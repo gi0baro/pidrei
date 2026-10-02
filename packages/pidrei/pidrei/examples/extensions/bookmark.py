@@ -9,7 +9,7 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/bookmark.py
 """
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 async def extension(pi):

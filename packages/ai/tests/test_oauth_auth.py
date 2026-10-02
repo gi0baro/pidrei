@@ -25,7 +25,7 @@ from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.providers.github_copilot import github_copilot_provider
 from pidrei_ai.providers.openai import openai_provider
 from pidrei_ai.registry import create_models
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from .oauth_helpers import OAuthRequest, json_response, stub_oauth_http, virtual_clock
 

@@ -7,9 +7,9 @@ is a ``{"provider", "id"}`` record naming the persisted default.
 import tonio.colored as tonio
 
 from pidrei_ai.registry import models_are_equal
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings
-from pidrei_tui._timers import Timeout
+from pidrei_utils.cancel import CancelToken
+from pidrei_utils.timers import Timeout
 
 from ..model_catalog_refresh import refresh_model_catalogs
 from ..model_search import get_model_selector_search_text

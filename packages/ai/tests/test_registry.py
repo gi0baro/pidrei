@@ -45,8 +45,8 @@ from pidrei_ai.types import (
     StreamOptions,
 )
 from pidrei_ai.utils.abort import race_with_cancel
-from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 def make_model(provider: str = "test", id: str = "model-1", **overrides) -> Model:

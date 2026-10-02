@@ -210,7 +210,7 @@ In order:
 1. **Catalog regen**: `make models-data`, then rerun `packages/ai/tests`.
    The regen-dependent failures noted during the port must clear. One run
    covers chat, image and classifier models.
-2. **Versions**: the five published packages (`packages/{ai,agent,tui,codemode,pidrei}/pyproject.toml`)
+2. **Versions**: the six published packages (`packages/{utils,ai,agent,tui,codemode,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
    `protocol`/`client`/`server` are not bumped.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
@@ -268,7 +268,7 @@ TonIO, httpunk and punkreq releases are ported as their own small change,
 usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
-   (TonIO: all seven packages), then `uv sync --all-packages`.
+   (TonIO: all eight packages), then `uv sync --all-packages`.
 2. For httpunk/punkreq, diff the two tags for the names PiDrei uses. PiDrei
    imports httpunk in exactly one place, `pidrei_ai/utils/http.py`
    (`Backend`, `H1Connection`, `H1Server`), and sees its exceptions only
@@ -627,7 +627,7 @@ untouched: component diffs port 1:1. What diverges:
     half.
   - Diffs to *when* a frame is scheduled land in
     `request_render`/`_render_loop`.
-- **Timers**: `pidrei_tui._timers.Timeout`/`Interval` are plain primitives.
+- **Timers**: `pidrei_utils.timers.Timeout`/`Interval` are plain primitives.
   A callback that touches UI state takes the lock itself. A callback whose
   late run (a fire racing `cancel()`) would undo newer state either
   re-checks its own state, or mutates nothing and computes from a deadline

@@ -22,11 +22,13 @@ classifiers = [
 ]
 
 dependencies = [
+    "pidrei-utils==1.0.0.0",
     "pydantic-monty==1.0.0",
     "tonio~=0.10.4",
 ]
 
 [tool.uv.sources]
+pidrei-utils = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei_codemode"]

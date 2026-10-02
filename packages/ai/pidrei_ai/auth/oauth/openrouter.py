@@ -23,8 +23,8 @@ from pidrei_ai.auth.types import (
     ProviderAuthInteraction,
 )
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 AUTHORIZE_URL = "https://openrouter.ai/auth"

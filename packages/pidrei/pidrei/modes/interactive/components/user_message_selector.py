@@ -4,7 +4,7 @@ Message items are ``{"id", "text", "timestamp"?}`` records.
 """
 
 from pidrei_tui import Container, Spacer, Text, get_keybindings, truncate_to_width
-from pidrei_tui._timers import Timeout
+from pidrei_utils.timers import Timeout
 
 from ..theme import theme
 from .dynamic_border import DynamicBorder

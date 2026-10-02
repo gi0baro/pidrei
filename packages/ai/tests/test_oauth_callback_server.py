@@ -23,7 +23,7 @@ from pidrei_ai.auth.oauth.callback_server import (
     wait_for_callback_or_manual_input,
 )
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 from .oauth_helpers import RecordingInteraction
 

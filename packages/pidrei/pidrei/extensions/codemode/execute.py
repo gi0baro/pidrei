@@ -36,7 +36,6 @@ from pidrei_ai.types import (
     TextContent,
     Usage,
 )
-from pidrei_ai.utils import clock
 from pidrei_codemode import (
     CodemodeError,
     CodemodeGlobal,
@@ -47,6 +46,7 @@ from pidrei_codemode import (
     parse_codemode_source,
     to_codemode_identifier,
 )
+from pidrei_utils import clock
 
 from ...config import TEMP_DIR
 from ...core.extensions.types import ToolNamespace

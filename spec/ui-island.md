@@ -208,7 +208,7 @@ to the run, as in Pi.
 
 ## Timers
 
-`Timeout` and `Interval` (`pidrei_tui._timers`) know nothing about the UI,
+`Timeout` and `Interval` (`pidrei_utils.timers`) know nothing about the UI,
 as `setTimeout` doesn't. A callback that touches UI state takes the lock
 itself (components use `apply`). A callback whose late run matters (a fire
 racing `cancel()`) either re-checks its own state, or mutates nothing and
@@ -315,8 +315,9 @@ Its surface:
 
 A new `TUI` member that Pi extensions use lands on the wrapper, either
 guarded (`apply` around any mutation) or needing no lock. Examples never
-import private modules (`pidrei_tui._timers` included): they use
-`tui.timeout`/`tui.interval` where Pi uses the global timers.
+import private modules, and never arm `pidrei_utils.timers` directly: they
+use `tui.timeout`/`tui.interval` (callbacks run under the UI state lock, and
+errors go to `report_error`) where Pi uses the global timers.
 
 ### Component code
 

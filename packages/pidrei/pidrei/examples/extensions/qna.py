@@ -11,7 +11,7 @@ Start pidrei with this extension:
 
 from pidrei.modes.interactive.components import BorderedLoader
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 SYSTEM_PROMPT = """You are a question extractor. Given text from a conversation, extract any questions that need answering and format them for the user to fill in.

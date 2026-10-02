@@ -10,7 +10,7 @@ from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.model_runtime import ModelRuntime
 from pidrei_ai.auth.types import ModelAuth, OAuthAuth, OAuthCredential, ProviderAuth
 from pidrei_ai.registry import ModelsRefreshOptions
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from .model_runtime_helpers import UnusedStreams, make_model
 

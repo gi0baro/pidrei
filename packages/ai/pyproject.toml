@@ -22,6 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "pidrei-utils==1.0.0.0",
     "tonio~=0.10.4",
     "punkreq~=0.2.3",
     # punkreq's own transport, declared directly because the OAuth callback
@@ -44,6 +45,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+pidrei-utils = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei_ai"]

@@ -42,8 +42,9 @@ monorepo:
 |---|---|---|
 | `packages/ai` (`pidrei-ai`) | `pidrei_ai` | `packages/ai` |
 | `packages/agent` (`pidrei-agent`) | `pidrei_agent` | `packages/agent` |
+| `packages/utils` (`pidrei-utils`) | `pidrei_utils` | none: what every package shares (the clock, cancel tokens, timers); must never import another pidrei package |
 | `packages/tui` (`pidrei-tui`) | `pidrei_tui` | `packages/tui` (must never import `pidrei_ai`) |
-| `packages/codemode` (`pidrei-codemode`) | `pidrei_codemode` | `packages/codemode` (the Monty sandbox; must never import another pidrei package) |
+| `packages/codemode` (`pidrei-codemode`) | `pidrei_codemode` | `packages/codemode` (the Monty sandbox; imports no pidrei package but `pidrei_utils`) |
 | `packages/pidrei` (`pidrei`) | `pidrei` | `packages/coding-agent` |
 | `packages/{protocol,client,server}` | `pidrei_protocol` etc. | transport remnants, unpublished workspace members |
 
@@ -79,7 +80,7 @@ Other places:
   35–45 s. Anything past 60 s is a hang: never rerun with a bigger budget.
 - Run the suite in slices:
   - `packages/ai/tests`
-  - `packages/{agent,codemode,tui,server,client,protocol}/tests`
+  - `packages/{agent,codemode,tui,utils,server,client,protocol}/tests`
   - `packages/pidrei/tests/test_[a-f]*.py`, `test_[g-r]*.py`,
     `test_[s-z]*.py`, `test_[0-9]*.py` (the numbered regression files are
     easy to forget).
@@ -185,9 +186,9 @@ from the runtime.
   the conftest of every package whose tests can reach its setter. The guard
   resets the state and warns, naming the polluting test (see
   `_capability_overrides_guard`).
-- **Clocks:** production code reads time only through `pidrei_ai.utils.clock`,
-  `pidrei_tui.clock` and `pidrei_codemode.clock` (ruff TID251 enforces this).
-  Those are the test seams.
+- **Clocks and timers:** production code reads time only through
+  `pidrei_utils.clock` (ruff TID251 enforces this) and arms timers only as
+  `pidrei_utils.timers.Timeout`/`Interval`. Those are the test seams.
 - Work still running after `main()` returns is a leak to fix where it leaks,
   not a lifecycle case to design or document around.
 
@@ -365,9 +366,11 @@ experiments.
   - The render loop and other loops write concurrently. Select by content,
     not position (`writes[-1]`).
 - Fake time instead of sleeping:
-  - Swap `clock.now_ms` (wall time) or `clock.monotonic` (deadlines); conftest
-    guards reset them.
-  - The agent package has `FakeTimers`.
+  - Swap `clock.now_ms` (wall time) or `clock.monotonic` (deadlines); the
+    root conftest's guard resets them, and `timers._start`.
+  - `FakeTimers` (`agent/tests/fake_timers.py`) drives the clock and queues
+    timers together; `manual_ui_timers()` (pidrei tests) records timers for
+    the test to fire.
   - Modules importing `Timeout` at top level can have it rebound to a fake
     that the test fires by hand.
   - Manual clocks seeded from real time must advance *past* thresholds with
@@ -394,8 +397,8 @@ experiments.
 
 ## Changelog, versions, releases
 
-- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The five
-  published packages (`ai`, `agent`, `tui`, `codemode`, `pidrei`) share the version and
+- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The six
+  published packages (`utils`, `ai`, `agent`, `tui`, `codemode`, `pidrei`) share the version and
   pin each other exactly; the transport packages are not bumped.
 - `UPSTREAM_VERSION`/`UPSTREAM_REF` in `upstream.py` and `.last_upstream_ref`
   move together (`make upstream-bump`), by convention to the commit right

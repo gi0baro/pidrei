@@ -386,7 +386,7 @@ def _report_project_trust_warnings(warnings: list[str]) -> None:
 
 
 async def _refresh_model_catalogs(agent_dir: str) -> None:
-    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_utils.cancel import CancelToken
 
     from ..core.model_runtime import ModelRuntime, ModelsRefreshOptions
 

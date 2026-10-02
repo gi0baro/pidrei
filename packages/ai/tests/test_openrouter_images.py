@@ -19,7 +19,7 @@ from pidrei_ai.types import (
     ProviderResponse,
     TextContent,
 )
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 last_params: list[dict] = []

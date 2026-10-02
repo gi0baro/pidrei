@@ -12,7 +12,7 @@ import pytest
 
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.types import TextContent, Usage, UsageCost, UserMessage
-from pidrei_ai.utils.clock import now_ms
+from pidrei_utils.clock import now_ms
 
 from .harness import create_harness
 

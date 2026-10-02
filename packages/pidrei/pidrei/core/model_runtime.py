@@ -66,7 +66,6 @@ from pidrei_ai.types import (
     StreamOptions,
     TranscriptContext,
 )
-from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.headers import merge_headers
 from pidrei_ai.utils.model_operations import (
     assert_chat_model,
@@ -76,6 +75,7 @@ from pidrei_ai.utils.model_operations import (
     image_error_result,
 )
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 from ..config import get_agent_dir
 from ..utils.abort import operation_cancel

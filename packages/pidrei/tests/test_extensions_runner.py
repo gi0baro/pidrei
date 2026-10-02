@@ -465,7 +465,7 @@ async def test_reflects_the_get_scoped_models_context_action_on_ctx_scoped_model
 
 @pytest.mark.tonio
 async def test_exposes_the_current_cancel_token_on_extension_context(fx):
-    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_utils.cancel import CancelToken
 
     runner = await make_runner(fx)
     cancel = CancelToken()

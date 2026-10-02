@@ -14,8 +14,8 @@ from tonio.colored import net
 
 from pidrei_ai.auth.oauth.openai_codex import openai_codex_oauth
 from pidrei_ai.auth.types import AuthPrompt, OAuthCredential
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from .oauth_helpers import (
     DEFAULT_START_MS,

@@ -7,7 +7,7 @@ rather than an exception, mirroring `api/lazy.py` for the streaming side.
 
 from pidrei_ai.images_api_registry import ImagesApiProvider, register_images_api_provider
 from pidrei_ai.types import AssistantImages, ImageModel, ImagesContext, ImagesOptions
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 def _create_lazy_load_error_images(model: ImageModel, error: Exception) -> AssistantImages:

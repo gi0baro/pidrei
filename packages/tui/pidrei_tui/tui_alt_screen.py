@@ -32,8 +32,9 @@ from dataclasses import dataclass, replace
 
 import tonio.colored as tonio
 
-from . import clock
-from ._timers import Interval
+from pidrei_utils import clock
+from pidrei_utils.timers import Interval
+
 from .alt_screen_search import (
     AltScreenSearchComponent,
     AltScreenSearchIndex,

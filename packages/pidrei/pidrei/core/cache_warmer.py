@@ -4,8 +4,7 @@ Keeps one prompt cache entry alive by re-sending its request with a one-token
 output cap before the entry expires.
 
 Runtime mapping (0.87.1 delta port):
-- `Date.now()` / `setTimeout` go through the `clock.now_ms` and
-  `timers.set_timeout` seams (module attributes, so tests swap them). The timer
+- `Date.now()` / `setTimeout` are `clock.now_ms` and a `Timeout`. The timer
   callback spawns the refresh as its own task.
 - The per-run `AbortController` is a `CancelToken` carried as the warm
   request's `cancel`; the provider stream owns its work in a scope and unwinds
@@ -29,9 +28,10 @@ import tonio.colored as tonio
 from pidrei_ai.builders import UsageBuilder
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import Model, SimpleStreamOptions, TranscriptContext
-from pidrei_ai.utils import clock, timers
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
+from pidrei_utils.timers import Timeout
 
 from .settings_manager import CacheWarmingMode
 
@@ -154,8 +154,8 @@ class _ActiveRun:
     refresh_deadline_at: int = 0
     # Set while a refresh that an extension forced is in flight.
     extension_override: bool = False
-    # Cancels the armed refresh timer; None while a refresh is running.
-    cancel_timer: Callable[[], None] | None = field(default=None)
+    # The armed refresh timer; None while a refresh is running.
+    timer: Timeout | None = field(default=None)
 
 
 async def _default_decide(event: dict[str, Any]) -> CacheWarmingAction:
@@ -196,7 +196,7 @@ class CacheWarmer:
                 return self._inactive
             # The run's fields are written under the lock; read one consistent set.
             phase = run.phase
-            refreshing = run.cancel_timer is None
+            refreshing = run.timer is None
             next_warm_at = run.next_warm_at
             extension_override = run.extension_override
         if not run.is_current():
@@ -275,9 +275,9 @@ class CacheWarmer:
         if run is None:
             return
         self._run = None
-        if run.cancel_timer is not None:
-            run.cancel_timer()
-            run.cancel_timer = None
+        if run.timer is not None:
+            run.timer.cancel()
+            run.timer = None
         run.cancel.cancel()
 
     def _stop_locked(
@@ -306,11 +306,11 @@ class CacheWarmer:
         def fire() -> None:
             tonio.spawn.without_tracking(self._refresh(run))
 
-        run.cancel_timer = timers.set_timeout(max(0, run.next_warm_at - clock.now_ms()), fire)
+        run.timer = Timeout(max(0, run.next_warm_at - clock.now_ms()), fire)
 
     async def _refresh(self, run: _ActiveRun) -> None:
         with self._lock:
-            run.cancel_timer = None
+            run.timer = None
             if not self._validate_run_locked(run) or self._refresh_deadline_missed_locked(run):
                 return
             phase = run.phase

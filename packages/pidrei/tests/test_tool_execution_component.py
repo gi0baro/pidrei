@@ -17,8 +17,8 @@ from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.components import ToolExecutionComponent, tool_execution
 from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.utils.ansi import strip_ansi
-from pidrei_ai.utils import clock as clock_module
 from pidrei_tui import Text, TuiMouseEvent, reset_capabilities_cache, set_capabilities
+from pidrei_utils import clock as clock_module
 
 
 def create_base_tool_definition(name: str = "custom_tool") -> ToolDefinition:

@@ -9,7 +9,7 @@ from pidrei_ai.auth.oauth.github_copilot import github_copilot_oauth
 from pidrei_ai.auth.types import AuthPrompt, OAuthCredential
 from pidrei_ai.providers.github_copilot import github_copilot_provider
 from pidrei_ai.registry import create_models
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from .oauth_helpers import (
     DEFAULT_START_MS,

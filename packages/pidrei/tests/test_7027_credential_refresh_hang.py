@@ -22,7 +22,7 @@ from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei_ai.auth.types import ApiKeyAuth, ApiKeyCredential, AuthCheck, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.registry import ModelsRefreshOptions, ModelsRefreshResult
 from pidrei_ai.types import Model, ModelCost
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 from .harness import create_harness
 

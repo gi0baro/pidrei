@@ -4,7 +4,7 @@ import traceback
 from typing import Any
 
 from pidrei_ai.types import AssistantMessageDiagnostic, DiagnosticErrorInfo
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 def format_thrown_value(value: Any) -> str:

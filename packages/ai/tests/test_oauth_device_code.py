@@ -8,8 +8,8 @@ which pin the same intervals (see `oauth_helpers`).
 import pytest
 
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from .oauth_helpers import DEFAULT_START_MS, virtual_clock
 

@@ -12,6 +12,7 @@ members = [
     "pidrei-protocol",
     "pidrei-server",
     "pidrei-tui",
+    "pidrei-utils",
 ]
 
 [manifest.dependency-groups]
@@ -338,6 +339,7 @@ dependencies = [
     { name = "pidrei-ai" },
     { name = "pidrei-codemode" },
     { name = "pidrei-tui" },
+    { name = "pidrei-utils" },
     { name = "pillow" },
     { name = "pygments" },
     { name = "pyyaml" },
@@ -352,6 +354,7 @@ requires-dist = [
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pidrei-codemode", editable = "packages/codemode" },
     { name = "pidrei-tui", editable = "packages/tui" },
+    { name = "pidrei-utils", editable = "packages/utils" },
     { name = "pillow", specifier = "~=12.3" },
     { name = "pygments", specifier = "~=2.20" },
     { name = "pyyaml", specifier = "~=6.0" },
@@ -364,12 +367,14 @@ version = "1.0.0.0"
 source = { editable = "packages/agent" }
 dependencies = [
     { name = "pidrei-ai" },
+    { name = "pidrei-utils" },
     { name = "tonio" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "pidrei-ai", editable = "packages/ai" },
+    { name = "pidrei-utils", editable = "packages/utils" },
     { name = "tonio", specifier = "~=0.10.4" },
 ]
 
@@ -383,6 +388,7 @@ dependencies = [
     { name = "httpunk" },
     { name = "jsonschema" },
     { name = "partial-json-parser" },
+    { name = "pidrei-utils" },
     { name = "punkreq" },
     { name = "tonio" },
     { name = "websockets" },
@@ -395,6 +401,7 @@ requires-dist = [
     { name = "httpunk", specifier = "~=0.4.5" },
     { name = "jsonschema", specifier = "~=4.26" },
     { name = "partial-json-parser", specifier = "~=0.2.1" },
+    { name = "pidrei-utils", editable = "packages/utils" },
     { name = "punkreq", specifier = "~=0.2.3" },
     { name = "tonio", specifier = "~=0.10.4" },
     { name = "websockets", specifier = "~=16.1" },
@@ -420,12 +427,14 @@ name = "pidrei-codemode"
 version = "1.0.0.0"
 source = { editable = "packages/codemode" }
 dependencies = [
+    { name = "pidrei-utils" },
     { name = "pydantic-monty" },
     { name = "tonio" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "pidrei-utils", editable = "packages/utils" },
     { name = "pydantic-monty", specifier = "==1.0.0" },
     { name = "tonio", specifier = "~=0.10.4" },
 ]
@@ -459,6 +468,7 @@ dependencies = [
     { name = "jieba" },
     { name = "linkify-it-py" },
     { name = "markdown-it-py" },
+    { name = "pidrei-utils" },
     { name = "tonio" },
     { name = "uniseg" },
 ]
@@ -469,9 +479,21 @@ requires-dist = [
     { name = "jieba", specifier = "~=0.42.1" },
     { name = "linkify-it-py", specifier = "~=2.1" },
     { name = "markdown-it-py", specifier = "~=4.2" },
+    { name = "pidrei-utils", editable = "packages/utils" },
     { name = "tonio", specifier = "~=0.10.4" },
     { name = "uniseg", specifier = "~=0.10.1" },
 ]
+
+[[package]]
+name = "pidrei-utils"
+version = "1.0.0.0"
+source = { editable = "packages/utils" }
+dependencies = [
+    { name = "tonio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tonio", specifier = "~=0.10.4" }]
 
 [[package]]
 name = "pillow"

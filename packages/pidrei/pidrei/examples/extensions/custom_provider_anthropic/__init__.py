@@ -45,8 +45,8 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.registry import create_provider
 from pidrei_ai.types import Model, ModelCost
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 PROVIDER_ID = "custom-anthropic"

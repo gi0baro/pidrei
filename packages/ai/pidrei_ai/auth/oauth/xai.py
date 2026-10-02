@@ -16,9 +16,9 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.user_agent import CLIENT_NAME
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"

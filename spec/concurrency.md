@@ -123,15 +123,15 @@ Pi gets "first come, first served" from promise chains. PiDrei uses:
 
 ### Timers
 
-`pidrei_tui._timers.Timeout`/`Interval` are plain primitives: a coroutine
+`pidrei_utils.timers.Timeout`/`Interval` are plain primitives: a coroutine
 parked on its cancel Event with the delay as timeout. The callback is
 synchronous and runs on the timer's own coroutine; it guards what it touches
 itself. `cancel()` is atomic with the fire's check. Unlike JavaScript's
 `clearTimeout`, though, a fire that checked just before the cancel still
 runs, so a callback whose late run matters re-checks its own state.
 
-Production code reads time only through `pidrei_ai.utils.clock` and
-`pidrei_tui.clock`, which are also the tests' seams.
+Production code reads time only through `pidrei_utils.clock`, which is also
+the tests' seam, and arms timers only as `Timeout`/`Interval`.
 
 ### Blocking work
 

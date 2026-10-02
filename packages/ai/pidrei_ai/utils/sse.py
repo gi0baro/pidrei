@@ -11,7 +11,7 @@ import codecs
 from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, field
 
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 @dataclass(slots=True)

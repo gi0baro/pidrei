@@ -26,12 +26,12 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
 from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import get_current_system_message, normalize_context
 from pidrei_ai.utils.uuid import uuidv7
+from pidrei_utils import clock
 
 from ..message_wire import serialize_tool
 from ..messages import convert_to_llm

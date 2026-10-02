@@ -11,7 +11,7 @@ import tonio.colored as tonio
 from tonio.colored.exceptions import CancelledError
 
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 class _Response:

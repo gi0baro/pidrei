@@ -15,7 +15,7 @@ from typing import Self
 import tonio.colored as tonio
 from tonio.colored import fs
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 STALE_SECONDS = 10.0

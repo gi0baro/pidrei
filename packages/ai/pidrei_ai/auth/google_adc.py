@@ -33,8 +33,8 @@ from tonio.colored import fs, sync
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.types import ProviderEnv
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_utils import clock
 
 
 CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"

@@ -19,7 +19,7 @@ from pidrei.core.session_manager import (
 )
 from pidrei.core.tools import EditToolDetails
 from pidrei_ai.types import UserMessage
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 
 from .coding_session_helpers import assistant_msg, make_usage, read_session_file_roles, tool_result_msg, user_msg
 

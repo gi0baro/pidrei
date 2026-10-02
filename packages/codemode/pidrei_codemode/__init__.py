@@ -20,7 +20,7 @@ from .declarations import (
     schema_to_type,
 )
 from .identifier import to_codemode_identifier
-from .runtime.host import CancelSignal, CodemodeSandbox
+from .runtime.host import CodemodeSandbox
 from .runtime.pool import CodemodePool
 from .runtime.prelude import MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS
 from .source import (
@@ -55,7 +55,6 @@ __all__ = [
     "MAX_STORE_TOTAL_CHARS",
     "MAX_STORE_VALUE_CHARS",
     "MCP_PYTHON_PREAMBLE",
-    "CancelSignal",
     "CodemodeCall",
     "CodemodeCallStatus",
     "CodemodeError",

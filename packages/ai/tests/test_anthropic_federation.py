@@ -20,7 +20,7 @@ from pidrei_ai.auth.types import AuthResult, ModelAuth
 from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 from tests.anthropic_helpers import PayloadCaptured, now_ms
 
 

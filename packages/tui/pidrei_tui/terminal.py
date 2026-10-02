@@ -72,8 +72,9 @@ import tonio.colored as tonio
 from tonio.colored import io as tonio_io, signals as tonio_signals
 from tonio.colored.sync import channel as tonio_channel
 
-from . import clock
-from ._timers import Interval
+from pidrei_utils import clock
+from pidrei_utils.timers import Interval
+
 from .keys import set_kitty_protocol_active
 from .stdin_buffer import StdinBuffer
 

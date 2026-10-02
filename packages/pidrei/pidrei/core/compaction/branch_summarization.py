@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, ToolCall, Usage, UserMessage
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils import clock
 
 from ..messages import (
     convert_to_llm,

@@ -10,7 +10,7 @@ from pidrei_ai.auth.types import (
     ModelAuth,
 )
 from pidrei_ai.types import ProviderEnv
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 CLOUDFLARE_API_KEY = "CLOUDFLARE_API_KEY"

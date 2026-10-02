@@ -701,7 +701,7 @@ async def test_cancel_during_time_to_first_byte_aborts_the_request():
     the stream with an aborted message, not wait for a read timeout."""
     import tonio.colored as tonio
 
-    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_utils.cancel import CancelToken
 
     head_pending = tonio.Event()
 

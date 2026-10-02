@@ -29,7 +29,7 @@ import threading
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import tonio.colored as tonio
 from pydantic_monty import (
@@ -47,7 +47,9 @@ from pydantic_monty import (
 )
 from tonio.colored.sync import channel
 
-from .. import clock
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
+
 from ..declarations import (
     RenderedTool,
     namespace_class_name,
@@ -105,19 +107,6 @@ _GATHER_HINT = (
     "Hint: asyncio.gather() does not support return_exceptions here. Use await all_settled(...) to keep "
     "the results of the calls that succeed."
 )
-
-
-class CancelSignal(Protocol):
-    """What `execute` needs of the caller's cancel token (pidrei_ai's
-    `CancelToken` fits): pi's `AbortSignal`."""
-
-    @property
-    def cancelled(self) -> bool: ...
-
-    @property
-    def reason(self) -> BaseException | None: ...
-
-    def on_cancel(self, callback: Callable[[BaseException], None]) -> Callable[[], None]: ...
 
 
 _UNSET: Any = object()
@@ -227,7 +216,7 @@ class _Execution:
         code: str,
         *,
         timeout_ms: float,
-        cancel: CancelSignal | None,
+        cancel: CancelToken | None,
         store: Mapping[str, Any] | None,
     ) -> None:
         self._setup = setup
@@ -768,7 +757,7 @@ class CodemodeSandbox:
         self,
         code: str,
         *,
-        cancel: CancelSignal | None = None,
+        cancel: CancelToken | None = None,
         timeout_ms: float = _UNSET,
         store: Mapping[str, Any] | None = None,
     ) -> CodemodeResult:

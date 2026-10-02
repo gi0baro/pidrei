@@ -38,8 +38,8 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_ai.auth.oauth import http as oauth_http
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_utils import clock
 
 
 GRANT_TYPE_JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"

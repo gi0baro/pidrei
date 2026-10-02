@@ -29,9 +29,9 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_utils.cancel import CancelToken
 from tests.mistral_helpers import FakeMistralClient, FakeMistralResponse, sse_body
 
 

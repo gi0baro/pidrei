@@ -17,7 +17,7 @@ from pidrei_ai.types import (
     ToolCall,
     ToolResultMessage,
 )
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)"

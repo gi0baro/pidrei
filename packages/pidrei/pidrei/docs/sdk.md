@@ -156,7 +156,7 @@ one low-level run, but retries, compaction or queued messages may follow;
 import tonio.colored as tonio
 from pidrei.core.model_runtime import ModelRuntime
 from pidrei_ai.types import Context, SimpleStreamOptions, TextContent, UserMessage
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 async def main():

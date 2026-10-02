@@ -70,6 +70,7 @@ PACKAGES = [
     "client/pidrei_client",
     "tui/pidrei_tui",
     "server/pidrei_server",
+    "utils/pidrei_utils",
 ]
 
 # Our package -> the pi package it ports, for the async/sync drift check.

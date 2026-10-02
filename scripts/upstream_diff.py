@@ -711,6 +711,9 @@ RENAMES = {
     # 1.0.0.0 codemode: pi's prelude is JavaScript source run in the VM;
     # pidrei's is host-side Python plus a small in-session prelude, one module.
     "packages/codemode/src/runtime/prelude-source.ts": "packages/codemode/pidrei_codemode/runtime/prelude.py",
+    # combineAbortSignals lives with the cancel token every package shares
+    # (1.0.0.0, pidrei-utils).
+    "packages/ai/src/utils/abort-signals.ts": "packages/utils/pidrei_utils/cancel.py",
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one

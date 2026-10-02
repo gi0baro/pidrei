@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 
 from pidrei_ai.utils import http
 from pidrei_ai.utils.abort import run_cancellable
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 @dataclass(slots=True)

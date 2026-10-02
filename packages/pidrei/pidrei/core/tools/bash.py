@@ -20,7 +20,7 @@ from tonio.colored import fs, time as tonio_time
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import JsonSchemaConstrainedSampling, TextContent
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from ...utils.shell import (
     ShellConfig,

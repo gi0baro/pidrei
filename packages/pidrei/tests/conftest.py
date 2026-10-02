@@ -6,7 +6,6 @@ import pytest
 
 from pidrei.core import output_guard
 from pidrei_ai.auth import anthropic_federation, google_adc
-from pidrei_ai.utils import clock, timers
 from pidrei_tui import terminal_image, utils as tui_utils
 
 
@@ -144,35 +143,6 @@ def _output_guard_guard():
     if output_guard.is_stdout_taken_over():
         output_guard.restore_stdout()
         warnings.warn("test left stdout taken over (take_over_stdout without restore_stdout); restored", stacklevel=1)
-
-
-# The clock/timer seams `fake_timers()` swaps, captured at collection time
-# before any test can touch them.
-_TIMER_SEAMS = (
-    (timers, "set_timeout", timers.set_timeout),
-    (clock, "now_ms", clock.now_ms),
-    (clock, "monotonic", clock.monotonic),
-)
-
-
-@pytest.fixture(autouse=True)
-def _timer_seam_guard():
-    """Fail-loud reset of the process-wide clock and timer seams.
-
-    The whole suite shares one tonio runtime and one copy of these modules, so
-    a test that installs `fake_timers()` (the cache-warmer tests) and never
-    exits it would hand every later test a frozen clock or a timer queue nothing
-    advances. The warning names the polluting test; the reset keeps the poison
-    from spreading.
-    """
-    yield
-    for module, name, original in _TIMER_SEAMS:
-        if getattr(module, name) is not original:
-            setattr(module, name, original)
-            warnings.warn(
-                f"test left {module.__name__}.{name} swapped (a fake was not exited); restored",
-                stacklevel=1,
-            )
 
 
 def pytest_configure(config):

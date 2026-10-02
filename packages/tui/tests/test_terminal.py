@@ -13,9 +13,9 @@ import os
 
 import pytest
 
-from pidrei_tui import clock as clock_module
 from pidrei_tui.keys import set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input, resolve_escape_timeout_ms
+from pidrei_utils import clock as clock_module
 
 from .tui_helpers import env_var
 

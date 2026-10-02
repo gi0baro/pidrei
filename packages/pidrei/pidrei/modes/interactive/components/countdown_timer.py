@@ -8,7 +8,7 @@ state lock, and a tick that races `dispose()` does nothing (pi's
 import contextlib
 import math
 
-from pidrei_tui._timers import Interval
+from pidrei_utils.timers import Interval
 
 
 class CountdownTimer:

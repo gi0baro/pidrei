@@ -15,7 +15,7 @@ from typing import Any
 
 from tonio.colored import fs
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from ..utils.paths import resolve_path
 from .session_manager import CURRENT_SESSION_VERSION, SessionManager, _dump_json, _entry_to_wire

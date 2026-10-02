@@ -60,13 +60,13 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
 from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import get_current_system_message
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from ..utils.frontmatter import strip_frontmatter
 from ..utils.image_process import process_image

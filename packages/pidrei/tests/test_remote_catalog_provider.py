@@ -17,7 +17,7 @@ from pidrei.core.remote_catalog import REMOTE_CATALOG_MODEL_TYPES, CatalogRespon
 from pidrei_ai.auth.types import ApiKeyAuth, ApiKeyCredential, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.registry import RefreshModelsContext, create_models, create_provider
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 from tests.model_runtime_helpers import UnusedStreams, make_model
 
 

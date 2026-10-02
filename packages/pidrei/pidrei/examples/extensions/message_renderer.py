@@ -12,8 +12,8 @@ Start pidrei with this extension:
 
 from datetime import UTC, datetime
 
-from pidrei_ai.utils import clock
 from pidrei_tui import Box, Text
+from pidrei_utils import clock
 
 
 async def extension(pi):

@@ -76,6 +76,14 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
   only the agent, the agent loop and their types, and no longer depends on
   `pyyaml` and `pathspec`. The coding-agent message roles live in
   `pidrei.core.messages`, as before.
+- **Breaking:** the clock, cancel tokens and timers moved to a new package,
+  `pidrei-utils`, shared by all the others. Extensions import them from
+  `pidrei_utils.clock`, `pidrei_utils.cancel` (`CancelToken`, `AbortError`)
+  and `pidrei_utils.timers` (`Timeout`, `Interval`). The old modules are
+  gone: `pidrei_ai.utils.clock`, `pidrei_ai.utils.cancel`,
+  `pidrei_ai.utils.timers`, `pidrei_tui.clock` and `pidrei_tui._timers`, as
+  are the TUI's own `CancelToken` and `AbortError` in
+  `pidrei_tui.components.cancellable_loader`.
 
 ### Fixed
 

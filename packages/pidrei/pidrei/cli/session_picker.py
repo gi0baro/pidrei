@@ -8,8 +8,8 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import set_keybindings
+from pidrei_utils.cancel import CancelToken
 
 from ..core.keybindings import KeybindingsManager
 from ..core.session_manager import SessionInfo, SessionListProgress

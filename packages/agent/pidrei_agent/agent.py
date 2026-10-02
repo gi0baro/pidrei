@@ -46,14 +46,14 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import (
     create_initial_system_message,
     get_current_system_message,
     get_current_system_prompt,
     to_tool_declaration,
 )
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from .agent_loop import run_agent_loop, run_agent_loop_continue
 from .stream_fn import get_default_stream_fn

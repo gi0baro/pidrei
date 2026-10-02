@@ -26,6 +26,7 @@ dependencies = [
     "pidrei-ai==1.0.0.0",
     "pidrei-codemode==1.0.0.0",
     "pidrei-tui==1.0.0.0",
+    "pidrei-utils==1.0.0.0",
     "tonio~=0.10.4",
     "pyyaml~=6.0",
     "jsonschema~=4.26",
@@ -39,6 +40,7 @@ pidrei-agent = { workspace = true }
 pidrei-ai = { workspace = true }
 pidrei-codemode = { workspace = true }
 pidrei-tui = { workspace = true }
+pidrei-utils = { workspace = true }
 
 [project.scripts]
 pidrei = "pidrei.__main__:run"

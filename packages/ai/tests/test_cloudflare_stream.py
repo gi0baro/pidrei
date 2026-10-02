@@ -11,7 +11,7 @@ import pytest
 from pidrei_ai.providers.cloudflare_auth import cloudflare_ai_gateway_auth, cloudflare_workers_ai_auth
 from pidrei_ai.providers.cloudflare_stream import cloudflare_streams
 from pidrei_ai.types import Context, Model, ModelCost, StreamOptions
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 _never_aborted_cancel = CancelToken()

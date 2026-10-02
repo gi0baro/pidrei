@@ -47,9 +47,9 @@ from pidrei_ai.types import (
     StreamOptions,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 # =============================================================================

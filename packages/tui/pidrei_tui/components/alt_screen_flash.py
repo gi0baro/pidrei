@@ -8,7 +8,8 @@ entry expires on its timer's task, and the frame walks the entries under
 that lock.
 """
 
-from .._timers import Timeout
+from pidrei_utils.timers import Timeout
+
 from ..utils import truncate_to_width
 
 

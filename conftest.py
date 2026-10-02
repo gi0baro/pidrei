@@ -14,6 +14,14 @@ fast the way it would offline. The autouse `_network_guard` fixture then fails
 the test by name, even if the code under test swallowed the error. Loopback
 and unix sockets stay allowed: the OAuth callback server and the websocket
 loopback tests use them.
+
+Clock and timer guard: every package reads time and arms timers through
+`pidrei_utils`, whose seams tests swap (`fake_timers()`, `virtual_clock()`,
+`manual_ui_timers()`). The whole suite shares one runtime and one copy of
+those modules, so a test that swaps one and never restores it would hand
+every later test a frozen clock or a timer queue nothing advances. The
+autouse `_clock_seam_guard` restores them after every test and warns, naming
+the polluting test.
 """
 
 import errno
@@ -21,11 +29,32 @@ import ipaddress
 import pathlib
 import sys
 import threading
+import warnings
 
 import pytest
 
+from pidrei_utils import clock, timers
+
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent / "scripts"))
+
+# The seams tests may swap, captured at collection time before any test can
+# touch them.
+_CLOCK_SEAMS = (
+    (clock, "now_ms", clock.now_ms),
+    (clock, "monotonic", clock.monotonic),
+    (clock, "sleep_ms", clock.sleep_ms),
+    (timers, "_start", timers._start),
+)
+
+
+@pytest.fixture(autouse=True)
+def _clock_seam_guard():
+    yield
+    for module, name, original in _CLOCK_SEAMS:
+        if getattr(module, name) is not original:
+            setattr(module, name, original)
+            warnings.warn(f"test left {module.__name__}.{name} swapped; restored", stacklevel=1)
 
 
 _LOOPBACK_NAMES = frozenset({"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"})

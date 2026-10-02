@@ -7,7 +7,7 @@ import pytest
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.runtime_credentials import RuntimeCredentials
 from pidrei_ai.auth.types import ApiKeyCredential, AuthOperationOptions, CredentialInfo, OAuthCredential
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 @pytest.mark.tonio

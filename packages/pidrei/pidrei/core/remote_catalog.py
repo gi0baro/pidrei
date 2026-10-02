@@ -15,10 +15,10 @@ from pidrei_ai.api.lazy import call_stream_into
 from pidrei_ai.models_store import ModelsStoreEntry
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import AnyModel, Model, ModelType
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.http import abandon_response
 from pidrei_ai.utils.model_operations import get_model_type, is_model_type
+from pidrei_utils import clock
 
 from ..config import VERSION
 from ..utils.management_http import fetch_with_retry

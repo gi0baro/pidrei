@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pidrei_ai.api import system_one_shared
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 @dataclass(slots=True)

@@ -23,11 +23,13 @@ classifiers = [
 
 dependencies = [
     "pidrei-ai==1.0.0.0",
+    "pidrei-utils==1.0.0.0",
     "tonio~=0.10.4",
 ]
 
 [tool.uv.sources]
 pidrei-ai = { workspace = true }
+pidrei-utils = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei_agent"]

@@ -1,4 +1,5 @@
-"""setTimeout/setInterval equivalents for the tui package.
+"""setTimeout/setInterval equivalents, the one timer API of every pidrei
+package.
 
 No pi counterpart: pi uses the JS event loop's global timers. Here a timer is
 a task parked on its cancel event with the delay as timeout

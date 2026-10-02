@@ -27,8 +27,8 @@ from pidrei_ai.auth.types import (
     CredentialStore,
     OAuthCredential,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 from ..config import get_agent_dir
 from ..utils import lockfile

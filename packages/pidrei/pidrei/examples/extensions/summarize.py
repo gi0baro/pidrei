@@ -13,9 +13,9 @@ import json
 from pidrei.modes.interactive.components import DynamicBorder
 from pidrei.modes.interactive.theme import get_markdown_theme
 from pidrei_ai.types import Context, SimpleStreamOptions, TextContent, UserMessage
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.uuid import uuidv7
 from pidrei_tui import Container, Markdown, Text, matches_key
+from pidrei_utils import clock
 
 
 def extract_text_parts(content):

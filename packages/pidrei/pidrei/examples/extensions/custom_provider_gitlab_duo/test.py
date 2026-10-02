@@ -16,7 +16,7 @@ import tonio.colored as tonio
 
 from pidrei.config import get_auth_path
 from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from . import MODELS, gitlab_duo_provider
 

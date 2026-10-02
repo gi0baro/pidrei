@@ -33,8 +33,6 @@ from tonio.colored import fs, signals as tonio_signals
 
 from pidrei_ai.auth.types import AuthOperationOptions, LoginOptions
 from pidrei_ai.registry import ModelsRefreshOptions
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
 from pidrei_tui import (
     CombinedAutocompleteProvider,
     Container,
@@ -55,6 +53,8 @@ from pidrei_tui import (
     visible_width,
 )
 from pidrei_tui.tui import call_sync
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken as AiCancelToken
 
 from ...config import (
     APP_NAME,

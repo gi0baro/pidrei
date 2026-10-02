@@ -44,15 +44,16 @@ from pidrei_ai.types import (
     StreamOptions,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock, http
+from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_ai.utils.user_agent import set_default_user_agent
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 DEFAULT_AZURE_API_VERSION = "v1"

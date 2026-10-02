@@ -35,7 +35,7 @@ Port deviations (pi is single-threaded JS):
 
 import re
 
-from . import clock as _clock
+from pidrei_utils import clock as _clock
 
 
 ESC = "\x1b"

@@ -16,8 +16,8 @@ Start pidrei with this extension:
 from pidrei.core.compaction import CompactionResult, serialize_conversation
 from pidrei.core.messages import convert_to_llm
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.uuid import uuidv7
+from pidrei_utils import clock
 
 
 SUMMARY_INSTRUCTIONS = """\

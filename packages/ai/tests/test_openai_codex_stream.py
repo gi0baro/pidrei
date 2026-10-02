@@ -55,9 +55,10 @@ from pidrei_ai.types import (
     TranscriptContext,
     UserMessage,
 )
-from pidrei_ai.utils import clock, http, websocket
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils import http, websocket
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 # --- shared fixtures ----------------------------------------------------------

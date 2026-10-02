@@ -2,7 +2,7 @@
 
 pi drives `Date.now()`/`setTimeout` with vitest fake timers and lets
 `advanceTimersByTimeAsync` flush the refresh the timer starts. pidrei swaps the
-`clock.now_ms` / `timers.set_timeout` seams for the shared `FakeTimers`
+`clock.now_ms` / `timers._start` seams for the shared `FakeTimers`
 (0.87.1 delta port): `advance_timers` takes each due refresh timer off
 the queue and awaits the refresh it would have spawned (`_refresh`) instead of
 racing a detached task.
@@ -33,8 +33,8 @@ from pidrei.core.extensions.runner import ExtensionRunner
 from pidrei.core.session_manager import SessionManager
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import AssistantMessage, Context, SimpleStreamOptions, Usage, UsageCost
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils.cancel import CancelToken
 
 from .model_runtime_helpers import create_in_memory_model_registry
 

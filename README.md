@@ -41,7 +41,7 @@ uv tool install -p 3.14t \
   'git+https://github.com/gi0baro/pidrei@v0.82.0.0#subdirectory=packages/pidrei'
 ```
 
-Yes, the `#subdirectory` is ugly. PiDrei mirrors Pi's monorepo, five packages and
+Yes, the `#subdirectory` is ugly. PiDrei mirrors Pi's monorepo, six packages and
 all, and the CLI is only one of them.
 
 Or you can have Homebrew do the honours:
@@ -52,7 +52,7 @@ brew install gi0baro/tap/pidrei
 
 Wheels and source tarballs are attached to every
 [GitHub release](https://github.com/gi0baro/pidrei/releases), if that's your
-thing — install all five, since they reference each other by exact version.
+thing — install all six, since they reference each other by exact version.
 
 In any case, you should end up with a `pidrei` command — and if you love
 shortcuts, `pi3`.

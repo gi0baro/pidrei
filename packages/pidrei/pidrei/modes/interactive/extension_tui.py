@@ -15,7 +15,7 @@ from collections.abc import Awaitable
 import tonio.colored as tonio
 
 from pidrei_tui import OverlayHandle
-from pidrei_tui._timers import Interval, Timeout
+from pidrei_utils.timers import Interval, Timeout
 
 
 __all__ = ["ExtensionTui"]

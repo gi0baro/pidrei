@@ -31,6 +31,7 @@ from pidrei_codemode import (
     CodemodeTextItem,
     CodemodeTool,
 )
+from pidrei_utils.cancel import CancelToken
 
 
 @pytest.fixture
@@ -63,33 +64,6 @@ async def _fail(_args):
 
 echo = tool("echo", _echo)
 fail = tool("fail", _fail)
-
-
-class Token:
-    """A minimal cancel token (the `CancelSignal` protocol)."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._callbacks = []
-        self.cancelled = False
-        self.reason = None
-
-    def cancel(self, reason=None) -> None:
-        with self._lock:
-            if self.cancelled:
-                return
-            self.cancelled, self.reason = True, reason
-            callbacks, self._callbacks = self._callbacks, []
-        for callback in callbacks:
-            callback(reason)
-
-    def on_cancel(self, callback):
-        with self._lock:
-            if not self.cancelled:
-                self._callbacks.append(callback)
-                return lambda: None
-        callback(self.reason)
-        return lambda: None
 
 
 def hanging_tool(name: str = "hang"):
@@ -683,7 +657,7 @@ async def test_aborts_via_cancel_and_cancels_in_flight_calls(make_sandbox):
     hang, started, cancelled = hanging_tool()
     sandbox = make_sandbox([hang])
 
-    token = Token()
+    token = CancelToken()
     pending = tonio.spawn(sandbox.execute("await tools.hang()\n'never'", cancel=token))
     await started.wait(5)
     token.cancel(Exception("user cancelled"))
@@ -694,10 +668,10 @@ async def test_aborts_via_cancel_and_cancels_in_flight_calls(make_sandbox):
     assert cancelled.is_set()
 
     # A token cancelled before the script starts: it never runs.
-    cancelled_early = Token()
+    cancelled_early = CancelToken()
     cancelled_early.cancel()
     early = await sandbox.execute("1", cancel=cancelled_early)
-    assert early.error == CodemodeError(kind="aborted", message="Execution aborted")
+    assert early.error == CodemodeError(kind="aborted", message="Operation was aborted")
 
 
 @pytest.mark.tonio

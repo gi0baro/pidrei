@@ -12,7 +12,7 @@ self-update planner, which pidrei does not have.
 
 from typing import Any
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 __all__ = ["RETRYABLE_STATUS_CODES", "fetch_with_retry"]

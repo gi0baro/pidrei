@@ -6,7 +6,7 @@ import pytest
 
 from pidrei_ai.auth.oauth.meta import meta_oauth
 from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthCredential
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 from .oauth_helpers import OAuthRequest, RecordingInteraction, json_response, stub_oauth_http, virtual_clock
 
