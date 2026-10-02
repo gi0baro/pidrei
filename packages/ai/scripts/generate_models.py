@@ -86,7 +86,7 @@ TOGETHER_REASONING_EFFORT_COMPAT = {
 TOGETHER_TOGGLE_REASONING_EFFORT_COMPAT = {**TOGETHER_TOGGLE_REASONING_COMPAT, "supportsReasoningEffort": True}
 TOGETHER_REASONING_ONLY_MODELS = {"deepseek-ai/DeepSeek-R1", "MiniMaxAI/MiniMax-M2.7"}
 TOGETHER_REASONING_EFFORT_MODELS = {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
-TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = {"deepseek-ai/DeepSeek-V4-Pro"}
+TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = {"deepseek-ai/DeepSeek-V4-Pro-0813"}
 TOGETHER_FIXED_REASONING_LEVEL_MAP: dict[str, str | None] = {
     "off": None,
     "minimal": None,

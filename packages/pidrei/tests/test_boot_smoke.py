@@ -37,7 +37,7 @@ from pidrei.config import APP_TITLE, ENV_AGENT_DIR
 
 COLS, ROWS = 100, 30
 # The startup header's onboarding line (its first lines are the logo).
-BANNER = "pidrei can explain its own features"
+BANNER = "PiDrei can explain its own features"
 BOOT_TIMEOUT = 40.0
 REPLY_TIMEOUT = 40.0
 EXIT_TIMEOUT = 15.0
@@ -218,8 +218,11 @@ async def _exit_with_double_ctrl_c(screen: _Screen, master: int, process: subpro
     screen.pump()
 
 
+# Both modes: their exits differ (fullscreen leaves the alternate screen and
+# prints the transcript on a regular screen it never starts).
+@pytest.mark.parametrize("tui_mode", ["regular", "fullscreen"])
 @pytest.mark.tonio
-async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
+async def test_interactive_mode_boots_and_completes_a_turn(tmp_path, tui_mode):
     agent_dir = tmp_path / "agent"
     project_dir = tmp_path / "project"
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +231,7 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
     port = listener.socket.getsockname()[1]
     tonio.spawn.without_tracking(_accept_loop(listener))
     _write_agent_dir(agent_dir, port)
+    (agent_dir / "settings.json").write_text(json.dumps({"tuiMode": tui_mode}))
 
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))

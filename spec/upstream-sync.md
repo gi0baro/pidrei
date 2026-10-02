@@ -297,10 +297,12 @@ Each has entries in the classifier's dropped tables, with the reason.
   rewrite, session backends, benchmarks. It is an unfinished rewrite the
   product does not run on; porting it would track churn on a moving target.
   Not porting it is a deferral, not a saving.
-  - Still ported: the stable harness helper layer the product imports, and
-    the transport layer (CBOR codec, framing, unix socket listener and
-    transports, unix client connect) in the unpublished
-    `protocol`/`client`/`server` packages.
+  - Still ported: the transport layer (CBOR codec, framing, unix socket
+    listener and transports, unix client connect) in the unpublished
+    `protocol`/`client`/`server` packages. Pi 1.0.0 removed the harness
+    helper layer from `pi-agent-core`; the parts the product used live in
+    `pidrei` (`core/messages.py`, `core/message_wire.py`,
+    `core/tools/edit_diff.py`, `core/tools/truncate.py`, `utils/mime.py`).
   - **Reopen** when Pi's product (`AgentSession` or the default interactive
     mode) starts running on the harness, when upstream declares session
     format 4 stable, or when `pi server`/`pi client` leave the
@@ -740,3 +742,29 @@ shares analytics, and their test cases are skipped; theme-step and
 `shouldRunFirstTimeSetup` hunks port 1:1. A new upstream consumer of those
 settings (a privacy command, an analytics sink) is a telemetry feature:
 drop it the same way.
+
+### `anthropic-federation` (`ai/src/api/anthropic-messages.ts`)
+
+Pi hands `@anthropic-ai/sdk` a workload identity federation `config` and the
+SDK exchanges and caches the token. PiDrei has no SDK, so
+`pidrei_ai/auth/anthropic_federation.py` ports that behaviour from the SDK
+version pi pins (`lib/credentials/*`), over the `auth/oauth/http.py` seam:
+
+- One process-wide token cache for the current `(base_url, config)`,
+  swapped under a thread lock (pi keys its client on `fetch` too, which has
+  no counterpart). The ai and pidrei conftests guard it.
+- The SDK's refresh policy (120 s advisory, 30 s mandatory, 5 s backoff
+  after a failed advisory refresh). Each exchange is a detached coroutine;
+  callers join it through an Event, so a cancelled caller stops waiting
+  while the exchange finishes for the others. Cache state sits behind a
+  thread lock that is never held across an await.
+- `_PunkreqAnthropicClient` applies the token per request. A 401 only
+  invalidates the cache: pi runs the SDK with retries off, so the request
+  still fails and the next one exchanges again.
+- Deviations from the SDK: a 30 s exchange timeout, no 1 MiB response cap.
+
+Hunks in `anthropic-messages.ts` that pass federation options to the SDK
+client, or a bump of pi's SDK pin that changes `lib/credentials`, land in
+that module and `_PunkreqAnthropicClient`, read against the SDK source at
+the version pi pins. The resolver half (`providers/anthropic.ts`,
+`get_anthropic_federation`, the env constants) ports 1:1.

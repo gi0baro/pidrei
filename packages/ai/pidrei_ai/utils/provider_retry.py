@@ -106,9 +106,11 @@ def _get_retry_delay_ms(error: Any, retry_index: int, max_retry_delay_ms: float 
     retry_after_ms = _headers_get(error.headers, "retry-after-ms")
     if retry_after_ms:
         try:
-            return _validate_server_retry_delay_ms(float(retry_after_ms), max_retry_delay_ms, message)
+            value = float(retry_after_ms)
         except ValueError:
-            pass
+            value = float("nan")
+        if math.isfinite(value):
+            return _validate_server_retry_delay_ms(value, max_retry_delay_ms, message)
 
     retry_after = _headers_get(error.headers, "retry-after")
     if retry_after:
@@ -117,7 +119,7 @@ def _get_retry_delay_ms(error: Any, retry_index: int, max_retry_delay_ms: float 
         except ValueError:
             parsed = _parse_http_date_delay_ms(retry_after)
             delay_ms = parsed if parsed is not None else float("nan")
-        if not math.isnan(delay_ms):
+        if math.isfinite(delay_ms):
             return _validate_server_retry_delay_ms(delay_ms, max_retry_delay_ms, message)
 
     exponential_delay = min(0.5 * 2**retry_index, 8) * 1000

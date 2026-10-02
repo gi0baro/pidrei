@@ -15,7 +15,6 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any
 
-from pidrei_agent.harness.session.serde import serialize_tool
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
@@ -34,6 +33,7 @@ from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import get_current_system_message, normalize_context
 from pidrei_ai.utils.uuid import uuidv7
 
+from ..message_wire import serialize_tool
 from ..messages import convert_to_llm
 from ..session_manager import (
     ProjectedSessionEntry,

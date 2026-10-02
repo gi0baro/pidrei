@@ -9,11 +9,11 @@ shape is unchanged.
 """
 
 from pidrei_ai.utils import clock
-from pidrei_tui import Container, Text, truncate_to_width
+from pidrei_tui import Container, Spacer, Text
 from pidrei_tui._timers import Interval
 
 from ....modes.interactive.components.keybinding_hints import key_hint
-from ....modes.interactive.components.visual_truncate import truncate_to_visual_lines
+from ....modes.interactive.components.visual_truncate import VisualLinePreview
 from ....modes.interactive.theme import theme
 from ..render_utils import get_text_output, invalid_arg_text, str_or_none
 from ..truncate import DEFAULT_MAX_BYTES, format_size
@@ -22,41 +22,6 @@ from .types import ToolRenderers
 
 BASH_PREVIEW_LINES = 5
 BASH_UPDATE_THROTTLE_S = 0.1
-
-
-class BashResultRenderComponent(Container):
-    def __init__(self) -> None:
-        super().__init__()
-        self.state = {"cachedWidth": None, "cachedLines": None}
-
-
-class _BashPreviewOutput:
-    """Width-aware cached preview (pi's inline render object)."""
-
-    def __init__(self, state: dict, styled_output: str) -> None:
-        self._state = state
-        self._styled_output = styled_output
-
-    def render(self, width: int) -> list:
-        state = self._state
-        # Cache the complete output: this renders on every frame for every bash result in the transcript.
-        if state["cachedLines"] is None or state["cachedWidth"] != width:
-            preview = truncate_to_visual_lines(self._styled_output, BASH_PREVIEW_LINES, width)
-            hint_lines: list[str] = []
-            if preview["skippedCount"] > 0:
-                hint = (
-                    theme.fg("muted", f"... ({preview['skippedCount']} earlier lines,")
-                    + f" {key_hint('app.tools.expand', 'to expand')}"
-                    + theme.fg("muted", ")")
-                )
-                hint_lines.append(truncate_to_width(hint, width, "..."))
-            state["cachedLines"] = ["", *hint_lines, *preview["visualLines"]]
-            state["cachedWidth"] = width
-        return state["cachedLines"]
-
-    def invalidate(self) -> None:
-        self._state["cachedWidth"] = None
-        self._state["cachedLines"] = None
 
 
 def _format_duration(ms: float) -> str:
@@ -93,14 +58,13 @@ def _result_details(result):
 
 
 def _rebuild_bash_result_render_component(
-    component: BashResultRenderComponent,
+    component: Container,
     result,
     options: dict,
     show_images: bool,
     started_at: float | None,
     ended_at: float | None,
 ) -> None:
-    state = component.state
     component.clear()
 
     output = get_text_output(result, show_images).strip()
@@ -124,7 +88,19 @@ def _rebuild_bash_result_render_component(
         if options.get("expanded"):
             component.add_child(Text(f"\n{styled_output}", 0, 0))
         else:
-            component.add_child(_BashPreviewOutput(state, styled_output))
+            component.add_child(Spacer(1))
+            component.add_child(
+                VisualLinePreview(
+                    text=styled_output,
+                    max_visual_lines=BASH_PREVIEW_LINES,
+                    keep="end",
+                    format_hint=lambda hidden: (
+                        theme.fg("muted", f"... ({hidden} earlier lines,")
+                        + f" {key_hint('app.tools.expand', 'to expand')}"
+                        + theme.fg("muted", ")")
+                    ),
+                )
+            )
 
     if (truncation is not None and truncation.truncated) or full_output_path:
         warnings: list = []
@@ -169,11 +145,7 @@ def create_shell_renderers(prompt: str) -> ToolRenderers:
             if state.get("interval"):
                 state["interval"].cancel()
                 state["interval"] = None
-        component = (
-            context["lastComponent"]
-            if isinstance(context.get("lastComponent"), BashResultRenderComponent)
-            else BashResultRenderComponent()
-        )
+        component = context["lastComponent"] if isinstance(context.get("lastComponent"), Container) else Container()
         _rebuild_bash_result_render_component(
             component, result, options, context["showImages"], state.get("startedAt"), state.get("endedAt")
         )

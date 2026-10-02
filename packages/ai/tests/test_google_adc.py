@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 import pytest
+import tonio.colored as tonio
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
@@ -288,6 +289,51 @@ async def test_a_credentials_file_that_is_not_json_is_an_error():
 
     with pytest.raises(GoogleAdcError, match="is not valid JSON"):
         await get_access_token({"GOOGLE_APPLICATION_CREDENTIALS": str(path)})
+
+
+@pytest.mark.tonio
+async def test_concurrent_callers_on_a_cold_cache_share_one_token_exchange():
+    env = {"GOOGLE_APPLICATION_CREDENTIALS": _service_account_file()}
+    fetching = tonio.Event()
+    release = tonio.Event()
+    calls: list[str] = []
+
+    async def stub(url, **_kwargs):
+        calls.append(url)
+        fetching.set()
+        await release.wait(5)
+        return _response({"access_token": "shared-token", "expires_in": 3600})
+
+    # The first caller makes all its cache checks before its exchange starts, so
+    # a check after that is the second caller missing the cold cache.
+    second_checked = tonio.Event()
+    original_cached_token = google_adc._cached_token
+
+    async def recording_cached_token(env, scope):
+        result = await original_cached_token(env, scope)
+        if fetching.is_set():
+            second_checked.set()
+        return result
+
+    original_request = oauth_http.request
+    oauth_http.request = stub
+    google_adc._cached_token = recording_cached_token
+    try:
+        first = tonio.spawn(get_access_token(env))
+        await fetching.wait(5)
+        assert fetching.is_set()
+        second = tonio.spawn(get_access_token(env))
+        await second_checked.wait(5)
+        assert second_checked.is_set()
+        release.set()
+
+        assert await first == "shared-token"
+        assert await second == "shared-token"
+    finally:
+        oauth_http.request = original_request
+        google_adc._cached_token = original_cached_token
+
+    assert len(calls) == 1
 
 
 def test_the_module_exposes_the_scope_vertex_requires():

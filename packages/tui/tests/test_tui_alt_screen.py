@@ -231,6 +231,35 @@ async def test_renders_a_terminal_height_viewport_and_preserves_manual_scroll_po
     await tui.stop()
 
 
+# pidrei-only: pi has no test for getScreenLines (its one caller, the header
+# logo easter egg, is not ported).
+@pytest.mark.tonio
+async def test_returns_a_copy_of_the_last_rendered_frames_lines():
+    terminal = VirtualTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    text = Text(_lines(10), 0, 0)
+    tui.add_child(text)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # As written: each line ends with the SGR and OSC 8 resets.
+    def plain(lines: list[str]) -> list[str]:
+        return [re.sub(r"\x1b\[[0-9;]*m|\x1b\]8;;\x07", "", line).rstrip() for line in lines]
+
+    lines = tui.get_screen_lines()
+    assert plain(lines) == ["line 7", "line 8", "line 9", "line 10"]
+    lines.clear()
+    assert len(tui.get_screen_lines()) == 4
+
+    text.set_text(_lines(11))
+    since = terminal.frames
+    tui.request_render()
+    await terminal.wait_for_render(since)
+    assert plain(tui.get_screen_lines()) == ["line 8", "line 9", "line 10", "line 11"]
+
+    await tui.stop()
+
+
 @pytest.mark.tonio
 async def test_shows_a_clickable_jump_to_end_indicator_on_the_transcripts_last_row_while_scrolled_up():
     terminal = VirtualTerminal(30, 6)

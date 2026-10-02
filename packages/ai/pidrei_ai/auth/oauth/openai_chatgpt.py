@@ -9,7 +9,7 @@ pi keeps its own `createServer` here rather than the shared callback server
 (fixed port 1455, a callback that carries `client_id`); this module keeps its
 own handler on `callback_server`'s lower layer for the same reason.
 
-The agent name hint is pidrei's, not pi's "Pi": OpenAI shows it to the user as
+The agent name hint is PiDrei's, not pi's "Pi": OpenAI shows it to the user as
 the connected app (see `utils/user_agent.py`).
 """
 
@@ -45,12 +45,11 @@ from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.utils.provider_env import get_provider_env_value
-from pidrei_ai.utils.user_agent import CLIENT_NAME
 
 
 # every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
 DYNAMIC_CLIENT_ID = "dynamic_agent_client"
-AGENT_NAME_HINT = CLIENT_NAME
+AGENT_NAME_HINT = "PiDrei"
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize"
 TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token"  # noqa: S105 - an endpoint, not a secret

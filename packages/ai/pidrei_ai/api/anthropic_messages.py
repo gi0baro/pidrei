@@ -19,12 +19,24 @@ from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, 
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.auth.anthropic_federation import (
+    OAUTH_API_BETA_HEADER,
+    AnthropicFederationConfig,
+    federation_token_cache,
+)
 from pidrei_ai.builders import (
     AssistantMessageBuilder,
     TextContentBuilder,
     ThinkingContentBuilder,
     ToolCallBuilder,
     UsageBuilder,
+)
+from pidrei_ai.env_api_keys import (
+    ANTHROPIC_FEDERATION_RULE_ID_ENV,
+    ANTHROPIC_IDENTITY_TOKEN_FILE_ENV,
+    ANTHROPIC_ORGANIZATION_ID_ENV,
+    ANTHROPIC_SERVICE_ACCOUNT_ID_ENV,
+    ANTHROPIC_WORKSPACE_ID_ENV,
 )
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
@@ -328,12 +340,24 @@ class _PunkreqResponse:
 
 
 class _PunkreqAnthropicClient:
-    """Default transport: POST {base_url}/v1/messages through the punkreq seam."""
+    """Default transport: POST {base_url}/v1/messages through the punkreq seam.
 
-    def __init__(self, base_url: str, headers: dict[str, str], env: ProviderEnv | None = None):
+    With `federation`, each request carries the federated access token, as the
+    SDK's token-cache auth does: a bearer `authorization` header plus the
+    `oauth-2025-04-20` beta, and a 401 invalidates the cached token.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        headers: dict[str, str],
+        env: ProviderEnv | None = None,
+        federation: AnthropicFederationConfig | None = None,
+    ):
         self._url = f"{base_url.rstrip('/')}/v1/messages"
         self._headers = headers
         self._env = env
+        self._federation = federation_token_cache(base_url, federation) if federation is not None else None
 
     async def create(
         self,
@@ -349,8 +373,15 @@ class _PunkreqAnthropicClient:
         body = dict(params)
         betas = body.pop("betas", None)
         headers = {**self._headers, "anthropic-beta": ",".join(betas)} if betas else self._headers
+        if self._federation is not None:
+            headers = _with_federated_auth(headers, await self._federation.get_token(self._env))
         response = await client.post(self._url, json=body, headers=headers, timeout=timeout)
         if not 200 <= response.status_code < 300:
+            if response.status_code == 401 and self._federation is not None:
+                # The server rejected the token even if its expiry looks fresh. pi's
+                # requests run with SDK retries off, so this request still fails and
+                # the next one exchanges again.
+                self._federation.invalidate()
             body = (await response.read()).decode("utf-8", "replace")
             raise AnthropicApiError(
                 status=response.status_code,
@@ -359,6 +390,20 @@ class _PunkreqAnthropicClient:
                 error=_parse_error_body(body),
             )
         return _PunkreqResponse(status=response.status_code, headers=dict(response.headers), _response=response)
+
+
+def _with_federated_auth(headers: dict[str, str], token: str) -> dict[str, str]:
+    """The SDK's token-cache auth: bearer authorization, and the OAuth beta appended
+    to whatever `anthropic-beta` the request already carries."""
+    merged = {key: value for key, value in headers.items() if key.lower() != "authorization"}
+    merged["authorization"] = f"Bearer {token}"
+    beta_key = next((key for key in merged if key.lower() == "anthropic-beta"), "anthropic-beta")
+    existing = merged.get(beta_key)
+    if not existing:
+        merged[beta_key] = OAUTH_API_BETA_HEADER
+    elif OAUTH_API_BETA_HEADER not in (value.strip() for value in existing.split(",")):
+        merged[beta_key] = f"{existing},{OAUTH_API_BETA_HEADER}"
+    return merged
 
 
 def _parse_error_body(body: str) -> dict | None:
@@ -400,16 +445,45 @@ def _has_header(headers: ProviderHeaders | None, name: str) -> bool:
     return any(key.lower() == expected and value is not None and value.strip() for key, value in headers.items())
 
 
-def _assert_request_auth(provider: str, api_key: str | None, headers: ProviderHeaders | None) -> None:
-    if api_key:
-        return
-    if (
-        _has_header(headers, "authorization")
+def _has_request_auth(api_key: str | None, headers: ProviderHeaders | None) -> bool:
+    return (
+        bool(api_key)
+        or _has_header(headers, "authorization")
         or _has_header(headers, "x-api-key")
         or _has_header(headers, "cf-aig-authorization")
-    ):
-        return
-    raise RuntimeError(f"No API key for provider: {provider}")
+    )
+
+
+def _assert_request_auth(provider: str, api_key: str | None, headers: ProviderHeaders | None) -> None:
+    if not _has_request_auth(api_key, headers):
+        raise RuntimeError(f"No API key for provider: {provider}")
+
+
+def get_anthropic_federation(
+    model: Model,
+    api_key: str | None,
+    headers: ProviderHeaders | None,
+    env: ProviderEnv | None,
+) -> AnthropicFederationConfig | None:
+    """Workload identity federation config from the ANTHROPIC_* variables the
+    Anthropic SDK documents; `auth/anthropic_federation.py` performs the token
+    exchange and refresh. Only for the anthropic provider, since the exchange is
+    an Anthropic API endpoint, and only when no key or auth header was resolved.
+    """
+    if model.provider != "anthropic" or _has_request_auth(api_key, headers):
+        return None
+    federation_rule_id = get_provider_env_value(ANTHROPIC_FEDERATION_RULE_ID_ENV, env)
+    organization_id = get_provider_env_value(ANTHROPIC_ORGANIZATION_ID_ENV, env)
+    identity_token_file = get_provider_env_value(ANTHROPIC_IDENTITY_TOKEN_FILE_ENV, env)
+    if not federation_rule_id or not organization_id or not identity_token_file:
+        return None
+    return AnthropicFederationConfig(
+        federation_rule_id=federation_rule_id,
+        organization_id=organization_id,
+        identity_token_file=identity_token_file,
+        service_account_id=get_provider_env_value(ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, env),
+        workspace_id=get_provider_env_value(ANTHROPIC_WORKSPACE_ID_ENV, env),
+    )
 
 
 def _is_oauth_token(api_key: str) -> bool:
@@ -427,6 +501,7 @@ def _create_client(
     dynamic_headers: dict[str, str] | None,
     session_id: str | None,
     env: ProviderEnv | None = None,
+    federation: AnthropicFederationConfig | None = None,
 ) -> tuple[AnthropicClient, bool]:
     """Build the default transport with pi's exact header assembly.
 
@@ -465,7 +540,7 @@ def _create_client(
         headers = {key: value for key, value in merged.items() if value is not None}
         return _PunkreqAnthropicClient(model.base_url, headers, env), True
 
-    # API key or header-owned auth.
+    # API key, header-owned auth, or workload identity federation.
     compat = _get_compat(model)
     session_affinity: dict[str, str] = {}
     if session_id and compat.send_session_affinity_headers:
@@ -479,7 +554,7 @@ def _create_client(
         options_headers,
     )
     headers = {key: value for key, value in merged.items() if value is not None}
-    return _PunkreqAnthropicClient(model.base_url, headers, env), False
+    return _PunkreqAnthropicClient(model.base_url, headers, env, federation=federation), False
 
 
 async def _iterate_anthropic_events(
@@ -574,7 +649,7 @@ def _anthropic_options(options: StreamOptions | None) -> AnthropicOptions:
     return AnthropicOptions(**values)
 
 
-def stream(
+def stream(  # noqa: C901 (mirrors pi's stream event ladder)
     model: Model,
     context: TranscriptContext,
     options: StreamOptions | None = None,
@@ -614,7 +689,9 @@ def stream(
                 is_oauth = False
             else:
                 api_key = opts.api_key
-                _assert_request_auth(model.provider, api_key, opts.headers)
+                federation = get_anthropic_federation(model, api_key, opts.headers, opts.env)
+                if federation is None:
+                    _assert_request_auth(model.provider, api_key, opts.headers)
                 copilot_dynamic_headers: dict[str, str] | None = None
                 if model.provider == "github-copilot":
                     copilot_dynamic_headers = build_copilot_dynamic_headers(
@@ -629,6 +706,7 @@ def stream(
                     copilot_dynamic_headers,
                     cache_session_id,
                     opts.env,
+                    federation,
                 )
 
             params = _build_params(model, normalized_context, is_oauth, opts)
@@ -854,7 +932,10 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
-    _assert_request_auth(model.provider, options.api_key if options else None, options.headers if options else None)
+    api_key = options.api_key if options else None
+    headers = options.headers if options else None
+    if get_anthropic_federation(model, api_key, headers, options.env if options else None) is None:
+        _assert_request_auth(model.provider, api_key, headers)
 
     base = build_base_options(model, context, options, options.api_key if options else None)
 
@@ -1121,6 +1202,50 @@ def _get_beta_features(
     return list(dict.fromkeys(features))
 
 
+# Keywords Anthropic strict tool use rejects with a 400 for the whole request.
+# https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+_ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS = frozenset(
+    {
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "maxItems",
+        "uniqueItems",
+        "minContains",
+        "maxContains",
+        "minProperties",
+        "maxProperties",
+    }
+)
+_ANTHROPIC_STRICT_STRING_FORMATS = frozenset(
+    {
+        "date-time",
+        "time",
+        "date",
+        "duration",
+        "email",
+        "hostname",
+        "uri",
+        "ipv4",
+        "ipv6",
+        "uuid",
+    }
+)
+
+
+def _is_anthropic_strict_unsupported_keyword(key: str, value: Any) -> bool:
+    if key in _ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS:
+        return True
+    if key == "minItems":
+        # pi's `value !== 0 && value !== 1`: a boolean is never strictly equal to a number.
+        return isinstance(value, bool) or value not in (0, 1)
+    if key == "format":
+        return not isinstance(value, str) or value not in _ANTHROPIC_STRICT_STRING_FORMATS
+    return False
+
+
 def _convert_tools(
     tools: list[Tool],
     is_oauth_token: bool,
@@ -1130,7 +1255,9 @@ def _convert_tools(
 ) -> list[dict[str, Any]]:
     converted: list[dict[str, Any]] = []
     for index, tool in enumerate(tools):
-        strict = resolve_json_schema_strict_sampling(tool, supports_strict_tools)
+        strict = resolve_json_schema_strict_sampling(
+            tool, supports_strict_tools, _is_anthropic_strict_unsupported_keyword
+        )
         schema = get_json_schema_tool_parameters(tool, strict) or {}
         legacy_input_schema = {
             "type": "object",

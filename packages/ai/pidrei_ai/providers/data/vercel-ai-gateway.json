@@ -7329,9 +7329,9 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.14,
-        "output": 0.28,
-        "cacheRead": 0.0028,
+        "input": 0.04,
+        "output": 1.28,
+        "cacheRead": 0.04,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -7853,10 +7853,10 @@
     }
   },
   "typesafe-system-one": {
-    "classifier:liquid/d1": {
+    "classifier:convaiinnovations/laya": {
       "type": "classifier",
-      "id": "liquid/d1",
-      "name": "Liquid d1",
+      "id": "convaiinnovations/laya",
+      "name": "Laya",
       "api": "typesafe-system-one",
       "provider": "vercel-ai-gateway",
       "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
@@ -7869,7 +7869,43 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 32000
+      "contextWindow": 8192
+    },
+    "classifier:convaiinnovations/laya-free": {
+      "type": "classifier",
+      "id": "convaiinnovations/laya-free",
+      "name": "Laya (Free)",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 8192
+    },
+    "classifier:liquid/d1": {
+      "type": "classifier",
+      "id": "liquid/d1",
+      "name": "Liquid d1",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.04,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 65536
     },
     "classifier:typesafe-ai/jev": {
       "type": "classifier",

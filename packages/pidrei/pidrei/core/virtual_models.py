@@ -146,25 +146,30 @@ def get_branch_selection(
     physical response wins, as in sessions without virtual models. A virtual
     model that is no longer registered does not hold, so the selection falls
     back to the physical model that answered last.
+
+    Only the last `model_change` can hold, so this looks up at most one model
+    in the catalog.
     """
-
-    def is_virtual(provider: str, model_id: str) -> bool:
-        model = get_model(provider, model_id)
-        return model is not None and is_virtual_model(model)
-
-    selection: tuple[str, str] | None = None
-    for entry in branch:
+    for i in range(len(branch) - 1, -1, -1):
+        entry = branch[i]
         if entry["type"] == "model_change":
-            selection = (entry["provider"], entry["modelId"])
-        elif entry["type"] == "message":
+            return (entry["provider"], entry["modelId"])
+        if entry["type"] == "message":
             message = entry["message"]
-            if (
-                getattr(message, "role", None) == "assistant"
-                and not is_virtual_model(message)
-                and (selection is None or not is_virtual(*selection))
-            ):
-                selection = (message.provider, message.model)
-    return selection
+            if getattr(message, "role", None) == "assistant" and not is_virtual_model(message):
+                response = (message.provider, message.model)
+                change = _find_last_model_change(branch, i)
+                model = get_model(*change) if change is not None else None
+                return change if change is not None and model is not None and is_virtual_model(model) else response
+    return None
+
+
+def _find_last_model_change(branch: Sequence[dict[str, Any]], before: int) -> tuple[str, str] | None:
+    for i in range(before - 1, -1, -1):
+        entry = branch[i]
+        if entry["type"] == "model_change":
+            return (entry["provider"], entry["modelId"])
+    return None
 
 
 def is_same_state(a: Any, b: Any) -> bool:

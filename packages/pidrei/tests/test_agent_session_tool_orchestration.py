@@ -18,7 +18,7 @@ from pidrei.core.extensions.types import ToolLoadoutChanges
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
 from pidrei_ai.types import TextContent, Usage, UsageCost
-from pidrei_ai.utils.transcript import get_current_tools
+from pidrei_ai.utils.transcript import get_current_system_prompt, get_current_tools
 
 from .harness import create_harness
 
@@ -167,6 +167,59 @@ async def test_leaves_results_without_nested_calls_unchanged(harnesses):
 
 
 # --- core cases of suite/agent-session-codemode.test.ts -----------------------
+
+
+@pytest.mark.tonio
+async def test_does_not_list_tools_whose_declarations_are_hidden_in_the_system_prompt(harnesses):
+    """pi's "presents tools per codemode.mode" checks this with `codemode.mode`
+    "only" (#10192); here a loadout hook hides `read`."""
+    hidden: list[str] = []
+
+    async def run_tools(*_rest):
+        return AgentToolResult(content=[TextContent(text="ran")], details={})
+
+    async def hiding_extension(pi) -> None:
+        pi.register_tool(
+            ToolDefinition(
+                name="run_tools",
+                label="run_tools",
+                description="Runs tools.",
+                prompt_snippet="Run tools",
+                parameters=EMPTY_SCHEMA,
+                exposure="model-only",
+                prepare_loadout=lambda _loadout: ToolLoadoutChanges(hidden_declarations=tuple(hidden)),
+                execute=run_tools,
+            )
+        )
+
+    harness = await create_harness(initial_active_tool_names=["read"], extension_factories=[hiding_extension])
+    harnesses.append(harness)
+    request_tools: list[list[str]] = []
+    request_prompts: list[str] = []
+
+    async def record(context, *_rest):
+        request_tools.append([tool.name for tool in get_current_tools(context.messages)])
+        request_prompts.append(get_current_system_prompt(context.messages))
+        return faux_assistant_message("ok")
+
+    harness.session.set_active_tools_by_name(["read", "run_tools"])
+    harness.set_responses([record])
+    await harness.session.prompt("shown")
+    assert "\n- read: " in request_prompts[0]
+
+    # The request applies the loadout again, so the hook hides `read` from it
+    # although the session's prompt was built while `read` was declared.
+    hidden.append("read")
+    harness.set_responses([record])
+    await harness.session.prompt("hidden")
+    assert request_tools[1] == ["run_tools"]
+    # The prompt's tool list matches the declarations: hidden tools are not listed.
+    assert "\n- read: " not in request_prompts[1]
+    assert "\n- run_tools: " in request_prompts[1]
+
+    harness.session.set_active_tools_by_name(["read", "run_tools"])
+    assert "\n- read: " not in harness.session.system_prompt
+    assert "\n- run_tools: " in harness.session.system_prompt
 
 
 def usage(input_tokens: int, cost: float) -> Usage:

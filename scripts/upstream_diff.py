@@ -295,11 +295,11 @@ DROPPED_PREFIXES += (
 
 #: pi's experimental stack — the durable harness runtime, Chord, the
 #: server/worker/client split and the Chord-era protocol/server/client — is
-#: not ported (2026-09-04 ruling; DROPPED prefixes per its §9). The stable
-#: harness helper layer (env/, tools/, utils/, messages, prompt-templates,
-#: skills, system-prompt, types) and the transport survivors (protocol cbor +
-#: framing, server unix listener + byte contracts, client unix transport)
-#: keep their mechanical mapping.
+#: not ported (2026-09-04 ruling; DROPPED prefixes per its §9). The transport
+#: survivors (protocol cbor + framing, server unix listener + byte contracts,
+#: client unix transport) keep their mechanical mapping. The stable harness
+#: helper layer went with pi 1.0.0 (`7fd478a2`); the modules the product used
+#: now live in pidrei (spec/upstream-sync.md).
 _EXPERIMENTAL_REASON = "experimental stack not ported (spec/upstream-sync.md, what is not ported)"
 DROPPED_PREFIXES += tuple(
     (path, _EXPERIMENTAL_REASON)
@@ -526,6 +526,7 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/jev-router-example.test.ts",
         "packages/coding-agent/test/plan-mode-extension.test.ts",
         "packages/coding-agent/test/plan-mode-utils.test.ts",
+        "packages/coding-agent/test/tool-renderer-examples.test.ts",
         "packages/coding-agent/test/trigger-compact-extension.test.ts",
     )
 )
@@ -561,10 +562,15 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/src/extensions/mcp/",
         "packages/coding-agent/src/extensions/tool-search/",
         "packages/coding-agent/docs/mcp.md",
+        "packages/coding-agent/docs/codemode.md",
         "packages/coding-agent/test/codemode-renderer.test.ts",
+        # the worker entry of pi's Bun/Node release builds (config.ts hunks are per-hunk skips)
+        "packages/coding-agent/test/codemode-worker-config.test.ts",
         "packages/coding-agent/test/mcp-command.test.ts",
+        "packages/coding-agent/test/mcp-conformance/",
         "packages/coding-agent/test/mcp-extension.test.ts",
         "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
+        "packages/coding-agent/test/mcp-oauth-store.test.ts",
         "packages/coding-agent/test/tool-search.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
@@ -597,6 +603,19 @@ DROPPED_PREFIXES += (
             "deprecated static image-catalog reads, kept upstream for npm consumers: image_models.py deleted "
             "(0.99.1 delta port); get_builtin_image_model(s) in providers/all.py replace them"
         ),
+    ),
+)
+#: 1.0.0 drops and deferrals (1.0.0 delta port).
+DROPPED_PREFIXES += (
+    (
+        "packages/ai/test/models-entry.test.ts",
+        "import footprint of pi's `pi-ai/models` npm entry point; no Python counterpart (1.0.0 delta port)",
+    ),
+    ("packages/coding-agent/test/experimental-durable-support.ts", _EXPERIMENTAL_REASON),
+    # pi-logo-animation.ts and its .lazy.ts shim; TuiAltScreen.getScreenLines() is ported
+    (
+        "packages/coding-agent/src/modes/interactive/components/pi-logo-animation",
+        "header logo easter egg deferred (1.0.0 delta port)",
     ),
 )
 
@@ -633,12 +652,11 @@ RENAMES = {
     "packages/coding-agent/test/package-command-paths.test.ts": "packages/pidrei/tests/test_package_commands.py",
     # 0.84.x additions (0.84.1 delta port).
     "packages/coding-agent/src/package-manager-cli.ts": "packages/pidrei/pidrei/cli/package_commands.py",
-    "packages/agent/src/harness/env/nodejs.ts": "packages/agent/pidrei_agent/harness/env/local.py",
     # 0.85.1 (0.85.1 delta port): pi split its process-title/env/undici prologue into
     # cli/setup.ts; pidrei's equivalent has always been the entry module's run().
     "packages/coding-agent/src/cli/setup.ts": "packages/pidrei/pidrei/__main__.py",
-    "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
-    "packages/agent/test/harness/session-test-utils.ts": "packages/agent/tests/session_helpers.py",
+    # 1.0.0: the calculate tool's only consumer is the e2e suite, which holds it.
+    "packages/agent/test/utils/calculate.ts": "packages/agent/tests/test_e2e.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",
     # pi's name refers to the Node `http` module it configures; nothing in
     # pidrei is Node (docstring of http_proxy.py).
@@ -829,7 +847,17 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
-    "packages/ai/src/api/anthropic-messages.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/anthropic-messages.ts": (
+        ("freeze-at-seam", _FREEZE_ADAPTER_NOTE),
+        (
+            "anthropic-federation",
+            (
+                "the SDK's workload identity federation (token exchange and cache) "
+                "is auth/anthropic_federation.py, applied per request by "
+                "_PunkreqAnthropicClient"
+            ),
+        ),
+    ),
     "packages/ai/src/api/openai-completions.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/openai-responses-shared.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
@@ -1090,7 +1118,8 @@ TEST_HOMES = {
     "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/constrained-sampling.test.ts": (
-        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases; "
+        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases "
+        "and the 1.0.0 foreign-item-id replay case; "
         "the grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
@@ -1105,8 +1134,8 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/agent-session-codemode.test.ts": (
         "partial mirror: test_agent_session_tool_orchestration.py holds the core cases (nested calls in "
         "parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
-        "structured result) driven by a Python tool; the script cases port with codemode (0.99.1 delta "
-        "port)"
+        "structured result, hidden declarations left out of the system prompt) driven by a Python tool; "
+        "the script cases port with codemode (0.99.1 delta port)"
     ),
     "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
     "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
@@ -1123,7 +1152,6 @@ TEST_HOMES = {
     "packages/tui/test/tui-cell-size-input.test.ts": "covered by packages/tui/tests/test_tui_queries.py",
     "packages/tui/test/tui-shrink.test.ts": "covered by packages/tui/tests/test_tui_render.py",
     "packages/tui/test/settings-list.test.ts": "PARITY GAP: components/settings_list.py ported, pre-existing cases unmirrored — new in-range cases port into a new test_settings_list.py",
-    "packages/agent/test/harness/tools.test.ts": "covered by packages/agent/tests/test_tools_bash.py + test_tools_files.py",
     "packages/coding-agent/test/model-runtime-cloudflare-compat.test.ts": "covered by packages/pidrei/tests/test_model_registry.py + test_model_runtime.py",
     "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": "covered by packages/pidrei/tests/test_provider_attribution.py",
     "packages/coding-agent/test/model-runtime-test-utils.ts": "pi test infra; pidrei equivalent is packages/pidrei/tests/model_runtime_helpers.py — absorb deltas where ported tests need them",
@@ -1147,7 +1175,10 @@ TEST_HOMES = {
     ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": "PARITY GAP: model-runtime auth options unmirrored",
-    "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": "PARITY GAP: modifyModels compat unmirrored",
+    "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": (
+        "partial mirror: test_model_runtime_modify_models_compat.py holds the 1.0.0 native-provider "
+        "registration case (#9962); the rest of the modifyModels compat suite is a PARITY GAP"
+    ),
     "packages/coding-agent/test/suite/agent-session-prompt.test.ts": (
         "partial mirror: test_agent_session_prompt.py holds the 0.87.0 image-normalization case; the rest of "
         "the prompt characterization suite is a PARITY GAP"

@@ -11,11 +11,15 @@ from pidrei_ai.auth.types import AuthOperationOptions, AuthResult
 from pidrei_ai.registry import Provider
 from pidrei_ai.types import (
     AnyModel,
+    AssistantImages,
     ClassifierContext,
     ClassifierModel,
     ClassifierOptions,
     ClassifierResult,
     Context,
+    ImageModel,
+    ImagesContext,
+    ImagesOptions,
     Model,
     ModelType,
     SimpleStreamOptions,
@@ -129,6 +133,12 @@ class ModelRegistry:
     ) -> Awaitable[ClassifierResult]:
         """Classify structured state with request-time authentication. Never raises."""
         return self._runtime.classify(model, context, options)
+
+    def generate_images(
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> Awaitable[AssistantImages]:
+        """Generate images with request-time authentication. Never raises."""
+        return self._runtime.generate_images(model, context, options)
 
     def get_provider_display_name(self, provider: str) -> str:
         entry = self._runtime.get_provider(provider)

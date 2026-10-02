@@ -1212,7 +1212,37 @@ class ModelRuntime:
             self._native_extension_providers[provider.id] = provider
             self._recompose_provider(provider.id)
             self._update_model_snapshot()
+            self._mark_provisionally_configured(
+                provider.id,
+                configured_request_auth_status(self._config.get_provider(provider.id), None),
+                "oauth" if provider.auth.oauth and not provider.auth.api_key else "api_key",
+            )
         self._request_refresh()
+
+    def _mark_provisionally_configured(
+        self, provider_id: str, configured_status: AuthStatus | None, auth_type: AuthType
+    ) -> None:
+        """Mark a newly registered provider as configured when it has a stored
+        credential or a configured API key. Availability checks run
+        asynchronously, and callers such as initial model selection read the
+        snapshot before they finish. The next availability pass replaces this
+        entry. Callers hold `_composition_guard`."""
+        with self._availability_guard:
+            if provider_id not in self._snapshot.stored_providers and not (
+                configured_status is not None and configured_status.configured
+            ):
+                return
+            configured_providers = set(self._snapshot.configured_providers) | {provider_id}
+            auth = dict(self._snapshot.auth)
+            # Never clobber a real check result.
+            if not auth.get(provider_id):
+                auth[provider_id] = AuthCheck(type=auth_type, source="configured provider")
+            self._snapshot = replace(
+                self._snapshot,
+                auth=auth,
+                configured_providers=configured_providers,
+                available=[model for model in self._snapshot.all if model.provider in configured_providers],
+            )
 
     def register_provider(self, provider_id: str, config: ProviderConfigInput) -> None:
         with self._composition_guard:
@@ -1229,23 +1259,11 @@ class ModelRuntime:
             self._extension_providers[provider_id] = effective
             self._recompose_provider(provider_id)
             self._update_model_snapshot()
-            configured = configured_request_auth_status(self._config.get_provider(provider_id), effective)
-            with self._availability_guard:
-                if provider_id in self._snapshot.stored_providers or (configured is not None and configured.configured):
-                    configured_providers = set(self._snapshot.configured_providers) | {provider_id}
-                    auth = dict(self._snapshot.auth)
-                    # Provisional entry until the async refresh lands; never clobber a real check result.
-                    if not auth.get(provider_id):
-                        auth[provider_id] = AuthCheck(
-                            type="oauth" if effective.get("oauth") and not effective.get("apiKey") else "api_key",
-                            source="configured provider",
-                        )
-                    self._snapshot = replace(
-                        self._snapshot,
-                        auth=auth,
-                        configured_providers=configured_providers,
-                        available=[model for model in self._snapshot.all if model.provider in configured_providers],
-                    )
+            self._mark_provisionally_configured(
+                provider_id,
+                configured_request_auth_status(self._config.get_provider(provider_id), effective),
+                "oauth" if effective.get("oauth") and not effective.get("apiKey") else "api_key",
+            )
         self._request_refresh()
 
     def unregister_provider(self, provider_id: str) -> None:

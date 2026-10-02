@@ -322,6 +322,8 @@ experiments.
 
 - Model-visible strings are byte-identical to Pi; PiDrei renames (app name,
   config dir, env vars) apply only to user-facing text.
+- The app name keeps Pi's casing in code: `pi` becomes `pidrei`, `Pi`
+  becomes `PiDrei`. Docs, README and CHANGELOG are outside this rule.
 - Session files keep Pi's JSONL format and the Pi identifiers in it; wire
   shapes (sessions, settings, RPC) stay camelCase with explicit field maps.
 - Pi's mirrored tests are the spec: when one fails, check Pi's behaviour

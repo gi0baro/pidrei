@@ -1,8 +1,10 @@
 """Port of pi's Anthropic OAuth flow (packages/ai/src/auth/oauth/anthropic.ts).
 
-Claude Pro/Max login: PKCE against claude.ai, with a loopback callback server on
-a fixed port racing a manual paste prompt, so a browser on another machine still
-works. When the port is taken, only the paste prompt is used.
+Claude Pro/Max login: PKCE against claude.ai, with a choice of two methods.
+Browser login runs a loopback callback server on a fixed port racing a manual
+paste prompt, so a browser on another machine still works; when the port is
+taken, only the paste prompt is used. Copy code login (headless) redirects to
+Anthropic's code page and asks for the code it shows.
 
 pi's Node-only guard (`getNodeApis` refusing to run outside Node/Bun) has no
 counterpart: there is no browser build to protect here.
@@ -25,6 +27,8 @@ from pidrei_ai.auth.oauth.callback_server import (
 from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
+    AuthPrompt,
+    AuthPromptOption,
     LoginOptions,
     ModelAuth,
     OAuthAuth,
@@ -47,6 +51,9 @@ CALLBACK_HOST = get_provider_env_value("PIDREI_OAUTH_CALLBACK_HOST") or "127.0.0
 CALLBACK_PORT = 53692
 CALLBACK_PATH = "/callback"
 REDIRECT_URI = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
+COPY_CODE_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback"
+ANTHROPIC_BROWSER_LOGIN_METHOD = "browser"
+ANTHROPIC_COPY_CODE_LOGIN_METHOD = "copy_code"
 SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 TOKEN_TIMEOUT_MS = 30_000
 
@@ -144,9 +151,7 @@ async def _exchange_authorization_code(
     )
 
 
-async def _login_anthropic(
-    interaction: ProviderAuthInteraction, options: LoginOptions | None = None
-) -> OAuthCredential:
+async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredential:
     pkce = generate_pkce()
     verifier, challenge = pkce.verifier, pkce.challenge
     callback: OAuthCallbackServer[str] | None
@@ -201,7 +206,8 @@ async def _login_anthropic(
             code, parsed_state = _parse_authorization_input(result.input)
             if parsed_state and parsed_state != verifier:
                 raise RuntimeError("OAuth state mismatch")
-            state = parsed_state or verifier
+            # pi's `parsed.state ?? verifier`: an empty state is kept.
+            state = parsed_state if parsed_state is not None else verifier
 
         if not code:
             raise RuntimeError("Missing authorization code")
@@ -210,6 +216,73 @@ async def _login_anthropic(
     finally:
         if callback is not None:
             callback.close()
+
+
+async def _login_anthropic_copy_code(interaction: ProviderAuthInteraction) -> OAuthCredential:
+    pkce = generate_pkce()
+    verifier, challenge = pkce.verifier, pkce.challenge
+    auth_params = urlencode(
+        {
+            "code": "true",
+            "client_id": CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": COPY_CODE_REDIRECT_URI,
+            "scope": SCOPES,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": verifier,
+        }
+    )
+    interaction.notify(
+        AuthEvent(
+            type="auth_url",
+            url=f"{AUTHORIZE_URL}?{auth_params}",
+            instructions="Complete login in your browser, then copy the code Anthropic shows and paste it here.",
+        )
+    )
+
+    value = await interaction.prompt(
+        AuthPrompt(
+            type="manual_code",
+            message="Paste the code Anthropic shows after you sign in:",
+            placeholder="code#state",
+            cancel=interaction.cancel,
+        )
+    )
+    code, parsed_state = _parse_authorization_input(value)
+    if parsed_state and parsed_state != verifier:
+        raise RuntimeError("OAuth state mismatch")
+    if not code:
+        raise RuntimeError("Missing authorization code")
+    interaction.notify(AuthEvent(type="progress", message="Exchanging authorization code for tokens..."))
+    return await _exchange_authorization_code(
+        code,
+        # pi's `parsed.state ?? verifier`: an empty state is kept.
+        parsed_state if parsed_state is not None else verifier,
+        verifier,
+        COPY_CODE_REDIRECT_URI,
+        interaction.cancel,
+    )
+
+
+async def _login(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
+    method = await interaction.prompt(
+        AuthPrompt(
+            type="select",
+            message="Select Anthropic login method:",
+            options=[
+                AuthPromptOption(id=ANTHROPIC_BROWSER_LOGIN_METHOD, label="Browser login (default)"),
+                AuthPromptOption(id=ANTHROPIC_COPY_CODE_LOGIN_METHOD, label="Copy code login (headless)"),
+            ],
+        )
+    )
+
+    if method == ANTHROPIC_COPY_CODE_LOGIN_METHOD:
+        return await _login_anthropic_copy_code(interaction)
+    if method != ANTHROPIC_BROWSER_LOGIN_METHOD:
+        raise RuntimeError(f"Unknown Anthropic login method: {method}")
+
+    return await _login_anthropic(interaction)
 
 
 async def _refresh_anthropic_token(refresh_token: str, cancel: CancelToken) -> OAuthCredential:
@@ -250,7 +323,7 @@ async def _to_auth(credential: OAuthCredential) -> ModelAuth:
 anthropic_oauth = OAuthAuth(
     name="Anthropic (Claude Pro/Max)",
     is_subscription=True,
-    login=_login_anthropic,
+    login=_login,
     refresh=_refresh,
     to_auth=_to_auth,
 )

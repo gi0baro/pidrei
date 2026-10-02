@@ -210,6 +210,12 @@ them with `ctx.model_registry.find_of_type("classifier", provider, id)`.
 [Virtual models](virtual-models.md#route-requests) can use them to route
 requests; see the `jev_router.py` example.
 
+Image models, such as OpenRouter's `google/gemini-2.5-flash-image`, generate
+images from a prompt and optional input images. Extensions generate images
+through `ctx.model_registry.generate_images(model, ImagesContext(input=...))`;
+the result's `output` holds base64 image blocks. Generated images are not
+saved to disk.
+
 ## Validating
 
 A malformed `models.json` does not stop pidrei — it reports the failing path at

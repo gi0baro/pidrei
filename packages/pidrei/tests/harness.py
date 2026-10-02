@@ -74,13 +74,16 @@ async def create_harness(
     extension_factories: list | None = None,
     with_configured_auth: bool = True,
     models: list[dict] | None = None,
+    session_manager: SessionManager | None = None,
 ) -> Harness:
+    """`session_manager` is the session to continue, for example to test a
+    resume. Default: a new in-memory session."""
     temp_dir = tempfile.mkdtemp(prefix="pidrei-suite-")
     faux = faux_provider(models=[FauxModelDefinition(**model) for model in models]) if models else faux_provider()
     faux.set_responses([])
     model = faux.get_model()
 
-    session_manager = SessionManager.in_memory()
+    session_manager = session_manager if session_manager is not None else SessionManager.in_memory()
     settings_manager = SettingsManager.in_memory(settings)
 
     auth_storage = AuthStorage.in_memory()

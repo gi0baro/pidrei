@@ -22,7 +22,7 @@
 | `PIDREI_THREADS` | Runtime worker threads (default: CPU count clamped to 2–8) |
 | `PIDREI_BLOCKING_THREADS` | Blocking thread pool cap (default: 8 per worker) |
 
-Provider credentials and cloud-provider configuration are listed in
+Provider credentials and provider-specific configuration are listed in
 [providers.md](providers.md#api-keys); `pidrei --help` prints them all.
 
 ## Available to bash tools

@@ -1,6 +1,11 @@
-"""Mirror of pi agent/test/harness/truncate.test.ts."""
+"""Mirror of pi agent/test/harness/truncate.test.ts.
 
-from pidrei_agent.harness.utils.truncate import truncate_head, truncate_tail
+pi removed the agent harness and this suite with it in 1.0.0; coding-agent's
+truncate.ts, which behaves the same, has no suite of its own. The suite is
+kept here, against pidrei's one implementation, so truncation stays covered.
+"""
+
+from pidrei.core.tools.truncate import truncate_head, truncate_tail
 
 
 def _is_high_surrogate(code: int) -> bool:

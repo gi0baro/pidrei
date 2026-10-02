@@ -11,8 +11,8 @@ on the way out, or `json.dumps` would refuse them; they parse back as dicts,
 which every consumer already accepts (renderers probe dict-or-attribute).
 
 Unknown message roles round-trip as their raw parsed dicts, exactly like pi's
-blind cast. Both the v4 session codec (`session/jsonl/codec.py`) and the
-coding-agent's own session store build on these converters.
+blind cast. The session store (`session_manager`) and the event/RPC wire
+conversion (`json_wire`) build on these converters.
 """
 
 import dataclasses
@@ -40,7 +40,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 
-from ..messages import BashExecutionMessage, BranchSummaryMessage, CompactionSummaryMessage, CustomMessage
+from .messages import BashExecutionMessage, BranchSummaryMessage, CompactionSummaryMessage, CustomMessage
 
 
 def _put(target: dict[str, Any], key: str, value: Any) -> None:

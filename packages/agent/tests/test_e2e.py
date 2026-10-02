@@ -9,7 +9,7 @@ import time
 import pytest
 
 from pidrei_agent.agent import Agent, AgentInitialState
-from pidrei_agent.types import AgentTool
+from pidrei_agent.types import AgentTool, AgentToolResult
 from pidrei_ai.providers.faux import (
     FauxModelDefinition,
     faux_assistant_message,
@@ -28,7 +28,6 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from tests.harness_tool_fixtures import CALCULATE_SCHEMA, calculate
 
 
 models = create_models()
@@ -43,8 +42,21 @@ def new_faux(**options):
     return faux
 
 
+# Mirror of pi agent/test/utils/calculate.ts (its only consumer is this suite).
+CALCULATE_SCHEMA = {
+    "type": "object",
+    "properties": {"expression": {"type": "string", "description": "The mathematical expression to evaluate"}},
+    "required": ["expression"],
+}
+
+
+def calculate(expression: str) -> AgentToolResult[None]:
+    result = eval(expression)  # noqa: S307 - test fixture mirroring pi's `new Function`
+    return AgentToolResult(content=[TextContent(text=f"{expression} = {result}")], details=None)
+
+
 class CalculateAgentTool(AgentTool):
-    """Agent-level calculate tool (4-arg execute; mirror of test/utils/calculate.ts)."""
+    """Agent-level calculate tool (4-arg execute)."""
 
     name = "calculate"
     label = "Calculator"

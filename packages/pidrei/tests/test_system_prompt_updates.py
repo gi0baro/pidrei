@@ -10,6 +10,7 @@ import os
 import pytest
 
 from pidrei.core.extensions import ToolDefinition
+from pidrei.core.message_wire import parse_message, serialize_message
 from pidrei.core.sdk import CreateAgentSessionOptions, create_agent_session
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
@@ -20,7 +21,6 @@ from pidrei.core.system_prompt import (
     build_system_prompt_state,
     diff_system_prompt_sections,
 )
-from pidrei_agent.harness.session.serde import parse_message, serialize_message
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call

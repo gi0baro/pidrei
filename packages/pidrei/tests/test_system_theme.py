@@ -90,6 +90,31 @@ class TestGenerateSystemThemeColors:
 
         assert abs(hue(resolved(DRACULA, "error")) - hue(DRACULA["palette"][1])) < 8
 
+    # https://github.com/earendil-works/pi/issues/10255
+    def test_keeps_pastel_palette_colors_pastel_at_other_lightnesses(self):
+        frappe = {
+            "background": rgb("#303446"),
+            "foreground": rgb("#c6d0f5"),
+            "palette": [
+                rgb(value)
+                for value in [
+                    *["#51576d", "#e78284", "#a6d189", "#e5c890", "#8caaee", "#f4b8e4", "#81c8be", "#b5bfe2"],
+                    *["#626880", "#e67172", "#8ec772", "#d9ba73", "#7b9ef0", "#f2a4db", "#5abfb5", "#a5adce"],
+                ]
+            ],
+        }
+
+        def chroma(color: dict) -> float:
+            return color_to_oklch(rgb_color(color["r"], color["g"], color["b"]))["c"]
+
+        pink = frappe["palette"][5]
+        accent = resolved(frappe, "accent")
+        # The accent is darker than the pink, but must not gain chroma (it was 2x before the cap).
+        assert lightness(accent) < lightness(pink) - 0.05
+        assert chroma(accent) <= chroma(pink) * 1.03
+        for panel in ["userMessageBg", "customMessageBg"]:
+            assert chroma(resolved(frappe, panel)) <= 0.1, panel
+
     def test_renders_grayscale_at_zero_saturation(self):
         colors = generate_system_theme_colors({**DRACULA, "saturation": 0})["colors"]
         assert color_to_oklch(parse_color(colors["error"]))["c"] < 0.005

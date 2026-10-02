@@ -47,15 +47,6 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
 
-from pidrei_agent.harness.session.serde import (
-    parse_content_block,
-    parse_message,
-    parse_usage,
-    serialize_content,
-    serialize_message,
-    serialize_usage,
-    to_wire_value,
-)
 from pidrei_ai.types import TextContent
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
@@ -64,6 +55,15 @@ from pidrei_ai.utils.uuid import uuidv7
 
 from ..config import APP_NAME, get_agent_dir as get_default_agent_dir, get_sessions_dir
 from ..utils.paths import normalize_path, resolve_path
+from .message_wire import (
+    parse_content_block,
+    parse_message,
+    parse_usage,
+    serialize_content,
+    serialize_message,
+    serialize_usage,
+    to_wire_value,
+)
 from .messages import (
     create_branch_summary_message,
     create_compaction_summary_message,

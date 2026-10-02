@@ -2,6 +2,8 @@
 
 from collections.abc import Awaitable, Callable
 
+from tonio.colored import sync
+
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
@@ -53,13 +55,25 @@ def lazy_oauth(
     """Wraps a lazily imported `OAuthAuth` so provider definitions can advertise
     OAuth without importing the flow implementation; it loads on first
     `login`/`refresh`/`to_auth` call.
+
+    pi memoizes the load's promise, so concurrent first calls share one load.
+    Here the load runs under a lock: callers that arrive meanwhile wait for it
+    and use the flow it published. A load that fails publishes nothing, and
+    the next call loads again.
     """
-    loaded: list[OAuthAuth | None] = [None]
+    loaded: OAuthAuth | None = None
+    load_lock = sync.Lock()
 
     async def _loaded() -> OAuthAuth:
-        if loaded[0] is None:
-            loaded[0] = await load()
-        return loaded[0]
+        nonlocal loaded
+        flow = loaded
+        if flow is not None:
+            return flow
+        async with load_lock:
+            # The caller that held the lock may have loaded it.
+            if loaded is None:
+                loaded = await load()
+            return loaded
 
     async def login(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
         return await (await _loaded()).login(interaction, options)

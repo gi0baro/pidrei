@@ -60,15 +60,9 @@ BASH_SCHEMA = {
 BASH_OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "output": {
-            "type": "string",
-            "description": (
-                "Combined stdout and stderr, up to 1 MiB. Longer output keeps its first and last 512 KiB "
-                "around an omission marker."
-            ),
-        },
-        "truncated": {"type": "boolean", "description": "Whether `output` omits part of the command output"},
-        "full_output_path": {"type": "string", "description": "Temp file with the full output, when truncated"},
+        "output": {"type": "string", "description": "Combined stdout and stderr, possibly truncated"},
+        "truncated": {"type": "boolean"},
+        "full_output_path": {"type": "string", "description": "Full output, when truncated"},
         "exit_code": {"type": "number"},
         "wall_time_seconds": {"type": "number"},
     },

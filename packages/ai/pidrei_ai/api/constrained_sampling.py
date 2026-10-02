@@ -2,6 +2,7 @@
 
 import copy
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,10 @@ from pidrei_ai.types import Tool
 
 class UnsupportedStrictJsonSchemaError(Exception):
     pass
+
+
+# Returns True when a provider's strict mode rejects this schema keyword with this value.
+type UnsupportedStrictSchemaKeywordCheck = Callable[[str, Any], bool]
 
 
 _UNSUPPORTED_STRICT_SCHEMA_KEYS = (
@@ -60,12 +65,19 @@ def _schema_allows_null(schema: Any) -> bool:
     return isinstance(any_of, list) and any(_schema_allows_null(variant) for variant in any_of)
 
 
-def _make_json_schema_node_strict(schema: Any) -> None:
+def _make_json_schema_node_strict(
+    schema: Any, is_unsupported_keyword: UnsupportedStrictSchemaKeywordCheck | None = None
+) -> None:
     if not _is_json_schema_object(schema):
         raise UnsupportedStrictJsonSchemaError("boolean schemas are unsupported")
     for key in _UNSUPPORTED_STRICT_SCHEMA_KEYS:
         if key in schema:
             raise UnsupportedStrictJsonSchemaError(f"{key} schemas are unsupported")
+    if is_unsupported_keyword:
+        for key, value in schema.items():
+            if is_unsupported_keyword(key, value):
+                rendered = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+                raise UnsupportedStrictJsonSchemaError(f"{key}: {rendered} is unsupported")
 
     if "anyOf" in schema:
         any_of = schema["anyOf"]
@@ -74,12 +86,12 @@ def _make_json_schema_node_strict(schema: Any) -> None:
         for variant in any_of:
             if _is_structured_schema(variant):
                 raise UnsupportedStrictJsonSchemaError("object and array unions are unsupported")
-            _make_json_schema_node_strict(variant)
+            _make_json_schema_node_strict(variant, is_unsupported_keyword)
 
     if "items" in schema:
         if isinstance(schema["items"], list):
             raise UnsupportedStrictJsonSchemaError("tuple schemas are unsupported")
-        _make_json_schema_node_strict(schema["items"])
+        _make_json_schema_node_strict(schema["items"], is_unsupported_keyword)
 
     is_object_schema = schema.get("type") == "object"
     if "properties" in schema and not is_object_schema:
@@ -101,19 +113,21 @@ def _make_json_schema_node_strict(schema: Any) -> None:
     if any(key not in property_names for key in required):
         raise UnsupportedStrictJsonSchemaError("required contains an unknown property")
     for key, prop in list(properties.items()):
-        _make_json_schema_node_strict(prop)
+        _make_json_schema_node_strict(prop, is_unsupported_keyword)
         if key not in required and not _schema_allows_null(prop):
             properties[key] = {"anyOf": [prop, {"type": "null"}]}
     schema["required"] = property_names
     schema["additionalProperties"] = False
 
 
-def make_strict_json_schema(schema: dict) -> dict:
+def make_strict_json_schema(
+    schema: dict, is_unsupported_keyword: UnsupportedStrictSchemaKeywordCheck | None = None
+) -> dict:
     """Convert a tool schema to the strict subset expected by provider constrained sampling."""
     cloned = copy.deepcopy(schema)
     if not _is_json_schema_object(cloned):
         raise UnsupportedStrictJsonSchemaError("root schema must have type object")
-    _make_json_schema_node_strict(cloned)
+    _make_json_schema_node_strict(cloned, is_unsupported_keyword)
     if cloned.get("type") != "object":
         raise UnsupportedStrictJsonSchemaError("root schema must have type object")
     return cloned
@@ -123,14 +137,21 @@ def get_json_schema_tool_parameters(tool: Tool, strict: bool | None) -> dict:
     return make_strict_json_schema(tool.parameters) if strict is True else tool.parameters
 
 
-def resolve_json_schema_strict_sampling(tool: Tool, supports_strict_mode: bool) -> bool | None:
+def resolve_json_schema_strict_sampling(
+    tool: Tool,
+    supports_strict_mode: bool,
+    is_unsupported_keyword: UnsupportedStrictSchemaKeywordCheck | None = None,
+) -> bool | None:
+    """Decide whether a JSON-schema tool is sent in strict mode. `is_unsupported_keyword` lets a provider
+    reject extra keywords its strict mode does not accept, so "prefer" tools fall back to non-strict.
+    """
     config = tool.constrained_sampling
     if not config or config is True or config.type != "json_schema":
         return None
 
     if supports_strict_mode:
         try:
-            make_strict_json_schema(tool.parameters)
+            make_strict_json_schema(tool.parameters, is_unsupported_keyword)
         except UnsupportedStrictJsonSchemaError as error:
             if config.strict != "require":
                 return None

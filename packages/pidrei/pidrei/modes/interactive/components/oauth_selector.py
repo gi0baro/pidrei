@@ -1,8 +1,11 @@
 """Mirror of pi coding-agent src/modes/interactive/components/oauth-selector.ts.
 
-Provider records are ``{"id", "name", "authType", "method"?, "status"?}``;
-``status`` may be an ``AuthCheck`` dataclass (live code) or a camelCase dict
-(mirrored tests pass plain records, like pi's object literals).
+Provider records are ``{"id", "name", "authType", "method"?, "status"?,
+"subscription"?}``; ``status`` may be an ``AuthCheck`` dataclass (live code) or
+a camelCase dict (mirrored tests pass plain records, like pi's object
+literals). ``subscription`` says whether the provider's OAuth sign-in is backed
+by a subscription: ``False`` labels it as an account, unset keeps the
+"subscription" label.
 """
 
 import re
@@ -16,14 +19,32 @@ from .dynamic_border import DynamicBorder
 _ENV_SOURCE_RE = re.compile(r"^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$")
 
 
-def format_auth_selector_provider_type(auth_type: str) -> str:
-    return "subscription" if auth_type == "oauth" else "API key"
+def format_auth_selector_provider_type(auth_type: str, subscription: bool | None = None) -> str:
+    if auth_type == "api_key":
+        return "API key"
+    return "account" if subscription is False else "subscription"
 
 
 def _status_get(status, key: str):
     if isinstance(status, dict):
         return status.get(key)
     return getattr(status, key, None)
+
+
+def format_auth_selector_provider_status(provider: dict) -> str:
+    """Themed suffix describing whether and how a login option is configured, for example " ✓ configured"."""
+    status = provider.get("status")
+    if not status:
+        return theme.fg("muted", " • not configured")
+    status_type = _status_get(status, "type")
+    source = _status_get(status, "source")
+    if status_type != provider["authType"]:
+        label = f"{format_auth_selector_provider_type(status_type, provider.get('subscription'))} configured"
+        return theme.fg("muted", " • ") + theme.fg("warning", label)
+    if not source or source in ("OAuth", "stored credential"):
+        return theme.fg("success", " ✓ configured")
+    display_source = f"env: {source}" if _ENV_SOURCE_RE.match(source) else source
+    return theme.fg("success", f" ✓ {display_source}")
 
 
 class OAuthSelectorComponent(Container):
@@ -115,9 +136,12 @@ class OAuthSelectorComponent(Container):
             provider = self._filtered_providers[i]
             is_selected = i == self._selected_index
 
-            status_indicator = self._format_status_indicator(provider)
+            status_indicator = format_auth_selector_provider_status(provider)
             auth_type_label = (
-                theme.fg("muted", f" [{format_auth_selector_provider_type(provider['authType'])}]")
+                theme.fg(
+                    "muted",
+                    f" [{format_auth_selector_provider_type(provider['authType'], provider.get('subscription'))}]",
+                )
                 if self._show_auth_type_labels
                 else ""
             )
@@ -145,20 +169,6 @@ class OAuthSelectorComponent(Container):
             else:
                 message = "No matching providers"
             self._list_container.add_child(TruncatedText(theme.fg("muted", f"  {message}"), 1, 0))
-
-    def _format_status_indicator(self, provider: dict) -> str:
-        status = provider.get("status")
-        if not status:
-            return theme.fg("muted", " • unconfigured")
-        status_type = _status_get(status, "type")
-        source = _status_get(status, "source")
-        if status_type != provider["authType"]:
-            label = "subscription configured" if status_type == "oauth" else "API key configured"
-            return theme.fg("muted", " • ") + theme.fg("warning", label)
-        if not source or source in ("OAuth", "stored credential"):
-            return theme.fg("success", " ✓ configured")
-        display_source = f"env: {source}" if _ENV_SOURCE_RE.match(source) else source
-        return theme.fg("success", f" ✓ {display_source}")
 
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()

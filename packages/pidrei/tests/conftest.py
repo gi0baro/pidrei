@@ -5,6 +5,7 @@ import warnings
 import pytest
 
 from pidrei.core import output_guard
+from pidrei_ai.auth import anthropic_federation, google_adc
 from pidrei_ai.utils import clock, timers
 from pidrei_tui import terminal_image, utils as tui_utils
 
@@ -92,6 +93,33 @@ def _capability_overrides_guard():
         warnings.warn(
             "test left pidrei_tui's terminal capability overrides set "
             "(set_capability_overrides was not restored); reset to auto-detection",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _anthropic_federation_cache_guard():
+    """Fail-loud reset of pidrei_ai's process-wide Anthropic federation token
+    cache: a session streaming Anthropic with the federation variables set
+    publishes it, and a leftover cache would serve its token to every later
+    federated request in the shared runtime."""
+    yield
+    if anthropic_federation.reset_federation_token_cache():
+        warnings.warn(
+            "test left the Anthropic federation token cache set (reset_federation_token_cache was not called); reset",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _google_adc_token_cache_guard():
+    """Fail-loud reset of pidrei_ai's process-wide Google ADC token cache: a
+    session streaming Vertex AI on ADC fills it, and a leftover token would be
+    served to every later Vertex request for that credential."""
+    yield
+    if google_adc.reset_google_adc_token_cache():
+        warnings.warn(
+            "test left Google ADC access tokens cached (reset_google_adc_token_cache was not called); reset",
             stacklevel=1,
         )
 

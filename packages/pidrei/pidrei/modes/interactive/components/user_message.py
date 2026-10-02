@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/user-message.ts."""
 
-from pidrei_tui import Box, Container, Markdown
+from pidrei_tui import Container, Markdown
 
 from ..theme import get_markdown_theme, theme
 from .markdown_transform import create_markdown_transform
@@ -34,14 +34,18 @@ class UserMessageComponent(Container):
 
     def _rebuild(self) -> None:
         self.clear()
-        content_box = Box(self._output_pad, 1, lambda content: theme.bg("userMessageBg", content))
-        content_box.add_child(
+        # The Markdown pads and colors its own background: a Box around it would keep a second full-width copy of every
+        # line, with identical output.
+        self.add_child(
             Markdown(
                 self._text,
-                0,
-                0,
+                self._output_pad,
+                1,
                 self._markdown_theme,
-                {"color": lambda content: theme.fg("userMessageText", content)},
+                {
+                    "color": lambda content: theme.fg("userMessageText", content),
+                    "bgColor": lambda content: theme.bg("userMessageBg", content),
+                },
                 {
                     "preserveOrderedListMarkers": True,
                     "preserveBackslashEscapes": True,
@@ -49,7 +53,6 @@ class UserMessageComponent(Container):
                 },
             )
         )
-        self.add_child(content_box)
 
     def render(self, width: int) -> list:
         lines = super().render(width)

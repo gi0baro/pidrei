@@ -24,8 +24,10 @@ from urllib.parse import urlparse
 
 #: Where pidrei points providers that show an app link (OpenRouter's leaderboard).
 ATTRIBUTION_URL = "https://github.com/gi0baro/pidrei"
-#: Short name sent as the app/client/billing-origin identifier.
+#: Short name sent as the app/client identifier.
 ATTRIBUTION_NAME = "pidrei"
+#: NVIDIA's billing-origin tag, title-cased where pi sends "Pi".
+ATTRIBUTION_BILLING_ORIGIN = "PiDrei"
 #: Session-scoped override for the `enableProviderAttribution` setting.
 ATTRIBUTION_ENV = "PIDREI_PROVIDER_ATTRIBUTION"
 
@@ -88,7 +90,7 @@ def _get_default_attribution_headers(model: Any, settings_manager: Any) -> dict[
         }
 
     if _is_nvidia_nim_model(model):
-        return {"X-BILLING-INVOKE-ORIGIN": ATTRIBUTION_NAME}
+        return {"X-BILLING-INVOKE-ORIGIN": ATTRIBUTION_BILLING_ORIGIN}
 
     if _is_cloudflare_model(model):
         return {"User-Agent": "pidrei-coding-agent"}

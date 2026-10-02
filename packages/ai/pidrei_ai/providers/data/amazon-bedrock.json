@@ -2473,6 +2473,44 @@
       },
       "type": "chat"
     },
+    "chat:global.openai.gpt-6.1-sol": {
+      "id": "global.openai.gpt-6.1-sol",
+      "name": "GPT-6.1 Sol (Global)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:global.xai.grok-4.6": {
       "id": "global.xai.grok-4.6",
       "name": "Grok 4.6 (Global)",

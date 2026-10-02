@@ -8,7 +8,8 @@ on. Hue and saturation come from the terminal's palette color for the
 family's ANSI slot, or from the family's own hue when the terminal reports no
 palette. Lightness comes from the rules alone. Colors are built in OKHSL,
 whose saturation is relative to the sRGB gamut, and fade toward gray near
-black and white.
+black and white. A palette color never gains OKLCH chroma when it moves to
+another lightness, so pastel palettes stay pastel.
 
 A contrast level is a target-lightness curve: the OKLab lightness a token
 needs, given the lightness of the surface below it. The curves were fitted to
@@ -32,7 +33,15 @@ its background); SystemThemeColors is ``{"colors", "dim", "appearance"}``.
 
 import math
 
-from pidrei_tui import color_to_okhsl, color_to_oklch, okhsl_color, oklab_to_okhsl_lightness, rgb_color
+from pidrei_tui import (
+    color_to_okhsl,
+    color_to_oklch,
+    color_to_rgb,
+    okhsl_color,
+    oklab_to_okhsl_lightness,
+    oklch_color,
+    rgb_color,
+)
 
 
 SYSTEM_THEME_NAME = "system"
@@ -456,7 +465,7 @@ def generate_system_theme_colors(input_: dict) -> dict:
     if not background:
         return _indexed_colors(saturation, input_.get("appearanceHint"))
     input_palette = input_.get("palette")
-    palette = [_okhsl_of(color) for color in input_palette] if input_palette and len(input_palette) == 16 else None
+    palette = [_source_of(color) for color in input_palette] if input_palette and len(input_palette) == 16 else None
 
     appearance = terminal_appearance(background, foreground)
     lighter = appearance == "dark"
@@ -575,7 +584,7 @@ def generate_system_theme_colors(input_: dict) -> dict:
                     result[token] = ""
                     continue
                 text = _anchored(
-                    _okhsl_of(foreground), _FAMILIES["neutral"], oklab_to_okhsl_lightness(needed), saturation
+                    _source_of(foreground), _FAMILIES["neutral"], oklab_to_okhsl_lightness(needed), saturation
                 )
         # Body text keeps at least 4.5:1 on the surfaces it is drawn on, even
         # on relaxed mid-gray backgrounds.
@@ -592,13 +601,27 @@ def _okhsl_of(color: dict) -> dict:
     return color_to_okhsl(rgb_color(color["r"], color["g"], color["b"]))
 
 
+def _source_of(color: dict) -> dict:
+    """A terminal color's OKHSL channels and its OKLCH chroma (``{"h", "s", "l", "chroma"}``)."""
+    return {**_okhsl_of(color), "chroma": color_to_oklch(rgb_color(color["r"], color["g"], color["b"]))["c"]}
+
+
 def _anchored(source: dict, family: dict, lightness: float, saturation: float) -> dict:
     """A source color's hue at another OKHSL lightness. Its saturation applies
     at its own lightness and falls off toward black and white along the
-    family's saturation curve, never rising above it."""
+    family's saturation curve, never rising above it.
+
+    OKHSL saturation is relative to the most chroma sRGB allows at a
+    lightness, so the same saturation can mean more chroma elsewhere:
+    Catppuccin Frappe's pink #f4b8e4 (chroma 0.089) would become #eb76d1
+    (0.180) at the lightness the accent needs. Chroma is therefore also capped
+    at the source's, with the same falloff."""
     anchor = _saturation_curve(family, source["l"])
     falloff = min(1, _saturation_curve(family, lightness) / anchor) if anchor > 0 else 1
-    return _rgb_of(okhsl_color(source["h"], source["s"] * falloff * saturation, lightness))
+    color = okhsl_color(source["h"], source["s"] * falloff * saturation, lightness)
+    cap = source["chroma"] * falloff * saturation
+    oklch = color_to_oklch(color)
+    return _rgb_of(color) if oklch["c"] <= cap else color_to_rgb(oklch_color(oklch["l"], cap, source["h"]))
 
 
 def _with_text_contrast(color: dict, surfaces: list[dict], lighter: bool) -> dict:

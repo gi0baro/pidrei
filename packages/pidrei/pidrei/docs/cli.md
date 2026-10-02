@@ -57,7 +57,7 @@ pidrei --model sonnet:high
 
 | Option | Behavior |
 |--------|----------|
-| `--provider <name>` | Restrict `--model` lookup to one provider |
+| `--provider <name>` | Restrict `--model` lookup to one provider; requires `--model` |
 | `--model <pattern>` | Exact or fuzzy ID/name match; accepts `provider/id` and a `:<thinking>` suffix |
 | `--api-key <key>` | Non-persistent key for this run; needs a model from `--model` or `--models` |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; overrides a `:<thinking>` suffix and is clamped to the model |
@@ -109,6 +109,10 @@ defaults instead (for example `["-bash", "+grep"]`). A project list with only
 `+name` and `-name` entries changes the user's selection; a list with a plain
 name replaces it.
 
+`/reload` enables tools newly added to `defaultTools`. It does not disable
+tools removed from it or re-enable unchanged tools you turned off. `--tools`,
+`--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
+
 | Built-in | Purpose |
 |----------|---------|
 | `read` | Read text files and supported images |
@@ -148,7 +152,7 @@ directory. See [extensions.md](extensions.md), [skills.md](skills.md),
 |--------|----------|
 | `--system-prompt <text\|path>` | Replace the default system prompt with text or an existing file's contents |
 | `--append-system-prompt <text\|path>` | Append text or a file to the system prompt; repeatable |
-| `--tui-mode <mode>` | `regular` (default) or `fullscreen` |
+| `--tui-mode <mode>` | `fullscreen` (default) or `regular` |
 | `--verbose` | Verbose startup, overriding `quietStartup` |
 | `-a`, `--approve` | Trust project-local configuration and resources for this process |
 | `-na`, `--no-approve` | Ignore trust-gated project-local configuration and resources |

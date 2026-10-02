@@ -6,6 +6,116 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.0.0.0] - 2026-10-02
+
+Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
+
+### Added
+
+- Anthropic workload identity federation from the
+  `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and
+  `ANTHROPIC_IDENTITY_TOKEN_FILE` environment variables (plus the optional
+  `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`). API keys and
+  `ANTHROPIC_AUTH_TOKEN` take precedence. See the providers page.
+- A copy code login method for Anthropic `/login`, for setups where the
+  browser runs on another machine: Anthropic's page shows the authorization
+  code to paste into pidrei.
+- `quietStartup: "header"` keeps the startup header with the version and key
+  hints, and hides the model scope line and the loaded-resource listing.
+- `/reload` enables tools newly added to the `defaultTools` setting. Tools
+  removed from it stay enabled, tools turned off during the session stay off
+  unless newly added, and `--tools`, `--no-tools` and `--no-builtin-tools`
+  still override the setting.
+- Extensions can generate images with `ctx.model_registry.generate_images()`.
+- `ToolNamespace` takes `instructions`, longer usage notes for the tools of a
+  namespace.
+- MCP servers registered with `pi.register_mcp_server()` accept
+  `description`, `oauth.clientName`, `oauth.authServerMetadataUrl`, and
+  `"auth": {"provider": "<provider>"}` for HTTP servers authenticated with a
+  provider's `/login` token.
+
+### Changed
+
+- Fullscreen is the default TUI mode. Set `tuiMode` to `"regular"` or pass
+  `--tui-mode regular` to keep the terminal's normal scrollback.
+- Cancelling a `/login` sign-in returns to the menu it was started from.
+- `/login` and `/logout` label providers without credentials "not
+  configured" instead of "unconfigured".
+- OAuth browser pages show the color Pi logo.
+- MCP server registration: the `codemode-deferred` exposure is an alias for
+  `codemode`, and server names that differ only in `-` and `_` are rejected.
+- Model catalog regenerated from models.dev.
+- Bumped the tonio dependency to 0.10.4.
+
+### Removed
+
+- **Breaking:** `pidrei_agent.harness` is gone; `pidrei-agent` now contains
+  only the agent, the agent loop and their types, and no longer depends on
+  `pyyaml` and `pathspec`. The coding-agent message roles live in
+  `pidrei.core.messages`, as before.
+
+### Fixed
+
+- `--provider` without `--model` fails with an error instead of being
+  ignored in favor of the default model of another provider.
+- New sessions no longer intermittently ignore a saved default model that
+  belongs to an extension-registered native provider with a stored
+  credential.
+- Prompt submission no longer slows down with session length, and model
+  lookups no longer slow down for providers with a refreshed pi.dev catalog.
+- Extension commands registered without a string name or handler make the
+  extension fail to load with an error, instead of crashing pidrei when
+  typing `/`.
+- Hidden tools are no longer listed in the system prompt's tool list.
+- Tools active in a resumed session, or before `/reload`, that an extension
+  registers only afterwards (such as MCP tools whose server reconnects) are
+  declared again once they register before the next prompt, instead of being
+  dropped.
+- Slash command autocompletion triggers when the input starts with
+  whitespace.
+- Colors no longer bleed past mouse selections and search highlights in
+  fullscreen mode when a styled token ends at the highlight boundary.
+- Less memory per rendered message: Markdown no longer keeps its parsed
+  tokens (a long message keeps about a fifth of what it kept before; resizes
+  and theme changes parse again), and user messages keep one copy of their
+  rendered lines instead of two.
+- The system theme no longer makes pastel palettes such as Catppuccin Frappé
+  much more vivid; palette colors keep their chroma.
+- `/login` and `/logout` label only subscription-backed OAuth sign-ins
+  "subscription"; other OAuth sign-ins say "account".
+- In Apple Terminal, the startup header shows a colored "PiDrei" with the
+  version instead of a logo rendered with gaps.
+- Exiting fullscreen mode no longer hangs after leaving the alternate screen
+  when the transcript is printed on exit (the default
+  `fullscreenExitOutput`).
+- The `built_in_tool_renderer.py` and `minimal_mode.py` extension examples no
+  longer remove the built-in tools' summaries and guidelines from the system
+  prompt.
+- Animated PNGs whose animation chunk sits past the first 256 bytes are no
+  longer taken for supported PNG images, like other animated PNGs.
+- Google Vertex with application default credentials: concurrent requests on
+  a cold token cache share one token exchange instead of each running their
+  own.
+- Together DeepSeek V4 Pro keeps its reasoning controls under its new model
+  id, `deepseek-ai/DeepSeek-V4-Pro-0813`.
+- Provider fixes: Z.AI CN `Prompt exceeds max length` errors are detected as
+  context overflow; Anthropic tools whose schema uses keywords Anthropic
+  strict tool use rejects, such as `minimum`/`maximum`, are sent non-strict
+  instead of failing the request; retries use exponential backoff when a
+  `Retry-After` header holds an unparseable date; OpenAI Responses requests
+  no longer fail with `Expected an ID that begins with 'ctc'` when replaying
+  grammar tool calls from another provider or a gateway.
+
+### Not ported
+
+- Codemode, tool search and the MCP client, still: with them the leaner
+  codemode prompts, image generation in codemode scripts, the MCP OAuth
+  hardening (`iss` checks, per-server credentials, step-up sign-in) and the
+  clickable `/mcp` sign-in URL.
+- Sign in with Radius and its MCP server setup in `/login`.
+- The animated logo in the startup header.
+- Upstream's lightweight `pi-ai/models` npm entry point.
+
 ## [0.99.1.1] - 2026-10-02
 
 ### Fixed

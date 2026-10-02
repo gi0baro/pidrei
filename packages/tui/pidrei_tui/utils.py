@@ -1385,7 +1385,9 @@ def slice_with_width(line: str, start_col: int, length: int, strict: bool = Fals
         ansi = extract_ansi_code(line, i)
         if ansi:
             if start_col <= current_col < end_col:
-                result += ansi["code"]
+                # Keep original order: codes from before the range must precede codes at the boundary
+                result += pending_ansi + ansi["code"]
+                pending_ansi = ""
             elif current_col < start_col:
                 pending_ansi += ansi["code"]
             i += ansi["length"]

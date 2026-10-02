@@ -70,6 +70,6 @@ async def extension(pi):
     # compact, or continue with queued follow-ups. Notify only after the full
     # run settles.
     async def on_agent_settled(_event, ctx) -> None:
-        notify(ctx, "Pidrei", "Ready for input")
+        notify(ctx, "PiDrei", "Ready for input")
 
     pi.on("agent_settled", on_agent_settled)

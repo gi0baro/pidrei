@@ -1,4 +1,4 @@
-"""pidrei-only: session serde round-trips.
+"""pidrei-only: session message codec round-trips (core/message_wire.py).
 
 pi persists messages by serializing the whole object, so every field survives
 a reload for free. pidrei's serde names each field, and a field missing there
@@ -7,7 +7,7 @@ is silently dropped from session JSONL and `--mode json` output.
 
 import json
 
-from pidrei_agent.harness.session.serde import parse_message, serialize_message
+from pidrei.core.message_wire import parse_message, serialize_message
 from pidrei_ai.types import AssistantMessage, TextContent, Usage
 
 

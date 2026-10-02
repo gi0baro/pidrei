@@ -154,7 +154,7 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
         )
         prompt_sections[
             "docs"
-        ] = f"""pidrei documentation (read only when the user asks about pidrei itself, its SDK, extensions, themes, skills, or TUI):
+        ] = f"""PiDrei documentation (read only when the user asks about pidrei itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: {get_readme_path()}
 - Additional docs: {get_docs_path()}
 - Examples: {get_examples_path()} (extensions, custom tools, SDK)

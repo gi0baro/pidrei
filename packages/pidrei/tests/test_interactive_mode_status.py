@@ -452,9 +452,10 @@ class TestCreateBaseAutocompleteProvider:
     async def test_matches_login_command_arguments_by_provider_id_and_name(self):
         fake = _create_base_provider_fake(
             login_provider_options=[
-                {"id": "anthropic", "name": "Anthropic", "authType": "oauth"},
-                {"id": "anthropic", "name": "Anthropic", "authType": "api_key"},
+                {"id": "anthropic", "name": "Anthropic", "authType": "oauth", "subscription": True},
+                {"id": "anthropic", "name": "Anthropic", "authType": "api_key", "subscription": True},
                 {"id": "openai", "name": "OpenAI", "authType": "api_key"},
+                {"id": "radius", "name": "Radius", "authType": "oauth", "subscription": False},
             ]
         )
 
@@ -468,6 +469,13 @@ class TestCreateBaseAutocompleteProvider:
                 "label": "anthropic",
                 "description": "Anthropic · subscription/API key",
             }
+        ]
+
+        # OAuth sign-in without a subscription, such as Radius, is an account.
+        radius_line = "/login radius"
+        radius_suggestions = await provider.get_suggestions([radius_line], 0, len(radius_line), {})
+        assert radius_suggestions["items"] == [
+            {"value": "radius", "label": "radius", "description": "Radius · account"}
         ]
 
 
@@ -1004,6 +1012,24 @@ class TestShowLoadedResources:
         )
 
         assert len(fake._loaded_resources_container.children) == 0
+
+    def test_hides_resource_listing_but_keeps_the_startup_header_with_header_only_quiet_startup(self):
+        fake = create_show_loaded_resources_fake(
+            quiet_startup="header",
+            skills=[{"filePath": "/tmp/skill/SKILL.md", "name": "commit"}],
+        )
+
+        InteractiveMode._show_loaded_resources(fake, {"force": False})
+
+        assert len(fake._loaded_resources_container.children) == 0
+        assert InteractiveMode._should_show_startup_header(fake) is True
+        assert InteractiveMode._should_show_startup_details(fake) is False
+
+    def test_hides_the_startup_header_with_full_quiet_startup_unless_verbose(self):
+        quiet = create_show_loaded_resources_fake(quiet_startup=True)
+        assert InteractiveMode._should_show_startup_header(quiet) is False
+        verbose = create_show_loaded_resources_fake(quiet_startup="header", verbose=True)
+        assert InteractiveMode._should_show_startup_details(verbose) is True
 
     def test_still_shows_diagnostics_on_quiet_startup_when_requested(self):
         fake = create_show_loaded_resources_fake(

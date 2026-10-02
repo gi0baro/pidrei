@@ -3,7 +3,7 @@
 The login cases open the real callback server on port 1455 (or fall back to the
 paste prompt when it is taken), as pi's do; the prompt answers with the
 callback URL, so the browser side is never needed. `agent_name_hint` is
-pidrei's name where pi asserts "Pi" (see the flow module).
+"PiDrei" where pi asserts "Pi" (see the flow module).
 """
 
 from typing import Any
@@ -13,7 +13,6 @@ import pytest
 
 from pidrei_ai.auth.oauth.openai_chatgpt import openai_chatgpt_oauth
 from pidrei_ai.auth.types import AuthEvent, AuthPrompt, LoginOptions, OAuthCredential
-from pidrei_ai.utils.user_agent import CLIENT_NAME
 
 from .oauth_helpers import (
     DEFAULT_START_MS,
@@ -102,7 +101,7 @@ async def test_registers_a_user_owned_client_and_stores_its_issued_id_and_grante
 
     params = authorize[0]
     assert params["client_id"] == "dynamic_agent_client"
-    assert params["agent_name_hint"] == CLIENT_NAME
+    assert params["agent_name_hint"] == "PiDrei"
     assert params["ext_agent_host_id"] == f"urn:uuid:{DEVICE_ID}"
     assert params["scope"] == REQUIRED_SCOPE
     assert params["redirect_uri"] == "http://127.0.0.1:1455/auth/callback"

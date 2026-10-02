@@ -4,20 +4,16 @@ import warnings
 
 import pytest
 
-from pidrei_agent.harness.env import local
 from pidrei_ai.utils import clock, timers
 
 
 # Module attributes tests are allowed to swap, captured at collection time
-# before any test can touch them: the clock/timer seams behind `fake_timers()`
-# and the shell-exec knobs the slow-spill regression test narrows.
+# before any test can touch them: the clock/timer seams behind `fake_timers()`.
 _PROCESS_SEAMS = (
     (timers, "set_timeout", timers.set_timeout),
     (clock, "now_ms", clock.now_ms),
     (clock, "monotonic", clock.monotonic),
     (clock, "sleep_ms", clock.sleep_ms),
-    (local, "SPILL_CHANNEL_SIZE", local.SPILL_CHANNEL_SIZE),
-    (local, "EXIT_STDIO_GRACE_SECONDS", local.EXIT_STDIO_GRACE_SECONDS),
 )
 
 
@@ -33,9 +29,9 @@ def _timer_seam_guard():
 
     The whole suite shares one tonio runtime and one copy of these modules, so
     a test that installs `fake_timers()` (or any stub of these) and never
-    restores it would hand every later test a frozen clock, a timer queue
-    nothing advances, or a one-slot spill channel. The warning names the
-    polluting test; the reset keeps the poison from spreading.
+    restores it would hand every later test a frozen clock or a timer queue
+    nothing advances. The warning names the polluting test; the reset keeps
+    the poison from spreading.
     """
     yield
     for module, name, original in _PROCESS_SEAMS:
