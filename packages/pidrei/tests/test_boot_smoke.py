@@ -37,7 +37,7 @@ from pidrei.config import APP_TITLE, ENV_AGENT_DIR
 
 COLS, ROWS = 100, 30
 # The startup header's onboarding line (its first lines are the logo).
-BANNER = "pidrei can explain its own features"
+BANNER = "PiDrei can explain its own features"
 BOOT_TIMEOUT = 40.0
 REPLY_TIMEOUT = 40.0
 EXIT_TIMEOUT = 15.0

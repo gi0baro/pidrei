@@ -1257,8 +1257,7 @@ class InteractiveMode:
             def onboarding() -> str:
                 return theme.fg(
                     "dim",
-                    f"{APP_NAME} can explain its own features and look up its docs. "
-                    f"Ask it how to use or extend {APP_NAME}.",
+                    "PiDrei can explain its own features and look up its docs. Ask it how to use or extend PiDrei.",
                 )
 
             self._built_in_header = ExpandableText(
@@ -1478,7 +1477,7 @@ class InteractiveMode:
 
         if extended_keys_format == "xterm":
             return (
-                f"tmux extended-keys-format is xterm. {APP_NAME} works best with csi-u. "
+                "tmux extended-keys-format is xterm. PiDrei works best with csi-u. "
                 "Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux."
             )
 

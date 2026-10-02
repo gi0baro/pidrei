@@ -104,11 +104,11 @@ class TestNvidiaNim:
         headers = merge_provider_attribution_headers(
             model("custom", "https://integrate.api.nvidia.com/v1"), settings(), None
         )
-        assert headers == {"X-BILLING-INVOKE-ORIGIN": ATTRIBUTION_NAME}
+        assert headers == {"X-BILLING-INVOKE-ORIGIN": "PiDrei"}
 
     def test_adds_headers_for_the_nvidia_provider(self):
         headers = merge_provider_attribution_headers(model("nvidia"), settings(), None)
-        assert headers == {"X-BILLING-INVOKE-ORIGIN": ATTRIBUTION_NAME}
+        assert headers == {"X-BILLING-INVOKE-ORIGIN": "PiDrei"}
 
     def test_does_not_add_headers_when_disabled(self):
         model_ = model("nvidia")
