@@ -60,6 +60,17 @@ CACHE_WARMING_MODES = ("off", "streaming", "idle")
 type CacheWarmingMode = Literal["off", "streaming", "idle"]
 # True hides all startup output, "header" keeps only the startup header.
 type QuietStartup = bool | Literal["header"]
+# How the codemode tool presents tools while it is active (the `codemode`
+# section: `mode`, default "on"; `inlineBudget`, the estimated tokens
+# (characters / 4) the codemode description may spend on tool declarations,
+# default 3000; `typeCheck`, whether scripts are type-checked before they run,
+# default true).
+# - "on": declared tools that scripts can call get a note on calling them from
+#   scripts appended to their description; the codemode description lists only
+#   the tools without "direct" exposure.
+# - "only": the codemode description lists every tool scripts can call, and
+#   active "direct" tools are not declared to the model.
+type CodemodeMode = Literal["on", "only"]
 
 
 def _is_mergeable_object(value: Any) -> bool:

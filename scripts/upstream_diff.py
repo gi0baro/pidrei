@@ -60,6 +60,8 @@ PREFIX_MAP = (
     ("packages/ai/test/", "packages/ai/tests/", "test"),
     ("packages/agent/src/", "packages/agent/pidrei_agent/", "src"),
     ("packages/agent/test/", "packages/agent/tests/", "test"),
+    ("packages/codemode/src/", "packages/codemode/pidrei_codemode/", "src"),
+    ("packages/codemode/test/", "packages/codemode/tests/", "test"),
     ("packages/coding-agent/src/", "packages/pidrei/pidrei/", "src"),
     ("packages/coding-agent/test/", "packages/pidrei/tests/", "test"),
     ("packages/coding-agent/docs/", "packages/pidrei/pidrei/docs/", "doc"),
@@ -548,33 +550,42 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/crash-log.test.ts",
     )
 )
-#: Codemode, MCP and tool-search port later, together, as one unit
-#: (0.99.1 delta port). core/mcp-servers.ts is not listed: its
-#: `McpServerRegistry` ports now with the tool-orchestration core.
-_DEFERRED_CODEMODE_REASON = "deferred, ports with codemode (0.99.1 delta port)"
+#: MCP ports later, as one unit (0.99.1 delta port; codemode and tool search,
+#: deferred with it, landed in 1.0.0.0). core/mcp-servers.ts is not listed:
+#: its `McpServerRegistry` ported with the tool-orchestration core.
+_DEFERRED_MCP_REASON = "deferred, ports with MCP (0.99.1 delta port)"
 DROPPED_PREFIXES += tuple(
-    (path, _DEFERRED_CODEMODE_REASON)
+    (path, _DEFERRED_MCP_REASON)
     for path in (
-        "packages/codemode/",
         "packages/mcp/",
         "packages/agent/examples/mcp-codemode/",
-        "packages/coding-agent/src/extensions/codemode/",
         "packages/coding-agent/src/extensions/mcp/",
-        "packages/coding-agent/src/extensions/tool-search/",
         "packages/coding-agent/docs/mcp.md",
-        "packages/coding-agent/docs/codemode.md",
-        "packages/coding-agent/test/codemode-renderer.test.ts",
-        # the worker entry of pi's Bun/Node release builds (config.ts hunks are per-hunk skips)
-        "packages/coding-agent/test/codemode-worker-config.test.ts",
         "packages/coding-agent/test/mcp-command.test.ts",
         "packages/coding-agent/test/mcp-conformance/",
         "packages/coding-agent/test/mcp-extension.test.ts",
         "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
         "packages/coding-agent/test/mcp-oauth-store.test.ts",
-        "packages/coding-agent/test/tool-search.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
         "packages/coding-agent/test/suite/mcp-oauth-server.ts",
+    )
+)
+#: Codemode's JavaScript sandbox machinery (1.0.0.0, recipe `codemode-python`):
+#: pidrei's scripts run on Monty, driven by pidrei_codemode/runtime/host.py.
+_CODEMODE_JS_REASON = "QuickJS/wasm codemode machinery; pidrei runs scripts on Monty (recipe codemode-python)"
+DROPPED_PREFIXES += tuple(
+    (path, _CODEMODE_JS_REASON)
+    for path in (
+        "packages/codemode/src/wasm.ts",
+        "packages/codemode/src/runtime/worker.ts",
+        "packages/codemode/src/runtime/protocol.ts",
+        # the worker entry of pi's Bun/Node release builds (config.ts hunks are per-hunk skips)
+        "packages/coding-agent/src/extensions/codemode/worker.ts",
+        "packages/coding-agent/test/codemode-worker-config.test.ts",
+        # the executor's lazy import: pidrei imports it with the extension
+        # (extensions/codemode/__init__.py docstring)
+        "packages/coding-agent/src/extensions/codemode/execute.lazy.ts",
     )
 )
 #: 0.99.1 drops (0.99.1 delta port).
@@ -697,6 +708,9 @@ RENAMES = {
     "packages/ai/src/model-catalog.ts": "packages/ai/pidrei_ai/models_generated.py",
     # Consolidated into generate_models.py like openrouter-reasoning-options.ts.
     "packages/ai/scripts/openrouter-catalog.ts": "packages/ai/scripts/generate_models.py",
+    # 1.0.0.0 codemode: pi's prelude is JavaScript source run in the VM;
+    # pidrei's is host-side Python plus a small in-session prelude, one module.
+    "packages/codemode/src/runtime/prelude-source.ts": "packages/codemode/pidrei_codemode/runtime/prelude.py",
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
@@ -1084,6 +1098,76 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/test/first-time-setup.test.ts": (
         ("no-telemetry", "analytics-settings cases are not mirrored"),
     ),
+    # Codemode scripts are Python on Monty (1.0.0.0): behaviour ports, the
+    # JavaScript-shaped text and machinery are translated or dropped.
+    "packages/codemode/src/runtime/prelude-source.ts": (
+        (
+            "codemode-python",
+            (
+                "the JS prelude is host-side Python (text/image/store/load, close-match errors) plus "
+                "all_settled/has_tool fed into the session; error strings keep pi's wording minus JS syntax"
+            ),
+        ),
+    ),
+    "packages/codemode/src/runtime/host.ts": (
+        (
+            "codemode-python",
+            (
+                "the worker host is a Monty driver (feed/resume snapshots on the blocking pool); "
+                "worker/wasm/interrupt changes are dropped, call/output/store/limit behaviour ports"
+            ),
+        ),
+    ),
+    "packages/codemode/src/declarations.ts": (
+        (
+            "codemode-python",
+            "TypeScript declarations are Python stubs (TypedDicts, keyword-only async defs) that Monty must type-check",
+        ),
+    ),
+    "packages/codemode/src/source.ts": (
+        ("codemode-python", "`# @options` instead of `// @options`; messages say Python"),
+    ),
+    "packages/coding-agent/src/extensions/codemode/tool.ts": (
+        (
+            "codemode-python",
+            (
+                "description, snippet, guideline, describeScriptCall/describeOutput and the globals list "
+                "are pidrei's Python text; catalog selection, loadout and modes port 1:1"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/extensions/codemode/execute.ts": (
+        (
+            "codemode-python",
+            (
+                "script API globals are snake_case with keyword options; model-call hints show Python "
+                "dicts; nested rows, limiter, truncation, spill and store entries port 1:1"
+            ),
+        ),
+    ),
+    "packages/coding-agent/docs/codemode.md": (
+        ("codemode-python", "the whole page is rewritten for Python scripts; behaviour text keeps pi's wording"),
+    ),
+    "packages/codemode/test/sandbox.test.ts": (
+        ("codemode-python", "scripts translated to Python; JS-only cases dropped or re-specified (module docstring)"),
+    ),
+    "packages/codemode/test/declarations.test.ts": (
+        ("codemode-python", "same structure, every expected declaration is a Python stub"),
+    ),
+    "packages/codemode/test/source.test.ts": (
+        ("codemode-python", "`#` options line"),
+    ),
+    # Read-then-set of the active tools is one guarded update (1.0.0.0; the
+    # API is pi.update_active_tools, documented in docs/extensions.md).
+    "packages/coding-agent/src/extensions/tool-search/tool.ts": (
+        (
+            "update-active-tools",
+            (
+                "getActiveTools()+setActiveTools() is one update_active_tools(update): candidates, "
+                "ranking and the new list are computed inside the update"
+            ),
+        ),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -1132,10 +1216,11 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": "PARITY GAP: compaction transient-retry regression unmirrored",
     "packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts": "PARITY GAP: session_start transient-UI regression unmirrored",
     "packages/coding-agent/test/suite/agent-session-codemode.test.ts": (
-        "partial mirror: test_agent_session_tool_orchestration.py holds the core cases (nested calls in "
-        "parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
-        "structured result, hidden declarations left out of the system prompt) driven by a Python tool; "
-        "the script cases port with codemode (0.99.1 delta port)"
+        "home: packages/pidrei/tests/test_agent_session_codemode.py (the script cases, translated to Python "
+        "per recipe codemode-python) + test_agent_session_tool_orchestration.py (the core cases: nested calls "
+        "in parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
+        "structured result, hidden declarations left out of the system prompt, codemode and tool_search "
+        "registered inactive)"
     ),
     "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
     "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
@@ -1334,7 +1419,8 @@ NOISE_PREFIXES = (
 #: but a new runtime dependency there needs a human decision, so they get
 #: their own summary section.
 DEPS_REVIEW_PATHS = {
-    f"packages/{name}/package.json" for name in ("ai", "agent", "coding-agent", "tui", "server", "protocol", "client")
+    f"packages/{name}/package.json"
+    for name in ("ai", "agent", "codemode", "coding-agent", "tui", "server", "protocol", "client")
 }
 
 

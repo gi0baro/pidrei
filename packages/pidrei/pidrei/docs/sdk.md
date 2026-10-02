@@ -72,7 +72,30 @@ loads like a configured extension file. It loads by default, is listed in
 `pidrei config`, and is disabled by `-builtin:<name>` in the `extensions`
 setting or by `no_extensions`; `additional_extension_paths=["builtin:<name>"]`
 loads it explicitly. It loads after project trust is resolved, so it cannot
-handle `project_trust`. pidrei itself ships no built-in extensions yet.
+handle `project_trust`. The CLI's built-in extensions, codemode and tool
+search, use it and are replaceable.
+
+<a id="codemode"></a>
+The CLI loads `codemode` and `tool_search` as built-in extensions. SDK
+sessions do not; add `create_codemode_extension()` (from
+`pidrei.extensions.codemode`) and `create_tool_search_extension()` (from
+`pidrei.extensions.tool_search`) to the `extension_factories` of
+`DefaultResourceLoader`. Both tools are registered inactive: enable them
+through the `defaultTools` setting (`["+codemode", "+tool_search"]` keeps the
+other default tools). The codemode extension opens its script sandbox on
+`session_start` and closes it on `session_shutdown`, so call
+`await session.bind_extensions(ExtensionBindings())` (from
+`pidrei.core.agent_session`), which emits `session_start`; without it every
+script fails with a sandbox error. `session.dispose()` does not emit
+`session_shutdown`, the only thing that closes the sandbox: before disposing,
+`await emit_session_shutdown_event(session.extension_runner, {"type":
+"session_shutdown", "reason": "quit"})` (from `pidrei.core.extensions.runner`),
+or use `create_agent_session_runtime`, whose `dispose()` emits it. `create_codemode_extension(mode=..., inline_budget=...,
+models=..., type_check=...)` overrides the `codemode.*` settings and turns the
+`models` global off. To use the tool without an extension,
+`create_codemode_tool(pool, tools)` builds it over a `CodemodePool` (from
+`pidrei_codemode`) that you open with `pool = await CodemodePool()` and close
+with `await pool.close()` once the tool is no longer used.
 
 Objects that load from disk are built by awaiting them:
 `await SettingsManager(cwd)`,

@@ -395,6 +395,17 @@ class ExtensionAPI:
         self._assert_active()
         self._action("set_active_tools")(tool_names)
 
+    def update_active_tools(self, update: Callable[[list[str]], list[str] | None]) -> None:
+        """Set the active tools to what `update` returns for the current active
+        tool names, as one step: no other change to the active tools lands
+        between the read and the write, as it could between
+        `get_active_tools()` and `set_active_tools()`. Returning None sets
+        nothing. `update` runs synchronously while the session's tool loadout
+        is locked: keep it quick and never block in it. Otherwise like
+        `set_active_tools()`."""
+        self._assert_active()
+        self._action("update_active_tools")(update)
+
     def get_commands(self) -> list[Any]:
         self._assert_active()
         return self._action("get_commands")()

@@ -1742,6 +1742,17 @@ class AgentSession:
             if any(name not in active for name in previous):
                 self._pending_tool_names.clear()
 
+    def update_active_tools(self, update: Callable[[list[str]], list[str] | None]) -> None:
+        """Set the active tools to what `update` returns for the current active
+        tool names, as one step: no other change to the active tools lands
+        between the read and the write. None sets nothing. `update` runs
+        synchronously under the loadout guard, so it must be quick and must
+        not block."""
+        with self._tool_loadout_guard:
+            tool_names = update(self.get_active_tool_names())
+            if tool_names is not None:
+                self.set_active_tools_by_name(tool_names)
+
     def _set_active_tools(self, tool_names: list[str]) -> None:
         """Callers hold `_tool_loadout_guard`."""
         tools = self._apply_tool_loadout(tool_names)
@@ -3668,6 +3679,7 @@ class AgentSession:
                 "get_all_tools": lambda: self.get_all_tools(),
                 "get_settings": lambda: self.settings_manager.get_settings(),
                 "set_active_tools": lambda tool_names: self.set_active_tools_by_name(tool_names),
+                "update_active_tools": lambda update: self.update_active_tools(update),
                 "refresh_tools": lambda: self._refresh_tool_registry(),
                 "get_commands": get_commands,
                 "set_model": set_model_action,

@@ -123,6 +123,53 @@ tools removed from it or re-enable unchanged tools you turned off. `--tools`,
 | `find` | Find paths by glob (needs `fd` on `PATH`) |
 | `ls` | List directory contents |
 
+Built-in extensions add two more tools. They are off by default; to enable
+them, name them in `--tools` or `defaultTools`.
+
+| Built-in extension | Purpose |
+|--------------------|---------|
+| `codemode` | Run Python that calls the other tools, for example in parallel with `all_settled`; only the script's output reaches the model |
+| `tool_search` | Search tools that are not declared to the model (`codemode` and `deferred` exposure) and declare the matches for the next call |
+
+### Enable codemode
+
+To turn on `codemode` for every session, add it to the default tools in
+`~/.pidrei/agent/settings.json` or a project's `.pidrei/settings.json`:
+
+```json
+{
+  "defaultTools": ["+codemode"]
+}
+```
+
+This keeps `read`, `bash`, `edit`, and `write` and adds `codemode`. For one
+invocation, list every tool, since `--tools` replaces the selection:
+
+```sh
+pidrei --tools read,bash,edit,write,codemode
+```
+
+Scripts can run several tool calls in parallel, filter large output before it
+reaches the model, call classifier models such as TypeSafe's Jev through
+`models.classify()`, and generate images through `models.generate_images()`
+(see [Classifier models](models.md#classifier-models)).
+
+### How codemode works
+
+Scripts are Python, not JavaScript as in pi. They run in a sandboxed
+interpreter, are type-checked before they run, and reach the other tools
+through `await tools.<name>(arg=value)`. [Codemode](codemode.md) describes the
+script API, how tools are listed and found, the `store()` and `models`
+globals, the settings, and the limits.
+
+### Tool search
+
+`tool_search` is off by default; enable it with
+`"defaultTools": ["+tool_search"]` or `--tools`. It uses the same ranking as
+`search_tools()` over tools that are not declared yet and declares the matches
+for the next model call. Loaded tools are recorded in the session like other
+tool changes, so they stay declared on that branch.
+
 ## Resources
 
 ```sh

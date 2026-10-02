@@ -15,7 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.14t, 3.15t]
+        # No 3.15t until pydantic-monty (codemode) publishes cp315t wheels.
+        python-version: [3.14t]
 
     env:
       UV_PYTHON: ${{ matrix.python-version }}
@@ -41,7 +42,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.14t, 3.15t]
+        # No 3.15t: see the linux job.
+        python-version: [3.14t]
 
     env:
       UV_PYTHON: ${{ matrix.python-version }}

@@ -1,20 +1,22 @@
 """Mirror of pi's suite/agent-session-tool-orchestration.test.ts, plus the core
 cases of suite/agent-session-codemode.test.ts.
 
-pi's "registers codemode and tool_search inactive until they are named" case
-needs the codemode and tool-search extensions, which port later with codemode.
-The codemode suite drives the mechanisms under test (nested calls in parallel,
-hooks on nested calls, nested usage, structured content through the hooks,
-bash's structured result) from codemode scripts; here a Python tool built on
-`ctx.execute_tool()` drives them, and the script-only cases (declarations per
-`codemode.mode`, images, script errors, the store, models) port with codemode.
+The codemode suite drives
+the mechanisms under test (nested calls in parallel, hooks on nested calls,
+nested usage, structured content through the hooks, bash's structured result)
+from codemode scripts; here a Python tool built on `ctx.execute_tool()` drives
+them, so they stay covered without the sandbox. The codemode suite itself is
+test_agent_session_codemode.py.
 """
 
 import pytest
 import tonio.colored as tonio
 
 from pidrei.core.extensions import ToolDefinition
+from pidrei.core.extensions.runner import emit_session_shutdown_event
 from pidrei.core.extensions.types import ToolLoadoutChanges
+from pidrei.extensions.codemode import create_codemode_extension
+from pidrei.extensions.tool_search import create_tool_search_extension
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
 from pidrei_ai.types import TextContent, Usage, UsageCost
@@ -148,6 +150,38 @@ async def test_supports_tools_that_call_other_tools_under_any_name_through_the_e
     ]
     # The record is persisted with the session.
     assert persisted_tool_result(harness).nested_calls == result.nested_calls
+
+
+@pytest.mark.tonio
+async def test_registers_codemode_and_tool_search_inactive_until_they_are_named(harnesses):
+    def extension_factories():
+        return [create_codemode_extension(), create_tool_search_extension()]
+
+    created = []
+    try:
+        plain = await create_harness(extension_factories=extension_factories())
+        created.append(plain)
+        assert {"codemode", "tool_search"} <= {tool.name for tool in plain.session.get_all_tools()}
+        assert plain.session.get_active_tool_names() == ["read", "bash", "edit", "write"]
+
+        # --tools and the defaultTools setting name them explicitly.
+        allowed = await create_harness(
+            allowed_tool_names=["read", "codemode"], extension_factories=extension_factories()
+        )
+        created.append(allowed)
+        assert allowed.session.get_active_tool_names() == ["read", "codemode"]
+        initial = await create_harness(
+            initial_active_tool_names=["tool_search"], extension_factories=extension_factories()
+        )
+        created.append(initial)
+        assert initial.session.get_active_tool_names() == ["tool_search"]
+    finally:
+        # Shutting down closes each session's codemode sandbox pool.
+        for harness in created:
+            harnesses.append(harness)
+            await emit_session_shutdown_event(
+                harness.session.extension_runner, {"type": "session_shutdown", "reason": "quit"}
+            )
 
 
 @pytest.mark.tonio

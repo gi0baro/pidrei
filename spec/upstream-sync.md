@@ -210,7 +210,7 @@ In order:
 1. **Catalog regen**: `make models-data`, then rerun `packages/ai/tests`.
    The regen-dependent failures noted during the port must clear. One run
    covers chat, image and classifier models.
-2. **Versions**: the four published packages (`packages/{ai,agent,tui,pidrei}/pyproject.toml`)
+2. **Versions**: the five published packages (`packages/{ai,agent,tui,codemode,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
    `protocol`/`client`/`server` are not bumped.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
@@ -268,7 +268,7 @@ TonIO, httpunk and punkreq releases are ported as their own small change,
 usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
-   (TonIO: all six packages), then `uv sync --all-packages`.
+   (TonIO: all seven packages), then `uv sync --all-packages`.
 2. For httpunk/punkreq, diff the two tags for the names PiDrei uses. PiDrei
    imports httpunk in exactly one place, `pidrei_ai/utils/http.py`
    (`Backend`, `H1Connection`, `H1Server`), and sees its exceptions only
@@ -321,9 +321,9 @@ Each has entries in the classifier's dropped tables, with the reason.
 - Live-API tests, Pi's eval harness, storage backends, manual probe scripts,
   Pi's TypeScript SDK examples and npm/wasm example extensions.
 
-Deferred (ported later as one unit): codemode, tool search and MCP (client,
-extension, CLI). The core they build on (tool exposure, nested tool calls,
-the MCP server registry) is ported.
+Deferred (ported later as one unit): MCP (client, extension, CLI). The core
+it builds on (tool exposure, nested tool calls, the MCP server registry,
+codemode and tool search) is ported.
 
 ## 7. Diverged regions
 
@@ -768,3 +768,59 @@ client, or a bump of pi's SDK pin that changes `lib/credentials`, land in
 that module and `_PunkreqAnthropicClient`, read against the SDK source at
 the version pi pins. The resolver half (`providers/anthropic.ts`,
 `get_anthropic_federation`, the env constants) ports 1:1.
+
+### `codemode-python` (`codemode/src/runtime/prelude-source.ts`, `runtime/host.ts`, `declarations.ts`, `source.ts`, `coding-agent/src/extensions/codemode/tool.ts`, `execute.ts`, `docs/codemode.md`, the codemode tests)
+
+Pi's codemode scripts are JavaScript, run in QuickJS compiled to wasm, one
+worker per script. PiDrei's are Python, run on Monty from a pool the
+extension owns. The behaviour ports; the script language, the sandbox
+machinery and the text that shows JavaScript do not.
+
+- **Behaviour changes port**, re-expressed in Python: a new global, option,
+  limit, error case or result shape lands in `pidrei_codemode` and the
+  extension. Script API names are snake_case with keyword options
+  (`searchTools(q, { limit })` is `search_tools(q, limit=...)`); keys inside
+  data keep their wire spelling (`stopReason`, `mimeType`,
+  `structuredContent`).
+- **Model-visible text is PiDrei's own** here (the `AGENTS.md` exemption):
+  the description, prompt snippet and guideline, the declarations, the errors
+  scripts see, and `docs/codemode.md`. Keep Pi's new wording wherever it does
+  not name JavaScript, QuickJS or JS syntax; translate what does (`undefined`
+  is `None`, object literals are dicts, `Promise.allSettled` is
+  `all_settled`, `// @options` is `# @options`). Strings outside these
+  regions (the result framing, store hints, image errors, `tool_search`'s
+  text) stay byte-identical.
+- **Declarations**: a change to Pi's TypeScript renderer is re-expressed in
+  the Python stub renderer (`pidrei_codemode/declarations.py`), and the
+  stubs must still pass Monty's type checker: check a script against them.
+- **JS-only machinery is dropped**: the QuickJS worker, wasm loading, the
+  host/worker protocol, the `tools` proxy, promise and microtask handling.
+  The files that hold only that are `DROPPED` in the classifier.
+- **PiDrei-only, kept on every port**: the type check before the script runs
+  (`codemode.typeCheck`, the factory's `type_check`); `all_settled`,
+  `has_tool` and `call_tool`; `store(key, None)` deleting; a final expression
+  line as the script's value (Monty's checker rejects top-level `return`);
+  keyword-only tool calls; the 60 s execution cap; the uncatchable memory
+  limit; the pool opened on `session_start` and closed on `session_shutdown`.
+- **Tests**: Pi's script cases translate to Python scripts and Python error
+  strings. A JS-only case is dropped or re-specified, and the test module's
+  docstring says which.
+
+### `update-active-tools` (`coding-agent/src/extensions/tool-search/tool.ts`)
+
+Pi changes the active tools relative to the current ones in two calls,
+`getActiveTools()` then `setActiveTools()`, which nothing interleaves on its
+single thread. Here a parallel tool, a handler or a late tool registration
+can write in between, and the second write undoes it. PiDrei does it in one
+call, `update_active_tools(update)`, which runs `update(active)` under the
+session's loadout guard and sets what it returns (`None` sets nothing).
+
+- Whatever Pi computes between the read and the write to decide the new list
+  (here: the candidates, the ranking, the new list) goes inside `update`,
+  which must stay synchronous and quick: no I/O, no awaiting.
+- What Pi does after the write (formatting the result) stays outside, fed by
+  what `update` recorded.
+- `ToolSearchToolOptions.tools` takes `get_all_tools` and
+  `update_active_tools`, not Pi's `getAllTools`/`getActiveTools`/
+  `setActiveTools`. A new upstream read-then-set of the active tools, in any
+  extension, gets the same treatment.

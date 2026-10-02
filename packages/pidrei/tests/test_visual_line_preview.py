@@ -1,7 +1,7 @@
 """pidrei-only: VisualLinePreview (pi's visual-truncate.ts).
 
-pi covers it through the codemode and MCP result renderers, which port later
-with codemode; the bash renderer is its only user here.
+pi covers it through the codemode and MCP result renderers; here the bash and
+codemode renderers use it, and the MCP renderer ports later.
 """
 
 import pytest

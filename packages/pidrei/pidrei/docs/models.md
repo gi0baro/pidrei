@@ -197,24 +197,87 @@ probabilities. pidrei includes TypeSafe's Jev model from these providers:
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 
-Classifier and image-generation models do not appear in `/model`. From the
-SDK, list them with `model_runtime.get_available_of_type("classifier")` and
-call `model_runtime.classify(model, ClassifierContext(state=..., questions=...))`.
-When the service reports token counts, as all System One services do,
-`result.usage` carries them with their cost at the model's catalog price;
-models without one, such as TypeSafe's direct `jev-latest`, report tokens at
-no cost.
+Classifier models do not appear in `/model`. The model reaches them through
+the [`codemode`](cli.md#enable-codemode) tool, which is off by default. Enable
+it with `"defaultTools": ["+codemode"]` in
+[settings](configuration.md#agent-directory).
+Scripts then list classifier models with
+`models.get_available_of_type("classifier")` and call
+`models.classify(model, {"state": ..., "questions": ...})`:
 
-Extensions call classifiers through `ctx.model_registry.classify()` and find
-them with `ctx.model_registry.find_of_type("classifier", provider, id)`.
+```python
+jev = await models.get_model_of_type("classifier", "typesafe", "jev-latest")
+assert jev is not None
+result = await models.classify(
+    jev,
+    {
+        "state": {"message": "The change works, thanks."},
+        "questions": {
+            "approved": {
+                "type": "bool",
+                "instructions": "Does the user approve of the result?",
+                "criteria": {"true": "Approval", "false": "No approval"},
+            },
+        },
+    },
+)
+result["answers"]
+```
+
+[Codemode](codemode.md#classify) describes the question and answer types.
+
+When the service reports token counts, as all System One services do,
+`result["usage"]` carries them with their cost. pidrei adds the usage of a
+script's classifier calls to the `codemode` tool result, so it counts toward
+the session cost in the footer and `/session`. The cost uses the model's
+catalog price; models without one, such as TypeSafe's direct `jev-latest`,
+report tokens at no cost.
+
+From the SDK, list classifier models with
+`model_runtime.get_available_of_type("classifier")` and call
+`model_runtime.classify(model, ClassifierContext(state=..., questions=...))`.
+
+Extensions call classifiers through `ctx.model_registry.classify()`, without
+codemode, and find them with
+`ctx.model_registry.find_of_type("classifier", provider, id)`.
 [Virtual models](virtual-models.md#route-requests) can use them to route
 requests; see the `jev_router.py` example.
 
 Image models, such as OpenRouter's `google/gemini-2.5-flash-image`, generate
-images from a prompt and optional input images. Extensions generate images
-through `ctx.model_registry.generate_images(model, ImagesContext(input=...))`;
-the result's `output` holds base64 image blocks. Generated images are not
-saved to disk.
+images from a prompt and optional input images. Like classifier models, they
+do not appear in `/model`; the model reaches them through the
+[`codemode`](cli.md#enable-codemode) tool. Scripts list them with
+`models.get_available_of_type("image")` and call
+`models.generate_images(model, {"input": ...})`. The result's `output` holds
+base64 image blocks, which `image()` attaches to the `codemode` result so the
+model sees them:
+
+```python
+painter = await models.get_model_of_type("image", "openrouter", "google/gemini-2.5-flash-image")
+assert painter is not None
+result = await models.generate_images(
+    painter,
+    {
+        "input": [{"type": "text", "text": "A red fox in the snow, watercolor"}],
+    },
+)
+if result["stopReason"] != "stop":
+    text(result.get("errorMessage"))
+    exit()
+for block in result["output"]:
+    if block["type"] == "image":
+        image(block)
+```
+
+`input` can also contain `{"type": "image", "data": ..., "mimeType": ...}`
+blocks to edit or use as references. pidrei adds the usage of a script's image
+calls to the `codemode` tool result, like classifier calls. Generated images
+are not saved to disk. [Codemode](codemode.md#generate-images) describes the
+full API.
+
+Extensions generate images through
+`ctx.model_registry.generate_images(model, ImagesContext(input=...))`, without
+codemode.
 
 ## Validating
 
