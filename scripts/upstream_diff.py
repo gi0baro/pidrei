@@ -526,6 +526,7 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/jev-router-example.test.ts",
         "packages/coding-agent/test/plan-mode-extension.test.ts",
         "packages/coding-agent/test/plan-mode-utils.test.ts",
+        "packages/coding-agent/test/tool-renderer-examples.test.ts",
         "packages/coding-agent/test/trigger-compact-extension.test.ts",
     )
 )
@@ -561,10 +562,15 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/src/extensions/mcp/",
         "packages/coding-agent/src/extensions/tool-search/",
         "packages/coding-agent/docs/mcp.md",
+        "packages/coding-agent/docs/codemode.md",
         "packages/coding-agent/test/codemode-renderer.test.ts",
+        # the worker entry of pi's Bun/Node release builds (config.ts hunks are per-hunk skips)
+        "packages/coding-agent/test/codemode-worker-config.test.ts",
         "packages/coding-agent/test/mcp-command.test.ts",
+        "packages/coding-agent/test/mcp-conformance/",
         "packages/coding-agent/test/mcp-extension.test.ts",
         "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
+        "packages/coding-agent/test/mcp-oauth-store.test.ts",
         "packages/coding-agent/test/tool-search.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
@@ -597,6 +603,19 @@ DROPPED_PREFIXES += (
             "deprecated static image-catalog reads, kept upstream for npm consumers: image_models.py deleted "
             "(0.99.1 delta port); get_builtin_image_model(s) in providers/all.py replace them"
         ),
+    ),
+)
+#: 1.0.0 drops and deferrals (1.0.0 delta port).
+DROPPED_PREFIXES += (
+    (
+        "packages/ai/test/models-entry.test.ts",
+        "import footprint of pi's `pi-ai/models` npm entry point; no Python counterpart (1.0.0 delta port)",
+    ),
+    ("packages/coding-agent/test/experimental-durable-support.ts", _EXPERIMENTAL_REASON),
+    # pi-logo-animation.ts and its .lazy.ts shim; TuiAltScreen.getScreenLines() is ported
+    (
+        "packages/coding-agent/src/modes/interactive/components/pi-logo-animation",
+        "header logo easter egg deferred (1.0.0 delta port)",
     ),
 )
 
@@ -1090,7 +1109,8 @@ TEST_HOMES = {
     "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/constrained-sampling.test.ts": (
-        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases; "
+        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases "
+        "and the 1.0.0 foreign-item-id replay case; "
         "the grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",

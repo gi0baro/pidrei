@@ -57,6 +57,12 @@ def test_detects_zai_prompt_too_long_errors():
     assert is_context_overflow(message, 1048576) is True
 
 
+def test_detects_zai_cn_endpoint_prompt_exceeds_max_length_errors():
+    # Regression for #10208.
+    message = create_error_message('400 {"code":"1261","message":"Prompt exceeds max length"}', "zai")
+    assert is_context_overflow(message, 1048576) is True
+
+
 def test_detects_together_ai_context_length_errors():
     message = create_error_message(
         "400 The input (516368 tokens) is longer than the model's context length (262144 tokens)."

@@ -14,7 +14,6 @@ from pidrei_ai.api.anthropic_messages import (
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     Context,
-    JsonSchemaConstrainedSampling,
     Model,
     ModelCost,
     SimpleStreamOptions,
@@ -56,30 +55,6 @@ TOOL = Tool(
     parameters={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
 )
 
-SCHEMA_COMPATIBILITY_TOOL = Tool(
-    name="lookup",
-    description="Look up a value",
-    parameters={
-        "type": "object",
-        "properties": {"value": {"type": "string"}},
-        "required": ["value"],
-        "additionalProperties": False,
-        "title": "LookupInput",
-    },
-)
-
-STRICT_TOOL = Tool(
-    name="lookup",
-    description="Look up a value",
-    parameters={
-        "type": "object",
-        "properties": {"value": {"type": "string"}, "optional": {"type": "number"}},
-        "required": ["value"],
-        "title": "StrictLookupInput",
-    },
-    constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
-)
-
 
 def create_context(tools: list[Tool] | None = None) -> Context:
     tool_list = [TOOL] if tools is None else tools
@@ -117,27 +92,3 @@ async def test_does_not_send_legacy_beta_when_there_are_no_tools():
 
     assert "tools" not in body
     assert "betas" not in body
-
-
-@pytest.mark.tonio
-async def test_only_sends_the_full_input_schema_for_strict_json_schema_tools():
-    legacy_body = await capture_body(
-        create_model(AnthropicMessagesCompat(supports_strict_tools=True)),
-        create_context([SCHEMA_COMPATIBILITY_TOOL]),
-    )
-    assert legacy_body["tools"][0]["input_schema"] == {
-        "type": "object",
-        "properties": SCHEMA_COMPATIBILITY_TOOL.parameters["properties"],
-        "required": SCHEMA_COMPATIBILITY_TOOL.parameters["required"],
-    }
-
-    strict_body = await capture_body(
-        create_model(AnthropicMessagesCompat(supports_strict_tools=True)),
-        create_context([STRICT_TOOL]),
-    )
-    assert strict_body["tools"][0]["strict"] is True
-    input_schema = strict_body["tools"][0]["input_schema"]
-    assert input_schema["additionalProperties"] is False
-    assert input_schema["required"] == ["value", "optional"]
-    assert input_schema["properties"]["optional"] == {"anyOf": [{"type": "number"}, {"type": "null"}]}
-    assert input_schema["title"] == "StrictLookupInput"

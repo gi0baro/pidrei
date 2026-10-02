@@ -198,6 +198,9 @@ async def test_ignores_stray_requests_and_resolves_with_the_completed_code():
         assert (success.status, success.content_type) == (200, "text/html; charset=utf-8")
         assert "Authentication successful" in success.body
         assert "Signed in to Example." in success.body
+        assert 'fill="#F09082"' in success.body
+        assert 'fill="#4D9ABF"' in success.body
+        assert 'fill="#F1BE58"' in success.body
         assert await server.wait() == "completed:the-code"
     finally:
         server.close()

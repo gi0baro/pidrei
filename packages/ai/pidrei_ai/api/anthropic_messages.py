@@ -1121,6 +1121,50 @@ def _get_beta_features(
     return list(dict.fromkeys(features))
 
 
+# Keywords Anthropic strict tool use rejects with a 400 for the whole request.
+# https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+_ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS = frozenset(
+    {
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "maxItems",
+        "uniqueItems",
+        "minContains",
+        "maxContains",
+        "minProperties",
+        "maxProperties",
+    }
+)
+_ANTHROPIC_STRICT_STRING_FORMATS = frozenset(
+    {
+        "date-time",
+        "time",
+        "date",
+        "duration",
+        "email",
+        "hostname",
+        "uri",
+        "ipv4",
+        "ipv6",
+        "uuid",
+    }
+)
+
+
+def _is_anthropic_strict_unsupported_keyword(key: str, value: Any) -> bool:
+    if key in _ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS:
+        return True
+    if key == "minItems":
+        # pi's `value !== 0 && value !== 1`: a boolean is never strictly equal to a number.
+        return isinstance(value, bool) or value not in (0, 1)
+    if key == "format":
+        return not isinstance(value, str) or value not in _ANTHROPIC_STRICT_STRING_FORMATS
+    return False
+
+
 def _convert_tools(
     tools: list[Tool],
     is_oauth_token: bool,
@@ -1130,7 +1174,9 @@ def _convert_tools(
 ) -> list[dict[str, Any]]:
     converted: list[dict[str, Any]] = []
     for index, tool in enumerate(tools):
-        strict = resolve_json_schema_strict_sampling(tool, supports_strict_tools)
+        strict = resolve_json_schema_strict_sampling(
+            tool, supports_strict_tools, _is_anthropic_strict_unsupported_keyword
+        )
         schema = get_json_schema_tool_parameters(tool, strict) or {}
         legacy_input_schema = {
             "type": "object",

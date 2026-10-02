@@ -275,11 +275,13 @@ def convert_responses_messages(
                     item_id: str | None = item_id_raw if "|" in block.id else ""
 
                     # Different-model messages omit the item id to dodge OpenAI's
-                    # fc/rs pairing validation; non-fc_* ids (e.g. ctc_*) are
-                    # dropped when replaying custom-tool calls as function_call.
-                    if (is_different_model and item_id and item_id.startswith("fc_")) or (
-                        custom_input_property is None and not (item_id or "").startswith("fc_")
-                    ):
+                    # item/rs pairing validation. Ids that do not match the replayed
+                    # item type are dropped too: function_call ids must be fc_* and
+                    # custom_tool_call ids must be ctc_*. Foreign tool call ids are
+                    # normalized to fc_*, and a call can switch between the two
+                    # types when grammar tool support differs.
+                    item_id_prefix = "fc_" if custom_input_property is None else "ctc_"
+                    if is_different_model or not (item_id or "").startswith(item_id_prefix):
                         item_id = None
 
                     if custom_input_property is not None:

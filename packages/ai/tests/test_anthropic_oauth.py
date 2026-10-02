@@ -1,7 +1,7 @@
 """Mirror of pi's anthropic-oauth.test.ts.
 
-Every login case really opens the loopback callback server on the fixed port —
-pi's suite does the same — and the browser-callback case fetches it.
+Every browser-login case really opens the loopback callback server on the fixed
+port — pi's suite does the same — and the browser-callback case fetches it.
 """
 
 from urllib.parse import parse_qs, urlsplit
@@ -10,7 +10,7 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_ai.auth.oauth.anthropic import anthropic_oauth
-from pidrei_ai.auth.types import AuthEvent, AuthPrompt, OAuthCredential
+from pidrei_ai.auth.types import AuthEvent, AuthPrompt, AuthPromptOption, OAuthCredential
 from pidrei_ai.utils import http
 
 from .oauth_helpers import (
@@ -46,6 +46,8 @@ async def test_keeps_the_localhost_redirect_uri_for_manual_callback_login():
     interaction = RecordingInteraction()
 
     def prompt(prompt: AuthPrompt) -> str:
+        if prompt.type == "select":
+            return "browser"
         if prompt.type != "manual_code":
             raise AssertionError(f"Unexpected prompt: {prompt.type}")
         params = auth_url_params(interaction)
@@ -61,6 +63,59 @@ async def test_keeps_the_localhost_redirect_uri_for_manual_callback_login():
     assert credential.access == "access-token"
     assert credential.refresh == "refresh-token"
     assert len(calls) == 1
+
+
+@pytest.mark.tonio
+async def test_offers_browser_login_first_and_uses_the_selected_anthropic_copy_code_flow():
+    interaction = RecordingInteraction()
+
+    def handler(request: OAuthRequest):
+        assert request.url == TOKEN_URL
+        assert request.json_body["grant_type"] == "authorization_code"
+        assert request.json_body["code"] == "copied-code"
+        assert request.json_body["state"] == auth_url_params(interaction)["state"]
+        assert request.json_body["redirect_uri"] == "https://platform.claude.com/oauth/code/callback"
+        return json_response({"access_token": "access-token", "refresh_token": "refresh-token", "expires_in": 3600})
+
+    select_prompts: list[AuthPrompt] = []
+
+    def prompt(prompt: AuthPrompt) -> str:
+        if prompt.type == "select":
+            select_prompts.append(prompt)
+            return "copy_code"
+        if prompt.type != "manual_code":
+            raise AssertionError(f"Unexpected prompt: {prompt.type}")
+        return f"copied-code#{auth_url_params(interaction)['state']}"
+
+    # the prompt needs the recorded auth_url, so it is attached after construction
+    interaction._prompt = prompt
+
+    with virtual_clock(), stub_oauth_http(handler) as calls:
+        credential = await anthropic_oauth.login(interaction)
+
+    assert credential.access == "access-token"
+    assert credential.refresh == "refresh-token"
+    assert auth_url_params(interaction)["redirect_uri"] == "https://platform.claude.com/oauth/code/callback"
+    assert len(calls) == 1
+    assert select_prompts == [
+        AuthPrompt(
+            type="select",
+            message="Select Anthropic login method:",
+            options=[
+                AuthPromptOption(id="browser", label="Browser login (default)"),
+                AuthPromptOption(id="copy_code", label="Copy code login (headless)"),
+            ],
+        )
+    ]
+
+
+@pytest.mark.tonio
+async def test_cancels_when_anthropic_login_method_selection_is_cancelled():
+    def prompt(_prompt: AuthPrompt) -> str:
+        raise RuntimeError("Login cancelled")
+
+    with pytest.raises(RuntimeError, match="Login cancelled"):
+        await anthropic_oauth.login(RecordingInteraction(prompt=prompt))
 
 
 @pytest.mark.tonio
@@ -94,6 +149,8 @@ async def test_login_resolves_through_the_manual_code_prompt_and_aborts_it_after
         return json_response({"access_token": "access", "refresh_token": "refresh", "expires_in": 3600})
 
     def prompt(prompt: AuthPrompt) -> str:
+        if prompt.type == "select":
+            return "browser"
         if prompt.type != "manual_code":
             raise AssertionError(f"Unexpected prompt: {prompt.type}")
         return "the-code"
@@ -133,6 +190,8 @@ async def test_completes_login_through_the_browser_callback_and_shows_the_sign_i
             page_fetched.set()
 
     async def pending_prompt(prompt: AuthPrompt) -> str:
+        if prompt.type == "select":
+            return "browser"
         done = tonio.Event()
         prompt.cancel.on_cancel(lambda _reason: done.set())
         await done.wait()
