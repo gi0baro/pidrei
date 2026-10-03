@@ -24,7 +24,6 @@ from pidrei_ai.auth.oauth.callback_server import (
     start_oauth_callback_server,
     wait_for_callback_or_manual_input,
 )
-from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
@@ -36,6 +35,7 @@ from pidrei_ai.auth.types import (
     ProviderAuthInteraction,
 )
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_http.pkce import generate_pkce
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 

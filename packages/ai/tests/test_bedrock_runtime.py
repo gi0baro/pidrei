@@ -208,7 +208,7 @@ async def test_a_bearer_token_replaces_sigv4_signing():
     class _StopSend(Exception):
         pass
 
-    from pidrei_ai.utils import http
+    from pidrei_http import http
 
     original = http.client_for
     http.client_for = lambda *_args, **_kwargs: type("C", (), {"post": staticmethod(fake_post)})()

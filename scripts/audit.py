@@ -65,6 +65,8 @@ PACKAGES = [
     "ai/pidrei_ai",
     "agent/pidrei_agent",
     "codemode/pidrei_codemode",
+    "http/pidrei_http",
+    "mcp/pidrei_mcp",
     "pidrei/pidrei",
     "protocol/pidrei_protocol",
     "client/pidrei_client",
@@ -78,6 +80,7 @@ PACKAGE_UPSTREAM = {
     "ai/pidrei_ai": "ai",
     "agent/pidrei_agent": "agent",
     "codemode/pidrei_codemode": "codemode",
+    "mcp/pidrei_mcp": "mcp",
     "pidrei/pidrei": "coding-agent",
     "protocol/pidrei_protocol": "protocol",
     "client/pidrei_client": "client",
@@ -142,6 +145,21 @@ JUSTIFIED_SYNC_PORTS = {
     # (a lazily-started coroutine would decide it at schedule time).
     # Documented at the definition.
     "PiServer._send_message",
+    # MCP transports: `send()` takes the message's place in the outgoing order
+    # when called and returns a `SendResult` the caller may await (recipe
+    # `mcp-client`).
+    "InMemoryTransport.send",
+    "StdioTransport.send",
+    "StreamableHttpTransport.send",
+    # pi's async body registers the request's cancel token before its first
+    # await; the sync handler registers it before the next message is handled
+    # and runs the handler detached (recipe `mcp-client`).
+    "McpClient._handle_request",
+    # Settling the waiters and closing the server and its connections are all
+    # synchronous (httpunk's `close()` and `close_all_connections()`), so
+    # nothing is awaited; the provider flows close their callback server the
+    # same way (recipe `mcp-client`).
+    "OAuthCallbackServer.close",
 }
 
 

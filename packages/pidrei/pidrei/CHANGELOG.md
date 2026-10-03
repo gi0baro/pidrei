@@ -29,9 +29,37 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
   the model (`codemode` and `deferred` exposure) and declares the matches for
   the next call. Off by default: enable it with
   `"defaultTools": ["+tool_search"]` or `--tools`.
-- Codemode and tool search load as the built-in extensions `builtin:codemode`
-  and `builtin:tool-search`. SDK sessions add them with
-  `create_codemode_extension()` and `create_tool_search_extension()`.
+- MCP: pidrei connects Model Context Protocol servers over stdio and
+  streamable HTTP. Servers are configured in `~/.pidrei/agent/mcp.json` and,
+  in trusted projects, `.pidrei/mcp.json`, with the `mcpServers` shape other
+  MCP clients use, or registered by extensions with
+  `pi.register_mcp_server()`. Tools are named `mcp__<server>__<tool>`. By
+  default they are called from codemode scripts (`codemode` exposure), and
+  `exposure` and `toolExposure` make a server's or a single tool's
+  `deferred` (loaded by `tool_search`), `direct`, or `hidden`. Codemode or
+  `tool_search` is activated when a server needs it (`autoEnableCodemode`),
+  and the system prompt lists the servers whose tools are not declared.
+  Servers with resources are reached through `list_mcp_resources`,
+  `list_mcp_resource_templates`, and `read_mcp_resource`. See the MCP page.
+- MCP OAuth: remote servers sign in through the browser (discovery, dynamic
+  client registration, PKCE), with tokens stored per server name and URL in
+  `mcp-auth.json` and refreshed when they expire or are rejected. A server
+  asking for more scope gets a new sign-in that keeps the granted scope, and
+  authorization responses from another issuer are rejected (RFC 9207).
+  `oauth.clientId`, `clientSecret`, `callbackPort`, `callbackUrl`, `scope`,
+  `clientName`, and `authServerMetadataUrl` configure it; when the browser
+  runs on another machine, the redirect URL can be pasted instead.
+- `/mcp` opens a manager to sign in, reconnect, enable or disable servers,
+  and change their exposure; `/mcp login`, `/mcp logout`, and
+  `/mcp reconnect` do it directly.
+- `pidrei mcp add`, `remove`, `list`, `login`, and `logout` configure and
+  check MCP servers and sign in to them outside a session, so the agent can
+  run them through bash. A running session picks up a sign-in on its next
+  turn.
+- MCP, codemode and tool search load as the built-in extensions
+  `builtin:mcp`, `builtin:codemode` and `builtin:tool-search`. SDK sessions
+  add them with `create_mcp_extension()`, `create_codemode_extension()` and
+  `create_tool_search_extension()`.
 - Extensions can change the active tools relative to the current ones with
   `pi.update_active_tools(update)`, without losing a change another tool,
   handler or tool registration makes at the same time.
@@ -84,6 +112,13 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
   `pidrei_ai.utils.timers`, `pidrei_tui.clock` and `pidrei_tui._timers`, as
   are the TUI's own `CancelToken` and `AbortError` in
   `pidrei_tui.components.cancellable_loader`.
+- **Breaking:** the HTTP client helpers moved to a new package,
+  `pidrei-http`. Extensions import them from `pidrei_http.http` (clients and
+  timeouts), `pidrei_http.http_proxy`, `pidrei_http.pkce` (`generate_pkce`)
+  and `pidrei_http.callback_server` (`start_callback_server`). The old
+  modules are gone: `pidrei_ai.utils.http`, `pidrei_ai.utils.http_proxy` and
+  `pidrei_ai.auth.oauth.pkce`; `pidrei_ai.auth.oauth.callback_server` keeps
+  only `start_oauth_callback_server` and `wait_for_callback_or_manual_input`.
 
 ### Fixed
 
@@ -139,9 +174,6 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
 
 ### Not ported
 
-- The MCP client, still: with it the MCP OAuth hardening (`iss` checks,
-  per-server credentials, step-up sign-in) and the clickable `/mcp` sign-in
-  URL.
 - Sign in with Radius and its MCP server setup in `/login`.
 - The animated logo in the startup header.
 - Upstream's lightweight `pi-ai/models` npm entry point.

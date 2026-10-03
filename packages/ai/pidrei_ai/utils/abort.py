@@ -2,8 +2,10 @@
 
 Two ways to stop waiting on an operation when a token fires:
 
-- `run_cancellable` unwinds the operation (tonio scope cancel): for requests
-  and reads, where nothing useful happens after the caller walked away.
+- `pidrei_utils.cancel.run_cancellable` unwinds the operation (tonio scope
+  cancel): for requests and reads, where nothing useful happens after the
+  caller walked away. It is pidrei's own and lives with the token, so the
+  packages that do not depend on pidrei-ai have it too.
 - `race_with_cancel` keeps it running detached, as pi's `raceWithAbortSignal`
   does — the operation is spawned as a detached task whose outcome lands in a
   box that swallows a post-abandonment failure the same way pi's
@@ -13,7 +15,6 @@ Two ways to stop waiting on an operation when a token fires:
 Both are free when the token is `None` or the shared placeholder.
 """
 
-import threading
 from collections.abc import Coroutine
 from typing import Any
 
@@ -31,74 +32,6 @@ def operation_cancel(cancel: CancelToken | None) -> CancelToken:
 def _abort_reason(cancel: CancelToken) -> BaseException:
     reason = cancel.reason
     return reason if reason is not None else AbortError("The operation was aborted")
-
-
-async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelToken | None) -> T:
-    """Await `operation`; if `cancel` fires first, unwind it and raise the reason.
-
-    The scope-owned shape (same as `EventStream.spawn_producer`): the
-    operation runs as the child of a scope, the caller waits inside that
-    scope for either outcome, and leaving the scope after a cancel is what
-    unwinds the child at its current suspension point — a pending request
-    head, a parked read, a backoff sleep. Unlike `race_with_cancel`, the
-    abandoned operation does not keep running.
-    """
-    if cancel is None or cancel.never:
-        return await operation
-    if cancel.cancelled:
-        operation.close()
-        raise _abort_reason(cancel)
-
-    settled = tonio.Event()
-    outcome = tonio.Result()
-    # Who owns `operation`: the child claims it before awaiting it; after the
-    # scope, the caller closes it only if the child never did (see below).
-    claim_guard = threading.Lock()
-    claim = {"child": False, "abandoned": False}
-
-    async def _child() -> None:
-        try:
-            with claim_guard:
-                if claim["abandoned"]:
-                    return
-                claim["child"] = True
-            outcome.store((False, await operation))
-        except Exception as error:
-            # Delivery is `raise payload` at the call site below: escaping
-            # further would only double-report through tonio's
-            # unhandled-coroutine printer on stdout. A cancel is reported as
-            # the token's reason below.
-            outcome.store((True, error))
-        finally:
-            settled.set()
-
-    def _on_cancel(_reason: BaseException) -> None:
-        scope.cancel()
-        settled.set()
-
-    async with tonio.scope() as scope:
-        scope.spawn(_child())
-        unsubscribe = cancel.on_cancel(_on_cancel)
-        await settled.wait()
-    unsubscribe()
-    # A cancel landing before the child first runs aborts it unstarted, so the
-    # operation is never awaited: close it (no body runs) rather than leave a
-    # dropped coroutine to the garbage collector. Leaving the scope does not
-    # interrupt a child already running on another worker, so a state probe
-    # could close the coroutine the child is about to await: ownership is
-    # settled under the claim lock instead — a child that starts late sees
-    # the abandonment and leaves the operation alone.
-    with claim_guard:
-        claim["abandoned"] = not claim["child"]
-    if claim["abandoned"]:
-        operation.close()
-    stored = outcome.fetch()
-    if stored is None:
-        raise _abort_reason(cancel)
-    failed, payload = stored
-    if failed:
-        raise payload
-    return payload
 
 
 async def race_with_cancel[T](operation: Coroutine[Any, Any, T], cancel: CancelToken | None) -> T:

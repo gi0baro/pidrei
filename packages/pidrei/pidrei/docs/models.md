@@ -198,7 +198,7 @@ probabilities. pidrei includes TypeSafe's Jev model from these providers:
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 
 Classifier models do not appear in `/model`. The model reaches them through
-the [`codemode`](cli.md#enable-codemode) tool, which is off by default. Enable
+the [`codemode`](cli.md#enable-codemode) tool, which is off unless an MCP server turned it on. Enable
 it with `"defaultTools": ["+codemode"]` in
 [settings](configuration.md#agent-directory).
 Scripts then list classifier models with

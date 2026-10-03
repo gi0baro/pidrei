@@ -72,22 +72,28 @@ loads like a configured extension file. It loads by default, is listed in
 `pidrei config`, and is disabled by `-builtin:<name>` in the `extensions`
 setting or by `no_extensions`; `additional_extension_paths=["builtin:<name>"]`
 loads it explicitly. It loads after project trust is resolved, so it cannot
-handle `project_trust`. The CLI's built-in extensions, codemode and tool
-search, use it and are replaceable.
+handle `project_trust`. The CLI's built-in extensions, codemode, tool search,
+and MCP, use it and are replaceable.
 
-<a id="codemode"></a>
-The CLI loads `codemode` and `tool_search` as built-in extensions. SDK
+<a id="codemode-mcp"></a>
+The CLI loads `codemode`, `tool_search`, and MCP as built-in extensions. SDK
 sessions do not; add `create_codemode_extension()` (from
-`pidrei.extensions.codemode`) and `create_tool_search_extension()` (from
-`pidrei.extensions.tool_search`) to the `extension_factories` of
-`DefaultResourceLoader`. Both tools are registered inactive: enable them
-through the `defaultTools` setting (`["+codemode", "+tool_search"]` keeps the
-other default tools). The codemode extension opens its script sandbox on
-`session_start` and closes it on `session_shutdown`, so call
+`pidrei.extensions.codemode`), `create_tool_search_extension()` (from
+`pidrei.extensions.tool_search`), and `create_mcp_extension()` (from
+`pidrei.extensions.mcp`) to the `extension_factories` of
+`DefaultResourceLoader`. `codemode` and `tool_search` are registered inactive:
+enable them through the `defaultTools` setting (`["+codemode",
+"+tool_search"]` keeps the other default tools), or let the MCP extension
+activate them: `codemode` for servers with `codemode` exposure, `tool_search`
+for servers with `deferred` exposure. The MCP extension connects its servers
+on `session_start` and closes them on `session_shutdown`, and the codemode
+extension opens its script sandbox on `session_start` and closes it on
+`session_shutdown`, so call
 `await session.bind_extensions(ExtensionBindings())` (from
-`pidrei.core.agent_session`), which emits `session_start`; without it every
-script fails with a sandbox error. `session.dispose()` does not emit
-`session_shutdown`, the only thing that closes the sandbox: before disposing,
+`pidrei.core.agent_session`), which emits `session_start`; without it no MCP
+server connects and every script fails with a sandbox error.
+`session.dispose()` does not emit `session_shutdown`, the only thing that
+closes the MCP connections and the sandbox: before disposing,
 `await emit_session_shutdown_event(session.extension_runner, {"type":
 "session_shutdown", "reason": "quit"})` (from `pidrei.core.extensions.runner`),
 or use `create_agent_session_runtime`, whose `dispose()` emits it. `create_codemode_extension(mode=..., inline_budget=...,

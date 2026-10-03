@@ -1,7 +1,7 @@
 import pytest
 import tonio.colored as tonio
 
-from pidrei_utils.cancel import NEVER_CANCELLED, AbortError, CancelToken, combine_cancel_tokens
+from pidrei_utils.cancel import NEVER_CANCELLED, AbortError, CancelToken, combine_cancel_tokens, run_cancellable
 
 
 def test_initial_state():
@@ -135,3 +135,38 @@ async def test_wait_wakes_on_cancel():
     await handle
 
     assert token.cancelled
+
+
+@pytest.mark.tonio
+async def test_run_cancellable_unwinds_a_parked_operation():
+    cancel = CancelToken()
+    parked = tonio.Event()
+    entered = tonio.Event()
+
+    async def operation():
+        entered.set()
+        await parked.wait(None)
+        return "never"
+
+    async def cancel_soon():
+        await entered.wait(5)
+        cancel.cancel()
+
+    tonio.spawn.without_tracking(cancel_soon())
+    with pytest.raises(AbortError):
+        await run_cancellable(operation(), cancel)
+    assert entered.is_set()
+
+
+@pytest.mark.tonio
+async def test_run_cancellable_returns_the_result_and_raises_its_errors():
+    async def ok():
+        return 7
+
+    async def bad():
+        raise ValueError("x")
+
+    assert await run_cancellable(ok(), CancelToken()) == 7
+    assert await run_cancellable(ok(), None) == 7
+    with pytest.raises(ValueError):
+        await run_cancellable(bad(), CancelToken())

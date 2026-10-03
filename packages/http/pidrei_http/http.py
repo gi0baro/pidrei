@@ -16,11 +16,11 @@ from typing import Any
 
 import tonio.colored as tonio
 from httpunk import Backend, H1Connection, H1Server
-from punkreq import Limits, Timeout, TimeoutException
+from punkreq import Limits, Timeout, TimeoutException, TransportError as _TransportError
 from punkreq.tonio import Client
 from tonio.colored.exceptions import CancelledError
 
-from pidrei_ai.utils.http_proxy import resolve_http_proxy_url_for_target
+from pidrei_http.http_proxy import resolve_http_proxy_url_for_target
 
 
 STREAMING_TIMEOUT = Timeout(connect=30.0, read=600.0, pool=30.0, total=None)
@@ -29,6 +29,9 @@ DEFAULT_LIMITS = Limits(max_connections=64)
 # Re-exported so callers can recognize a timeout without importing punkreq
 # themselves (this module is the only one that may).
 RequestTimeout = TimeoutException
+# Every failure of the exchange itself (connect, read, write, protocol, proxy,
+# timeouts): what fetch reports as a network error.
+TransportError = _TransportError
 
 _shared_client: Client | None = None
 _shared_client_guard = threading.Lock()
@@ -177,6 +180,12 @@ def request_timeout(timeout_ms: float | None) -> Timeout:
     if timeout_ms is None:
         return STREAMING_TIMEOUT
     return Timeout(connect=30.0, read=timeout_ms / 1000, pool=30.0, total=None)
+
+
+def timeout(*, connect: float | None, read: float | None, pool: float | None, total: float | None) -> Timeout:
+    """A request timeout with every bound spelled out, in seconds (None: no
+    bound), for callers whose defaults are not the LLM-streaming ones."""
+    return Timeout(connect=connect, read=read, pool=pool, total=total)
 
 
 def h1_server(transport: Any) -> H1Server:

@@ -11,7 +11,7 @@ import tonio.colored as tonio
 
 from pidrei_ai.auth.oauth.anthropic import anthropic_oauth
 from pidrei_ai.auth.types import AuthEvent, AuthPrompt, AuthPromptOption, OAuthCredential
-from pidrei_ai.utils import http
+from pidrei_http import http
 
 from .oauth_helpers import (
     DEFAULT_START_MS,
@@ -24,6 +24,7 @@ from .oauth_helpers import (
 
 
 TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+_WAIT_S = 10
 
 
 def auth_url_params(interaction: RecordingInteraction) -> dict[str, str]:
@@ -192,10 +193,13 @@ async def test_completes_login_through_the_browser_callback_and_shows_the_sign_i
     async def pending_prompt(prompt: AuthPrompt) -> str:
         if prompt.type == "select":
             return "browser"
+        # The browser callback settles the login, which cancels this prompt.
+        # Bounded: when the fixed callback port is taken, the login falls back
+        # to this prompt alone and would otherwise wait forever.
         done = tonio.Event()
         prompt.cancel.on_cancel(lambda _reason: done.set())
-        await done.wait()
-        raise RuntimeError("aborted")
+        await done.wait(_WAIT_S)
+        raise RuntimeError("aborted" if done.is_set() else "the browser callback never settled the login")
 
     interaction = RecordingInteraction(prompt=pending_prompt)
 
@@ -212,6 +216,7 @@ async def test_completes_login_through_the_browser_callback_and_shows_the_sign_i
 
     assert credential.access == "access"
     assert exchanged_codes == ["browser-code"]
-    await page_fetched.wait()
+    await page_fetched.wait(_WAIT_S)
+    assert page_fetched.is_set()
     assert callback_page and callback_page[0][0] == 200
     assert "Signed in to Anthropic." in callback_page[0][1]

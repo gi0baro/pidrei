@@ -159,7 +159,7 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
 - Additional docs: {get_docs_path()}
 - Examples: {get_examples_path()} (extensions, custom tools, SDK)
 - When reading pidrei docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pidrei packages (docs/packages.md), environment variables (docs/environment-variables.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pidrei packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
 - When working on pidrei topics, read the docs and examples, and follow .md cross-references before implementing
 - Always read pidrei .md files completely and follow links to related docs (e.g., tui.md for TUI API details)"""
 

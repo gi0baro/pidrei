@@ -28,7 +28,6 @@ from urllib.parse import urlencode
 
 from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
 from pidrei_ai.auth.oauth import http as oauth_http
-from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
@@ -45,6 +44,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.registry import create_provider
 from pidrei_ai.types import Model, ModelCost
+from pidrei_http.pkce import generate_pkce
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 

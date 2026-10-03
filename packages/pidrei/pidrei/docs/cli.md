@@ -12,6 +12,7 @@ pidrei update [source] [--extensions|--models|--all]
 pidrei list
 pidrei config [-l]
 pidrei auth <check|print-api-key|print-bearer-token> [options]
+pidrei mcp <add|remove|list|login|logout> [options]
 ```
 
 ## Invocation and output
@@ -123,13 +124,15 @@ tools removed from it or re-enable unchanged tools you turned off. `--tools`,
 | `find` | Find paths by glob (needs `fd` on `PATH`) |
 | `ls` | List directory contents |
 
-Built-in extensions add two more tools. They are off by default; to enable
-them, name them in `--tools` or `defaultTools`.
+Built-in extensions add two more tools. They are off by default; the MCP
+extension turns them on when an MCP server needs them (see
+[MCP](mcp.md#control-tool-exposure)). To enable them yourself, name them in
+`--tools` or `defaultTools`.
 
 | Built-in extension | Purpose |
 |--------------------|---------|
 | `codemode` | Run Python that calls the other tools, for example in parallel with `all_settled`; only the script's output reaches the model |
-| `tool_search` | Search tools that are not declared to the model (`codemode` and `deferred` exposure) and declare the matches for the next call |
+| `tool_search` | Search tools that are not declared to the model (`codemode` and `deferred` exposure, such as MCP tools) and declare the matches for the next call |
 
 ### Enable codemode
 
@@ -178,8 +181,8 @@ pidrei -e ./review.py
 
 | Option | Behavior |
 |--------|----------|
-| `-e`, `--extension <path>` | Load an extension file or directory, or a built-in extension as `builtin:<name>`; repeatable |
-| `-ne`, `--no-extensions` | Skip discovered, configured, and built-in extensions; `-e` still loads |
+| `-e`, `--extension <path>` | Load an extension file or directory, or a built-in extension such as `builtin:mcp`; repeatable |
+| `-ne`, `--no-extensions` | Skip discovered, configured, and built-in extensions; `-e` still loads, so `pidrei -ne -e builtin:mcp` keeps only the built-in MCP support |
 | `--skill <path>` | Load a skill file or directory; repeatable |
 | `-ns`, `--no-skills` | Skip discovered and configured skills; `--skill` still loads |
 | `--prompt-template <path>` | Load a prompt template file or directory; repeatable |
@@ -256,3 +259,26 @@ Each command needs `--provider <provider>`, `--model <model>`, or both.
 | `--min-expiry <duration>` | `print-bearer-token` | Require remaining lifetime, e.g. `30m` (`ms`, `s`, `m`, `h`) |
 
 The printing commands write secrets to stdout.
+
+## MCP commands
+
+These commands work outside a session, so agents can run them through `bash`.
+See [MCP Servers](mcp.md).
+
+| Command | Behavior |
+|---------|----------|
+| `pidrei mcp add <server> [options] -- <command> [args...]` | Add or replace a stdio server in `mcp.json`; `--env KEY=VALUE` (repeatable) and `--cwd <dir>` set its environment and working directory. Arguments after the command are passed to it |
+| `pidrei mcp add <server> [options] --url <url>` | Add or replace a streamable HTTP server; `--header KEY=VALUE` (repeatable), `--bearer-token-env-var <NAME>` (sends `Authorization: Bearer ${NAME}`), `--oauth-client-id`, `--oauth-client-secret`, `--oauth-callback-port`, and `--oauth-client-name` configure authentication |
+| `pidrei mcp remove <server>` | Remove a server from `mcp.json`; stored OAuth credentials are kept |
+| `pidrei mcp list [--json]` | Connect to every enabled server and print its state, tools, and errors; exit with `1` when a config entry is invalid or an enabled server is not connected |
+| `pidrei mcp login <server> [--timeout <seconds>]` | Sign in to an OAuth server: open the authorization page and wait for the browser (default 300 seconds); a terminal also accepts the pasted redirect URL |
+| `pidrei mcp logout <server>` | Delete the stored OAuth credentials of a server |
+
+`add` and `remove` change `~/.pidrei/agent/mcp.json`, or `.pidrei/mcp.json` in
+the current directory with `--local` (`-l`). `add` also takes
+`--exposure <mode>` (see [Exposure](mcp.md#control-tool-exposure)) and
+`--description <text>` and does not connect; run `pidrei mcp list` to check
+the server.
+
+Project `.pidrei/mcp.json` files are only read for projects that are already
+trusted.

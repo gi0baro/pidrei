@@ -75,7 +75,7 @@ class ToolNamespace:
     description: str | None = None
     # Longer usage guidance, such as MCP server instructions. Not part of tool
     # listings; tools that describe the namespace on request (codemode's
-    # `describeNamespace()`) return it.
+    # `describe_namespace()`) return it.
     instructions: str | None = None
 
 

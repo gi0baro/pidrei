@@ -4,9 +4,8 @@ MCP server configuration and the servers extensions register with
 `pi.register_mcp_server()`.
 
 The core only validates and stores registrations. An MCP extension (one that
-handles `mcp_servers_change`) connects them. pidrei's built-in MCP extension
-and client port later, with codemode; until then a registration is reported
-as unhandled unless an extension handles the event.
+handles `mcp_servers_change`) connects them: the built-in MCP extension, or
+another one that replaced it. A registration nothing handles is reported.
 
 Configs keep the JSON shape of an `mcpServers` entry in `mcp.json`
 (camelCase keys), like pi's objects.
@@ -23,7 +22,7 @@ from typing import Any, Literal
 
 # - "codemode": tools are callable from codemode scripts but neither declared
 #   to the model nor listed in the codemode description, which lists only the
-#   server's namespace. Scripts find them with `searchTools()`.
+#   server's namespace. Scripts find them with `search_tools()`.
 #   "codemode-deferred" is accepted as an alias.
 # - "deferred": not declared to the model until the `tool_search` tool loads
 #   them; the model then calls them directly. Does not need codemode.
@@ -42,7 +41,7 @@ _MCP_EXPOSURE_ALIASES: dict[str, McpExposure] = {"codemode-deferred": "codemode"
 #
 # - `description`: what the server offers, in a sentence. The `mcp_servers`
 #   system prompt section lists the server with it, tool search ranks the
-#   server's tools by it, and codemode's `describeNamespace()` returns it.
+#   server's tools by it, and codemode's `describe_namespace()` returns it.
 # - `oauth.clientName`: `client_name` sent with dynamic client registration,
 #   for servers that only accept known clients. Default: `pidrei`.
 # - `oauth.authServerMetadataUrl`: authorization server metadata document
@@ -77,6 +76,16 @@ def _parse_url(value: str) -> urllib.parse.SplitResult | None:
     return url
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def url_port(url: urllib.parse.SplitResult) -> int | None:
+    """The URL's port as `new URL(...).port` gives it: None when it names
+    none, or names its scheme's default (`http://localhost:80/` has no port)."""
+    port = url.port
+    return None if port == _DEFAULT_PORTS.get(url.scheme) else port
+
+
 def _host_of(url: urllib.parse.SplitResult) -> str:
     """The URL's hostname as `new URL(...).hostname` spells it (IPv6 in brackets)."""
     hostname = url.hostname or ""
@@ -100,8 +109,6 @@ def _is_port(value: Any) -> bool:
 
 
 def _validate_oauth(value: Any) -> str | None:
-    if value is None:
-        return None
     if not isinstance(value, dict):
         return "oauth must be an object"
     if "clientId" in value and not isinstance(value["clientId"], str):
@@ -115,8 +122,8 @@ def _validate_oauth(value: Any) -> str | None:
         callback_url = value["callbackUrl"]
         if not isinstance(callback_url, str) or not is_loopback_redirect_uri(callback_url):
             return "oauth.callbackUrl must be an http URI on localhost, 127.0.0.1, or [::1] without query or fragment"
-        url_port = _parse_url(callback_url).port  # type: ignore[union-attr]
-        if url_port is not None and "callbackPort" in value and url_port != port:
+        callback_port = url_port(_parse_url(callback_url))  # type: ignore[arg-type]
+        if callback_port is not None and "callbackPort" in value and callback_port != port:
             return "oauth.callbackUrl and oauth.callbackPort name different ports"
     if "scope" in value and not isinstance(value["scope"], str):
         return "oauth.scope must be a string"
@@ -204,7 +211,8 @@ def validate_mcp_server_config(name: str, raw: Any) -> McpServerConfig | str:
             return f'server "{name}": url must be an http or https URL'
         if "headers" in value and not _is_string_record(value["headers"]):
             return f'server "{name}": headers must map names to strings'
-        oauth_error = _validate_oauth(value.get("oauth"))
+        # pi skips only an absent `oauth`; `"oauth": null` is not an object.
+        oauth_error = _validate_oauth(value["oauth"]) if "oauth" in value else None
         if oauth_error:
             return f'server "{name}": {oauth_error}'
         if "auth" in value:

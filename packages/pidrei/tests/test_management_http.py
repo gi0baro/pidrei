@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent test/management-http.test.ts.
 
-pi stubs global `fetch`; pidrei routes through the `utils/http.py` seam, so
+pi stubs global `fetch`; pidrei routes through the `pidrei_http.http` seam, so
 these swap `shared_client` (the same pattern as `test_version_check.py`). pi's
 "does not retry caller cancellation" case has no counterpart: cancellation
 reaches these requests as the shared timeout budget, covered by the
@@ -9,7 +9,7 @@ budget-exhaustion case below.
 
 import pytest
 
-import pidrei_ai.utils.http as http_module
+import pidrei_http.http as http_module
 from pidrei.utils.management_http import fetch_with_retry
 
 
@@ -75,7 +75,7 @@ async def test_gives_up_after_the_retry_budget(stub_http):
 
 @pytest.mark.tonio
 async def test_retries_an_attempt_timeout(stub_http):
-    from pidrei_ai.utils.http import RequestTimeout
+    from pidrei_http.http import RequestTimeout
 
     ok = _Response()
     client = stub_http([RequestTimeout("Timed out"), ok])
@@ -130,7 +130,7 @@ async def test_shares_the_timeout_budget_across_attempts(stub_http):
 
 @pytest.mark.tonio
 async def test_stops_retrying_once_the_budget_is_exhausted(stub_http):
-    from pidrei_ai.utils.http import RequestTimeout
+    from pidrei_http.http import RequestTimeout
 
     client = stub_http([Exception("request failed")] * 3)
 

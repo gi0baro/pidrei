@@ -49,7 +49,7 @@ from pidrei_ai.types import (
     TranscriptContext,
     Usage,
 )
-from pidrei_ai.utils import http, websocket
+from pidrei_ai.utils import websocket
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import (
     append_assistant_message_diagnostic,
@@ -70,6 +70,7 @@ from pidrei_ai.utils.transcript import (
 )
 from pidrei_ai.utils.user_agent import ORIGINATOR, get_user_agent
 from pidrei_ai.utils.uuid import uuidv7
+from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import AbortError, CancelToken
 

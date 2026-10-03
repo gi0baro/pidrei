@@ -12,7 +12,7 @@ import pytest
 from pidrei_ai.api.bedrock_converse_stream import BedrockOptions, stream as stream_bedrock
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, ProviderResponse, UserMessage
-from pidrei_ai.utils import http
+from pidrei_http import http
 
 
 MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"

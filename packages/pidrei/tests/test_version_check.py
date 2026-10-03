@@ -1,7 +1,7 @@
 """Update check against the GitHub releases API.
 
 Adapted from pi's version-check.test.ts, which was never mirrored. pi stubs
-global fetch; pidrei routes through the `utils/http.py` seam, so these swap
+global fetch; pidrei routes through the `pidrei_http.http` seam, so these swap
 `shared_client` on the module the checker imports from.
 
 The comparison cases are pi's, plus the pidrei-only ones: our version scheme is
@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-import pidrei_ai.utils.http as http_module
+import pidrei_http.http as http_module
 from pidrei.utils.version_check import (
     RELEASES_URL,
     check_for_new_version,

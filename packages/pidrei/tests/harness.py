@@ -75,9 +75,15 @@ async def create_harness(
     with_configured_auth: bool = True,
     models: list[dict] | None = None,
     session_manager: SessionManager | None = None,
+    extension_bindings: ExtensionBindings | None = None,
 ) -> Harness:
     """`session_manager` is the session to continue, for example to test a
-    resume. Default: a new in-memory session."""
+    resume. Default: a new in-memory session.
+
+    The harness binds the extensions once, which emits `session_start`;
+    `extension_bindings` are the bindings it binds with (pi's suites call
+    `bindExtensions({ uiContext })` themselves, and a reload emits
+    `session_start` again only to a session bound with a UI context)."""
     temp_dir = tempfile.mkdtemp(prefix="pidrei-suite-")
     faux = faux_provider(models=[FauxModelDefinition(**model) for model in models]) if models else faux_provider()
     faux.set_responses([])
@@ -177,7 +183,7 @@ async def create_harness(
             extension_runner_ref=extension_runner_ref,
         )
     )
-    await session.bind_extensions(ExtensionBindings())
+    await session.bind_extensions(extension_bindings if extension_bindings is not None else ExtensionBindings())
 
     events: list = []
     session.subscribe(events.append)
@@ -215,10 +221,66 @@ def get_assistant_texts(harness: Harness) -> list[str]:
     return [get_message_text(m) for m in harness.session.messages if getattr(m, "role", None) == "assistant"]
 
 
+def get_tool_result(harness: Harness, tool_name: str) -> Any:
+    """The latest result of `tool_name` in the session transcript."""
+    for message in reversed(harness.session.messages):
+        if message.role == "toolResult" and message.tool_name == tool_name:
+            return message
+    raise AssertionError(f"No {tool_name} tool result")
+
+
+async def _answer(value: Any) -> Any:
+    return value
+
+
+def create_test_ui_context(**overrides: Any) -> SimpleNamespace:
+    """pi's createTestUiContext: an extension UI context that does nothing,
+    with `overrides` applied. Dialogs return an awaitable, as the real ones
+    return a spawn handle."""
+    ui = SimpleNamespace(
+        select=lambda *_args, **_kwargs: _answer(None),
+        confirm=lambda *_args, **_kwargs: _answer(False),
+        input=lambda *_args, **_kwargs: _answer(None),
+        editor=lambda *_args, **_kwargs: _answer(None),
+        custom=lambda *_args, **_kwargs: _answer(None),
+        notify=lambda *_args, **_kwargs: None,
+        on_terminal_input=lambda *_args, **_kwargs: lambda: None,
+        set_status=lambda *_args, **_kwargs: None,
+        set_working_message=lambda *_args, **_kwargs: None,
+        set_working_visible=lambda *_args, **_kwargs: None,
+        set_working_indicator=lambda *_args, **_kwargs: None,
+        set_hidden_thinking_label=lambda *_args, **_kwargs: None,
+        set_widget=lambda *_args, **_kwargs: None,
+        set_footer=lambda *_args, **_kwargs: None,
+        set_header=lambda *_args, **_kwargs: None,
+        set_title=lambda *_args, **_kwargs: None,
+        paste_to_editor=lambda *_args, **_kwargs: None,
+        set_editor_text=lambda *_args, **_kwargs: None,
+        get_editor_text=lambda: "",
+    )
+    for name, value in overrides.items():
+        setattr(ui, name, value)
+    return ui
+
+
+async def create_test_extensions_result(factories: list, cwd: str) -> LoadExtensionsResult:
+    """pi's createTestExtensionsResult: load inline extension factories with a fresh runtime."""
+    runtime = create_extension_runtime()
+    event_bus = EventBus()
+    extensions = [
+        await load_extension_from_factory(factory, cwd, event_bus, runtime, f"<inline:{index + 1}>")
+        for index, factory in enumerate(factories)
+    ]
+    return LoadExtensionsResult(extensions=extensions, runtime=runtime)
+
+
 __all__ = [
     "Harness",
     "create_harness",
+    "create_test_extensions_result",
+    "create_test_ui_context",
     "get_assistant_texts",
     "get_message_text",
+    "get_tool_result",
     "get_user_texts",
 ]

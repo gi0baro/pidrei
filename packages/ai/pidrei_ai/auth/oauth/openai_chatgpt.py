@@ -24,14 +24,6 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import tonio.colored as tonio
 
 from pidrei_ai.auth.oauth import http as oauth_http
-from pidrei_ai.auth.oauth.callback_server import (
-    CallbackRequest,
-    CallbackResponse,
-    CallbackServer,
-    OneShotValue,
-    start_callback_server,
-)
-from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
@@ -43,6 +35,14 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.utils.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_http.callback_server import (
+    CallbackRequest,
+    CallbackResponse,
+    CallbackServer,
+    OneShotValue,
+    start_callback_server,
+)
+from pidrei_http.pkce import generate_pkce
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 

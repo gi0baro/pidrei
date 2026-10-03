@@ -1,4 +1,5 @@
-"""Mirror of pi's node-http-proxy.test.ts, plus the punkreq plumbing.
+"""Mirror of pi's node-http-proxy.test.ts, plus the adapters reaching the seam
+with their scoped env (`client_for` itself is tested in pidrei-http).
 
 pi mutates `process.env` and restores it in `afterEach`; these tests pass the
 process-env half through a context manager instead, so nothing leaks between
@@ -13,9 +14,9 @@ import pytest
 
 from pidrei_ai.api import anthropic_messages, openai_completions, openai_responses
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
-from pidrei_ai.utils import http
-from pidrei_ai.utils.http_proxy import UNSUPPORTED_PROXY_PROTOCOL_MESSAGE, resolve_http_proxy_url_for_target
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_http import http
+from pidrei_http.http_proxy import UNSUPPORTED_PROXY_PROTOCOL_MESSAGE, resolve_http_proxy_url_for_target
 
 
 PROXY_ENV_KEYS = [
@@ -98,36 +99,6 @@ def test_unsupported_protocol_message_is_pis_wording():
     assert UNSUPPORTED_PROXY_PROTOCOL_MESSAGE == (
         "Unsupported proxy protocol. SOCKS and PAC proxy URLs are not supported; use an HTTP or HTTPS proxy URL."
     )
-
-
-# --- punkreq plumbing ---------------------------------------------------------
-
-
-def test_client_for_reuses_the_shared_client_without_scoped_env():
-    with process_proxy_env():
-        assert http.client_for(TARGET) is http.shared_client()
-        assert http.client_for(TARGET, {}) is http.shared_client()
-
-
-def test_client_for_pools_one_client_per_scoped_proxy():
-    with process_proxy_env():
-        first = http.client_for(TARGET, {"HTTPS_PROXY": "http://scoped.example:8080"})
-        again = http.client_for(TARGET, {"HTTPS_PROXY": "http://scoped.example:8080"})
-        other = http.client_for(TARGET, {"HTTPS_PROXY": "http://elsewhere.example:8080"})
-
-    assert first is again
-    assert first is not other
-    assert first is not http.shared_client()
-
-
-def test_client_for_honours_a_scoped_no_proxy_over_an_ambient_proxy():
-    with process_proxy_env(HTTPS_PROXY="http://ambient.example:8080"):
-        # punkreq's trust_env would proxy through the ambient value; a scoped
-        # NO_PROXY must win, so this cannot be the shared client.
-        scoped = http.client_for(TARGET, {"NO_PROXY": "bedrock-runtime.us-east-1.amazonaws.com"})
-
-        assert scoped is not http.shared_client()
-        assert scoped is http.client_for(TARGET, {"NO_PROXY": "*"})
 
 
 # --- the adapters reach client_for with their scoped env ----------------------

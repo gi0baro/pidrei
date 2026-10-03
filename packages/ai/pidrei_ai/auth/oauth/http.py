@@ -4,7 +4,7 @@ pi's flows call the global `fetch` and its tests replace it with
 `vi.stubGlobal("fetch", ...)`. There is no global to replace here, so the flows
 call `oauth_http.request(...)` module-qualified and the mirrors substitute this
 one attribute — the same single point of interception, and the punkreq seam
-stays in `utils/http.py`.
+stays in `pidrei_http.http`.
 
 Cancellation raises `AbortError` rather than a flow's wording: each flow turns
 it into its own message ("Login cancelled", "…refresh aborted"), exactly as
@@ -17,9 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
 
-from pidrei_ai.utils import http
-from pidrei_ai.utils.abort import run_cancellable
-from pidrei_utils.cancel import CancelToken
+from pidrei_http import http
+from pidrei_utils.cancel import CancelToken, run_cancellable
 
 
 @dataclass(slots=True)

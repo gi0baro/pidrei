@@ -9,11 +9,14 @@ provider-scoped `options.env` overrides, which take precedence over the process
 environment — plus pi's explicit refusal of SOCKS/PAC proxy URLs.
 """
 
+import os
 import re
+from collections.abc import Mapping
 from urllib.parse import urlsplit
 
-from pidrei_ai.types import ProviderEnv
-from pidrei_ai.utils.provider_env import get_provider_env_value
+
+# pi-ai's `ProviderEnv`: provider-scoped env overrides.
+type ProviderEnv = Mapping[str, str]
 
 
 DEFAULT_PROXY_PORTS = {
@@ -77,9 +80,10 @@ def _get_proxy_env(key: str, env: ProviderEnv | None = None) -> str:
     return (
         scoped.get(lowercase_key)
         or scoped.get(uppercase_key)
-        # pi passes no `env` here: the scoped values were already checked above.
-        or get_provider_env_value(lowercase_key)
-        or get_provider_env_value(uppercase_key)
+        # pi calls `getProviderEnvValue` without `env` here (the scoped values
+        # were already checked above), which reads the process environment.
+        or os.environ.get(lowercase_key)
+        or os.environ.get(uppercase_key)
         or ""
     )
 

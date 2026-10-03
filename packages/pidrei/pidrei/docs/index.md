@@ -10,7 +10,8 @@ where this documentation says otherwise.
 
 - [How pidrei works](how-pi-works.md) — the agent loop, context, sessions, and where customization plugs in.
 - [Providers](providers.md) — subscription and API-key setup for the built-in providers.
-- [CLI reference](cli.md) — modes, options, and the package and auth commands.
+- [CLI reference](cli.md) — modes, options, and the package, auth, and MCP commands.
+- [MCP servers](mcp.md) — connect Model Context Protocol servers and control how their tools reach the model.
 - [Codemode](codemode.md) — Python scripts that call tools and run classifier and image models.
 - [Slash commands](slash-commands.md) — the built-in interactive commands.
 - [Configuration](configuration.md) — user and project directories, settings files, context files, and project trust.

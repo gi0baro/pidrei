@@ -10,7 +10,7 @@ import pytest
 import tonio.colored as tonio
 from tonio.colored.exceptions import CancelledError
 
-from pidrei_ai.utils import http
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 
 
