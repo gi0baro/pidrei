@@ -23,7 +23,7 @@ classifiers = [
 
 dependencies = [
     "pidrei-utils==1.0.0.0",
-    "pydantic-monty==1.0.0",
+    "pydantic-monty~=1.0.0",
     "tonio~=0.10.4",
 ]
 

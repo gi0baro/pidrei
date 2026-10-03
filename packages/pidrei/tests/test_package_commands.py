@@ -298,9 +298,8 @@ class TestSelfUpdateIsRefused:
         assert "does not support self-update" in err
         assert "uv tool install" in err
 
-    def test_the_hint_names_both_install_channels(self):
+    def test_the_hint_names_the_install_command(self):
         assert "uv tool install" in SELF_UPDATE_HINT
-        assert "brew upgrade" in SELF_UPDATE_HINT
 
 
 class TestUpdateTargets:

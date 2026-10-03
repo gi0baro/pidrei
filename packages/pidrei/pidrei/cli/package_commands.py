@@ -5,8 +5,8 @@ before the normal argument parse because they never start a session.
 
 **pidrei does not self-update** (decided 2026-07-27). pi's `update` defaults to
 updating pi itself, shelling out to whichever package manager installed it —
-npm, pnpm, yarn or bun. pidrei installs from git or Homebrew, where "update"
-means re-running the install command with a new tag, and `uv tool upgrade` on a
+npm, pnpm, yarn or bun. pidrei installs from git, where "update" means
+re-running the install command with a new tag, and `uv tool upgrade` on a
 tag-pinned git install re-resolves the same tag and silently does nothing. So
 roughly 250 lines of pi's file — `getSelfUpdatePlan`, `runSelfUpdate`, the
 install-method detection, the npm/pnpm fallback hints and the Windows
@@ -55,8 +55,7 @@ CONFIG_COMMAND_USAGE = f"{APP_NAME} config [-l] [--approve|--no-approve]"
 SELF_UPDATE_HINT = (
     f"{APP_NAME} does not update itself. Re-run the install command with the new version:\n"
     f"  uv tool install -p 3.14t 'git+https://github.com/gi0baro/pidrei"
-    f"@<version>#subdirectory=packages/pidrei'\n"
-    f"  brew upgrade pidrei"
+    f"@<version>#subdirectory=packages/pidrei'"
 )
 
 
@@ -170,7 +169,6 @@ Short forms:
 Updating {APP_NAME}:
   Re-run the install command with the new version.
   uv tool install -p 3.14t 'git+https://github.com/gi0baro/pidrei@<version>#subdirectory=packages/pidrei'
-  brew upgrade pidrei
 
 """)
         return

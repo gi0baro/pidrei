@@ -19,16 +19,11 @@ The main reasons behind PiDrei's existence are:
 
 Alpha, and the honest kind. PiDrei is a port in progress, validated the only way
 a port sensibly can be: by porting Pi's own test suites module by module and
-keeping them green (3,000 cases so far, the bulk of them direct mirrors).
+keeping them green.
 
-Working today: the agent loop and its tools, the TUI and interactive mode, the
-headless CLI and RPC server, all 37 of Pi's providers, image generation, OAuth
-login for the ones that need it, and extensions — loading, the full hook bus,
-and packages installed from git.
-
-Not yet: Pi's bundled llama.cpp extension. PiDrei also never updates itself —
-`pidrei update` handles packages and model catalogs, and tells you which install
-command to re-run for PiDrei.
+It does what Pi does, give or take the deliberate differences below — and Pi's
+bundled llama.cpp extension, which hasn't made the trip yet. If you were
+counting on that one, Pi is right there.
 
 ## Installation
 
@@ -38,21 +33,15 @@ you, so this is the whole procedure:
 
 ```
 uv tool install -p 3.14t \
-  'git+https://github.com/gi0baro/pidrei@v0.82.0.0#subdirectory=packages/pidrei'
+  'git+https://github.com/gi0baro/pidrei@v1.0.0.0#subdirectory=packages/pidrei'
 ```
 
-Yes, the `#subdirectory` is ugly. PiDrei mirrors Pi's monorepo, six packages and
-all, and the CLI is only one of them.
-
-Or you can have Homebrew do the honours:
-
-```
-brew install gi0baro/tap/pidrei
-```
+Yes, the `#subdirectory` is ugly. PiDrei mirrors Pi's monorepo, packages and all,
+and the CLI is only one of them.
 
 Wheels and source tarballs are attached to every
 [GitHub release](https://github.com/gi0baro/pidrei/releases), if that's your
-thing — install all six, since they reference each other by exact version.
+thing — install all of them, since they reference each other by exact version.
 
 In any case, you should end up with a `pidrei` command — and if you love
 shortcuts, `pi3`.
@@ -69,8 +58,17 @@ Deliberate, and not going away:
   modules loaded through jiti. The hook bus semantics mirror Pi's 1:1; the
   extension artifacts themselves obviously cannot. One rule Pi does not have:
   handlers are `async def` — the runtime's contract, not a style preference.
+- **Codemode speaks Python.** Having a Python port ask the model for JavaScript
+  felt like a step too far. Scripts run in a
+  [Monty](https://github.com/pydantic/monty) sandbox instead of QuickJS, and are
+  type-checked before anything runs, so a typo fails before it costs you a tool
+  call. The price: codemode's model-facing text is PiDrei's own — the one place
+  where the strings the model sees are not Pi's.
 - **Its own config**: `~/.pidrei/` and `PIDREI_*` environment variables. Session
   files keep Pi's JSONL format, so transcripts stay interchangeable.
+- **No self-update.** `pidrei update` handles packages and model catalogs; for
+  PiDrei itself, it tells you which install command to re-run. Rewriting its
+  own installation on a guess seemed a bit much.
 - **Syntax highlighting is Pygments**, not highlight.js — close enough to look
   right, not close enough to diff.
 - **No `radius`**, provider or presence integration. A Pi-specific service that

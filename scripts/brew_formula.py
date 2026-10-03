@@ -2,7 +2,7 @@
 
     uv run python scripts/brew_formula.py <version> [dist-dir] > pidrei.rb
 
-The six pidrei distributions exist on no index, so the formula carries each as
+The pidrei distributions exist on no index, so the formula carries each as
 a `resource` pointing at the GitHub release asset, with the sha256 taken from
 the file that was actually built.
 

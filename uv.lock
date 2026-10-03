@@ -439,7 +439,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pidrei-utils", editable = "packages/utils" },
-    { name = "pydantic-monty", specifier = "==1.0.0" },
+    { name = "pydantic-monty", specifier = "~=1.0.0" },
     { name = "tonio", specifier = "~=0.10.4" },
 ]
 

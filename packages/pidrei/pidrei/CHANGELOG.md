@@ -119,6 +119,9 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
   modules are gone: `pidrei_ai.utils.http`, `pidrei_ai.utils.http_proxy` and
   `pidrei_ai.auth.oauth.pkce`; `pidrei_ai.auth.oauth.callback_server` keeps
   only `start_oauth_callback_server` and `wait_for_callback_or_manual_input`.
+- Homebrew is no longer an installation method, and the `gi0baro/tap`
+  formula is no longer updated. Reinstall with `uv tool install`, as the
+  README shows.
 
 ### Fixed
 

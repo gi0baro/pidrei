@@ -409,7 +409,7 @@ experiments.
 
 ## Changelog, versions, releases
 
-- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The eight
+- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The
   published packages (`utils`, `http`, `ai`, `agent`, `tui`, `codemode`, `mcp`, `pidrei`) share the version and
   pin each other exactly; the transport packages are not bumped.
 - `UPSTREAM_VERSION`/`UPSTREAM_REF` in `upstream.py` and `.last_upstream_ref`

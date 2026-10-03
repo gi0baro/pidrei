@@ -3,7 +3,6 @@ name: Publish
 on:
   push:
     tags:
-      # Four segments: pi's version plus our build number, with a leading v.
       - v*.*.*.*
 
 env:
@@ -29,28 +28,16 @@ jobs:
           uv sync --all-packages --group test
 
       - name: Release checks
-        # Tag vs tree version, the six package versions, the intra-repo pins,
-        # the LICENSE copies, and the upstream ref. Same script as
-        # `make release-check`, so it is runnable before tagging.
         run: |
           uv run python scripts/release_check.py "${GITHUB_REF_NAME}"
 
       - name: Build distributions
         run: |
-          # Named members, not bare `uv build`: the repo root is a uv
-          # workspace with no [project], where bare `uv build` silently
-          # produces an "unknown-0.0.0" artifact instead of failing. Not
-          # --all-packages either: protocol/client/server are workspace-only
-          # transport remnants (spec/upstream-sync.md), never shipped.
           for name in pidrei pidrei-ai pidrei-agent pidrei-tui pidrei-codemode pidrei-mcp pidrei-http pidrei-utils; do
             uv build --package "${name}"
           done
 
       - name: Verify the built artifacts
-        # The workspace can never catch a missing intra-repo dependency —
-        # `uv sync --all-packages` installs every member either way — so the
-        # wheels are installed into a venv *outside* it, resolving only from
-        # dist/. This is how the missing `pidrei-tui` dependency was found.
         run: |
           version="${GITHUB_REF_NAME#v}"
           for name in pidrei pidrei_ai pidrei_agent pidrei_tui pidrei_codemode pidrei_mcp pidrei_http pidrei_utils; do
@@ -61,15 +48,11 @@ jobs:
           done
 
           uv venv --python ${{ env.UV_PYTHON }} /tmp/release-check
-          # --find-links only, no --no-index: the six pidrei wheels exist on
-          # no index and must come from dist/, while tonio and the rest still
-          # resolve from PyPI. --no-index blocks both and fails to resolve.
           uv pip install --python /tmp/release-check/bin/python \
             --find-links dist "pidrei==${version}"
           test "$(/tmp/release-check/bin/pidrei --version)" = "${version}" \
             || { echo "installed --version does not report ${version}"; exit 1; }
           /tmp/release-check/bin/pi3 --version >/dev/null
-          # The shipped docs and examples must survive packaging.
           /tmp/release-check/bin/python -c "
           import os
           from pidrei.config import get_docs_path, get_examples_path, get_readme_path
@@ -78,20 +61,11 @@ jobs:
           assert os.path.isdir(get_examples_path()), 'examples/ not in the wheel'
           "
 
-      - name: Generate the Homebrew formula
-        # Complete and final: the six no-index distributions from the
-        # artifacts just built, the third-party resources from uv.lock (the
-        # exact set this run's test suite ran against). Deliberately not
-        # `brew update-python-resources`: brew resolves latest-from-PyPI —
-        # it cannot see pidrei's pins, since pidrei is on no index — and
-        # rewrites the GitHub-asset resources it does not understand.
-        run: |
-          uv run python scripts/brew_formula.py "${GITHUB_REF_NAME}" dist > pidrei.rb
+      # - name: Generate the Homebrew formula
+      #   run: |
+      #     uv run python scripts/brew_formula.py "${GITHUB_REF_NAME}" dist > pidrei.rb
 
       - name: Extract the release notes
-        # The description is the CHANGELOG.md entry for this version (the
-        # same text the in-app What's New panel shows), with relative links
-        # absolutized against the tag — not GitHub's auto-generated notes.
         run: |
           uv run python scripts/release_notes.py "${GITHUB_REF_NAME}" > release_notes.md
           test -s release_notes.md
@@ -105,11 +79,8 @@ jobs:
             --notes-file release_notes.md \
             dist/*.whl dist/*.tar.gz
 
-      - name: Upload the formula
-        # Attached rather than pushed: the tap is a separate repo, and pushing
-        # to it needs a cross-repo token. The formula is final — copy it into
-        # the tap and commit.
-        uses: actions/upload-artifact@v4
-        with:
-          name: homebrew-formula
-          path: pidrei.rb
+      # - name: Upload the formula
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: homebrew-formula
+      #     path: pidrei.rb

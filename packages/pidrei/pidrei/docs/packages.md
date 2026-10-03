@@ -144,8 +144,8 @@ pidrei -e git:github.com/someone/pack
 ```
 
 **pidrei does not update itself.** pi's `update` also reinstalls pi through
-whichever package manager installed it; pidrei installs from git or Homebrew,
-where updating means re-running the install command with a new version — so
+whichever package manager installed it; pidrei installs from git, where
+updating means re-running the install command with a new version — so
 `pidrei update --self` tells you the command rather than guessing at your
 installation.
 
