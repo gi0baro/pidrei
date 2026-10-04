@@ -265,6 +265,12 @@ def model_to_dict(model: AnyModel) -> dict[str, Any]:
             raw["promptCache"] = dict(model.prompt_cache)
         if model.thinking_level_map is not None:
             raw["thinkingLevelMap"] = dict(model.thinking_level_map)
+        if model.sampling_params is not None:
+            raw["samplingParams"] = dict(model.sampling_params)
+        if model.sampling_params_by_thinking_level is not None:
+            raw["samplingParamsByThinkingLevel"] = {
+                level: dict(params) for level, params in model.sampling_params_by_thinking_level.items()
+            }
         if model.compat is not None:
             raw["compat"] = compat_to_dict(model.compat)
     elif isinstance(model, ImageModel):

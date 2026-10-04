@@ -13,7 +13,7 @@ from pidrei_ai.api.openai_responses_shared import (
     convert_responses_tools,
     process_responses_stream,
 )
-from pidrei_ai.api.simple_options import build_base_options
+from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
 from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
@@ -364,14 +364,19 @@ def build_params(
     if options.tool_choice is not None:
         params["tool_choice"] = options.tool_choice
 
+    reasoning_effort = (
+        options.reasoning_effort
+        if options.reasoning_effort is not None
+        else ("medium" if options.reasoning_summary else None)
+    )
     if model.reasoning:
         mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}
-        if options.reasoning_effort or options.reasoning_summary:
+        if reasoning_effort:
             if options.reasoning_effort:
                 mapped = mapping.get(options.reasoning_effort)
                 effort = mapped if mapped is not None else options.reasoning_effort
             else:
-                effort = "medium"
+                effort = reasoning_effort
             params["reasoning"] = {"effort": effort, "summary": options.reasoning_summary or "auto"}
             params["include"] = ["reasoning.encrypted_content"]
         elif model.provider != "github-copilot" and not ("off" in mapping and mapping["off"] is None):
@@ -380,9 +385,12 @@ def build_params(
         if model.provider == "xai":
             params["include"] = ["reasoning.encrypted_content"]
 
-    # Last so custom keys override the named request fields. Per-request keys override model defaults.
-    params.update(model.sampling_params or {})
-    params.update(options.sampling_params or {})
+    # Last so model and request sampling parameters override named request fields.
+    sampling_params = resolve_sampling_params(
+        model, reasoning_effort if reasoning_effort is not None else "off", options.sampling_params
+    )
+    if sampling_params is not None:
+        params.update(sampling_params)
 
     return params
 

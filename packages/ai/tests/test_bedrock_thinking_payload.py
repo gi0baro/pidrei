@@ -18,6 +18,14 @@ from pidrei_ai.types import Context, TranscriptContext, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
 
 
+THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
+ADAPTIVE_WITH_BINDING = {
+    "type": "adaptive",
+    "display": "summarized",
+    "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+}
+
+
 class PayloadCaptured(Exception):
     """Aborts the request once the payload has been seen."""
 
@@ -88,9 +96,9 @@ async def test_uses_adaptive_thinking_for_claude_opus_4_8_when_reasoning_is_enab
     payload = await capture_payload(_opus_48())
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "high"}
-    assert fields.get("anthropic_beta") is None
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
 
 
 @pytest.mark.tonio
@@ -98,9 +106,9 @@ async def test_maps_xhigh_reasoning_to_effort_xhigh_for_claude_opus_4_8():
     payload = await capture_payload(_opus_48(), BedrockOptions(reasoning="xhigh"))
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "xhigh"}
-    assert fields.get("anthropic_beta") is None
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
 
 
 @pytest.mark.tonio
@@ -108,9 +116,9 @@ async def test_uses_adaptive_thinking_for_claude_fable_5_when_reasoning_is_enabl
     payload = await capture_payload(get_builtin_model("amazon-bedrock", "global.anthropic.claude-fable-5"))
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "high"}
-    assert fields.get("anthropic_beta") is None
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
 
 
 @pytest.mark.tonio
@@ -118,9 +126,9 @@ async def test_uses_adaptive_thinking_for_claude_sonnet_5_when_reasoning_is_enab
     payload = await capture_payload(get_builtin_model("amazon-bedrock", "global.anthropic.claude-sonnet-5"))
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "high"}
-    assert fields.get("anthropic_beta") is None
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
 
 
 @pytest.mark.tonio
@@ -128,9 +136,9 @@ async def test_uses_adaptive_thinking_for_claude_opus_5_when_reasoning_is_enable
     payload = await capture_payload(get_builtin_model("amazon-bedrock", "global.anthropic.claude-opus-5"))
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "high"}
-    assert fields.get("anthropic_beta") is None
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
 
 
 @pytest.mark.tonio
@@ -141,9 +149,9 @@ async def test_maps_xhigh_reasoning_to_effort_xhigh_for_claude_opus_5():
     )
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "xhigh"}
-    assert fields.get("anthropic_beta") is None
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
 
 
 @pytest.mark.tonio
@@ -154,8 +162,29 @@ async def test_maps_xhigh_reasoning_to_effort_xhigh_for_claude_fable_5():
     )
 
     fields = payload["additionalModelRequestFields"]
-    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
     assert fields["output_config"] == {"effort": "xhigh"}
+
+
+# https://github.com/earendil-works/pi/issues/10324
+@pytest.mark.tonio
+async def test_sends_block_binding_and_the_binding_beta_for_claude_opus_5_5():
+    payload = await capture_payload(get_builtin_model("amazon-bedrock", "global.anthropic.claude-opus-5-5"))
+
+    fields = payload["additionalModelRequestFields"]
+    assert fields["thinking"] == ADAPTIVE_WITH_BINDING
+    assert fields["anthropic_beta"] == [THINKING_BINDING_CONTROLS_BETA]
+
+
+# Bedrock rejects block_binding on 4.6 models: "Extra inputs are not permitted" (#10324)
+@pytest.mark.tonio
+@pytest.mark.parametrize("model_id", ["global.anthropic.claude-opus-4-6-v1", "global.anthropic.claude-sonnet-4-6"])
+async def test_omits_block_binding_for(model_id):
+    payload = await capture_payload(get_builtin_model("amazon-bedrock", model_id))
+
+    fields = payload["additionalModelRequestFields"]
+    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields.get("anthropic_beta") is None
 
 
 @pytest.mark.tonio

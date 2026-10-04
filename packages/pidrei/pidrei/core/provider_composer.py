@@ -55,6 +55,7 @@ from pidrei_ai.types import (
     ImagesOptions,
     Model,
     ModelCost,
+    SamplingParamsByThinkingLevel,
     TranscriptContext,
 )
 from pidrei_ai.utils.model_operations import (
@@ -185,6 +186,20 @@ def _model_compat(api: str, value: Any) -> Any:
     return parse_compat(api, value)
 
 
+def _merge_sampling_params_by_thinking_level(
+    base: SamplingParamsByThinkingLevel | None, override: SamplingParamsByThinkingLevel | None
+) -> SamplingParamsByThinkingLevel | None:
+    # pi's `if (!override)` / `if (params)`: an empty object is truthy, so only absence skips.
+    if override is None:
+        return base
+    merged = dict(base or {})
+    for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
+        params = override.get(level)
+        if params is not None:
+            merged[level] = {**((base or {}).get(level) or {}), **params}
+    return merged
+
+
 def apply_model_override(model: Model, override: dict[str, Any]) -> Model:
     override_cost = override.get("cost")
     if override_cost:
@@ -217,6 +232,9 @@ def apply_model_override(model: Model, override: dict[str, Any]) -> Model:
         sampling_params={**(model.sampling_params or {}), **override["samplingParams"]}
         if override.get("samplingParams") is not None
         else model.sampling_params,
+        sampling_params_by_thinking_level=_merge_sampling_params_by_thinking_level(
+            model.sampling_params_by_thinking_level, override.get("samplingParamsByThinkingLevel")
+        ),
         compat=merge_compat(model.api, model.compat, override.get("compat")),
     )
 
@@ -254,6 +272,7 @@ def _model_from_json(
         context_window=_nn(definition.get("contextWindow"), 128000),
         max_tokens=_nn(definition.get("maxTokens"), 16384),
         sampling_params=definition.get("samplingParams"),
+        sampling_params_by_thinking_level=definition.get("samplingParamsByThinkingLevel"),
         headers=None,
         compat=merge_compat(api, parse_compat(api, provider_config.get("compat")), definition.get("compat")),
     )
@@ -399,6 +418,8 @@ def _extension_model_from_definition(
         prompt_cache=definition.get("promptCache"),
         context_window=_nn(definition.get("contextWindow"), 128000),
         max_tokens=_nn(definition.get("maxTokens"), 16384),
+        sampling_params=definition.get("samplingParams"),
+        sampling_params_by_thinking_level=definition.get("samplingParamsByThinkingLevel"),
         headers=None,
         compat=_model_compat(api, definition.get("compat")),
         type=definition.get("type"),

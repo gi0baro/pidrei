@@ -32,6 +32,7 @@ from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.simple_options import (
     build_base_options,
     clamp_thinking_budget_to_answer_room,
+    resolve_sampling_params,
     thinking_budget_for_level,
 )
 from pidrei_ai.api.transform_messages import transform_messages
@@ -1178,9 +1179,14 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
         if gateway_options:
             params["providerOptions"] = {"gateway": gateway_options}
 
-    # Last so custom keys override the named request fields. Per-request keys override model defaults.
-    params.update(model.sampling_params or {})
-    params.update(options.sampling_params or {})
+    # Last so model and request sampling parameters override named request fields.
+    sampling_params = resolve_sampling_params(
+        model,
+        options.reasoning_effort if options.reasoning_effort is not None else "off",
+        options.sampling_params,
+    )
+    if sampling_params is not None:
+        params.update(sampling_params)
 
     return params
 

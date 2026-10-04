@@ -12,6 +12,9 @@ from pidrei_ai.api import (
     openai_completions,
     openai_responses,
 )
+from pidrei_ai.api.azure_openai_responses import AzureOpenAIResponsesOptions
+from pidrei_ai.api.openai_completions import OpenAICompletionsOptions
+from pidrei_ai.api.openai_responses import OpenAIResponsesOptions
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, StreamOptions, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
 
@@ -23,24 +26,35 @@ _ADAPTERS = {
     "anthropic-messages": anthropic_messages,
 }
 
+# pi's `DirectSamplingOptions` (StreamOptions plus `reasoningEffort`/`reasoningSummary`)
+# is each adapter's own options class here.
+_DIRECT_OPTIONS = {
+    "openai-completions": OpenAICompletionsOptions,
+    "openai-responses": OpenAIResponsesOptions,
+    "azure-openai-responses": AzureOpenAIResponsesOptions,
+}
+
 
 def make_context() -> Context:
     return normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)]))
 
 
-def make_model(api: str, sampling_params: dict | None = None) -> Model:
+def make_model(api: str, sampling_params: dict | None = None, **overrides) -> Model:
     return Model(
-        id="custom-model",
-        name="Custom Model",
-        api=api,
-        provider="custom-provider",
-        base_url="http://127.0.0.1:9/v1",
-        reasoning=False,
-        input=["text"],
-        cost=ModelCost(),
-        context_window=128000,
-        max_tokens=16384,
-        sampling_params=sampling_params,
+        **{
+            "id": "custom-model",
+            "name": "Custom Model",
+            "api": api,
+            "provider": "custom-provider",
+            "base_url": "http://127.0.0.1:9/v1",
+            "reasoning": False,
+            "input": ["text"],
+            "cost": ModelCost(),
+            "context_window": 128000,
+            "max_tokens": 16384,
+            "sampling_params": sampling_params,
+            **overrides,
+        }
     )
 
 
@@ -59,7 +73,25 @@ async def capture_payload(model: Model, **option_kwargs) -> dict:
         .stream(
             model,
             make_context(),
-            StreamOptions(api_key="fake-key", on_payload=capturing_on_payload(captured), **option_kwargs),
+            _DIRECT_OPTIONS.get(model.api, StreamOptions)(
+                api_key="fake-key", on_payload=capturing_on_payload(captured), **option_kwargs
+            ),
+        )
+        .result()
+    )
+
+    assert "payload" in captured, "Expected payload to be captured before request failure"
+    return captured["payload"]
+
+
+async def capture_simple_payload(model: Model, **option_kwargs) -> dict:
+    captured: dict = {}
+    await (
+        _ADAPTERS[model.api]
+        .stream_simple(
+            model,
+            make_context(),
+            SimpleStreamOptions(api_key="fake-key", on_payload=capturing_on_payload(captured), **option_kwargs),
         )
         .result()
     )
@@ -102,17 +134,89 @@ async def test_applies_model_level_sampling_params_with_request_keys_taking_prec
 
 @pytest.mark.tonio
 async def test_passes_request_sampling_params_through_stream_simple():
-    captured: dict = {}
+    payload = await capture_simple_payload(make_model("openai-completions"), sampling_params={"top_p": 0.5})
 
-    await openai_completions.stream_simple(
-        make_model("openai-completions"),
-        make_context(),
-        SimpleStreamOptions(
-            sampling_params={"top_p": 0.5}, api_key="fake-key", on_payload=capturing_on_payload(captured)
+    assert payload["top_p"] == 0.5
+
+
+@pytest.mark.tonio
+async def test_applies_sampling_params_for_the_effective_thinking_level_over_model_defaults():
+    payload = await capture_simple_payload(
+        make_model(
+            "openai-completions",
+            {"temperature": 1, "top_p": 0.95},
+            reasoning=True,
+            thinking_level_map={"low": None, "medium": None},
+            sampling_params_by_thinking_level={"high": {"temperature": 0.8, "top_k": 64}},
         ),
-    ).result()
+        reasoning="low",
+    )
 
-    assert captured["payload"]["top_p"] == 0.5
+    assert payload["temperature"] == 0.8
+    assert payload["top_p"] == 0.95
+    assert payload["top_k"] == 64
+
+
+@pytest.mark.tonio
+async def test_applies_off_sampling_params_when_reasoning_is_disabled():
+    payload = await capture_simple_payload(
+        make_model("openai-completions", None, sampling_params_by_thinking_level={"off": {"temperature": 0.7}})
+    )
+
+    assert payload["temperature"] == 0.7
+
+
+@pytest.mark.tonio
+async def test_merges_stream_option_keys_over_thinking_level_keys():
+    payload = await capture_simple_payload(
+        make_model(
+            "openai-completions",
+            None,
+            reasoning=True,
+            sampling_params_by_thinking_level={"low": {"temperature": 0.6, "top_p": 0.95}},
+        ),
+        reasoning="low",
+        sampling_params={"top_p": 0.5},
+    )
+
+    assert payload["temperature"] == 0.6
+    assert payload["top_p"] == 0.5
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("api", ["openai-completions", "openai-responses", "azure-openai-responses"])
+async def test_applies_thinking_level_params_between_model_and_request_params(api):
+    payload = await capture_payload(
+        make_model(
+            api,
+            {"temperature": 1, "top_p": 0.95},
+            reasoning=True,
+            sampling_params_by_thinking_level={"low": {"temperature": 0.6, "top_k": 64}},
+        ),
+        reasoning_effort="low",
+        sampling_params={"top_p": 0.5},
+    )
+
+    assert payload["temperature"] == 0.6
+    assert payload["top_p"] == 0.5
+    assert payload["top_k"] == 64
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("api", ["openai-responses", "azure-openai-responses"])
+async def test_uses_medium_sampling_params_for_summary_only_requests(api):
+    payload = await capture_payload(
+        make_model(
+            api,
+            None,
+            reasoning=True,
+            sampling_params_by_thinking_level={"off": {"temperature": 0.7}, "medium": {"temperature": 0.8}},
+        ),
+        reasoning_summary="auto",
+    )
+
+    assert payload["reasoning"]["effort"] == "medium"
+    assert payload["temperature"] == 0.8
 
 
 @pytest.mark.tonio

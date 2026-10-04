@@ -3,9 +3,13 @@
 
 System One models on the Workers AI REST endpoint:
 `POST /accounts/{account}/ai/run` with `{model, input}`. The REST API wraps the
-model output in Cloudflare's API envelope and a run record:
+model output in Cloudflare's API envelope. Third-party models such as
+`typesafe/jev` add a run record:
 `{success, result: {state: "Completed", result: {answers, usage}}}`.
 https://developers.cloudflare.com/ai/models/typesafe/jev/
+Cloudflare-hosted models such as `@cf/cloudflare/clef` return the output directly:
+`{success, result: {model, answers, usage}}`.
+https://developers.cloudflare.com/workers-ai/models/clef/
 """
 
 import json
@@ -32,14 +36,16 @@ def _output(body: Any) -> dict[str, Any]:
         raise RuntimeError(f"{_LABEL} returned an unexpected response")
     if body.get("success") is False:
         raise RuntimeError(_cloudflare_error_message(body.get("errors")))
-    run = body.get("result")
-    if not is_record(run):
+    result = body.get("result")
+    if not is_record(result):
         raise RuntimeError(f"{_LABEL} returned an unexpected response")
-    if run.get("state") != "Completed":
-        raise RuntimeError(f"{_LABEL} run did not complete (state: {_js_string(run, 'state')})")
-    if not is_record(run.get("result")):
+    if "answers" in result:
+        return result
+    if result.get("state") != "Completed":
+        raise RuntimeError(f"{_LABEL} run did not complete (state: {_js_string(result, 'state')})")
+    if not is_record(result.get("result")):
         raise RuntimeError(f"{_LABEL} returned an unexpected response")
-    return run["result"]
+    return result["result"]
 
 
 def _js_string(record: dict[str, Any], key: str) -> str:

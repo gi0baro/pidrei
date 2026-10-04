@@ -82,6 +82,12 @@ _THINKING_LEVEL_MAP = {
     "properties": dict.fromkeys(("off", "minimal", "low", "medium", "high", "xhigh", "max"), _THINKING_LEVEL_MAP_VALUE),
 }
 
+_SAMPLING_PARAMS = {"type": "object"}
+_SAMPLING_PARAMS_BY_THINKING_LEVEL = {
+    "type": "object",
+    "properties": dict.fromkeys(("off", "minimal", "low", "medium", "high", "xhigh", "max"), _SAMPLING_PARAMS),
+}
+
 _CHAT_TEMPLATE_KWARG = {
     "anyOf": [
         _STRING,
@@ -249,7 +255,8 @@ _MODEL_DEFINITION = {
         "promptCache": _MODEL_PROMPT_CACHE,
         "contextWindow": _NUMBER,
         "maxTokens": _NUMBER,
-        "samplingParams": {"type": "object"},
+        "samplingParams": _SAMPLING_PARAMS,
+        "samplingParamsByThinkingLevel": _SAMPLING_PARAMS_BY_THINKING_LEVEL,
         "headers": _STRING_RECORD,
         "compat": _PROVIDER_COMPAT,
     },
@@ -271,7 +278,8 @@ _MODEL_OVERRIDE = {
         "promptCache": _MODEL_PROMPT_CACHE,
         "contextWindow": _NUMBER,
         "maxTokens": _NUMBER,
-        "samplingParams": {"type": "object"},
+        "samplingParams": _SAMPLING_PARAMS,
+        "samplingParamsByThinkingLevel": _SAMPLING_PARAMS_BY_THINKING_LEVEL,
         "headers": _STRING_RECORD,
         "compat": _PROVIDER_COMPAT,
     },

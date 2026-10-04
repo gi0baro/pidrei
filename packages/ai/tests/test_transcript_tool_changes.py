@@ -110,6 +110,7 @@ ANTHROPIC_NATIVE_MODEL = make_model(
     AnthropicMessagesCompat(supports_mid_convo_system_messages=True, supports_mid_convo_tool_changes=True),
 )
 
+INLINE_TOOLS_BETA = "inline-tools-2026-09-15"
 MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
 
 
@@ -117,25 +118,31 @@ MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
 async def test_sends_anthropic_updates_and_tool_changes_in_native_system_messages():
     payload = await capture_payload(ANTHROPIC_NATIVE_MODEL, CONTEXT)
 
-    assert MID_CONVERSATION_TOOL_CHANGES_BETA in payload["betas"]
+    assert INLINE_TOOLS_BETA in payload["betas"]
+    assert MID_CONVERSATION_TOOL_CHANGES_BETA not in payload["betas"]
     assert [block["text"] for block in payload["system"]] == [
         "base prompt\n\n<rules>\nold rules\n</rules>\n\n<docs>\nread docs\n</docs>"
     ]
-    # Initial tools stay active and carry the cache breakpoint; the placeholder and every
-    # later declaration are deferred; the removed tool stays declared.
+    # The top-level list holds only the initial tools (with the cache breakpoint) and the
+    # deferred placeholder; later tools never appear there.
     tools = payload["tools"]
-    assert [tool["name"] for tool in tools] == ["base_tool", "__pi_deferred_placeholder__", "late_tool"]
+    assert [tool["name"] for tool in tools] == ["base_tool", "__pi_deferred_placeholder__"]
     assert tools[0]["cache_control"] == {"type": "ephemeral"}
     assert tools[1]["defer_loading"] is True
-    assert tools[2]["defer_loading"] is True
     assert "defer_loading" not in tools[0]
     assert "cache_control" not in tools[1]
-    assert "cache_control" not in tools[2]
     update = payload["messages"][-1]
     assert update["role"] == "system"
     assert [block["type"] for block in update["content"]] == ["text", "tool_removal", "tool_addition"]
-    assert update["content"][1]["tool"]["name"] == "base_tool"
-    assert update["content"][2]["tool"]["name"] == "late_tool"
+    assert update["content"][1]["tool"] == {"type": "tool_reference", "name": "base_tool"}
+    addition = update["content"][2]
+    assert addition["tool"]["type"] == "tool_definition"
+    assert addition["tool"]["definition"]["name"] == "late_tool"
+    assert addition["tool"]["definition"]["description"] == "late_tool tool"
+    assert addition["cache_control"] == {"type": "ephemeral"}
+    # Cache control goes on the block, never on the inline definition; nothing is deferred.
+    assert "cache_control" not in addition["tool"]["definition"]
+    assert "defer_loading" not in addition["tool"]["definition"]
     assert "updated guidance" in update["content"][0]["text"]
     assert "<rules>\nnew rules\n</rules>" in update["content"][0]["text"]
     assert 'Removed system prompt section "docs"' in update["content"][0]["text"]
@@ -146,38 +153,57 @@ async def test_sends_anthropic_updates_and_tool_changes_in_native_system_message
 
 
 @pytest.mark.tonio
-async def test_sends_the_current_anthropic_tool_list_when_native_tool_changes_cannot_express_the_history():
+async def test_redefines_an_anthropic_tool_by_value_under_the_same_name():
     redefined_tool = replace(BASE_TOOL, description="changed")
-    fallback_contexts = [
-        # Same-name redefinition: blocks reference tools by name only.
+    payload = await capture_payload(
+        ANTHROPIC_NATIVE_MODEL,
         Context(
             messages=[
                 SystemMessage(content="base prompt", tools_added=[BASE_TOOL], timestamp=0),
+                UserMessage(content="before", timestamp=1),
                 SystemMessage(
-                    content="updated guidance",
+                    content="",
                     tools_removed=[ToolReference(name="base_tool")],
                     tools_added=[redefined_tool],
                     timestamp=2,
                 ),
             ]
         ),
-        # No initial tool: Anthropic rejects an all-deferred tool list.
+    )
+
+    assert INLINE_TOOLS_BETA in payload["betas"]
+    # The top-level declaration keeps the original definition, so the cached prefix survives.
+    assert [tool["name"] for tool in payload["tools"]] == ["base_tool", "__pi_deferred_placeholder__"]
+    assert payload["tools"][0]["description"] == "base_tool tool"
+    # The new definition replaces the old one in place; no removal block is sent for it.
+    update = payload["messages"][-1]
+    assert update["role"] == "system"
+    assert len(update["content"]) == 1
+    assert update["content"][0]["type"] == "tool_addition"
+    assert update["content"][0]["tool"]["type"] == "tool_definition"
+    assert update["content"][0]["tool"]["definition"]["name"] == "base_tool"
+    assert update["content"][0]["tool"]["definition"]["description"] == "changed"
+
+
+@pytest.mark.tonio
+async def test_sends_the_current_anthropic_tool_list_without_an_initial_tool():
+    # Anthropic rejects a tool list where every tool (here: the placeholder) is deferred.
+    payload = await capture_payload(
+        ANTHROPIC_NATIVE_MODEL,
         Context(
             messages=[
                 SystemMessage(content="base prompt", timestamp=0),
-                SystemMessage(content="updated guidance", tools_added=[redefined_tool], timestamp=2),
+                UserMessage(content="before", timestamp=1),
+                SystemMessage(content="updated guidance", tools_added=[LATE_TOOL], timestamp=2),
             ]
         ),
-    ]
-    for fallback_context in fallback_contexts:
-        payload = await capture_payload(ANTHROPIC_NATIVE_MODEL, fallback_context)
-        assert MID_CONVERSATION_TOOL_CHANGES_BETA not in payload.get("betas", [])
-        assert len(payload["tools"]) == 1
-        assert payload["tools"][0]["name"] == "base_tool"
-        assert payload["tools"][0]["description"] == "changed"
-        assert payload["tools"][0]["cache_control"] == {"type": "ephemeral"}
-        assert "defer_loading" not in payload["tools"][0]
-        assert [block["type"] for block in payload["messages"][-1]["content"]] == ["text"]
+    )
+    assert INLINE_TOOLS_BETA not in payload.get("betas", [])
+    assert len(payload["tools"]) == 1
+    assert payload["tools"][0]["name"] == "late_tool"
+    assert payload["tools"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "defer_loading" not in payload["tools"][0]
+    assert [block["type"] for block in payload["messages"][-1]["content"]] == ["text"]
 
 
 @pytest.mark.tonio
@@ -185,7 +211,7 @@ async def test_folds_anthropic_updates_into_the_system_prompt_without_native_sup
     model = make_model("claude-sonnet-4-5", "Claude Sonnet 4.5", "anthropic-messages", "anthropic")
     payload = await capture_payload(model, CONTEXT)
 
-    assert MID_CONVERSATION_TOOL_CHANGES_BETA not in payload.get("betas", [])
+    assert INLINE_TOOLS_BETA not in payload.get("betas", [])
     assert [block["text"] for block in payload["system"]] == [
         "base prompt\n\nupdated guidance\n\n<rules>\nnew rules\n</rules>"
     ]
@@ -204,7 +230,7 @@ async def test_requires_both_anthropic_capabilities_for_native_tool_changes():
     )
     payload = await capture_payload(model, CONTEXT)
 
-    assert MID_CONVERSATION_TOOL_CHANGES_BETA not in payload.get("betas", [])
+    assert INLINE_TOOLS_BETA not in payload.get("betas", [])
     assert [value["name"] for value in payload["tools"]] == ["late_tool"]
     assert [message["role"] for message in payload["messages"]] == ["user"]
 

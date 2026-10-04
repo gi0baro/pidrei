@@ -229,8 +229,12 @@ def get_declared_tools(messages: TranscriptMessages) -> list[Tool]:
 
 
 def has_tool_redefinitions(messages: TranscriptMessages) -> bool:
-    """Whether a tool name was declared twice with different definitions. Transports that
-    reference tools by name (Anthropic `tool_addition`/`tool_removal`) cannot express that."""
+    """Whether a tool name was declared twice with different definitions. A transport that can
+    only reference previously declared tools by name cannot replay such a history.
+
+    Deprecated: no built-in transport needs this anymore: Anthropic expresses redefinitions with
+    inline `tool_definition` blocks. Kept for API compatibility and will be removed in a future release.
+    """
     declared: dict[str, Tool] = {}
     for message in messages:
         if not _is_system_message(message):

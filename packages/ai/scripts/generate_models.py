@@ -38,6 +38,7 @@ from model_data import (  # sibling script, not an installed module
     ModelDataStructure,
     assert_exact_model_ids,
     create_model_data_manifest,
+    group_provider_model_data,
     validate_generated_model_data,
     validate_model_data_directory,
 )
@@ -1111,7 +1112,7 @@ def _cost(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_models_dev_cost(cost: dict[str, Any] | None) -> dict[str, Any]:
-    """pi's tier-aware cost reader; used for GitHub Copilot and xAI."""
+    """pi's tier-aware cost reader (`getModelsDevCost`)."""
     cost = cost or {}
     tiers = []
     for tier in cost.get("tiers") or []:
@@ -1462,6 +1463,32 @@ OPENCODE_CLASSIFIER_MODELS: list[dict[str, Any]] = [
 # System One models yet. Cloudflare publishes pricing only in the dashboard.
 # https://developers.cloudflare.com/ai/models/typesafe/jev/
 CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
+    # Cloudflare-hosted Clef decision models. They accept images, but classifier
+    # contexts carry text or JSON state only, so the catalog advertises text.
+    # Pricing: https://developers.cloudflare.com/workers-ai/models/clef/
+    # and https://developers.cloudflare.com/workers-ai/models/clef-flash/
+    {
+        "type": "classifier",
+        "id": "@cf/cloudflare/clef",
+        "name": "Clef",
+        "api": "cloudflare-workers-ai-system-one",
+        "provider": "cloudflare-workers-ai",
+        "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+        "input": ["text"],
+        "cost": {"input": 0.24, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 65536,
+    },
+    {
+        "type": "classifier",
+        "id": "@cf/cloudflare/clef-flash",
+        "name": "Clef Flash",
+        "api": "cloudflare-workers-ai-system-one",
+        "provider": "cloudflare-workers-ai",
+        "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+        "input": ["text"],
+        "cost": {"input": 0.09, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 65536,
+    },
     {
         "type": "classifier",
         "id": "typesafe/jev",
@@ -1581,7 +1608,8 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
             "baseUrl": get_bedrock_base_url(model_id),
             "reasoning": source.get("reasoning") is True,
             "input": _input(source),
-            "cost": _cost(source),
+            # Includes models.dev pricing tiers, e.g. the long-context tier for OpenAI models (#10326).
+            "cost": get_models_dev_cost(source.get("cost")),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
         }
@@ -1719,7 +1747,14 @@ def _load_gateway_providers(
         if upstream == "openai":
             api, base_url, model_id = "openai-responses", CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL, native_id
         elif upstream == "anthropic":
-            api, base_url, model_id = "anthropic-messages", CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL, native_id
+            # The /anthropic passthrough forwards the model ID to Anthropic unchanged.
+            # models.dev lists dotted versions (claude-opus-5.5), but Anthropic only
+            # accepts dashed IDs (claude-opus-5-5).
+            api, base_url, model_id = (
+                "anthropic-messages",
+                CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
+                native_id.replace(".", "-"),
+            )
         elif upstream == "workers-ai":
             api, base_url, model_id = "openai-completions", CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL, prefixed_id
         else:
@@ -3249,18 +3284,7 @@ async def main() -> None:
             for model_type in ("chat", "image", "classifier")
             for _model_id, model in sorted(providers[provider_id][model_type].items())
         ]
-        by_api: dict[str, dict[str, Any]] = {}
-        structure[provider_id] = {}
-        for api in sorted({model["api"] for model in provider_models}):
-            by_api[api] = {}
-            for model in provider_models:
-                if model["api"] != api:
-                    continue
-                identity = f"{model['type']}:{model['id']}"
-                if identity in by_api[api]:
-                    raise RuntimeError(f"{provider_id}/{identity} has duplicate {api} catalog entries")
-                by_api[api][identity] = model
-                structure[provider_id][identity] = api
+        by_api, structure[provider_id] = group_provider_model_data(provider_id, provider_models)
         file_contents[f"{provider_id}.json"] = json.dumps(by_api, indent=2) + "\n"
 
     manifest = create_model_data_manifest(
