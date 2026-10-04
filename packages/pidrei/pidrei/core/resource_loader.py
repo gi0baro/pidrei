@@ -5,7 +5,7 @@ SYSTEM.md / APPEND_SYSTEM.md, with the project-trust bootstrap flow.
 """
 
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -70,6 +70,15 @@ class SourcedPath:
 
 def _warn(message: str) -> None:
     write_stderr(f"\x1b[33mWarning: {message}\x1b[0m\n")
+
+
+def _directories_among_blocking(paths: list[str]) -> frozenset[str]:
+    return frozenset(path for path in paths if os.path.isdir(path))
+
+
+def _skill_directories_among_blocking(paths: list[str]) -> frozenset[str]:
+    """The paths that are a directory holding a `SKILL.md`."""
+    return frozenset(path for path in paths if os.path.isdir(path) and os.path.exists(os.path.join(path, "SKILL.md")))
 
 
 def _resolve_prompt_input(input: str | None, description: str) -> Awaitable[str | None]:
@@ -451,9 +460,7 @@ class DefaultResourceLoader:
         enabled_skill_resources = get_enabled_resources(resolved_paths.skills)
         enabled_prompts = get_enabled_paths(resolved_paths.prompts)
 
-        enabled_skills = [
-            await self._map_skill_path(resource, metadata_by_path) for resource in enabled_skill_resources
-        ]
+        enabled_skills = await self._map_skill_paths(enabled_skill_resources, metadata_by_path)
 
         for resource in [*cli_extension_paths.extensions, *cli_extension_paths.skills]:
             if resource.path not in metadata_by_path:
@@ -469,13 +476,10 @@ class DefaultResourceLoader:
             extension_paths = await self._merge_paths(cli_enabled_extensions, enabled_extensions)
 
         extensions_result = await self._load_final_extension_set(extension_paths, pre_trust_extensions)
-        for path in self._additional_extension_paths:
-            if is_local_path(path):
-                resolved = self._resolve_resource_path(path)
-                if not await fs.Path(resolved).exists():
-                    extensions_result.errors.append(
-                        ExtensionLoadError(path=resolved, error=f"Extension path does not exist: {resolved}")
-                    )
+        for resolved in await self._missing_local_paths(self._additional_extension_paths):
+            extensions_result.errors.append(
+                ExtensionLoadError(path=resolved, error=f"Extension path does not exist: {resolved}")
+            )
         self._extensions_result = (
             self._extensions_override(extensions_result) if self._extensions_override else extensions_result
         )
@@ -519,27 +523,19 @@ class DefaultResourceLoader:
 
     async def _load_skills_stage(self, skill_paths: list[str], metadata_by_path: dict[str, PathMetadata]) -> None:
         await self._update_skills_from_paths(skill_paths, metadata_by_path)
-        for path in self._additional_skill_paths:
-            if is_local_path(path):
-                resolved = self._resolve_resource_path(path)
-                if not await fs.Path(resolved).exists() and not any(
-                    d.path == resolved for d in self._skill_diagnostics
-                ):
-                    self._skill_diagnostics.append(
-                        ResourceDiagnostic(type="error", message="Skill path does not exist", path=resolved)
-                    )
+        for resolved in await self._missing_local_paths(self._additional_skill_paths):
+            if not any(d.path == resolved for d in self._skill_diagnostics):
+                self._skill_diagnostics.append(
+                    ResourceDiagnostic(type="error", message="Skill path does not exist", path=resolved)
+                )
 
     async def _load_prompts_stage(self, prompt_paths: list[str], metadata_by_path: dict[str, PathMetadata]) -> None:
         await self._update_prompts_from_paths(prompt_paths, metadata_by_path)
-        for path in self._additional_prompt_template_paths:
-            if is_local_path(path):
-                resolved = self._resolve_resource_path(path)
-                if not await fs.Path(resolved).exists() and not any(
-                    d.path == resolved for d in self._prompt_diagnostics
-                ):
-                    self._prompt_diagnostics.append(
-                        ResourceDiagnostic(type="error", message="Prompt template path does not exist", path=resolved)
-                    )
+        for resolved in await self._missing_local_paths(self._additional_prompt_template_paths):
+            if not any(d.path == resolved for d in self._prompt_diagnostics):
+                self._prompt_diagnostics.append(
+                    ResourceDiagnostic(type="error", message="Prompt template path does not exist", path=resolved)
+                )
 
     async def _load_agents_files_stage(self) -> None:
         agents_files = (
@@ -573,18 +569,16 @@ class DefaultResourceLoader:
         else:
             discovered = await tonio.spawn_blocking(self._discover_append_system_prompt_file_blocking)
             append_sources = [discovered] if discovered is not None else []
-        base_append = [
-            resolved
-            for source in append_sources
-            if (resolved := await _resolve_prompt_input(source, "append system prompt")) is not None
-        ]
+        resolved = await gather(*(_resolve_prompt_input(source, "append system prompt") for source in append_sources))
+        base_append = [text for text in resolved if text is not None]
         self._append_system_prompt = (
             self._append_system_prompt_override(base_append)
             if self._append_system_prompt_override is not None
             else base_append
         )
+        found = await gather(*(fs.Path(source).exists() for source in append_sources))
         self._append_system_prompt_source_paths = [
-            resolve_path(source) for source in append_sources if await fs.Path(source).exists()
+            resolve_path(source) for source, exists in zip(append_sources, found, strict=True) if exists
         ]
 
     # -- extension loading -------------------------------------------------------
@@ -755,10 +749,11 @@ class DefaultResourceLoader:
     async def _apply_extension_source_info(
         self, extensions: list[Extension], metadata_by_path: dict[str, PathMetadata]
     ) -> None:
+        directories = await self._directories_among(extension.path for extension in extensions)
         for extension in extensions:
-            source_info = await self._find_source_info_for_path(
-                extension.path, None, metadata_by_path
-            ) or await self._get_default_source_info_for_path(extension.path)
+            source_info = self._find_source_info_for_path(
+                extension.path, None, metadata_by_path, directories
+            ) or self._default_source_info_for_path(extension.path, directories)
             extension.source_info = source_info
             for command in extension.commands.values():
                 command.source_info = source_info
@@ -767,22 +762,44 @@ class DefaultResourceLoader:
 
     # -- helpers ----------------------------------------------------------------
 
-    async def _map_skill_path(self, resource: ResolvedResource, metadata_by_path: dict[str, PathMetadata]) -> str:
-        if resource.metadata.source != "auto" and resource.metadata.origin != "package":
-            return resource.path
-        skill_file = os.path.join(resource.path, "SKILL.md")
+    async def _map_skill_paths(
+        self, resources: list[ResolvedResource], metadata_by_path: dict[str, PathMetadata]
+    ) -> list[str]:
+        """An auto-discovered or package skill that is a directory with a
+        `SKILL.md` is named by that file. The filesystem is asked once, for
+        all of them."""
 
-        def is_skill_dir_blocking() -> bool:
-            try:
-                return os.path.isdir(resource.path) and os.path.exists(skill_file)
-            except OSError:
-                return False
+        def is_candidate(resource: ResolvedResource) -> bool:
+            return resource.metadata.source == "auto" or resource.metadata.origin == "package"
 
-        if await tonio.spawn_blocking(is_skill_dir_blocking):
+        candidates = [resource.path for resource in resources if is_candidate(resource)]
+        skill_dirs = (
+            await tonio.spawn_blocking(_skill_directories_among_blocking, candidates) if candidates else frozenset()
+        )
+        paths: list[str] = []
+        for resource in resources:
+            if not is_candidate(resource) or resource.path not in skill_dirs:
+                paths.append(resource.path)
+                continue
+            skill_file = os.path.join(resource.path, "SKILL.md")
             if skill_file not in metadata_by_path:
                 metadata_by_path[skill_file] = resource.metadata
-            return skill_file
-        return resource.path
+            paths.append(skill_file)
+        return paths
+
+    async def _directories_among(self, paths: Iterable[str]) -> frozenset[str]:
+        """Which of `paths` are directories, asked once: what the default
+        source info of a path outside the known roots depends on."""
+        candidates = [os.path.abspath(path) for path in paths if path]
+        if not candidates:
+            return frozenset()
+        return await tonio.spawn_blocking(_directories_among_blocking, candidates)
+
+    async def _missing_local_paths(self, paths: list[str]) -> list[str]:
+        """The local paths among `paths` that do not exist, resolved, in their order."""
+        resolved = [self._resolve_resource_path(path) for path in paths if is_local_path(path)]
+        found = await gather(*(fs.Path(path).exists() for path in resolved))
+        return [path for path, exists in zip(resolved, found, strict=True) if not exists]
 
     def _normalize_extension_paths(self, entries: list[SourcedPath]) -> list[SourcedPath]:
         normalized: list[SourcedPath] = []
@@ -806,15 +823,16 @@ class DefaultResourceLoader:
                 include_defaults=False,
             )
         resolved_skills = self._skills_override(skills_result) if self._skills_override is not None else skills_result
+        directories = await self._directories_among(skill.file_path for skill in resolved_skills.skills)
         self._skills = [
             replace(
                 skill,
                 source_info=(
-                    await self._find_source_info_for_path(
-                        skill.file_path, self._extension_skill_source_infos, metadata_by_path
+                    self._find_source_info_for_path(
+                        skill.file_path, self._extension_skill_source_infos, metadata_by_path, directories
                     )
                     or skill.source_info
-                    or await self._get_default_source_info_for_path(skill.file_path)
+                    or self._default_source_info_for_path(skill.file_path, directories)
                 ),
             )
             for skill in resolved_skills.skills
@@ -840,15 +858,16 @@ class DefaultResourceLoader:
         resolved_prompts = (
             self._prompts_override(prompts_result) if self._prompts_override is not None else prompts_result
         )
+        directories = await self._directories_among(prompt.file_path for prompt in resolved_prompts.prompts)
         self._prompts = [
             replace(
                 prompt,
                 source_info=(
-                    await self._find_source_info_for_path(
-                        prompt.file_path, self._extension_prompt_source_infos, metadata_by_path
+                    self._find_source_info_for_path(
+                        prompt.file_path, self._extension_prompt_source_infos, metadata_by_path, directories
                     )
                     or prompt.source_info
-                    or await self._get_default_source_info_for_path(prompt.file_path)
+                    or self._default_source_info_for_path(prompt.file_path, directories)
                 ),
             )
             for prompt in resolved_prompts.prompts
@@ -859,12 +878,13 @@ class DefaultResourceLoader:
         self, theme_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
     ) -> None:
         themes, diagnostics = await tonio.spawn_blocking(self._load_themes_from_paths_blocking, theme_paths)
+        directories = await self._directories_among(loaded_theme.source_path for loaded_theme in themes)
         for loaded_theme in themes:
             source_path = loaded_theme.source_path
             if source_path:
-                loaded_theme.source_info = await self._find_source_info_for_path(
-                    source_path, None, metadata_by_path
-                ) or await self._get_default_source_info_for_path(source_path)
+                loaded_theme.source_info = self._find_source_info_for_path(
+                    source_path, None, metadata_by_path, directories
+                ) or self._default_source_info_for_path(source_path, directories)
         self._themes = themes
         self._theme_diagnostics = diagnostics
 
@@ -955,17 +975,19 @@ class DefaultResourceLoader:
 
         return list(seen.values()), diagnostics
 
-    async def _find_source_info_for_path(
+    def _find_source_info_for_path(
         self,
         resource_path: str,
-        extra_source_infos: dict[str, SourceInfo] | None = None,
-        metadata_by_path: dict[str, PathMetadata] | None = None,
+        extra_source_infos: dict[str, SourceInfo] | None,
+        metadata_by_path: dict[str, PathMetadata] | None,
+        directories: frozenset[str],
     ) -> SourceInfo | None:
+        """`directories` is what `_directories_among` found for the caller's paths."""
         if not resource_path:
             return None
 
         if is_synthetic_path(resource_path):
-            return await self._get_default_source_info_for_path(resource_path)
+            return self._default_source_info_for_path(resource_path, directories)
 
         normalized_resource_path = os.path.abspath(resource_path)
         if extra_source_infos:
@@ -990,7 +1012,7 @@ class DefaultResourceLoader:
 
         return None
 
-    async def _get_default_source_info_for_path(self, file_path: str) -> SourceInfo:
+    def _default_source_info_for_path(self, file_path: str, directories: frozenset[str]) -> SourceInfo:
         synthetic_source = get_synthetic_path_source(file_path)
         if synthetic_source:
             return SourceInfo(path=file_path, source=synthetic_source, scope="temporary", origin="top-level")
@@ -1014,7 +1036,7 @@ class DefaultResourceLoader:
             source="local",
             scope="temporary",
             origin="top-level",
-            base_dir=normalized_path if await fs.Path(normalized_path).is_dir() else os.path.dirname(normalized_path),
+            base_dir=normalized_path if normalized_path in directories else os.path.dirname(normalized_path),
         )
 
     async def _merge_paths(self, primary: list[str], additional: list[str]) -> list[str]:

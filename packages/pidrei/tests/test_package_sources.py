@@ -331,6 +331,33 @@ async def test_update_reconciles_each_configured_git_package(dirs):
 
 
 @pytest.mark.tonio
+async def test_update_finishes_the_other_packages_when_one_fails(dirs):
+    """A failed update does not stop the others, as in pi. The failures are
+    raised together once every update is done."""
+    names = ("a", "b", "c")
+    for name in names:
+        os.makedirs(os.path.join(dirs.agent_dir, "git", "github.com", "user", name))
+    dirs.settings.set_packages([f"git:github.com/user/{name}@v1.0.0" for name in names])
+    checked_out: list[str] = []
+
+    async def run_command(_command: str, args: list[str], *, cwd: str | None = None) -> str:
+        name = os.path.basename(cwd)
+        if name == "a":
+            raise Exception("git failed")
+        if args[0] == "checkout":
+            checked_out.append(name)
+        return ""
+
+    dirs.manager._run_command = run_command
+
+    with pytest.raises(ExceptionGroup) as raised:
+        await dirs.manager.update()
+
+    assert [str(error) for error in raised.value.exceptions] == ["git failed"]
+    assert sorted(checked_out) == ["b", "c"]
+
+
+@pytest.mark.tonio
 async def test_update_reports_an_unmatched_source(dirs):
     dirs.settings.set_packages(["git:github.com/user/repo"])
 

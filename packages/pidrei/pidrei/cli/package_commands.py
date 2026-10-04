@@ -517,6 +517,7 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
         lambda event: write_stdout(dim(event.message) + "\n") if event.type == "start" and event.message else None
     )
 
+    failures: tuple[BaseException, ...] = ()
     try:
         if options.command == "install":
             await package_manager.install_and_persist(options.source, local=options.local)
@@ -543,9 +544,12 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
             await _refresh_model_catalogs(agent_dir)
         await settings_manager.flush()
         return 0
-    except Exception as error:
+    except* Exception as group:
+        # An update runs several packages at once and raises every failure.
+        failures = group.exceptions
+    for error in failures:
         write_stderr(red(f"Error: {error or 'Unknown package command error'}") + "\n")
-        return 1
+    return 1
 
 
 async def handle_config_command(args: list[str], *, extension_factories: list[Any] | None = None) -> bool | int:

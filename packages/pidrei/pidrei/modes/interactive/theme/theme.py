@@ -25,7 +25,6 @@ foreground or background depending on the slot; use ``theme.colors[token]``
 to use a token's color in the other slot.
 """
 
-import contextlib
 import json
 import os
 import re
@@ -500,17 +499,21 @@ async def _get_custom_theme_infos() -> list:
     than memoised.
     """
     custom_themes_dir = get_custom_themes_dir()
-    result: list = []
     entries = await tonio.spawn_blocking(_scan_custom_theme_dir_blocking, custom_themes_dir)
-    for file in entries:
+    if not entries:
+        return []
+
+    async def info(file: str) -> dict | None:
         theme_path = os.path.join(custom_themes_dir, file)
         # Invalid themes are ignored here; the resource loader reports them
         # during normal startup/reload.
-        with contextlib.suppress(Exception):
+        try:
             custom_theme = await load_theme_from_path(theme_path)
-            if custom_theme.name:
-                result.append({"name": custom_theme.name, "path": theme_path})
-    return result
+        except Exception:
+            return None
+        return {"name": custom_theme.name, "path": theme_path} if custom_theme.name else None
+
+    return [found for found in await tonio.map(info, entries) if found is not None]
 
 
 def _assert_theme_name_is_valid(name: str) -> None:

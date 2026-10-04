@@ -30,6 +30,7 @@ import tonio.colored as tonio
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
+from pidrei_ai.utils.tasks import gather
 from pidrei_mcp import CallToolResult, ContentBlock, LlmContent, Tool, to_llm_content
 from pidrei_tui import Container, Spacer, Text
 from pidrei_utils.cancel import CancelToken
@@ -235,10 +236,8 @@ async def to_model_content(
 ) -> list[ModelContent]:
     """Model-facing content of `server`'s content blocks, before the output limit."""
     options = options or ConvertMcpResultOptions()
-    content: list[ModelContent] = []
-    for block in blocks:
-        content.extend(await _block_to_content(server, block, options))
-    return content
+    converted = await gather(*(_block_to_content(server, block, options) for block in blocks))
+    return [item for content in converted for item in content]
 
 
 async def convert_mcp_result(

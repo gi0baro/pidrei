@@ -5,6 +5,7 @@ import base64
 import tonio.colored as tonio
 
 from pidrei_ai.types import ImageContent, ModelImageResizeOptions, TextContent
+from pidrei_ai.utils.tasks import gather
 
 from .image_process import process_image
 
@@ -33,14 +34,10 @@ async def normalize_tool_result_images(
     if not any(block.type == "image" for block in content):
         return content
 
-    normalized: list = []
-    changed = False
-
-    for block in content:
+    async def replacement(block) -> list | None:
+        """What an image block becomes; None when it stays as it is."""
         if block.type != "image":
-            normalized.append(block)
-            continue
-
+            return None
         # Pillow work is CPU-bound and off the runtime, like every other
         # process_image call site.
         processed = await tonio.spawn_blocking(
@@ -55,17 +52,19 @@ async def normalize_tool_result_images(
             # this image and the failure may just be an unavailable image
             # backend, so passing it through preserves the behavior tools have
             # today instead of silently deleting their output.
-            normalized.append(block)
-            continue
-
+            return None
         hints = processed.hints or []
         if processed.data == block.data and processed.mime_type == block.mime_type and not hints:
-            normalized.append(block)
-            continue
+            return None
+        image = ImageContent(data=processed.data, mime_type=processed.mime_type)
+        return [image, TextContent(text="\n".join(hints))] if hints else [image]
 
-        normalized.append(ImageContent(data=processed.data, mime_type=processed.mime_type))
-        if hints:
-            normalized.append(TextContent(text="\n".join(hints)))
-        changed = True
-
-    return normalized if changed else content
+    # The images are processed at the same time; each result goes where its block was.
+    replacements = await gather(*(replacement(block) for block in content))
+    if all(replaced is None for replaced in replacements):
+        return content
+    return [
+        item
+        for block, replaced in zip(content, replacements, strict=True)
+        for item in (replaced if replaced is not None else [block])
+    ]

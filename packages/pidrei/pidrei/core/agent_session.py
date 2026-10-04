@@ -63,6 +63,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
 from pidrei_ai.utils.session_resources import cleanup_session_resources
+from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_utils import clock
@@ -2193,15 +2194,21 @@ class AgentSession:
         hints: list[str] = []
         auto_resize_images = self.settings_manager.get_image_auto_resize()
         resize_options = self._model_image_resize_options()
-        for image in images:
-            # Pillow work is CPU-bound, so it stays off the runtime.
-            processed = await tonio.spawn_blocking(
-                process_image,
-                base64.b64decode(image.data),
-                image.mime_type,
-                auto_resize_images=auto_resize_images,
-                resize_options=resize_options,
+        decoded = [base64.b64decode(image.data) for image in images]
+        # Pillow work is CPU-bound, so it stays off the runtime; the images are processed at the same time.
+        results = await gather(
+            *(
+                tonio.spawn_blocking(
+                    process_image,
+                    data,
+                    image.mime_type,
+                    auto_resize_images=auto_resize_images,
+                    resize_options=resize_options,
+                )
+                for image, data in zip(images, decoded, strict=True)
             )
+        )
+        for processed in results:
             if not processed.ok:
                 hints.append(processed.message)
                 continue

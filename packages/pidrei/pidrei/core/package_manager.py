@@ -29,11 +29,14 @@ import hashlib
 import os
 import re
 import shutil
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import fs
+
+from pidrei_ai.utils.tasks import gather
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
@@ -47,6 +50,8 @@ from .source_info import BUILTIN_PATH_PREFIX, PathMetadata
 
 
 RESOURCE_TYPES = ("extensions", "skills", "prompts", "themes")
+# Git packages updated at once.
+GIT_UPDATE_CONCURRENCY = 4
 
 _FILE_PATTERNS: dict[str, re.Pattern] = {
     # pi matches `.ts`/`.js`; a pidrei extension is a Python module.
@@ -900,7 +905,7 @@ class DefaultPackageManager:
         if is_offline_mode_enabled():
             return []
 
-        candidates: list[tuple[GitSource, str, str]] = []
+        candidates: list[tuple[GitSource, str, str, str]] = []
         for package in await self.list_configured_packages():
             if package.scope == "temporary":
                 continue
@@ -908,17 +913,16 @@ class DefaultPackageManager:
             # A pinned ref is a checkout target, not a moving branch.
             if not isinstance(parsed, GitSource) or parsed.pinned:
                 continue
-            installed_path = await self._get_git_install_path(parsed, package.scope)
-            if not await fs.Path(installed_path).exists():
+            # Listed with its checkout, when it has one.
+            if package.installed_path is None:
                 continue
-            candidates.append((parsed, package.scope, package.source))
+            candidates.append((parsed, package.scope, package.source, package.installed_path))
 
         if not candidates:
             return []
 
-        async def check_one(candidate: tuple[GitSource, str, str]) -> PackageUpdate | None:
-            parsed, scope, source = candidate
-            installed_path = await self._get_git_install_path(parsed, scope)
+        async def check_one(candidate: tuple[GitSource, str, str, str]) -> PackageUpdate | None:
+            parsed, scope, source, installed_path = candidate
             if not await self._git_has_available_update(installed_path):
                 return None
             return PackageUpdate(
@@ -933,7 +937,8 @@ class DefaultPackageManager:
 
     async def update(self, source: str | None = None) -> None:
         """Update configured git packages. Sources with a pinned ref are
-        checkout targets, so they are re-reconciled rather than skipped."""
+        checkout targets, so they are re-reconciled rather than skipped.
+        Failed updates are raised as one exception group."""
         targets: list[tuple[GitSource, str, str]] = []
         for package in await self.list_configured_packages():
             if source is not None and self._source_match_key_for_input(
@@ -953,13 +958,17 @@ class DefaultPackageManager:
         if is_offline_mode_enabled():
             return
 
-        for parsed, scope, source_str in targets:
-            await self._with_progress(
-                "update",
-                source_str,
-                f"Updating {source_str}...",
-                lambda parsed=parsed, scope=scope: self._update_git(parsed, scope),
+        # pi updates up to four at once (its `runWithConcurrency`). A failed
+        # update does not stop the others; the failures are raised together.
+        @tonio.mark.max_concurrency(GIT_UPDATE_CONCURRENCY)
+        def update_one(target: tuple[GitSource, str, str]) -> Awaitable[None]:
+            parsed, scope, source_str = target
+            return self._with_progress(
+                "update", source_str, f"Updating {source_str}...", lambda: self._update_git(parsed, scope)
             )
+
+        if targets:
+            await tonio.map(update_one, targets)
 
     # -- settings -----------------------------------------------------------------
 
@@ -1032,22 +1041,25 @@ class DefaultPackageManager:
         return True
 
     async def list_configured_packages(self) -> list[ConfiguredPackage]:
-        configured: list[ConfiguredPackage] = []
-        for scope, settings in (
-            ("user", self._settings_manager.get_global_settings()),
-            ("project", self._settings_manager.get_project_settings()),
-        ):
-            for package in settings.get("packages") or []:
-                source = self._get_package_source_string(package)
-                installed = await self.get_installed_path(source, scope)
-                configured.append(
-                    ConfiguredPackage(
-                        source=source,
-                        scope=scope,
-                        installed_path=installed if installed and await fs.Path(installed).exists() else None,
-                    )
+        async def configured(scope: str, package: Any) -> ConfiguredPackage:
+            source = self._get_package_source_string(package)
+            installed = await self.get_installed_path(source, scope)
+            return ConfiguredPackage(
+                source=source,
+                scope=scope,
+                installed_path=installed if installed and await fs.Path(installed).exists() else None,
+            )
+
+        return await gather(
+            *(
+                configured(scope, package)
+                for scope, settings in (
+                    ("user", self._settings_manager.get_global_settings()),
+                    ("project", self._settings_manager.get_project_settings()),
                 )
-        return configured
+                for package in settings.get("packages") or []
+            )
+        )
 
     def _collect_files_from_paths_blocking(self, paths: list[str], resource_type: str) -> list[str]:
         files: list[str] = []

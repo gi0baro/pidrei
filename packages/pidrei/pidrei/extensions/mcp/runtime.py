@@ -688,8 +688,8 @@ class McpServerConnection:
         # Wakes a retry delay; the open then fails as closed.
         self._closed_event.set()
         await self._changed()
-        for client in clients:
-            await _close_quietly(client)
+        if clients:
+            await tonio.map(_close_quietly, clients)
         # A connect in flight fails now that it is closed (and its client with
         # it): wait for it, so nothing of the connection runs after the close.
         # No other can start: `get_client()` refuses once closed.

@@ -61,6 +61,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
+from pidrei_ai.utils.tasks import gather
 from pidrei_tui import hyperlink
 from pidrei_utils import clock
 
@@ -736,7 +737,10 @@ class _McpExtension:
         """Reconnect servers that need a sign-in when their credentials were stored since."""
         with self._lock:
             waiting = list(self._tokens_at_sign_in.items())
-        signed_in = [connection for connection, tokens in waiting if await self._stored_tokens(connection) != tokens]
+        stored = await gather(*(self._stored_tokens(connection) for connection, _tokens in waiting))
+        signed_in = [
+            connection for (connection, tokens), current in zip(waiting, stored, strict=True) if current != tokens
+        ]
         if not signed_in:
             return
         with self._lock:
