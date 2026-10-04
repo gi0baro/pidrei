@@ -191,8 +191,8 @@ class _ServerStore:
 
         await self._credentials.write(update)
 
-    async def with_refresh_lock[T](self, fn: Callable[[], Awaitable[T]]) -> T:
-        return await self._credentials.with_refresh_lock(self._key, fn)
+    def with_refresh_lock[T](self, fn: Callable[[], Awaitable[T]]) -> Awaitable[T]:
+        return self._credentials.with_refresh_lock(self._key, fn)
 
 
 class McpOAuthCredentialStore:

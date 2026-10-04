@@ -8,8 +8,11 @@ for each event in registration order before taking the next. The close is
 closing the channel: the consumer drains what was queued before it, then
 delivers the close; an event emitted after it is dropped.
 
-Outgoing, `send()` takes the message's place in the transport's order when
-it is called and returns a `SendResult` to await for the outcome.
+Outgoing, `send()` returns a `SendResult` to await for the outcome. On a
+transport with one outgoing stream (stdio, in-memory) it also takes the
+message's place in that stream when it is called. Over HTTP every message
+is an exchange of its own, and nothing orders two exchanges: a client only
+learns that the server has a message from its response.
 """
 
 import threading

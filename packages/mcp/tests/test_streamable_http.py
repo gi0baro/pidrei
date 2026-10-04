@@ -21,6 +21,7 @@ from pidrei_mcp import (
     AuthProvider,
     McpAuthRequiredError,
     McpClient,
+    McpConnectionClosedError,
     McpSessionExpiredError,
     StreamableHttpReconnectOptions,
     StreamableHttpTransport,
@@ -513,3 +514,156 @@ async def test_closing_the_transport_ends_an_open_server_to_client_stream(monkey
         await client.close()
         await hung_up.wait(_WAIT_S)
         assert hung_up.is_set()
+
+
+class _HeldStream:
+    """An SSE response that stays open until it is closed. Its close waits
+    for `gate`, as a close that has not finished yet."""
+
+    status = 200
+
+    def __init__(self, gate: tonio.Event, closing: tonio.Event) -> None:
+        self.headers = {"content-type": "text/event-stream"}
+        self._gate = gate
+        self._closing = closing
+        self._ended = tonio.Event()
+        self.reading = tonio.Event()
+        self.closed = tonio.Event()
+
+    async def iter_bytes(self):
+        self.reading.set()
+        await self._ended.wait(_WAIT_S)
+        yield b""
+
+    async def read(self) -> bytes:
+        return b""
+
+    async def close(self) -> None:
+        self._closing.set()
+        await self._gate.wait(_WAIT_S)
+        self._ended.set()
+        self.closed.set()
+
+
+class _Accepted:
+    status = 202
+
+    def __init__(self) -> None:
+        self.headers: dict[str, str] = {}
+
+    async def read(self) -> bytes:
+        return b""
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.mark.tonio
+async def test_a_close_whose_caller_is_cancelled_still_closes_the_responses_it_holds():
+    """pidrei-only: a coroutine closing the transport can be cancelled by its
+    scope. The responses are out of the transport's reach by then, so the
+    close must not stop with its caller."""
+    gate = tonio.Event()
+    closing = tonio.Event()
+    opened = tonio.Event()
+    streams: list[_HeldStream] = []
+
+    async def fetch(_url, *, method="GET", headers=None, body=None, timeout_ms=None):
+        # The GET stream, and the stream answering the request.
+        if method == "GET" or "id" in json.loads(body):
+            stream = _HeldStream(gate, closing)
+            streams.append(stream)
+            if len(streams) == 2:
+                opened.set()
+            return stream
+        return _Accepted()
+
+    transport = StreamableHttpTransport("http://server.invalid/mcp", fetch=fetch)
+    await transport.start()
+    await transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    await transport.send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "wait"}})
+    await opened.wait(_WAIT_S)
+    assert len(streams) == 2
+    # A stream that is being read is registered with the transport.
+    for stream in streams:
+        await stream.reading.wait(_WAIT_S)
+        assert stream.reading.is_set()
+
+    async with tonio.scope(cancel_on_exc=True) as scope:
+        scope.spawn(transport.close())
+        # The close is parked closing a response when its scope is cancelled.
+        await closing.wait(_WAIT_S)
+        assert closing.is_set()
+        scope.cancel()
+    gate.set()
+
+    for stream in streams:
+        await stream.closed.wait(_WAIT_S)
+    assert [stream.closed.is_set() for stream in streams] == [True, True]
+
+
+@pytest.mark.tonio
+async def test_closing_the_transport_ends_a_request_waiting_for_its_response():
+    """pidrei-only: pi's close aborts every fetch in flight through the
+    transport's signal. Here the close fires a token, and a request still
+    waiting for its response head is cancelled where it is parked."""
+    waiting = tonio.Event()
+    cancelled = tonio.Event()
+    never = tonio.Event()
+
+    async def fetch(_url, *, method="GET", headers=None, body=None, timeout_ms=None):
+        answered = False
+        waiting.set()
+        try:
+            await never.wait(_WAIT_S)
+            answered = True
+        finally:
+            if not answered:
+                cancelled.set()
+        return _Accepted()
+
+    transport = StreamableHttpTransport("http://server.invalid/mcp", fetch=fetch)
+    await transport.start()
+    sent = transport.send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "wait"}})
+    await waiting.wait(_WAIT_S)
+    assert waiting.is_set()
+
+    await transport.close()
+
+    await cancelled.wait(_WAIT_S)
+    assert cancelled.is_set()
+    with pytest.raises(McpConnectionClosedError):
+        await sent
+
+
+@pytest.mark.tonio
+async def test_a_request_whose_headers_resolve_after_the_close_is_not_sent():
+    """pidrei-only: a request can be waiting for its auth token when the
+    transport closes. It fails as closed without reaching the server."""
+    asked = tonio.Event()
+    release = tonio.Event()
+    requests: list[str] = []
+
+    async def token() -> str | None:
+        asked.set()
+        await release.wait(_WAIT_S)
+        return "tok"
+
+    async def fetch(_url, *, method="GET", headers=None, body=None, timeout_ms=None):
+        requests.append(method)
+        return _Accepted()
+
+    transport = StreamableHttpTransport(
+        "http://server.invalid/mcp", fetch=fetch, auth_provider=AuthProvider(token=token)
+    )
+    await transport.start()
+    sent = transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    await asked.wait(_WAIT_S)
+    assert asked.is_set()
+
+    await transport.close()
+    release.set()
+
+    with pytest.raises(McpConnectionClosedError):
+        await sent
+    assert requests == []

@@ -16,8 +16,11 @@ A request's pending entry is settled at most once, by whichever comes
 first: its response, its timeout, its cancel token, a failed send, or the
 close. Its message is queued on the transport under the client's lock, in
 the same step as registering the entry, and a `notifications/cancelled` is
-queued only after its request was claimed, so a cancellation never goes out
-before the request it cancels.
+queued only after its request was claimed, so on a transport with one
+outgoing stream a cancellation never goes out before the request it
+cancels. Over HTTP the two are separate exchanges and can reach the server
+in either order; a server ignores a cancellation for a request it does not
+know.
 """
 
 import math
@@ -422,8 +425,10 @@ class McpClient:
     async def ping(self, *, cancel: CancelToken | None = None, timeout_ms: float | None = None) -> None:
         await self.request("ping", None, cancel=cancel, timeout_ms=timeout_ms)
 
-    async def list_tools(self, *, cancel: CancelToken | None = None, timeout_ms: float | None = None) -> list[Tool]:
-        return await self._list_all("tools/list", "tools", _is_tool, cancel, timeout_ms)  # type: ignore[return-value]
+    def list_tools(
+        self, *, cancel: CancelToken | None = None, timeout_ms: float | None = None
+    ) -> Awaitable[list[Tool]]:
+        return self._list_all("tools/list", "tools", _is_tool, cancel, timeout_ms)  # type: ignore[return-value]
 
     async def list_resources(
         self, *, cancel: CancelToken | None = None, timeout_ms: float | None = None
@@ -836,8 +841,8 @@ class McpClient:
             entry.unsubscribe()
             entry.unsubscribe = None
 
-    async def _handle_transport_close(self) -> None:
-        await self._mark_closed(McpConnectionClosedError())
+    def _handle_transport_close(self) -> Awaitable[None]:
+        return self._mark_closed(McpConnectionClosedError())
 
     async def _mark_closed(self, error: Exception) -> None:
         """Idempotent: fails in-flight requests, cancels the server requests

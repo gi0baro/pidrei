@@ -11,9 +11,12 @@ flight is bounded, so one frees up) and no total limit (a stream that keeps
 delivering is legitimate). `timeout_ms` instead bounds the whole request, for
 one that is given up on after a while (pi's `AbortSignal.timeout(...)`).
 
-Nothing here cancels a request: a response is stopped by closing it, which
-closes its connection and ends a read parked on it. A network failure is
-reported as `pidrei_http.http.TransportError`, fetch's `TypeError`.
+A fetch takes no signal. A response is stopped by closing it, which closes
+its connection and ends a read parked on it; a request still waiting for
+its head is stopped by cancelling the coroutine that awaits the fetch,
+which discards its connection (the HTTP transport's close does both). A
+network failure is reported as `pidrei_http.http.TransportError`, fetch's
+`TypeError`.
 """
 
 from collections.abc import AsyncIterator, Awaitable, Mapping
@@ -77,11 +80,11 @@ class _PunkreqResponse:
     def iter_bytes(self) -> AsyncIterator[bytes]:
         return self._response.iter_bytes()
 
-    async def read(self) -> bytes:
-        return await self._response.read()
+    def read(self) -> Awaitable[bytes]:
+        return self._response.read()
 
-    async def close(self) -> None:
-        await self._response.close()
+    def close(self) -> Awaitable[None]:
+        return self._response.close()
 
 
 async def default_fetch(

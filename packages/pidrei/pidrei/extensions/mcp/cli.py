@@ -456,20 +456,22 @@ async def _report(
     except Exception:
         # The connection records the state and error.
         pass
-    report["state"] = connection.state
-    report["tools"] = [tool["name"] for tool in connection.tools]
+    # One snapshot: the server can still change the connection (a dropped transport, a list change).
+    view = connection.view
+    report["state"] = view.state
+    report["tools"] = [tool["name"] for tool in view.tools]
     overrides = {
         tool["name"]: tool_exposure
-        for tool in connection.tools
+        for tool in view.tools
         if (tool_exposure := get_mcp_tool_exposure(entry.config, tool["name"])) != exposure
     }
     if overrides:
         report["toolExposure"] = overrides
-    if connection.has_resources:
-        report["resources"] = len(connection.resources)
-        report["resourceTemplates"] = len(connection.resource_templates)
-    if connection.state != "connected" and connection.error:
-        report["error"] = connection.error
+    if view.has_resources:
+        report["resources"] = len(view.resources)
+        report["resourceTemplates"] = len(view.resource_templates)
+    if view.state != "connected" and view.error:
+        report["error"] = view.error
     await connection.close()
     return report
 
@@ -539,8 +541,9 @@ async def _login(
         log(f'Already signed in to MCP server "{name}" ({len(connection.tools)} tools).')
         return 0
     except Exception:
-        if connection.state != "needs-auth":
-            error(f'MCP server "{name}" failed to connect: {connection.error or "unknown error"}')
+        view = connection.view
+        if view.state != "needs-auth":
+            error(f'MCP server "{name}" failed to connect: {view.error or "unknown error"}')
             return 1
 
     open_url = options.open_url or open_browser

@@ -124,11 +124,11 @@ class McpOAuthProvider(OAuthClientProvider):
 
         await self._update(update)
 
-    async def redirect_to_authorization(self, url: str) -> None:
-        await self._on_redirect(url)
+    def redirect_to_authorization(self, url: str) -> Awaitable[None]:
+        return self._on_redirect(url)
 
-    async def save_code_verifier(self, verifier: str) -> None:
-        await self._update(lambda value: {**value, "codeVerifier": verifier})
+    def save_code_verifier(self, verifier: str) -> Awaitable[None]:
+        return self._update(lambda value: {**value, "codeVerifier": verifier})
 
     async def code_verifier(self) -> str:
         verifier = (await self._load()).get("codeVerifier")
@@ -154,8 +154,8 @@ class McpOAuthProvider(OAuthClientProvider):
 
         await self._update(update)
 
-    async def save_discovery_state(self, discovery: OAuthDiscoveryState) -> None:  # type: ignore[override]
-        await self._update(lambda value: {**value, "discovery": discovery})
+    def save_discovery_state(self, discovery: OAuthDiscoveryState) -> Awaitable[None]:  # type: ignore[override]
+        return self._update(lambda value: {**value, "discovery": discovery})
 
     async def discovery_state(self) -> OAuthDiscoveryState | None:  # type: ignore[override]
         return (await self._load()).get("discovery")

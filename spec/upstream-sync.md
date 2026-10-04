@@ -844,8 +844,11 @@ runtime layer from TonIO, httpunk and punkreq.
   order. Close is closing the channel: the consumer drains what is queued,
   then runs the close listeners once; a message after the close is dropped.
   A listener change upstream lands in `TransportEvents`, not per transport.
-- **`send()` returns a `SendResult`** (awaitable) and takes the message's
-  place in the outgoing order when called, as pi's synchronous prefix does.
+- **`send()` returns a `SendResult`** (awaitable). On the transports with
+  one outgoing stream (stdio, in-memory) it takes the message's place in
+  that stream when called, as pi's synchronous prefix does. Over HTTP every
+  message is its own exchange and nothing orders two of them, in pi either:
+  a cancellation can reach the server before the request it cancels.
   A pi `await transport.send(...)` stays an await of the result.
 - **The client**: its state (transport, pending requests, incoming request
   tokens) is under one thread lock, and what readers see (`connection_state`,
@@ -855,15 +858,21 @@ runtime layer from TonIO, httpunk and punkreq.
   that stops waiting removes its entry synchronously in a `finally`. Incoming
   requests run detached; their cancel token is registered before the next
   message is handled.
-- **The HTTP transport cancels nothing**: every request is bounded by
-  `MCP_TIMEOUT` (connect 10 s, read 300 s, no pool or total limit, undici's
-  defaults), a whole-request `timeout_ms` where pi uses
-  `AbortSignal.timeout`, and a response is stopped by closing it. `close()`
-  marks the transport closed, spawns the session `DELETE` (1 s request
-  timeout), closes the responses it holds, wakes reconnect waits, joins the
-  `DELETE`, then emits close; a request still waiting for its head ends on
-  its own. Only the client's own logic cancels (request tokens, timeouts).
-  An upstream `signal` threaded into the transport is not ported; one at the
+- **The HTTP transport's close ends what is in flight**, where pi's aborts
+  the one `AbortSignal` it hands every fetch. Every request runs under
+  `run_cancellable` with a token the close fires: one still waiting for its
+  response head is unwound there (its connection is discarded), and one that
+  starts after the close is not sent. A response being read is stopped by
+  closing it. `close()` marks the transport closed, fires the token, wakes
+  reconnect waits, spawns the session `DELETE` (1 s request timeout) and the
+  closing of the responses it holds, joins both, then emits close. Every
+  request is also bounded by `MCP_TIMEOUT` (connect 10 s, read 300 s, no
+  pool or total limit, undici's defaults), and by a whole-request
+  `timeout_ms` where pi uses `AbortSignal.timeout`. Only the close cancels
+  an exchange: a request the client gives up on (request tokens, timeouts)
+  keeps its own, as in pi, and the auth provider's work is not under the
+  token (a token refresh must not be torn). A per-request `signal` an
+  upstream change threads into the transport is not ported; one at the
   client level maps to the request's cancel token.
 - **OAuth**: `McpOAuthProvider.state()` reads and, when none is stored,
   writes in one locked step. `OAuthCallbackServer.close()` is synchronous:
@@ -890,10 +899,13 @@ awaits. Here those run on parallel coroutines.
   first-prompt wait bounds each `ready` by one deadline; a tool call's wait
   is `Waiter.any(ready, ctx.signal.event)`.
 - **A connection** publishes one frozen snapshot (state, error, tools,
-  resources, instructions) under its lock. Pi's shared `opening` promise is a
-  detached open that callers join through an Event; `close()` also closes the
-  client still connecting and wakes a retry delay (pi leaves the connect to
-  its request timeout, which here would outlive shutdown). `on_change` is
+  resources, instructions) under its lock; a reader of more than one field
+  takes it once (`view`). Pi's shared `opening` promise is a detached open
+  that callers join through an Event; `close()` also closes the client still
+  connecting, wakes a retry delay, and waits for that connect to end (pi
+  leaves the connect to its request timeout, which here would outlive
+  shutdown). The client of an expired session, which pi detaches and never
+  closes, is kept and closed by `close()`. `on_change` is
   async and awaited where the state changes; the extension re-checks the
   state before recording the stored-token snapshot.
 - **OAuth refresh**: one detached refresh per provider, joined through an

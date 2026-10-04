@@ -1,5 +1,6 @@
 import importlib
 import os
+import signal
 import warnings
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from pidrei.core import output_guard
 from pidrei_ai.auth import anthropic_federation, google_adc
 from pidrei_http import http
+from pidrei_mcp.transports import stdio
 from pidrei_tui import terminal_image, utils as tui_utils
 
 
@@ -35,6 +37,24 @@ def _http_seam_guard():
         if getattr(http, name) is not original:
             setattr(http, name, original)
             warnings.warn(f"test left pidrei_http.http.{name} replaced; restored", stacklevel=1)
+
+
+@pytest.fixture(autouse=True)
+def _live_process_groups_guard():
+    """Fail-loud cleanup of stdio MCP servers a test left running (see the
+    mcp package's conftest): the MCP extension and `pidrei mcp` suites start
+    real ones."""
+    yield
+    with stdio._live_guard:
+        leftover = list(stdio._live_process_groups)
+        stdio._live_process_groups.clear()
+    for pid in leftover:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    if leftover:
+        warnings.warn(f"test left stdio MCP servers running (process groups {leftover}); killed", stacklevel=1)
 
 
 @pytest.fixture(autouse=True, scope="session")

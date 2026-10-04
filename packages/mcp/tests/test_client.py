@@ -485,7 +485,7 @@ async def test_a_request_whose_caller_is_cancelled_is_cancelled_on_the_server():
 
     client.on_error(on_error)
     try:
-        async with tonio.scope() as scope:
+        async with tonio.scope(cancel_on_exc=True) as scope:
             scope.spawn(client.call_tool("wait"))
             await server.wait_for(is_method("tools/call"))
             scope.cancel()

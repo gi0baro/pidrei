@@ -1187,7 +1187,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         (
             "mcp-client",
             "delivery is one consumer per transport over a channel; send() returns a SendResult, taking its "
-            "place in the outgoing order when called",
+            "place in the outgoing stream when called (stdio, in-memory; HTTP exchanges have no order)",
         ),
     ),
     "packages/mcp/src/transports/in-memory.ts": (
@@ -1199,8 +1199,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/mcp/src/transports/streamable-http.ts": (
         (
             "mcp-client",
-            "no cancellation: requests are bounded by MCP_TIMEOUT, close spawns the session DELETE (1 s) and "
-            "joins it, closes held responses, and leaves a head-pending request to end on its own",
+            "no signal: requests are bounded by MCP_TIMEOUT and run under run_cancellable with a token the "
+            "close fires (a head-pending request is cancelled), close spawns the session DELETE (1 s) and the "
+            "closing of held responses and joins both",
         ),
     ),
     "packages/mcp/src/client.ts": (

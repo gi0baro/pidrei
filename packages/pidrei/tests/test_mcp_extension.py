@@ -38,6 +38,7 @@ from pidrei.extensions.mcp.tools import ConvertMcpResultOptions, convert_mcp_res
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
 from pidrei_mcp import LATEST_PROTOCOL_VERSION, McpAuthRequiredError, McpHttpError, McpSessionExpiredError, SendResult
+from pidrei_mcp.oauth import McpOAuthAuthorizationRequiredError
 from pidrei_mcp.testing import create_in_memory_transport_pair
 
 from .mcp_oauth_server import loopback_servers
@@ -519,6 +520,287 @@ async def test_starts_a_new_session_and_retries_once_when_the_session_expired(fa
     assert results == [{"content": [{"type": "text", "text": "ok"}]}] * 2
     assert connected.opened == 2
     await connection.close()
+
+
+@pytest.mark.tonio
+async def test_closes_the_client_of_an_expired_session_with_the_connection(fake_servers):
+    """pidrei-only: the client of a session the server forgot is left open
+    for its calls in flight, and pi never closes it. Here the connection
+    keeps it and closes it with its other clients."""
+    closed = tonio.Event()
+
+    async def expiring():
+        transport = await fake_servers.create()
+        _expire_tool_calls(transport)
+
+        async def on_close() -> None:
+            closed.set()
+
+        transport.on_close(on_close)
+        return transport
+
+    connected = _Connected(_stdio_entry(), [expiring, fake_servers.create])
+    connection = connected.connection
+    assert await connection.call_tool("echo", {}) == {"content": [{"type": "text", "text": "ok"}]}
+    assert connected.opened == 2
+    assert not closed.is_set()
+
+    await connection.close()
+
+    await closed.wait(_WAIT_S)
+    assert closed.is_set()
+
+
+@pytest.mark.tonio
+async def test_a_tool_refresh_failing_after_the_close_changes_nothing(fake_servers, monkeypatch):
+    """pidrei-only: a refresh whose client was closed or replaced while it
+    listed the tools fails for that reason; its error is not the
+    connection's."""
+    listing = tonio.Event()
+    refreshed = tonio.Event()
+    changes: list[tuple[str, str | None]] = []
+    refresh_tools = McpServerConnection._refresh_tools
+
+    async def refresh_then_report(self, client) -> None:
+        await refresh_tools(self, client)
+        refreshed.set()
+
+    async def holding():
+        transport = await fake_servers.create()
+        send = transport.send
+        lists: list[None] = []
+
+        def held(message):
+            if message.get("method") == "tools/list":
+                lists.append(None)
+                if len(lists) > 1:
+                    # The refresh's list is never answered.
+                    listing.set()
+                    return SendResult.succeeded()
+            return send(message)
+
+        transport.send = held
+        return transport
+
+    async def on_change(connection) -> None:
+        changes.append((connection.state, connection.error))
+
+    monkeypatch.setattr(McpServerConnection, "_refresh_tools", refresh_then_report)
+    connection = _Connected(_stdio_entry(), [holding], on_change=on_change).connection
+    await connection.get_client()
+    fake_servers.servers[0].send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+    await listing.wait(_WAIT_S)
+    assert listing.is_set()
+
+    await connection.close()
+
+    await refreshed.wait(_WAIT_S)
+    assert refreshed.is_set()
+    assert connection.error is None
+    assert changes[-1] == ("closed", None)
+
+
+@pytest.mark.tonio
+async def test_a_cancelled_call_that_needed_a_sign_in_still_marks_the_server(fake_servers):
+    """pidrei-only: a call run by a codemode script is cancelled with the
+    script's scope. One that had found the server asking for a sign-in
+    still leaves the connection marked, and its listeners told."""
+    closing = tonio.Event()
+    gate = tonio.Event()
+    marked = tonio.Event()
+    transports: list = []
+
+    async def asking_for_sign_in():
+        transport = await fake_servers.create()
+        send, close = transport.send, transport.close
+
+        def rejecting(message):
+            if message.get("method") == "tools/call":
+                return SendResult.failed(McpOAuthAuthorizationRequiredError())
+            return send(message)
+
+        async def parked_close() -> None:
+            closing.set()
+            await gate.wait(_WAIT_S)
+            await close()
+
+        transport.send = rejecting
+        transport.close = parked_close
+        transports.append(close)
+        return transport
+
+    async def on_change(connection) -> None:
+        if connection.state == "needs-auth":
+            marked.set()
+
+    connection = _Connected(_stdio_entry(), [asking_for_sign_in], on_change=on_change).connection
+    await connection.get_client()
+
+    async with tonio.scope(cancel_on_exc=True) as scope:
+        scope.spawn(connection.call_tool("echo", {}))
+        # The call is closing the client when its scope is cancelled.
+        await closing.wait(_WAIT_S)
+        assert closing.is_set()
+        scope.cancel()
+    gate.set()
+
+    await marked.wait(_WAIT_S)
+    assert marked.is_set()
+    assert connection.state == "needs-auth"
+    # The fake's close was cut with the call: close the transport for real.
+    await transports[0]()
+    await connection.close()
+
+
+def _parked_close(transport, closing: tonio.Event, gate: tonio.Event) -> None:
+    """Makes the transport's close wait for `gate`, as a close still in flight."""
+    close = transport.close
+
+    async def parked() -> None:
+        closing.set()
+        await gate.wait(_WAIT_S)
+        await close()
+
+    transport.close = parked
+
+
+@pytest.mark.tonio
+async def test_a_connect_made_while_a_call_drops_its_client_for_a_sign_in_is_not_marked_over(fake_servers):
+    """pidrei-only: the client is dropped and the server marked as needing a
+    sign-in in one step, before the client is closed. A connect another call
+    makes during that close is the newer state, and stays."""
+    closing = tonio.Event()
+    gate = tonio.Event()
+
+    async def asking_for_sign_in():
+        transport = await fake_servers.create()
+        send = transport.send
+
+        def rejecting(message):
+            if message.get("method") == "tools/call":
+                return SendResult.failed(McpOAuthAuthorizationRequiredError())
+            return send(message)
+
+        transport.send = rejecting
+        _parked_close(transport, closing, gate)
+        return transport
+
+    connection = _Connected(_stdio_entry(), [asking_for_sign_in, fake_servers.create]).connection
+    await connection.get_client()
+
+    async def rejected_call() -> None:
+        with pytest.raises(Exception, match="requires sign-in"):
+            await connection.call_tool("echo", {})
+
+    try:
+        async with tonio.scope(cancel_on_exc=True) as scope:
+            scope.spawn(rejected_call())
+            await closing.wait(_WAIT_S)
+            assert closing.is_set()
+            assert connection.state == "needs-auth"
+            # Another call connects while the old client is still closing.
+            await connection.get_client()
+            assert connection.state == "connected"
+            gate.set()
+        assert connection.state == "connected"
+    finally:
+        gate.set()
+        await connection.close()
+
+
+@pytest.mark.tonio
+async def test_a_connect_made_while_a_sign_out_closes_its_client_is_not_marked_over(fake_servers):
+    """pidrei-only: as above, for a sign-out."""
+    closing = tonio.Event()
+    gate = tonio.Event()
+
+    async def signed_in():
+        transport = await fake_servers.create()
+        _parked_close(transport, closing, gate)
+        return transport
+
+    connection = _Connected(_stdio_entry(), [signed_in, fake_servers.create]).connection
+    await connection.get_client()
+    try:
+        async with tonio.scope(cancel_on_exc=True) as scope:
+            scope.spawn(connection.sign_out())
+            await closing.wait(_WAIT_S)
+            assert closing.is_set()
+            assert connection.state == "needs-auth"
+            await connection.get_client()
+            assert connection.state == "connected"
+            gate.set()
+        assert connection.state == "connected"
+    finally:
+        gate.set()
+        await connection.close()
+
+
+@pytest.mark.tonio
+async def test_a_failing_change_listener_fails_the_call_that_needed_a_sign_in_with_its_own_error(fake_servers):
+    """pidrei-only: marking the server runs on its own coroutine, whose
+    failure reaches the call as itself, not as the spawn's exception group."""
+
+    async def asking_for_sign_in():
+        transport = await fake_servers.create()
+        send = transport.send
+
+        def rejecting(message):
+            if message.get("method") == "tools/call":
+                return SendResult.failed(McpOAuthAuthorizationRequiredError())
+            return send(message)
+
+        transport.send = rejecting
+        return transport
+
+    async def on_change(connection) -> None:
+        if connection.state == "needs-auth":
+            raise RuntimeError("listener failed")
+
+    connection = _Connected(_stdio_entry(), [asking_for_sign_in], on_change=on_change).connection
+    try:
+        with pytest.raises(RuntimeError, match="^listener failed$"):
+            await connection.call_tool("echo", {})
+    finally:
+        await connection.close()
+
+
+@pytest.mark.tonio
+async def test_close_returns_once_the_connect_in_flight_has_ended():
+    """pidrei-only: pi leaves a connect in flight running after the close.
+    Here the close ends it and waits for it, so nothing of the connection
+    runs once `close()` has returned."""
+    creating = tonio.Event()
+    release = tonio.Event()
+    states: list[str] = []
+
+    async def held():
+        creating.set()
+        await release.wait(_WAIT_S)
+        raise RuntimeError("no transport")
+
+    async def on_change(connection) -> None:
+        states.append(connection.state)
+        if connection.state == "closed":
+            # The close has started: the transport factory may answer now.
+            release.set()
+
+    connection = _Connected(_stdio_entry(), [held], on_change=on_change).connection
+
+    async def connect() -> None:
+        try:
+            await connection.get_client()
+        except Exception:
+            # Fails as closed, which is not what the test is about.
+            pass
+
+    async with tonio.scope(cancel_on_exc=True) as scope:
+        scope.spawn(connect())
+        await creating.wait(_WAIT_S)
+        assert creating.is_set()
+        await connection.close()
+        # The connect's own last change (it failed as closed) came before the close returned.
+        assert states == ["connecting", "closed", "closed"]
 
 
 @pytest.mark.tonio

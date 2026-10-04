@@ -47,7 +47,7 @@ from pydantic_monty import (
 )
 from tonio.colored.sync import channel
 
-from pidrei_utils import clock
+from pidrei_utils import clock, timers
 from pidrei_utils.cancel import CancelToken
 
 from ..declarations import (
@@ -249,8 +249,6 @@ class _Execution:
         self._printed: list[str] = []
         self._sender, self._receiver = channel.unbounded()
         self._scope: Any = None
-        self._deadline_coroutine: Any = None
-        self._deadline_started = False
         # Set when `run` has returned or raised; `close()` waits on it.
         self.done = tonio.Event()
 
@@ -280,11 +278,8 @@ class _Execution:
         message = str(reason) if reason is not None and str(reason) else "Execution aborted"
         self.stop("aborted", message)
 
-    async def _deadline(self, seconds: float) -> None:
-        self._deadline_started = True
-        # Parked on an Event nothing sets: the scope cancels it when the script
-        # ends first.
-        await tonio.Event().wait(seconds)
+    def _on_deadline(self) -> None:
+        # A fire that raced the timer's cancel is a `stop` after the outcome, which does nothing.
         self.stop("timeout", f"Execution timed out after {_format_timeout_ms(self._timeout_ms)} ms")
 
     def _abandon(self) -> None:
@@ -585,6 +580,7 @@ class _Execution:
 
     async def run(self) -> CodemodeResult:
         unsubscribe: Callable[[], None] | None = None
+        deadline: timers.Timeout | None = None
         try:
             async with tonio.scope(cancel_on_exc=True) as scope:
                 self._scope = scope
@@ -592,8 +588,7 @@ class _Execution:
                     if self._cancel is not None:
                         unsubscribe = self._cancel.on_cancel(self._on_cancel)
                     if math.isfinite(self._timeout_ms):
-                        self._deadline_coroutine = self._deadline(self._timeout_ms / 1000)
-                        scope.spawn(self._deadline_coroutine)
+                        deadline = timers.Timeout(self._timeout_ms, self._on_deadline)
                     result, session = await self._drive()
                 except BaseException:
                     self._abandon()
@@ -604,13 +599,13 @@ class _Execution:
         finally:
             if unsubscribe is not None:
                 unsubscribe()
+            if deadline is not None:
+                deadline.cancel()
             # Children the scope dropped before their first step: close them
             # rather than leave never-awaited coroutines to the collector.
             for call in self._pending:
                 if not call.started:
                     call.coroutine.close()
-            if self._deadline_coroutine is not None and not self._deadline_started:
-                self._deadline_coroutine.close()
             self.done.set()
 
     async def _drive(self) -> tuple[CodemodeResult, Any]:

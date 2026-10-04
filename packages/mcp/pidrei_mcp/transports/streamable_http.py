@@ -1,22 +1,37 @@
 """Mirror of pi mcp src/transports/streamable-http.ts.
 
-Nothing in the transport cancels a request. Closing it:
+pi's transport hands every fetch one `AbortSignal`, which its close aborts.
+Here the close ends what the transport has in flight, each by its own
+means:
 
-- ends the session with a DELETE, spawned at once and joined at the end,
-  bounded by its own one-second request timeout;
-- closes every response the transport holds (the server-to-client stream,
-  the SSE streams answering requests), which closes its connection: a read
-  parked on it ends with a read error (httpunk ends a parked read only by
-  closing the socket), and its reader sees the transport closed and returns;
-- wakes a reconnect waiting out its backoff.
+- a request still waiting for its response head is cancelled: every request
+  runs under `run_cancellable` with a token the close fires, so it is
+  unwound where it is parked and fails as closed (its connection is
+  discarded). One that starts after the close is not sent;
+- every response the transport holds (the server-to-client stream, the SSE
+  streams answering requests) is closed, which closes its connection: a
+  read parked on it ends with a read error (httpunk ends a parked read only
+  by closing the socket), and its reader sees the transport closed and
+  returns;
+- a reconnect waiting out its backoff is woken;
+- the session ends with a DELETE, spawned at once and joined at the end,
+  bounded by its own one-second request timeout.
 
-A request still waiting for its response head is left to end on its own:
-when the server answers (the response, arriving after the close, is closed
-at once) or when its read timeout passes (`fetch.MCP_TIMEOUT`). The client
-has failed it already.
+The DELETE and the closing of the responses run on their own coroutines,
+which the close waits for: a caller that is cancelled stops waiting, and
+both complete.
+
+Only the close cancels. A request the client gives up on (its token, its
+timeout) keeps its exchange, as in pi: the server is told with
+`notifications/cancelled`. The auth provider's work (its token, its handling
+of a 401) is not under the close's token either: a token refresh must not
+be torn.
 
 A response is registered as soon as its head arrives and is closed by
 whoever unregisters it: its reader when done with it, or the close.
+
+Every message sent is an exchange of its own, started on its own coroutine:
+nothing orders two of them (see `transport.py`).
 """
 
 import codecs
@@ -30,6 +45,7 @@ import tonio.colored as tonio
 
 from pidrei_http import http
 from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken, run_cancellable
 
 from ..auth_provider import AuthProvider, UnauthorizedContext
 from ..fetch import McpFetch, McpResponse, default_fetch
@@ -247,6 +263,8 @@ class StreamableHttpTransport(TransportEvents):
         self._lock = threading.Lock()
         # Set by `close()`: wakes a reconnect waiting out its backoff.
         self._closed_event = tonio.Event()
+        # Fired by `close()`: ends every request still waiting for its response head.
+        self._close_token = CancelToken()
         self._responses: set[Any] = set()
         self._started = False
         self._closed = False
@@ -286,12 +304,18 @@ class StreamableHttpTransport(TransportEvents):
             responses = list(self._responses)
             self._responses.clear()
         self._closed_event.set()
-        # The DELETE touches no transport state: it runs beside the teardown,
-        # and the close waits for it (up to its timeout), as pi waits for it.
+        self._close_token.cancel(McpConnectionClosedError())
+        # Each response is closed on its own coroutine, and the close waits
+        # for them. The responses are out of the transport's reach by now, so
+        # a caller that is cancelled must only stop waiting: nothing else
+        # would close them. The DELETE touches no transport state: it runs
+        # beside the teardown, and the close waits for it too (up to its
+        # timeout), as pi waits for it.
+        closing = tonio.spawn(*(_close_quietly(response) for response in responses)) if responses else None
         deleting = tonio.spawn(self._delete_session()) if delete_session else None
         try:
-            for response in responses:
-                await _close_quietly(response)
+            if closing is not None:
+                await closing
             if deleting is not None:
                 await deleting
         finally:
@@ -349,8 +373,13 @@ class StreamableHttpTransport(TransportEvents):
         raise McpHttpError(response.status, f"Unsupported MCP response content type: {content_type or 'missing'}")
 
     async def _open(self, method: str, headers: dict[str, str], body: bytes | None) -> McpResponse:
-        """One request, its response registered with the transport."""
-        response = await self._fetch(self.url, method=method, headers=headers, body=body)
+        """One request, its response registered with the transport. The close
+        cancels it while it waits for the response head, and one that starts
+        after the close is not sent."""
+        response = await run_cancellable(
+            self._fetch(self.url, method=method, headers=headers, body=body),  # type: ignore[arg-type]
+            self._close_token,
+        )
         with self._lock:
             closed = self._closed
             if not closed:

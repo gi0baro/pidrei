@@ -37,8 +37,9 @@ from pidrei.core.extensions.loader import ExtensionAPI
 from pidrei.core.extensions.runner import emit_session_shutdown_event
 from pidrei.core.extensions.types import ToolAnnotations
 from pidrei.extensions.codemode import create_codemode_extension
-from pidrei.extensions.mcp import MCP_SERVERS_SECTION, create_mcp_extension
+from pidrei.extensions.mcp import MCP_SERVERS_SECTION, _McpExtension, create_mcp_extension
 from pidrei.extensions.mcp.config import LoadedMcpConfig, McpServerEntry
+from pidrei.extensions.mcp.runtime import McpServerConnection
 from pidrei.extensions.mcp.tools import create_mcp_tool_name
 from pidrei.extensions.tool_search import create_tool_search_extension
 from pidrei.extensions.tool_search.tool import TOOL_SEARCH_DESCRIPTION
@@ -1319,3 +1320,230 @@ async def test_declares_tools_tool_search_loaded_again_after_reload(harnesses, c
 
     await changes.until(lambda: connected == ["docs", "docs"])
     await changes.until(lambda: "mcp__docs__search" in harness.session.get_active_tool_names())
+
+
+# AgentSession MCP work that finishes after its server is gone (pidrei-only)
+
+
+@pytest.mark.tonio
+async def test_a_tool_refresh_finishing_after_its_server_was_removed_registers_nothing(harnesses, changes, monkeypatch):
+    """pidrei-only: a connection checks that it is current and then registers
+    its tools in two steps, and a removal can hide the tools in between. pi
+    runs both in one synchronous step."""
+    created, _releases = harnesses
+    apis: list = []
+    servers: list = []
+
+    async def capture(pi) -> None:
+        apis.append(pi)
+
+    async def load_config(_ctx):
+        return LoadedMcpConfig(servers=[], errors=[])
+
+    async def create_transport(_entry, _cwd, _auth_provider):
+        client, server = await fake_server([])
+        servers.append(server)
+        return client
+
+    harness = await create_harness(
+        initial_active_tool_names=[],
+        extension_factories=[
+            capture,
+            create_codemode_extension(),
+            create_mcp_extension(load_config=load_config, create_transport=create_transport),
+        ],
+        extension_bindings=ui_bindings(),
+    )
+    created.append(harness)
+    (pi,) = apis
+    pi.register_mcp_server("late", {"url": "http://late.invalid"})
+    await changes.until(lambda: "mcp__late__search" in harness.session.get_callable_tool_names())
+
+    refreshed = tonio.Event()
+    closed = tonio.Event()
+    refresh_tools = McpServerConnection._refresh_tools
+    close = McpServerConnection.close
+
+    async def refresh_then_report(self, client) -> None:
+        await refresh_tools(self, client)
+        refreshed.set()
+
+    async def refresh_before_closing(self) -> None:
+        # The removal has hidden the tools and is about to close the
+        # connection: a whole refresh runs here, while it is still open.
+        servers[0].send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+        await refreshed.wait(_WAIT_S)
+        await close(self)
+        closed.set()
+
+    monkeypatch.setattr(McpServerConnection, "_refresh_tools", refresh_then_report)
+    monkeypatch.setattr(McpServerConnection, "close", refresh_before_closing)
+    pi.unregister_mcp_server("late")
+    await closed.wait(_WAIT_S)
+    monkeypatch.setattr(McpServerConnection, "close", close)
+
+    assert refreshed.is_set()
+    assert closed.is_set()
+    assert "mcp__late__search" not in harness.session.get_callable_tool_names()
+
+
+@pytest.mark.tonio
+async def test_a_server_unregistered_before_its_connection_starts_is_not_connected(harnesses, monkeypatch):
+    """pidrei-only: a server's connection starts on its own coroutine, so the
+    server can be removed before that runs. The removal finds no connection
+    to close, and nothing would close one made afterwards."""
+    created, _releases = harnesses
+    apis: list = []
+    connected: list[str] = []
+    handled: list[None] = []
+    removed = tonio.Event()
+    settled = tonio.Event()
+    start_connection = _McpExtension._start_connection
+    on_mcp_servers_change = _McpExtension._on_mcp_servers_change
+
+    async def capture(pi) -> None:
+        apis.append(pi)
+
+    async def load_config(_ctx):
+        return LoadedMcpConfig(servers=[], errors=[])
+
+    async def create_transport(entry, _cwd, _auth_provider):
+        connected.append(entry.name)
+        client, _server = await fake_server([])
+        return client
+
+    def start_after_removal(self, server) -> tonio.Event:
+        ready = tonio.Event()
+
+        async def start() -> None:
+            # The server was listed while registered; it is unregistered, and
+            # that handled, before its connection starts.
+            pi.unregister_mcp_server("late")
+            await removed.wait(_WAIT_S)
+            await start_connection(self, server).wait(_WAIT_S)
+            ready.set()
+
+        tonio.spawn.without_tracking(start())
+        return ready
+
+    async def report_handled(self, event, ctx) -> None:
+        await on_mcp_servers_change(self, event, ctx)
+        # The unregistration's handler returns first: the registration's waits for `ready`.
+        handled.append(None)
+        (removed if len(handled) == 1 else settled).set()
+
+    monkeypatch.setattr(_McpExtension, "_on_mcp_servers_change", report_handled)
+    harness = await create_harness(
+        initial_active_tool_names=[],
+        extension_factories=[capture, create_mcp_extension(load_config=load_config, create_transport=create_transport)],
+        extension_bindings=ui_bindings(),
+    )
+    created.append(harness)
+    (pi,) = apis
+    monkeypatch.setattr(_McpExtension, "_start_connection", start_after_removal)
+
+    pi.register_mcp_server("late", {"url": "http://late.invalid"})
+    await settled.wait(_WAIT_S)
+
+    assert settled.is_set()
+    assert connected == []
+
+
+@pytest.mark.tonio
+async def test_the_status_of_a_server_is_read_from_one_snapshot(harnesses, monkeypatch):
+    """pidrei-only: a connection publishes its state and error as one
+    snapshot, and a reader taking two fields in two reads can pair an old
+    one with a new one. Here every read of `error` alone is followed by the
+    publication that clears it, as a sign-in landing in between would be."""
+    created, _releases = harnesses
+    notifications: list[str] = []
+    entry = McpServerEntry(name="docs", config={"url": "http://unused.invalid"}, source="test")
+
+    async def load_config(_ctx):
+        return LoadedMcpConfig(servers=[entry], errors=[])
+
+    async def create_transport(_entry, _cwd, _auth_provider):
+        raise RuntimeError("boom")
+
+    harness = await create_harness(
+        initial_active_tool_names=[],
+        extension_factories=[create_mcp_extension(load_config=load_config, create_transport=create_transport)],
+        extension_bindings=ui_bindings(notifications),
+    )
+    created.append(harness)
+    # `/mcp` waits for the startup connections, and their report.
+    await harness.session.prompt("/mcp")
+    error = McpServerConnection.error
+
+    def error_then_cleared(self) -> str | None:
+        value = error.fget(self)
+        with self._lock:
+            self._publish_locked(error=None)
+        return value
+
+    monkeypatch.setattr(McpServerConnection, "error", property(error_then_cleared))
+    notifications.clear()
+    await harness.session.prompt("/mcp")
+
+    assert notifications == ["docs: failed (codemode)\n    boom"]
+
+
+@pytest.mark.tonio
+async def test_enabling_a_server_does_not_connect_it_once_the_session_ended(harnesses, monkeypatch):
+    """pidrei-only: saving the config is awaited, so the session can end
+    while `/mcp` enables a server. pi saves synchronously."""
+    created, _releases = harnesses
+    connected: list[str] = []
+    saving = tonio.Event()
+    saved = tonio.Event()
+    entry = McpServerEntry(name="docs", config={"url": "http://unused.invalid", "enabled": False}, source="test")
+
+    async def load_config(_ctx):
+        return LoadedMcpConfig(servers=[entry], errors=[])
+
+    async def create_transport(entry, _cwd, _auth_provider):
+        connected.append(entry.name)
+        client, _server = await fake_server([])
+        return client
+
+    async def update_config(_entry, _patch) -> None:
+        saving.set()
+        await saved.wait(_WAIT_S)
+
+    class EnablesDocs:
+        """The manager view of a user who opens `docs` and picks Enable."""
+
+        def __init__(self) -> None:
+            self._answers = iter(["docs", "enable"])
+
+        async def menu(self, _build, _subscribe=None) -> str | None:
+            return next(self._answers, None)
+
+        def status(self, _title: str, _message: str) -> None:
+            pass
+
+    async def show_mcp_manager(_ctx, manage) -> None:
+        await manage(EnablesDocs())
+
+    monkeypatch.setattr("pidrei.extensions.mcp.show_mcp_manager", show_mcp_manager)
+    harness = await create_harness(
+        initial_active_tool_names=[],
+        extension_factories=[
+            create_mcp_extension(
+                load_config=load_config, create_transport=create_transport, update_config=update_config
+            )
+        ],
+        extension_bindings=ExtensionBindings(ui_context=create_test_ui_context(), mode="tui"),
+    )
+    created.append(harness)
+
+    async with tonio.scope(cancel_on_exc=True) as scope:
+        scope.spawn(harness.session.prompt("/mcp"))
+        await saving.wait(_WAIT_S)
+        assert saving.is_set()
+        await emit_session_shutdown_event(
+            harness.session.extension_runner, {"type": "session_shutdown", "reason": "quit"}
+        )
+        saved.set()
+
+    assert connected == []

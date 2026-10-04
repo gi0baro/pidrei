@@ -88,6 +88,7 @@ from .resources import (
     create_mcp_resource_tool_definitions,
 )
 from .runtime import (
+    ConnectionView,
     McpOAuthCredentialStore,
     McpServerConnection,
     McpServerLog,
@@ -199,7 +200,8 @@ class McpServerListing:
 def _server_summary(server: Any) -> str:
     """First line of the configured description, or of the server instructions once connected."""
     description = (server.entry.config.get("description") or "").strip()
-    instructions = server.connection.instructions if server.connection is not None else None
+    connection = server.connection
+    instructions = connection.instructions if connection is not None else None
     return _first_line(description or instructions or "").strip()
 
 
@@ -255,20 +257,37 @@ def _script_needs_server(code: str, server: str) -> bool:
     return mcp_namespace(server) in code
 
 
+def _view_of(server: _McpServer) -> ConnectionView | None:
+    """The snapshot of the server's connection, None without one. Two reads
+    can see two snapshots: a reader of more than one field takes it once."""
+    connection = server.connection
+    return connection.view if connection is not None else None
+
+
+def _in_state(server: _McpServer, *states: str) -> bool:
+    """Whether the server has a connection in one of `states`."""
+    view = _view_of(server)
+    return view is not None and view.state in states
+
+
 def _describe_state(server: _McpServer, with_error: bool = True) -> str:
     """Short state for lists and the startup report. `with_error` appends the first line of a failure."""
+    return _describe_view(server, _view_of(server), with_error)
+
+
+def _describe_view(server: _McpServer, view: ConnectionView | None, with_error: bool = True) -> str:
+    """`_describe_state` of a snapshot the caller took."""
     if not _is_enabled(server):
         return "disabled"
-    connection = server.connection
-    if connection is None:
+    if view is None:
         return "starting"
-    match connection.state:
+    match view.state:
         case "needs-auth":
             return "needs sign-in"
         case "failed":
-            return f"failed: {_first_line(connection.error or 'unknown error')}" if with_error else "failed"
+            return f"failed: {_first_line(view.error or 'unknown error')}" if with_error else "failed"
         case "connected":
-            tools, count = connection.tools, len(connection.resources)
+            tools, count = view.tools, len(view.resources)
             resource_count = f" · {count} resource{'' if count == 1 else 's'}" if count > 0 else ""
             return f"connected · {len(tools)} tool{'' if len(tools) == 1 else 's'}{resource_count}"
         case "connecting":
@@ -284,11 +303,11 @@ _EXPOSURE_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _attention_rank(server: _McpServer) -> int:
+def _attention_rank(server: _McpServer, view: ConnectionView | None) -> int:
     """Servers that need the user first."""
     if not _is_enabled(server):
         return 5
-    match server.connection.state if server.connection is not None else None:
+    match view.state if view is not None else None:
         case "needs-auth":
             return 0
         case "failed":
@@ -477,7 +496,7 @@ class _McpExtension:
         return unsubscribe
 
     def _connections(self) -> list[McpServerConnection]:
-        return [server.connection for server in self._servers if server.connection is not None]
+        return [connection for server in self._servers if (connection := server.connection) is not None]
 
     def _find_server(self, name: str) -> _McpServer | None:
         return next((server for server in self._servers if server.entry.name == name), None)
@@ -533,14 +552,20 @@ class _McpExtension:
         server = connection.entry.name
         with self._lock:
             found = self._find_server(server)
-            entry = found.entry if found is not None else connection.entry
+            # The connection checks that it is current before calling this, but
+            # not in the same step: one replaced, disabled or removed in
+            # between had its tools hidden, and registers nothing.
+            if found is None or found.connection is not connection:
+                return
+            entry = found.entry
+            view = connection.view
             description = (entry.config.get("description") or "").strip()
             namespace = ToolNamespace(
-                name=mcp_namespace(server), description=description or None, instructions=connection.instructions
+                name=mcp_namespace(server), description=description or None, instructions=view.instructions
             )
             previous = self._server_tools.get(server, {})
             current: dict[str, None] = {}
-            tools = connection.tools
+            tools = view.tools
             # Like Codex, all tools whose names sanitize to the same name get the
             # hash suffix, so which one would keep the plain name does not depend
             # on the order of the list.
@@ -598,25 +623,26 @@ class _McpExtension:
         self._server_tools[server] = {}
         self._sync_resource_tools_locked()
 
-    def _servers_with_resources(self) -> list[_McpServer]:
-        """Enabled servers with resources whose exposure is not `hidden`, which the resource tools reach."""
+    def _servers_with_resources(self) -> list[tuple[_McpServer, McpServerConnection]]:
+        """Enabled servers with resources whose exposure is not `hidden`, which
+        the resource tools reach, each with the connection it was read with."""
         return [
-            server
+            (server, connection)
             for server in self._servers
-            if server.connection is not None
-            and server.connection.has_resources
+            if (connection := server.connection) is not None
+            and connection.has_resources
             and _is_enabled(server)
             and _exposure_of(server.entry) != "hidden"
         ]
 
     def _resource_servers(self) -> list[McpServerConnection]:
-        return [server.connection for server in self._servers_with_resources() if server.connection is not None]
+        return [connection for _server, connection in self._servers_with_resources()]
 
     def _sync_resource_tools_locked(self) -> None:
         """Register the resource tools with the widest exposure of the servers
         they reach: `direct` when one of them is direct, and so on. They are
         hidden when no server has resources."""
-        exposures = {_exposure_of(server.entry) for server in self._servers_with_resources()}
+        exposures = {_exposure_of(server.entry) for server, _connection in self._servers_with_resources()}
         exposure = next((candidate for candidate in ("direct", "codemode", "deferred") if candidate in exposures), None)
         target: McpExposure = exposure if exposure is not None else "hidden"
         if target == self._resource_tools_exposure or (self._resource_tools_exposure is None and target == "hidden"):
@@ -737,10 +763,12 @@ class _McpExtension:
         server.connection = connection
         return connection
 
-    def _start_connection(self, server: _McpServer, is_current: Callable[[], bool]) -> tonio.Event:
+    def _start_connection(self, server: _McpServer) -> tonio.Event:
         """Connect the server in the background. The returned Event (also
         `server.ready`) is set when it connected or failed; failures show in
-        its state. `is_current` stops it when the session ended meanwhile."""
+        its state. A server that left the session's servers meanwhile (it was
+        removed, or the session ended) is not connected: nothing would close
+        its connection."""
         ready = tonio.Event()
         with self._lock:
             server.ready = ready
@@ -748,7 +776,8 @@ class _McpExtension:
         async def connect() -> None:
             try:
                 with self._lock:
-                    if not is_current():
+                    # By identity: a new session and a re-registration list new servers.
+                    if not any(candidate is server for candidate in self._servers):
                         return
                     connection = self._create_connection_locked(server)
                 self._emit_change()
@@ -781,9 +810,9 @@ class _McpExtension:
         only for `only`, servers that connected later."""
         lines = [] if only is not None else [f"config: {error}" for error in self._config_errors]
         for server in only if only is not None else self._servers:
-            state = server.connection.state if server.connection is not None else None
-            if state in ("needs-auth", "failed"):
-                lines.append(f"{server.entry.name}: {_describe_state(server)}")
+            view = _view_of(server)
+            if view is not None and view.state in ("needs-auth", "failed"):
+                lines.append(f"{server.entry.name}: {_describe_view(server, view)}")
         if not lines:
             return
         body = "\n".join(f"  {line}" for line in lines)
@@ -864,7 +893,7 @@ class _McpExtension:
             if connection is not None:
                 await connection.close()
             return None
-        await self._start_connection(server, lambda: True).wait()
+        await self._start_connection(server).wait()
         return None
 
     async def _set_exposure(self, server: _McpServer, exposure: McpExposure) -> str | None:
@@ -896,7 +925,11 @@ class _McpExtension:
         ]
 
     def _servers_menu(self) -> McpMenu:
-        servers = sorted(self._servers, key=lambda server: (_attention_rank(server), locale_order(server.entry.name)))
+        # Each server is ranked and described from one snapshot.
+        servers = sorted(
+            ((server, _view_of(server)) for server in self._servers),
+            key=lambda listed: (_attention_rank(*listed), locale_order(listed[0].entry.name)),
+        )
         return McpMenu(
             title="MCP servers",
             error="\n".join(self._notices()) or None,
@@ -905,11 +938,11 @@ class _McpExtension:
                     "value": server.entry.name,
                     "label": server.entry.name,
                     "description": (
-                        f"{_describe_state(server)} · {_exposure_of(server.entry)} · "
+                        f"{_describe_view(server, view)} · {_exposure_of(server.entry)} · "
                         f"{server.entry.scope or server.entry.source}"
                     ),
                 }
-                for server in servers
+                for server, view in servers
             ],
             empty=_config_hint(),
             confirm_label="manage",
@@ -927,6 +960,7 @@ class _McpExtension:
                 cancel_label="back",
             )
         entry, connection = server.entry, server.connection
+        view = connection.view if connection is not None else None
         if entry.scope == "extension":
             saved = "for this session"
         elif entry.scope:
@@ -937,11 +971,11 @@ class _McpExtension:
         if not _is_enabled(server):
             items.append({"value": "enable", "label": "Enable", "description": saved})
         else:
-            state = connection.state if connection is not None else None
+            state = view.state if view is not None else None
             if state == "needs-auth":
                 items.append({"value": "signin", "label": "Sign in", "description": "opens the browser"})
-            if state == "connected" and connection is not None:
-                items.append({"value": "tools", "label": "Tools", "description": f"{len(connection.tools)} offered"})
+            if state == "connected" and view is not None:
+                items.append({"value": "tools", "label": "Tools", "description": f"{len(view.tools)} offered"})
             if state in ("failed", "disconnected", "connected", "needs-auth"):
                 items.append({"value": "reconnect", "label": "Reconnect"})
             if state == "connected" and connection is not None and connection.oauth_url:
@@ -951,15 +985,13 @@ class _McpExtension:
         details = [
             _describe_transport(entry),
             f"{entry.scope or 'config'}: {entry.source}",
-            f"State: {_describe_state(server, False)}",
+            f"State: {_describe_view(server, view, False)}",
         ]
         errors = [
             line
             for line in (
                 server.message,
-                None
-                if connection is not None and connection.state == "connected"
-                else (connection.error if connection is not None else None),
+                view.error if view is not None and view.state != "connected" else None,
             )
             if line is not None
         ]
@@ -980,7 +1012,8 @@ class _McpExtension:
         note = "\nSome tools override it with toolExposure." if overridden else ""
 
         def build() -> McpMenu:
-            tools = server.connection.tools if server.connection is not None else []
+            view = _view_of(server)
+            tools = view.tools if view is not None else []
             items = []
             for tool in tools:
                 tool_exposure = get_mcp_tool_exposure(server.entry.config, tool["name"])
@@ -1095,22 +1128,20 @@ class _McpExtension:
         for server in servers:
             name = server.entry.name
             exposure = _exposure_of(server.entry)
-            connection = server.connection
-            if connection is not None and connection.state == "needs-auth":
+            view = _view_of(server)
+            if view is not None and view.state == "needs-auth":
                 lines.append(f"{name}: needs sign-in, run /mcp login {name} ({exposure})")
                 continue
-            tools = (
-                f", {len(connection.tools)} tools" if connection is not None and connection.state == "connected" else ""
-            )
+            tools = f", {len(view.tools)} tools" if view is not None and view.state == "connected" else ""
             if not _is_enabled(server):
                 state = "disabled"
-            elif connection is not None and connection.state == "disconnected":
+            elif view is not None and view.state == "disconnected":
                 state = "disconnected, reconnects on next call"
             else:
-                state = connection.state if connection is not None else "starting"
+                state = view.state if view is not None else "starting"
             error = (
-                "\n    " + "\n    ".join(connection.error.split("\n"))
-                if connection is not None and connection.error and connection.state != "connected"
+                "\n    " + "\n    ".join(view.error.split("\n"))
+                if view is not None and view.error and view.state != "connected"
                 else ""
             )
             lines.append(f"{name}: {state}{tools} ({exposure}){error}")
@@ -1149,14 +1180,15 @@ class _McpExtension:
 
     @staticmethod
     def _uses_oauth(server: _McpServer) -> bool:
-        return server.connection is not None and server.connection.oauth_url is not None
+        connection = server.connection
+        return connection is not None and connection.oauth_url is not None
 
     def _pick_oauth_server(self, name: str | None, ctx: Any) -> Awaitable[_McpServer | None]:
         return self._pick_server(
             name,
             ctx,
             eligible=self._uses_oauth,
-            preferred=lambda server: server.connection is not None and server.connection.state == "needs-auth",
+            preferred=lambda server: _in_state(server, "needs-auth"),
             none="No enabled MCP server uses OAuth. Only HTTP servers without an Authorization header do.",
         )
 
@@ -1191,7 +1223,8 @@ class _McpExtension:
             ctx.ui.notify(failure, "info" if failure == "Sign-in cancelled." else "error")
             return
         self._ensure_discovery_active(ctx)
-        tools = len(server.connection.tools) if server.connection is not None else 0
+        view = _view_of(server)
+        tools = len(view.tools) if view is not None else 0
         ctx.ui.notify(f'Signed in to MCP server "{name}" ({tools} tools).', "info")
 
     async def _argument_completions(self, prefix: str) -> list[dict[str, str]] | None:
@@ -1258,9 +1291,7 @@ class _McpExtension:
                     name,
                     ctx,
                     eligible=lambda candidate: candidate.connection is not None,
-                    preferred=lambda candidate: (
-                        candidate.connection is not None and candidate.connection.state in ("failed", "disconnected")
-                    ),
+                    preferred=lambda candidate: _in_state(candidate, "failed", "disconnected"),
                     none="No enabled MCP server to reconnect.",
                 )
                 if server is None:
@@ -1310,7 +1341,7 @@ class _McpExtension:
         def is_current() -> bool:
             return current == self._generation
 
-        readies = [self._start_connection(server, is_current) for server in enabled]
+        readies = [self._start_connection(server) for server in enabled]
         pending = tonio.Event()
         with self._lock:
             self._pending = pending
@@ -1374,9 +1405,7 @@ class _McpExtension:
         pending_servers = [
             server
             for server in self._servers
-            if _is_enabled(server)
-            and (server.connection is None or server.connection.state != "connected")
-            and server.ready is not None
+            if _is_enabled(server) and not _in_state(server, "connected") and server.ready is not None
         ]
         if not pending_servers:
             return
@@ -1418,19 +1447,17 @@ class _McpExtension:
                 self._hide_tools_locked(server.entry.name)
         self._emit_change()
         self._ensure_discovery_active(ctx)
-        await _wait_all([server.connection.close() for server in removed if server.connection is not None])
+        await _wait_all([connection.close() for server in removed if (connection := server.connection) is not None])
         connecting = [server for server in added if _is_enabled(server)]
         if current != self._generation or not connecting:
             return
-
-        def is_current() -> bool:
-            return current == self._generation
-
-        readies = [self._start_connection(server, is_current) for server in connecting]
+        readies = [self._start_connection(server) for server in connecting]
         for ready in readies:
             await ready.wait()
         if current != self._generation:
-            await _wait_all([server.connection.close() for server in connecting if server.connection is not None])
+            await _wait_all(
+                [connection.close() for server in connecting if (connection := server.connection) is not None]
+            )
             return
         self._report_problems(ctx, connecting)
 

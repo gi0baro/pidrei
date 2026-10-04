@@ -276,15 +276,15 @@ async def register_client(
     return parse_client_information(parse_json(payload))
 
 
-async def exchange_authorization_code(
+def exchange_authorization_code(
     authorization_server_url: str,
     options: TokenRequestOptions,
     *,
     code: str,
     code_verifier: str,
     redirect_url: str,
-) -> OAuthTokens:
-    return await _token_request(
+) -> Awaitable[OAuthTokens]:
+    return _token_request(
         authorization_server_url,
         options,
         {

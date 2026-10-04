@@ -11,13 +11,19 @@ refreshes and close run in parallel:
 
 - What the extension reads of a connection (state, error, tools, resources,
   instructions) is one frozen snapshot, replaced whole under the connection's
-  lock; readers take one copy.
+  lock. A reader of more than one field takes it once, as `view`; the
+  per-field properties each read the snapshot of that moment.
 - pi shares one `opening` promise between callers. Here the open runs on its
   own detached coroutine and callers join it through an Event, so a caller
   that is cancelled stops waiting while the open completes for the others.
-- `close()` also closes the client still connecting, and wakes a retry
-  delay: pi leaves a connect in flight running until it fails or times out,
-  which here would be work still running after shutdown.
+- `close()` also closes the client still connecting, wakes a retry delay,
+  and waits for that connect to end: pi leaves a connect in flight running
+  until it fails or times out, which here would be work still running after
+  shutdown. What the wait can take is what the connect cannot be made to
+  drop: the transport factory resolving its config values.
+- The client of a session the server forgot is left open for its calls in
+  flight, as in pi, which then never closes it. Here the connection keeps
+  it and `close()` closes it too.
 - `on_change` is async and awaited where the state changes, so the extension
   can read what it needs (the stored tokens) at that moment.
 - Factories and settings that resolve config values (`!command`, `${VAR}`)
@@ -33,6 +39,7 @@ from typing import Any, Literal
 
 import tonio.colored as tonio
 
+from pidrei_ai.utils.tasks import unwrap_spawn_error
 from pidrei_http.http import TransportError
 from pidrei_mcp import (
     JSON_RPC_ERROR_CODES,
@@ -71,6 +78,7 @@ from .resources import is_mcp_app_resource
 
 
 __all__ = [
+    "ConnectionView",
     "McpOAuthCredentialStore",
     "McpServerConnection",
     "McpServerLog",
@@ -181,7 +189,7 @@ async def _fetch_resources(client: McpClient) -> tuple[list[Resource], list[Reso
 
 
 @dataclass(frozen=True, slots=True)
-class _ConnectionView:
+class ConnectionView:
     """Published whole; the lists are never changed after publication."""
 
     state: ServerState = "connecting"
@@ -238,13 +246,16 @@ class McpServerConnection:
         self._on_change = on_change
         self._log = log
         self._lock = threading.Lock()
-        self._view = _ConnectionView()
+        self._view = ConnectionView()
         # Last OAuth challenge from the server; sign-in uses its resource
         # metadata URL and scope. One value, rebound whole.
         self.challenge: OAuthChallenge | None = None
         self._client: McpClient | None = None
         # The client of the connect in flight, which `close()` closes too.
         self._connecting: McpClient | None = None
+        # Clients of sessions the server forgot, left open for their calls in
+        # flight (see `_with_client`); `close()` closes them.
+        self._expired: list[McpClient] = []
         self._opening: _Opening | None = None
         self._closed = False
         self._closed_event = tonio.Event()
@@ -284,6 +295,12 @@ class McpServerConnection:
     def oauth_url(self) -> str | None:
         """Server URL when the server authenticates with OAuth."""
         return self.entry.config["url"] if _uses_oauth(self.entry) else None
+
+    @property
+    def view(self) -> ConnectionView:
+        """The current snapshot. Two reads of the connection can see two
+        snapshots, so a reader of more than one field takes this once."""
+        return self._view
 
     @property
     def state(self) -> ServerState:
@@ -437,17 +454,38 @@ class McpServerConnection:
                     # did not run the request. Retry once on a new session. The old
                     # client is detached but not closed: closing would fail its other
                     # in-flight calls, which instead get the same 404 and retry the
-                    # same way.
+                    # same way. It stays the connection's to close (pi leaves it to
+                    # the collector).
                     with self._lock:
                         if self._client is client:
                             self._client = None
+                            self._expired.append(client)
                     attempt += 1
                     continue
                 if not self._needs_sign_in(error):
                     raise
-                await self._drop_client(client)
-                await self._mark_needs_auth()
+                try:
+                    # On its own coroutine: a caller that is cancelled (a codemode
+                    # script's call) only stops waiting, and both steps complete.
+                    await tonio.spawn(self._drop_and_mark_needs_auth(client))
+                except* Exception as group:
+                    raise unwrap_spawn_error(group) from group
                 raise Exception(_sign_in_required_message(self.entry)) from None
+
+    async def _drop_and_mark_needs_auth(self, client: McpClient) -> None:
+        """Dropping the client and showing the server as needing a sign-in are
+        one step, taken before the client is closed: a connect another call
+        makes during that close is the newer state. A client that is no
+        longer the connection's (a sibling call dropped it first) changes
+        nothing."""
+        with self._lock:
+            current = self._client is client
+            if current:
+                self._client = None
+                self._publish_locked(state="needs-auth", error=None)
+        await _close_quietly(client)
+        if current:
+            await self._changed()
 
     async def _wait_for_opening(self) -> None:
         with self._lock:
@@ -466,11 +504,16 @@ class McpServerConnection:
     async def sign_out(self) -> None:
         """Disconnect after the stored credentials were removed."""
         await self._wait_for_opening()
-        client = self._client
+        # One step, before the client is closed (see `_drop_and_mark_needs_auth`).
+        with self._lock:
+            closed = self._closed
+            client, self._client = self._client, None
+            if not closed:
+                self._publish_locked(state="needs-auth", error=None)
         if client is not None:
-            await self._drop_client(client)
-        if not self._closed:
-            await self._mark_needs_auth()
+            await _close_quietly(client)
+        if not closed:
+            await self._changed()
 
     def _needs_sign_in(self, error: BaseException) -> bool:
         """OAuth servers that still reject the request after a refresh need the user to sign in again."""
@@ -480,6 +523,9 @@ class McpServerConnection:
 
     async def _mark_needs_auth(self) -> None:
         with self._lock:
+            # A closed connection stays closed.
+            if self._closed:
+                return
             self._publish_locked(state="needs-auth", error=None)
         await self._changed()
 
@@ -519,8 +565,8 @@ class McpServerConnection:
         name = self.entry.name
         if log is not None:
 
-            async def on_message(params: Any) -> None:
-                await log.write(name, params)
+            def on_message(params: Any) -> Awaitable[None]:
+                return log.write(name, params)
 
             client.on_notification("notifications/message", on_message)
         with self._lock:
@@ -542,8 +588,8 @@ class McpServerConnection:
             client.on_notification("notifications/resources/list_changed", on_resources_changed)
             stdio = transport if isinstance(transport, StdioTransport) else None
 
-            async def on_close() -> None:
-                await self._handle_client_close(client, stdio)
+            def on_close() -> Awaitable[None]:
+                return self._handle_client_close(client, stdio)
 
             client.on_close(on_close)
             capabilities = client.server_capabilities or {}
@@ -614,6 +660,10 @@ class McpServerConnection:
             self._on_tools(self)
         except Exception as error:
             with self._lock:
+                # A client closed or replaced meanwhile fails for that reason,
+                # which is not the connection's error (pi sets it unguarded).
+                if self._client is not client or self._closed:
+                    return
                 self._publish_locked(error=f"Failed to refresh tools: {error}")
         await self._changed()
 
@@ -631,13 +681,19 @@ class McpServerConnection:
             self._closed = True
             self._publish_locked(state="closed")
             clients = [client for client in (self._client, self._connecting) if client is not None]
+            clients.extend(self._expired)
             self._client = None
             self._connecting = None
+            self._expired = []
         # Wakes a retry delay; the open then fails as closed.
         self._closed_event.set()
         await self._changed()
         for client in clients:
             await _close_quietly(client)
+        # A connect in flight fails now that it is closed (and its client with
+        # it): wait for it, so nothing of the connection runs after the close.
+        # No other can start: `get_client()` refuses once closed.
+        await self._wait_for_opening()
         # A refresh the server already answered may have rotated the refresh
         # token; exiting before the new tokens are saved would lose the grant.
         if self._auth_settled is not None:
