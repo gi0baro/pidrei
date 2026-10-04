@@ -14,7 +14,6 @@ from .countdown_timer import CountdownTimer
 from .custom_editor import CustomEditor
 from .custom_entry import CustomEntryComponent
 from .custom_message import CustomMessageComponent
-from .daxnuts import DaxnutsComponent
 from .diff import render_diff
 from .dynamic_border import DynamicBorder
 from .earendil_announcement import EarendilAnnouncementComponent, load_earendil_image_base64
@@ -64,7 +63,6 @@ __all__ = [
     "CustomEditor",
     "CustomEntryComponent",
     "CustomMessageComponent",
-    "DaxnutsComponent",
     "DynamicBorder",
     "EarendilAnnouncementComponent",
     "ExtensionEditorComponent",

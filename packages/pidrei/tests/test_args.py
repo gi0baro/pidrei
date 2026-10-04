@@ -124,6 +124,11 @@ class TestFlagsWithValues:
         result = parse_args(["--models", "gpt-4o,claude-sonnet,gemini-pro"])
         assert result.models == ["gpt-4o", "claude-sonnet", "gemini-pro"]
 
+    # Issue #10334
+    def test_ignores_empty_entries_in_models(self):
+        result = parse_args(["--models", "gpt-4o, ,claude-sonnet,"])
+        assert result.models == ["gpt-4o", "claude-sonnet"]
+
 
 # Issue #9045
 class TestModeFlag:

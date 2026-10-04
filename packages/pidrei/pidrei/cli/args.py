@@ -150,7 +150,7 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
             result.session_dir = args[i]
         elif arg == "--models" and i + 1 < len(args):
             i += 1
-            result.models = [s.strip() for s in args[i].split(",")]
+            result.models = [pattern for pattern in (s.strip() for s in args[i].split(",")) if len(pattern) > 0]
         elif arg in ("--no-tools", "-nt"):
             result.no_tools = True
         elif arg in ("--no-builtin-tools", "-nbt"):

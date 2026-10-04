@@ -138,7 +138,6 @@ from .components import (
     CustomEditor,
     CustomEntryComponent,
     CustomMessageComponent,
-    DaxnutsComponent,
     DynamicBorder,
     EarendilAnnouncementComponent,
     ExtensionEditorComponent,
@@ -5208,7 +5207,6 @@ class InteractiveMode:
                     self._footer.invalidate()
                     self._update_editor_border_color()
                     self.show_status(f"Model: {model.id}")
-                    self._check_daxnuts_easter_egg(model)
                 self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(model))
             except Exception as error:
                 self.show_error(str(error))
@@ -5362,7 +5360,6 @@ class InteractiveMode:
                         self.show_status(
                             f"Default model: {model.provider}/{model.id}" if persist else f"Model: {model.id}"
                         )
-                        self._check_daxnuts_easter_egg(model)
                     self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(model))
                 except Exception as error:
                     with self.ui.state_lock:
@@ -6192,7 +6189,6 @@ class InteractiveMode:
                         f"{action_label}. Selected {selected_model.id}. Credentials saved to {get_auth_path()}"
                     )
                     self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(selected_model))
-                    self._check_daxnuts_easter_egg(selected_model)
                 else:
                     self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}")
                     if selection_error:
@@ -7138,13 +7134,6 @@ class InteractiveMode:
 
     async def _handle_demented_elves(self) -> None:
         self._append_to_chat(Spacer(1), EarendilAnnouncementComponent(await load_earendil_image_base64()))
-
-    def _handle_daxnuts(self) -> None:
-        self._append_to_chat(Spacer(1), DaxnutsComponent(self.ui))
-
-    def _check_daxnuts_easter_egg(self, model) -> None:
-        if model.provider == "opencode" and "kimi-k2.5" in model.id.lower():
-            self._handle_daxnuts()
 
     async def _handle_bash_command(self, command: str, exclude_from_context: bool = False) -> None:
         extension_runner = self.session.extension_runner
