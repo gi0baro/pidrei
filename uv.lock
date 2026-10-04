@@ -456,7 +456,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpunk", specifier = "~=0.4.5" },
-    { name = "punkreq", specifier = "~=0.2.3" },
+    { name = "punkreq", specifier = "~=0.2.4" },
     { name = "tonio", specifier = "~=0.10.4" },
 ]
 
@@ -594,14 +594,14 @@ wheels = [
 
 [[package]]
 name = "punkreq"
-version = "0.2.3"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpunk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/f4/1d16293acb626e8408646091c65a3c590b26485134204316fdb5761ddbcc/punkreq-0.2.3.tar.gz", hash = "sha256:f8f055f959d685b72702076b597ddde6c94cec835d36150cc36515a56e4a4881", size = 66284, upload-time = "2026-09-24T08:57:39.926Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/8e/ad9981282c305ad3330ddc0aee17ebc49684524ecdd72837c4095dc4bf5d/punkreq-0.2.4.tar.gz", hash = "sha256:74072c27dfff3f002ad2aad1b6d8a8695ef9e9cf0422240c31cc1f25715face9", size = 67118, upload-time = "2026-10-04T22:19:50.901Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/b5/8e012ad29ab2b06232e43537236ffe09ef787cfd0283e87ae2e8487c2a38/punkreq-0.2.3-py3-none-any.whl", hash = "sha256:f0e4fb4a36056284bb5d9c98c83f81310e6e35284731db547342f540f002d01e", size = 49572, upload-time = "2026-09-24T08:57:38.413Z" },
+    { url = "https://files.pythonhosted.org/packages/24/bb/a968ec8ddab999f7231342a862205cb217314e34ee82ce770099ef89fb96/punkreq-0.2.4-py3-none-any.whl", hash = "sha256:112d2e7272197e4c22d959f927ae4952b0910d9f7164bfd7998278e65f3bf7c7", size = 50399, upload-time = "2026-10-04T22:19:49.504Z" },
 ]
 
 [[package]]

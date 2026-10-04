@@ -4,9 +4,10 @@ and OAuth tests.
 pi's are node `http` servers; these are httpunk's (through the pidrei-http
 seam), served one connection per coroutine. `loopback_servers` gives a test
 its servers and a shared client without keep-alive, so a connection ends with
-its exchange and nothing is left open when the test ends. A handler that holds
-a response open waits on `request.peer_closed()`, which resolves once the
-client hangs up.
+its exchange. When the test ends the servers drop whatever connections are
+left, as pi's helper does, and wait for every coroutine they started. A
+handler that holds a response open waits on `request.peer_closed()`, which
+resolves once the client hangs up.
 
 It is entered inside the test body, never from a fixture: the runtime shuts
 down every I/O registration when a `run_until_complete` returns, and a
@@ -55,35 +56,55 @@ class _Server:
         self.listener = listener
         self.handler = handler
         self.origin = f"http://127.0.0.1:{listener.socket.getsockname()[1]}"
-        # One Event per accepted connection, set once it has been served.
-        self.served: list[tonio.Event] = []
+        # Every accepted connection, with the Event its coroutine sets when it ends.
+        self.connections: list[tuple[Any, tonio.Event]] = []
+        self.stopped = tonio.Event()
 
     async def serve(self, stream: Any, done: tonio.Event) -> None:
-        async with http.h1_server(stream) as server:
-            async for request in server:
-                try:
-                    await self.handler(request, self.origin)
-                except Exception:
-                    break
-                finally:
-                    done.set()
+        try:
+            async with http.h1_server(stream) as server:
+                async for request in server:
+                    try:
+                        await self.handler(request, self.origin)
+                    except Exception:
+                        break
+        except Exception:
+            # The connection was dropped under a read: by its client, or by `close()`.
+            pass
+        finally:
+            done.set()
 
     async def accept(self) -> None:
-        while True:
-            try:
-                stream = await self.listener.accept()
-            except Exception:
-                return
-            done = tonio.Event()
-            self.served.append(done)
-            tonio.spawn.without_tracking(self.serve(stream, done))
+        try:
+            while True:
+                try:
+                    stream = await self.listener.accept()
+                except Exception:
+                    return
+                done = tonio.Event()
+                self.connections.append((stream, done))
+                tonio.spawn.without_tracking(self.serve(stream, done))
+        finally:
+            self.stopped.set()
 
     async def close(self) -> None:
+        """Stop accepting, drop every connection (pi's `closeAllConnections`)
+        and wait for the accept loop and each connection's coroutine to end:
+        none of them may still be parked on its socket when the test body
+        returns. A connection that never carried a request (a client that
+        gave up while connecting) is dropped like any other."""
         self.listener.close()
-        for done in self.served:
-            await done.wait(_CLOSE_WAIT_S)
+        await self._ended(self.stopped, "its accept loop")
+        for stream, done in self.connections:
             if not done.is_set():
-                raise AssertionError(f"a connection to the test server at {self.origin} was never served")
+                stream.close()
+        for _stream, done in self.connections:
+            await self._ended(done, "a connection")
+
+    async def _ended(self, event: tonio.Event, what: str) -> None:
+        await event.wait(_CLOSE_WAIT_S)
+        if not event.is_set():
+            raise AssertionError(f"the test server at {self.origin} did not shut down: {what} is still running")
 
 
 class HttpServers:
@@ -111,8 +132,9 @@ class HttpServers:
 @contextlib.asynccontextmanager
 async def loopback_servers(monkeypatch) -> AsyncIterator[HttpServers]:
     """Loopback test servers for one test body, and a shared HTTP client that
-    keeps no idle connection; the servers are shut down, then the client is
-    closed, before the body returns."""
+    keeps no idle connection; the servers are shut down (every connection
+    dropped, every server coroutine ended), then the client is closed, before
+    the body returns."""
     client = http.create_client(limits=http.Limits(max_keepalive_connections=0))
     monkeypatch.setattr(http, "shared_client", lambda: client)
     servers = HttpServers()
