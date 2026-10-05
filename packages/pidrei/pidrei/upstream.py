@@ -16,12 +16,12 @@ version number cannot be bumped independently.
 UPSTREAM_REPO = "https://github.com/earendil-works/pi"
 
 #: pi's released version at UPSTREAM_REF.
-UPSTREAM_VERSION = "1.0.2"
+UPSTREAM_VERSION = "1.0.3"
 
 #: The exact pi commit ported — by convention the commit immediately after the
 #: release tag ("Add [Unreleased] section for next cycle"). Bumped by
 #: `make upstream-bump` as each upstream delta lands.
-UPSTREAM_REF = "200387122ca450d6387f033949423114a270b96c"
+UPSTREAM_REF = "997d31f286afd924f87bed0f6457efa18683ddd9"
 
 
 def short_ref() -> str:
