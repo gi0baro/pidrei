@@ -25,6 +25,7 @@ from pidrei_tui.terminal_image import (
     get_capabilities,
     get_kitty_image_metadata,
     get_kitty_image_placement,
+    get_kitty_image_placement_rows,
     hyperlink,
     image_fallback,
     is_image_line,
@@ -484,6 +485,11 @@ def test_can_request_no_terminal_side_cursor_movement():
     assert sequence.startswith("\x1b_Ga=T,f=100,q=2,C=1,c=2,r=2;")
 
 
+def test_reads_explicit_placement_rows_without_registered_metadata():
+    sequence = encode_kitty("AAAA", columns=2, rows=3, move_cursor=False)
+    assert get_kitty_image_placement_rows(sequence) == 3
+
+
 def test_suppresses_kitty_replies_for_delete_commands():
     assert delete_kitty_image(42) == "\x1b_Ga=d,d=I,i=42,q=2\x1b\\"
     assert delete_all_kitty_images() == "\x1b_Ga=d,d=A,q=2\x1b\\"
@@ -543,8 +549,10 @@ def test_creates_placement_only_commands_for_uploaded_and_cropped_images():
     line = f"left {crop_kitty_image_line(transmission, 2, 1)} right"
     placement = get_kitty_image_placement(line)
     assert placement
+    assert get_kitty_image_placement_rows(line) == 1
     assert placement["transmissionBytes"] == len(line) - len("left ") - len(" right")
     assert placement["estimatedDecodedBytes"] == 100 * 100 * 4
+    assert placement["rows"] == 1
     assert placement["sequence"] == "\x1b_Ga=p,q=2,C=1,c=3,i=42,y=66,h=34,r=1\x1b\\"
     assert placement["replacementLine"] == f"left {placement['sequence']} right"
     assert "AAAA" not in placement["replacementLine"]

@@ -1143,6 +1143,43 @@ async def test_crops_a_kitty_image_whose_first_line_is_above_the_viewport():
 
 
 @pytest.mark.tonio
+async def test_redraws_wezterm_kitty_images_after_writes_to_covered_rows(monkeypatch):
+    # Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    monkeypatch.setenv("WEZTERM_PANE", "1")
+    with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
+        terminal = RecordingTerminal(20, 4)
+        image_id = 10319
+        image_line = encode_kitty("AAAA", columns=2, rows=3, image_id=image_id, move_cursor=False)
+        register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 3, "widthPx": 100, "heightPx": 100})
+        covered = {"line": ""}
+
+        class Root:
+            def render(self, _width):
+                return [image_line, covered["line"], "", "after"]
+
+            def invalidate(self):
+                pass
+
+        tui = TuiAltScreen(terminal)
+        tui.set_layout_root(Root())
+        await tui.start()
+        await terminal.wait_for_render()
+        event_count = len(terminal.events)
+
+        tui.apply(lambda: covered.update(line="changed"))
+        since = terminal.frames
+        tui.request_render()
+        await terminal.wait_for_render(since)
+        redraw_writes = "".join(event["data"] for event in terminal.events[event_count:] if event["type"] == "write")
+        placement_index = redraw_writes.find("\x1b_Ga=p,q=2")
+        assert "\x1b_Ga=d,d=a,q=2\x1b\\" in redraw_writes
+        assert placement_index > redraw_writes.find("changed")
+        assert "\x1b_Ga=T" not in redraw_writes
+        await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_reuses_moved_kitty_images_without_dropping_hstack_siblings():
     with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
         terminal = RecordingTerminal(20, 6)
