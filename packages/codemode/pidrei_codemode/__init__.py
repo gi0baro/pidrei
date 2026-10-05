@@ -22,7 +22,7 @@ from .declarations import (
 from .identifier import to_codemode_identifier
 from .runtime.host import CodemodeSandbox
 from .runtime.pool import CodemodePool
-from .runtime.prelude import MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS
+from .runtime.prelude import MAX_OUTPUT_CHARS, MAX_OUTPUT_ITEMS, MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS
 from .source import (
     CODEMODE_OPTIONS_PREFIX,
     CODEMODE_SOURCE_GRAMMAR,
@@ -52,6 +52,8 @@ __all__ = [
     "CODEMODE_OPTIONS_PREFIX",
     "CODEMODE_SOURCE_GRAMMAR",
     "DEFAULT_INPUT_SCHEMA_MAX_CHARS",
+    "MAX_OUTPUT_CHARS",
+    "MAX_OUTPUT_ITEMS",
     "MAX_STORE_TOTAL_CHARS",
     "MAX_STORE_VALUE_CHARS",
     "MCP_PYTHON_PREAMBLE",

@@ -70,7 +70,16 @@ from ..types import (
     CodemodeTool,
 )
 from .pool import CodemodePool
-from .prelude import PRELUDE, ScriptStore, image_output, json_round_trip, output_text
+from .prelude import (
+    MAX_OUTPUT_CHARS,
+    MAX_OUTPUT_ITEMS,
+    OUTPUT_LIMIT_MESSAGE,
+    PRELUDE,
+    ScriptStore,
+    image_output,
+    json_round_trip,
+    output_text,
+)
 
 
 DEFAULT_TIMEOUT_MS = 300_000
@@ -239,7 +248,8 @@ class _Execution:
         # the records and the output. Never held across an await.
         self._guard = threading.Lock()
         self._finished = False
-        self._stop: tuple[CodemodeErrorKind, str] | None = None
+        # `(kind, message, name)` of an early end.
+        self._stop: tuple[CodemodeErrorKind, str, str | None] | None = None
         self._session: Any = None
         self._pid: int | None = None
         self._step_done: tonio.Event | None = None
@@ -247,6 +257,9 @@ class _Execution:
         self._pending: list[_PendingCall] = []
         self._output: list[CodemodeOutputItem] = []
         self._printed: list[str] = []
+        # Counted against MAX_OUTPUT_CHARS / MAX_OUTPUT_ITEMS.
+        self._output_chars = 0
+        self._output_items = 0
         self._sender, self._receiver = channel.unbounded()
         self._scope: Any = None
         # Set when `run` has returned or raised; `close()` waits on it.
@@ -254,17 +267,21 @@ class _Execution:
 
     # -- stopping -----------------------------------------------------------
 
-    def stop(self, kind: CodemodeErrorKind, message: str) -> None:
-        """End the script early with `kind`. Synchronous and callable from any
-        thread: kills the worker if it has one."""
+    def stop(self, kind: CodemodeErrorKind, message: str, name: str | None = None) -> None:
+        """End the script early with `kind` (and the error `name`, for a script
+        error). Synchronous and callable from any thread: kills the worker if
+        it has one."""
         with self._guard:
-            if self._finished or self._stop is not None:
-                return
-            self._stop = (kind, message)
-            # Under the guard: after `_finished` the worker may already be back
-            # in the pool, serving someone else.
-            self._kill_locked()
-            self._sender.send(_STOP)
+            self._stop_locked(kind, message, name)
+
+    def _stop_locked(self, kind: CodemodeErrorKind, message: str, name: str | None = None) -> None:
+        if self._finished or self._stop is not None:
+            return
+        self._stop = (kind, message, name)
+        # Under the guard: after `_finished` the worker may already be back
+        # in the pool, serving someone else.
+        self._kill_locked()
+        self._sender.send(_STOP)
 
     def _kill_locked(self) -> None:
         if self._pid is None:
@@ -372,9 +389,27 @@ class _Execution:
 
     # -- output -------------------------------------------------------------
 
+    def _count_output_locked(self, chars: int, items: int) -> bool:
+        """Count output against the limits; False once they are passed. Past
+        them the script ends through `stop()`, so catching the error does not
+        resume output, and the output that passed a limit is not kept (pi's
+        `RangeError`; Python's nearest is `RuntimeError`)."""
+        if self._finished or self._stop is not None:
+            return False
+        self._output_chars += chars
+        self._output_items += items
+        if self._output_chars > MAX_OUTPUT_CHARS or self._output_items > MAX_OUTPUT_ITEMS:
+            self._stop_locked("script", OUTPUT_LIMIT_MESSAGE, "RuntimeError")
+            return False
+        return True
+
     def _on_print(self, _stream: str, text: str) -> None:
+        # Monty hands over `print()` output in buffered chunks (on the pool
+        # thread, mid-feed), not one call per `print()`, and consecutive prints
+        # merge into one item anyway: print output counts by its characters.
         with self._guard:
-            self._printed.append(text)
+            if self._count_output_locked(len(text), 0):
+                self._printed.append(text)
 
     def _flush_prints_locked(self) -> None:
         """Consecutive `print()` output becomes one text item, without its final
@@ -386,7 +421,10 @@ class _Execution:
         self._output.append(CodemodeTextItem(text))
 
     def _emit(self, item: CodemodeOutputItem) -> None:
+        chars = len(item.text) if isinstance(item, CodemodeTextItem) else len(item.data)
         with self._guard:
+            if not self._count_output_locked(chars, 1):
+                return
             self._flush_prints_locked()
             self._output.append(item)
 
@@ -519,8 +557,8 @@ class _Execution:
         with self._guard:
             self._finished = True
             if self._stop is not None:
-                kind, message = self._stop
-                error = CodemodeError(kind=kind, message=message)
+                kind, message, name = self._stop
+                error = CodemodeError(kind=kind, message=message, name=name)
             self._flush_prints_locked()
             now = clock.monotonic()
             calls = tuple(record.freeze(now) for record in self._calls)
@@ -634,7 +672,8 @@ class _Execution:
                         snapshot = await self._step(snapshot.resume_not_handled)
                         continue
                     answer = self._answer(snapshot, host_functions)
-                    if answer is _EXIT:
+                    # A stop during the answer (output past its limits) killed the worker already.
+                    if answer is _EXIT or self._stop is not None:
                         return self._finish()
                     snapshot = await self._step(snapshot.resume, answer)
                 elif isinstance(snapshot, NameLookupSnapshot):

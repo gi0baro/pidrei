@@ -19,6 +19,19 @@ from ..types import CodemodeImageItem, CodemodeStoreWrites
 
 MAX_STORE_VALUE_CHARS = 256 * 1024
 MAX_STORE_TOTAL_CHARS = 1024 * 1024
+# Output one script may produce with `text()`, `image()`, and `print()`:
+# characters of text and base64 image data, and items. The host keeps all
+# output until the script ends, so without a limit a script that prints in a
+# loop grows the host's memory until it crashes. The item limit covers loops
+# that output empty strings; it counts `text()` and `image()` calls, since
+# `print()` output reaches the host in buffered chunks and counts by its
+# characters only.
+MAX_OUTPUT_CHARS = 16 * 1024 * 1024
+MAX_OUTPUT_ITEMS = 100_000
+OUTPUT_LIMIT_MESSAGE = (
+    f"script output exceeded the limit of {MAX_OUTPUT_CHARS} characters or {MAX_OUTPUT_ITEMS} text() and image() "
+    "calls. Print a summary instead, or write large data to a file with a tool."
+)
 
 # Defined in the session before each script (`ALL_TOOLS` is an input of the
 # same feed). Session globals persist across feeds, so the script sees them.

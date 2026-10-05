@@ -22,6 +22,8 @@ import tonio.colored as tonio
 from tonio.colored.exceptions import CancelledError
 
 from pidrei_codemode import (
+    MAX_OUTPUT_CHARS,
+    MAX_OUTPUT_ITEMS,
     CodemodeError,
     CodemodeGlobal,
     CodemodeImageItem,
@@ -684,6 +686,34 @@ async def test_close_aborts_in_flight_executions_and_rejects_new_ones(make_sandb
     assert (await pending).error == CodemodeError(kind="aborted", message="Sandbox closed")
     with pytest.raises(RuntimeError, match="closed"):
         await sandbox.execute("1")
+
+
+# #10283: the host keeps all output, so a script that prints in a loop must not grow it without bound.
+@pytest.mark.tonio
+async def test_fails_a_script_whose_output_passes_the_limits_even_if_it_catches_the_error(make_sandbox):
+    sandbox = make_sandbox(type_check=False)
+    for output in ("text(s)", "print(s)", 'image("data:image/png;base64," + p)'):
+        result = await sandbox.execute(
+            f"""s = "x" * (1 << 20)
+p = "iVBORw0KGgoA" + "A" * (1 << 20)
+while True:
+    try:
+        {output}
+    except Exception:
+        pass
+"""
+        )
+        assert result.ok is False
+        assert (result.error.kind, result.error.name) == ("script", "RuntimeError")
+        assert "script output exceeded" in result.error.message
+        chars = sum(len(item.text) if item.type == "text" else len(item.data) for item in result.output)
+        assert chars <= MAX_OUTPUT_CHARS
+        assert chars > MAX_OUTPUT_CHARS - (2 << 20)
+
+    empty = await sandbox.execute("while True:\n    text('')\n")
+    assert empty.ok is False
+    assert empty.error.name == "RuntimeError"
+    assert len(empty.output) == MAX_OUTPUT_ITEMS
 
 
 @pytest.mark.tonio
