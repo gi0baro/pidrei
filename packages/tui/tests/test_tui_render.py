@@ -678,6 +678,7 @@ async def test_clears_reserved_kitty_image_rows_before_drawing_appended_image_pl
         terminal.clear_writes()
 
         image = Image(
+            tui,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: value},
@@ -716,6 +717,7 @@ async def test_falls_back_to_full_redraw_when_kitty_image_pre_clear_would_scroll
         terminal.clear_writes()
 
         image = Image(
+            tui,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: value},
@@ -747,6 +749,7 @@ async def test_reserves_kitty_image_rows_before_drawing_during_full_redraw_fallb
         terminal.clear_writes()
 
         image = Image(
+            tui,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: value},
@@ -785,6 +788,7 @@ async def test_does_not_use_cursor_up_placement_for_kitty_images_taller_than_the
         terminal.clear_writes()
 
         image = Image(
+            tui,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: value},

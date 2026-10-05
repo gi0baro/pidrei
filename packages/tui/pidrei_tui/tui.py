@@ -521,6 +521,50 @@ def _without(listeners: tuple, listener) -> tuple:
 MAX_RENDER_WRITE_CHARS = 1024 * 1024
 
 
+#: An `ImageConversions` entry whose conversion is still running.
+IMAGE_CONVERSION_PENDING: Any = object()
+
+
+class ImageConversions:
+    """How `Image` converts non-PNG data for Kitty-protocol terminals, which
+    accept PNG only: the converter and the converted images, owned by a TUI.
+
+    pidrei-only: pi has one module-level transcoder and cache
+    (`setImageTranscoder`). The converter is async, `await convert(base64_data,
+    mime_type)` returning base64 PNG data or None, since images are converted
+    off the render path. The cache holds `MAX_ENTRIES` results keyed by source
+    data, least recently used first: PNG data, None for a failed conversion,
+    or `IMAGE_CONVERSION_PENDING`. Read and written under the UI state lock
+    only; it takes no lock of its own."""
+
+    MAX_ENTRIES = 32
+
+    __slots__ = ("_cache", "converter")
+
+    def __init__(self) -> None:
+        self.converter: Any = None
+        self._cache: dict[str, Any] = {}
+
+    def set_converter(self, convert: Any) -> None:
+        """Replace the converter. Results of the previous one are dropped."""
+        self.converter = convert
+        self._cache.clear()
+
+    def lookup(self, source: str, default: Any = None) -> Any:
+        """The entry for `source`, marked as most recently used, or `default`."""
+        if source not in self._cache:
+            return default
+        value = self._cache.pop(source)
+        self._cache[source] = value
+        return value
+
+    def store(self, source: str, value: Any) -> None:
+        self._cache.pop(source, None)
+        self._cache[source] = value
+        if len(self._cache) > self.MAX_ENTRIES:
+            del self._cache[next(iter(self._cache))]
+
+
 class _RenderRequest:
     """The render loop's request message (see the module docstring)."""
 
@@ -598,6 +642,9 @@ class TuiBase(Container, ABC):
         self._show_hardware_cursor = False
         # Clear empty rows when content shrinks (default: off)
         self._clear_on_shrink = False
+        # How `Image` converts non-PNG images for Kitty; carried to the next
+        # renderer on a mode switch.
+        self.image_conversions = ImageConversions()
         self._full_redraw_count = 0
         self._stopped = False
         self._query_lock = threading.Lock()
@@ -722,6 +769,18 @@ class TuiBase(Container, ABC):
         """
         with self.state_lock:
             self._clear_on_shrink = enabled
+
+    def set_image_converter(self, convert: Any) -> None:
+        """Set the async converter `Image` uses for non-PNG images on Kitty-protocol
+        terminals (`await convert(base64_data, mime_type)` -> base64 PNG data or
+        None). Without one, such images render as text fallbacks."""
+        with self.state_lock:
+            self.image_conversions.set_converter(convert)
+
+    def set_image_conversions(self, conversions: ImageConversions) -> None:
+        """Take over another TUI's converter and converted images (a renderer switch)."""
+        with self.state_lock:
+            self.image_conversions = conversions
 
     # ------------------------------------------------------------------
     # Focus and overlay focus-restore machinery

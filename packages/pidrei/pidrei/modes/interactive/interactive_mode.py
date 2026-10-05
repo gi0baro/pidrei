@@ -119,6 +119,7 @@ from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboa
 from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
+from ...utils.image_process import convert_image_to_png_base64
 from ...utils.paths import get_cwd_relative_path
 from ...utils.process import probe_tmux_hyperlinks, run_command
 from ...utils.shell import kill_tracked_detached_children
@@ -609,6 +610,8 @@ class InteractiveMode:
         # What extension factories receive as `tui` (spec/ui-island.md).
         self._extension_tui = ExtensionTui(self.ui)
         self.ui.set_clear_on_shrink(self.settings_manager.get_clear_on_shrink())
+        # Kitty-protocol terminals accept PNG only: images convert through it, extension images included.
+        self.ui.set_image_converter(convert_image_to_png_base64)
         self.ui.set_render_error_handler(self._uncaught_crash)
         self._header_container = Container()
         self._loaded_resources_container = Container()
@@ -1074,6 +1077,7 @@ class InteractiveMode:
                     fullscreen_wheel_scroll_lines=self.settings_manager.get_fullscreen_wheel_scroll_lines(),
                 )
                 next_ui.set_clear_on_shrink(previous_ui.get_clear_on_shrink())
+                next_ui.set_image_conversions(previous_ui.image_conversions)
                 next_ui.set_render_error_handler(self._uncaught_crash)
                 next_ui.on_debug = previous_ui.on_debug
                 if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
@@ -7135,7 +7139,7 @@ class InteractiveMode:
         self._append_to_chat(Spacer(1), ArminComponent(self.ui))
 
     async def _handle_demented_elves(self) -> None:
-        self._append_to_chat(Spacer(1), EarendilAnnouncementComponent(await load_earendil_image_base64()))
+        self._append_to_chat(Spacer(1), EarendilAnnouncementComponent(self.ui, await load_earendil_image_base64()))
 
     async def _handle_bash_command(self, command: str, exclude_from_context: bool = False) -> None:
         extension_runner = self.session.extension_runner

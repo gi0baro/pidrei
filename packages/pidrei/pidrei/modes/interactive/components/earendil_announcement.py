@@ -37,7 +37,7 @@ async def load_earendil_image_base64() -> str | None:
 
 
 class EarendilAnnouncementComponent(Container):
-    def __init__(self, image_base64: str | None) -> None:
+    def __init__(self, tui, image_base64: str | None) -> None:
         """`image_base64` comes from `load_earendil_image_base64()`."""
         super().__init__()
 
@@ -51,6 +51,7 @@ class EarendilAnnouncementComponent(Container):
         if image_base64:
             self.add_child(
                 Image(
+                    tui,
                     image_base64,
                     "image/png",
                     {"fallbackColor": lambda text: theme.fg("muted", text)},

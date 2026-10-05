@@ -79,6 +79,13 @@ class ExtensionTui:
     def terminal(self) -> _ExtensionTerminal:
         return self._terminal
 
+    @property
+    def image_conversions(self):
+        """The TUI's image converter and converted images, so an `Image` an
+        extension builds with this handle converts like pidrei's own. `Image`
+        reads it under the UI state lock, in `render()`."""
+        return self._tui.image_conversions
+
     def request_render(self, force: bool = False) -> None:
         self._tui.request_render(force)
 

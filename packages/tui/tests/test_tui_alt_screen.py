@@ -1083,6 +1083,7 @@ async def test_does_not_emit_kitty_graphics_or_osc133_zones_in_iterm2():
         tui.add_child(RenderComponent(["\x1b]133;B\x07\x1b]133;C\x07\x1b]133;A\x07content"]))
         tui.add_child(
             Image(
+                tui,
                 "AAAA",
                 "image/png",
                 {"fallbackColor": lambda value: value},
@@ -1186,6 +1187,7 @@ async def test_reuses_moved_kitty_images_without_dropping_hstack_siblings():
         tui = TuiAltScreen(terminal)
         label = Text("left", 0, 0)
         image = Image(
+            tui,
             "A" * 8192,
             "image/png",
             {"fallbackColor": lambda value: value},
