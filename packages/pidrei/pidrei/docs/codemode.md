@@ -36,7 +36,7 @@ The result starts with `Script completed` or `Script failed`, the wall time, and
 |---|---|
 | `tools.<name>(...)` | Call a tool. See [Call tools](#call-tools). |
 | `text(value)` | Add a text item to the output. Strings, numbers, booleans and `None` are added as their string form, other values as JSON. |
-| `image(value)` | Add an image to the output: a base64 `data:` URL, an `{'image_url': ...}` dict, or an image block `{'type': 'image', 'data': ..., 'mimeType': ...}` such as those returned by MCP tools and `models.generate_images()`. Remote URLs are not supported. PNG, JPEG, GIF, and WebP are accepted. |
+| `image(value)` | Add an image to the output: a base64 `data:` URL, an `{'image_url': ...}` dict, or an image block `{'type': 'image', 'data': ..., 'mimeType': ...}` such as those returned by MCP tools and `models.generate_images()`. Remote URLs are not supported. PNG, JPEG, GIF, and WebP are accepted. Each image is also saved to a temp file, and the result names the path before the image. |
 | `print(...)` | Add a text item to the output. Consecutive prints become one item. |
 | last line | If the script's last line is an expression, its value is added like `text()`. `None` adds nothing. |
 | `exit()` | End the script successfully. |
@@ -87,7 +87,7 @@ While `codemode` is active, `codemode.mode` decides how the other tools are pres
 
 `store(key, value)` keeps a JSON value under a string key for later `codemode` calls; `store(key, None)` deletes the key. `load(key)` returns the value, or `None`. Writes are kept only when the script succeeds: each successful script that stores values appends a `codemode-store` custom entry to the session, so resumed sessions keep the values and each branch sees only the values written on its path.
 
-The store is for small state such as IDs, cursors, or summaries. One value may have at most 262144 characters of JSON and all values together at most 1048576. Do not store image data; show images with `image()` or write them to a file with a tool.
+The store is for small state such as IDs, cursors, or summaries. One value may have at most 262144 characters of JSON and all values together at most 1048576. Do not store image data; show images with `image()`, which also saves them to a temp file.
 
 ## Models
 
@@ -285,7 +285,7 @@ class ImageBlock(TypedDict):
     mimeType: str
 ```
 
-Show generated images with `image(block)`. Do not add `data` to the output with `text()`, `print()`, or the last line: it is large and the model cannot read it as text. Generated images are not saved to disk; to keep one, write it to a file with a tool.
+Show generated images with `image(block)`. Do not add `data` to the output with `text()`, `print()`, or the last line: it is large and the model cannot read it as text. `image()` also saves each image to a temp file and puts its path in the result, so a later turn can copy or move the file.
 
 ```python
 # @options: {"timeout_ms": 300000}

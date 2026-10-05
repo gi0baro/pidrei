@@ -7,8 +7,10 @@ pty master.
 """
 
 import contextlib
+import errno
 import os
 import pty
+import sys
 import termios
 import threading
 
@@ -470,6 +472,43 @@ async def test_pty_input_survives_a_raising_input_handler():
         set_kitty_protocol_active(False)
     os.close(master)
     os.close(slave)
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Linux fails a pty master read with EIO once the slave closes; other systems may report end of input",
+)
+@pytest.mark.tonio
+async def test_pty_a_failed_input_read_reaches_on_error():
+    """pi's stdin `error` listener (4c6b724e): a read that fails (EIO from a
+    dead terminal, as here) goes to `start`'s `on_error`, the crash handler
+    that tells a dead terminal from a crash, instead of ending input
+    silently."""
+    master, slave = pty.openpty()
+    out_r, out_w = os.pipe()
+    errors: list[BaseException] = []
+    got_error = tonio.Event()
+
+    async def no_input(_data: str) -> None:
+        pass
+
+    def on_error(error: BaseException) -> None:
+        errors.append(error)
+        got_error.set()
+
+    terminal = ProcessTerminal(input_fd=master, output_fd=out_w)
+    try:
+        await terminal.start(no_input, None, None, on_error)
+        os.close(slave)
+        await got_error.wait(5)
+        assert got_error.is_set(), "the failed read never reached on_error"
+        assert [(type(error), error.errno) for error in errors] == [(OSError, errno.EIO)]
+    finally:
+        await terminal.stop()
+        await terminal.close()
+        set_kitty_protocol_active(False)
+    for fd in (master, out_r, out_w):
+        os.close(fd)
 
 
 @pytest.mark.tonio

@@ -98,7 +98,7 @@ def _isolate(request):
 
 
 def model_fixture():
-    return get_builtin_model("azure-openai-responses", "gpt-4o-mini")
+    return get_builtin_model("azure", "gpt-4o-mini")
 
 
 async def capture_client_base_url(base_url: str) -> str:

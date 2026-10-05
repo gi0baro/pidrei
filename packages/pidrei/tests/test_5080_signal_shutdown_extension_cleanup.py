@@ -14,22 +14,27 @@ stubbed.
 """
 
 import contextlib
+import errno
 import io
 import os
 import shutil
 import tempfile
+import termios
 import threading
 from types import SimpleNamespace
 
 import pytest
 
 from pidrei.config import APP_NAME
+from pidrei.modes.interactive import interactive_mode
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.utils.colors import dim
 
 
 class ProcessExitError(Exception):
-    pass
+    def __init__(self, code: int) -> None:
+        super().__init__(f"os._exit({code})")
+        self.code = code
 
 
 @contextlib.contextmanager
@@ -37,8 +42,8 @@ def _stubbed_exit():
     """Context manager (predates tonio 0.9.14 yield-fixture support)."""
     original = os._exit
 
-    def fake_exit(_code: int) -> None:
-        raise ProcessExitError
+    def fake_exit(code: int) -> None:
+        raise ProcessExitError(code)
 
     os._exit = fake_exit
     try:
@@ -188,3 +193,80 @@ async def test_re_entrant_shutdown_is_a_no_op():
         await call_shutdown(context, {"fromSignal": True})
 
     assert order == []
+
+
+# Regression for the `read EIO` crash reports (crash_tty_read_eio).
+#
+# When the terminal goes away, stdin reads and raw mode fail with EIO (pidrei
+# is left in an orphaned background process group) or ENOTTY (macOS revoked
+# the tty). The input reader hands a failed read to the crash handler
+# (`_uncaught_crash`, through the TUI's `report_error`), and a raw-mode
+# failure reaches it as an uncaught error; for a dead terminal it must exit
+# quietly instead of reporting a crash.
+#
+# pi tests its stdin `error` listener and `uncaughtCrash` apart; here both are
+# `_uncaught_crash`, so the stdin cases below also cover pi's "uncaught dead
+# terminal errors" case. Crash recording (`/bug`) is not ported: "not recorded"
+# is the terminal left alone (`ui.stop` not called), "recorded" is the crash
+# report. "Handlers are removed on unregister" is Node listener bookkeeping and
+# is not mirrored. The reader's hand-off is covered in pidrei_tui's
+# test_terminal_pty.py.
+
+
+def create_crash_context(calls: list[str]) -> SimpleNamespace:
+    async def stop() -> None:
+        calls.append("ui.stop")
+
+    async def close() -> None:
+        calls.append("ui.close")
+
+    context = SimpleNamespace(
+        _is_shutting_down=False,
+        _shutdown_guard=threading.Lock(),
+        _unregister_signal_handlers=lambda: None,
+        ui=SimpleNamespace(stop=stop, close=close),
+    )
+    context._emergency_terminal_exit = lambda: InteractiveMode._emergency_terminal_exit(context)
+    return context
+
+
+async def capture_crash_exit(context, error: BaseException) -> int:
+    with _stubbed_exit(), pytest.raises(ProcessExitError) as exited:
+        await InteractiveMode._uncaught_crash(context, error)
+    return exited.value.code
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError(errno.EIO, "read EIO"),
+        termios.error(errno.EIO, "setRawMode EIO"),
+        termios.error(errno.ENOTTY, "setRawMode ENOTTY"),
+    ],
+    ids=["read EIO", "setRawMode EIO", "setRawMode ENOTTY"],
+)
+async def test_stdin_dead_terminal_errors_exit_quietly_without_reporting_a_crash(monkeypatch, error):
+    calls: list[str] = []
+    report = io.StringIO()
+    monkeypatch.setattr(interactive_mode, "write_stderr", report.write)
+
+    assert await capture_crash_exit(create_crash_context(calls), error) == 129
+    assert calls == []
+    assert report.getvalue() == ""
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "error",
+    [OSError(errno.ECONNREFUSED, "read ECONNREFUSED"), RuntimeError("boom")],
+    ids=["other stdin error", "other uncaught error"],
+)
+async def test_other_errors_still_crash(monkeypatch, error):
+    calls: list[str] = []
+    report = io.StringIO()
+    monkeypatch.setattr(interactive_mode, "write_stderr", report.write)
+
+    assert await capture_crash_exit(create_crash_context(calls), error) == 1
+    assert calls == ["ui.stop", "ui.close"]
+    assert report.getvalue().startswith(f"{APP_NAME} exiting due to uncaught exception:\n")

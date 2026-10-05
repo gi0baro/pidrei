@@ -650,6 +650,8 @@ LIVE_API_AI_TESTS = (
     "image-tool-result",
     "images",
     "openai-completions-thinking-as-text",
+    "openai-responses-tool-result-images",
+    "responseid",
     "stream",
     "tokens",
     "tool-call-without-result",

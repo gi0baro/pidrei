@@ -635,12 +635,12 @@ async def test_supports_configurable_keyboard_viewport_navigation_with_four_rows
     assert _viewport(terminal) == [f"line {index}" for index in range(5, 13)]
 
     since = terminal.frames
-    await terminal.send_input("\x1bOH")  # home
+    await terminal.send_input("\x1b[7^")  # ctrl+home
     await terminal.wait_for_render(since)
     assert _viewport(terminal) == [f"line {index}" for index in range(1, 9)]
 
     since = terminal.frames
-    await terminal.send_input("\x1bOF")  # end
+    await terminal.send_input("\x1b[8^")  # ctrl+end
     await terminal.wait_for_render(since)
     assert _viewport(terminal) == [f"line {index}" for index in range(5, 13)]
 
@@ -976,7 +976,7 @@ async def test_scrolls_the_transcript_by_one_line_with_custom_bindings():
 
 
 @pytest.mark.tonio
-async def test_routes_ctrl_modified_viewport_navigation_to_the_focused_component():
+async def test_routes_home_and_end_to_the_focused_component_and_ctrl_home_end_to_the_transcript():
     terminal = VirtualTerminal(20, 6)
     tui = TuiAltScreen(terminal)
     transcript = ScrollView(Text(_lines(12), 0, 0), {"follow": "end", "primary": True})
@@ -1007,25 +1007,39 @@ async def test_routes_ctrl_modified_viewport_navigation_to_the_focused_component
     await tui.start()
     await terminal.wait_for_render()
 
+    bottom = transcript.scroll_top
+    assert bottom > 0
+
+    # #10314: unmodified Home/End belong to the editor in every UI mode.
+    editor_keys = ["\x1bOH", "\x1b[F", "\x1b[57423u", "\x1b[5;5~", "\x1b[6;5~"]
+    for data in editor_keys:
+        await terminal.send_input(data)
+    await terminal.wait_for_render()
+    assert transcript.scroll_top == bottom
+    assert editor_inputs == editor_keys
+
     since = terminal.frames
-    await terminal.send_input("\x1bOH")
+    await terminal.send_input("\x1b[1;5H")
     await terminal.wait_for_render(since)
     assert transcript.scroll_top == 0
-    assert editor_inputs == []
 
-    modified_inputs = ["\x1b[1;5H", "\x1b[1;5F", "\x1b[5;5~", "\x1b[6;5~", "\x1b[57423;5u"]
-    for data in modified_inputs:
-        await terminal.send_input(data)
+    since = terminal.frames
+    await terminal.send_input("\x1b[1;5F")
+    await terminal.wait_for_render(since)
+    assert transcript.scroll_top == bottom
+    assert transcript.is_following_end is True
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[57423;5u")
     await terminal.send_input("\x1b[57423;5:3u")
-    await terminal.wait_for_render()
+    await terminal.wait_for_render(since)
     assert transcript.scroll_top == 0
-    assert editor_inputs == modified_inputs
 
     since = terminal.frames
     await terminal.send_input("\x1b[6~")
     await terminal.wait_for_render(since)
     assert transcript.scroll_top == 1
-    assert editor_inputs == modified_inputs
+    assert editor_inputs == editor_keys
 
     await tui.stop()
 

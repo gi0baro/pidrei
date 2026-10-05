@@ -5,7 +5,7 @@ nothing is stored. No silent env fallback after a failed refresh or for a
 credential type without a matching handler.
 """
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import tonio.colored as tonio
@@ -26,10 +26,16 @@ from pidrei_ai.types import ProviderEnv
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
 from pidrei_ai.utils.models_error import ModelsError, ModelsErrorCode
 from pidrei_utils import clock
-from pidrei_utils.cancel import AbortError, CancelToken, combine_cancel_tokens
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
-__all__ = ["AuthResolutionOverrides", "ModelsError", "ModelsErrorCode", "resolve_provider_auth"]
+__all__ = [
+    "AuthResolutionOverrides",
+    "ModelsError",
+    "ModelsErrorCode",
+    "refresh_stored_oauth_credential",
+    "resolve_provider_auth",
+]
 
 
 @dataclass(slots=True)
@@ -119,6 +125,74 @@ DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000
 DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000
 
 
+async def refresh_stored_oauth_credential(
+    credentials: CredentialStore,
+    provider_id: str,
+    oauth: OAuthAuth,
+    needs_refresh: Callable[[OAuthCredential], bool],
+    cancel: CancelToken,
+) -> OAuthCredential | None:
+    """Refresh a stored OAuth credential under the credential-store lock and
+    persist the result before the lock is released. `needs_refresh` is
+    re-checked under the lock, so concurrent callers and processes refresh only
+    once.
+
+    `cancel` cancels only the wait for the lock. Once a refresh starts, the
+    provider may already have rotated the refresh token, so the refresh and its
+    persistence ignore `cancel` and are bounded only by a timeout. Otherwise a
+    cancelled caller could discard the only valid refresh token. Callers that
+    must return promptly on cancellation race this with their token.
+
+    Returns the stored OAuth credential after the operation, or None when the
+    provider no longer has an OAuth credential.
+    """
+    lock_wait = CancelToken()
+    # Fires at once on a cancelled token (pi's `if (signal.aborted)`).
+    unsubscribe = cancel.on_cancel(lock_wait.cancel)
+
+    async def _refresh_under_lock(current: Credential | None) -> Credential | None:
+        # `cancel()` sets the token and takes its callbacks in one locked step,
+        # so after this either the check below sees the cancellation or it can
+        # no longer reach `lock_wait`.
+        unsubscribe()
+        cancel.raise_if_cancelled()
+        if current is None or current.type != "oauth":
+            return None  # logged out meanwhile
+        if not needs_refresh(current):
+            return None  # another process/request refreshed
+        try:
+            # pi: `AbortSignal.timeout(15s)` — a hung refresh must not hold the
+            # credential lock forever.
+            timeout_cancel = CancelToken()
+            timer = CancelToken()
+
+            async def _expire(timeout_cancel: CancelToken = timeout_cancel, timer: CancelToken = timer) -> None:
+                try:
+                    await clock.sleep_ms(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS, timer)
+                except AbortError:
+                    return
+                timeout_cancel.cancel(TimeoutError("The operation timed out."))
+
+            tonio.spawn.without_tracking(_expire())
+            try:
+                return await oauth.refresh(current, timeout_cancel)
+            finally:
+                timer.cancel()
+        except Exception as error:
+            raise ModelsError("oauth", f"OAuth refresh failed for {provider_id}", cause=error)
+
+    try:
+        post = await credentials.modify(provider_id, _refresh_under_lock, AuthOperationOptions(cancel=lock_wait))
+    except ModelsError:
+        raise
+    except Exception as error:
+        cancel.raise_if_cancelled()
+        raise ModelsError("auth", f"Credential store modify failed for {provider_id}", cause=error)
+    finally:
+        unsubscribe()
+    return post if post is not None and post.type == "oauth" else None
+
+
 async def _resolve_stored_oauth(
     credentials: CredentialStore,
     provider_id: str,
@@ -128,8 +202,7 @@ async def _resolve_stored_oauth(
     min_oauth_validity_ms: int | None = None,
 ) -> AuthResult | None:
     """OAuth resolution with double-checked locking: tokens with less than five
-    minutes remaining lock, re-check expiry under the lock, refresh once
-    globally, and persist the rotated credential before release.
+    minutes remaining are refreshed through `refresh_stored_oauth_credential`.
     """
     minimum_validity_ms = max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, min_oauth_validity_ms or 0)
 
@@ -140,43 +213,8 @@ async def _resolve_stored_oauth(
 
     if expires_soon(credential):
         # Optimistic check said expired; the authoritative check runs under the lock.
-        async def _refresh_under_lock(current: Credential | None) -> Credential | None:
-            if current is None or current.type != "oauth":
-                return None  # logged out meanwhile
-            if not expires_soon(current):
-                return None  # another process/request refreshed
-            try:
-                # pi: `AbortSignal.any([signal, AbortSignal.timeout(15s)])` — a
-                # hung refresh must not hold the credential lock forever.
-                timeout_cancel = CancelToken()
-                timer = CancelToken()
-
-                async def _expire(timeout_cancel: CancelToken = timeout_cancel, timer: CancelToken = timer) -> None:
-                    try:
-                        await clock.sleep_ms(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS, timer)
-                    except AbortError:
-                        return
-                    timeout_cancel.cancel(TimeoutError("The operation timed out."))
-
-                tonio.spawn.without_tracking(_expire())
-                # No cleanup: pi's `AbortSignal.any` composite stays linked to
-                # the caller's signal after resolution (a late caller abort
-                # still shows on the token handed to the refresh).
-                combined = combine_cancel_tokens(cancel, timeout_cancel)
-                try:
-                    return await oauth.refresh(current, combined.token)
-                finally:
-                    timer.cancel()
-            except Exception as error:
-                raise ModelsError("oauth", f"OAuth refresh failed for {provider_id}", cause=error)
-
-        try:
-            post = await credentials.modify(provider_id, _refresh_under_lock, AuthOperationOptions(cancel=cancel))
-        except ModelsError:
-            raise
-        except Exception as error:
-            raise ModelsError("auth", f"Credential store modify failed for {provider_id}", cause=error)
-        if post is None or post.type != "oauth":
+        post = await refresh_stored_oauth_credential(credentials, provider_id, oauth, expires_soon, cancel)
+        if post is None:
             return None  # logged out meanwhile
         credential = post
         # The normal five-minute window triggers a refresh but does not impose a

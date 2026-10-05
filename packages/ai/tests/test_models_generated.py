@@ -144,7 +144,7 @@ def test_includes_official_metadata_for_openai_and_codex(model_id, cost):
 def test_does_not_support_off_for_gpt_6_1_sol():
     expected = {
         "openai": ["low", "medium", "high", "xhigh", "max"],
-        "azure-openai-responses": ["low", "medium", "high", "xhigh", "max"],
+        "azure": ["low", "medium", "high", "xhigh", "max"],
         "openai-codex": ["minimal", "low", "medium", "high", "xhigh", "max"],
     }
     for provider, levels in expected.items():

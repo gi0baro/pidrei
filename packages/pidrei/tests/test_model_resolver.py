@@ -73,7 +73,7 @@ def _ambiguous_models() -> list:
     """The same bare id under two providers (pi's gpt-5.6-sol case)."""
     return [
         make_model(provider, "gpt-5.6-sol", api="anthropic-messages", name="GPT 5.6 Sol")
-        for provider in ("azure-openai-responses", "openai-codex")
+        for provider in ("azure", "openai-codex")
     ]
 
 
@@ -346,7 +346,7 @@ class TestResolveCliModel:
         )
         assert result.model is None
         assert 'Model "gpt-5.6-sol" is ambiguous across providers' in result.error
-        assert "azure-openai-responses/gpt-5.6-sol" in result.error
+        assert "azure/gpt-5.6-sol" in result.error
         assert "openai-codex/gpt-5.6-sol" in result.error
         assert "Use --provider or provider/model" in result.error
 

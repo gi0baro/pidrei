@@ -18,15 +18,11 @@ content becomes `TextContent`/`ImageContent`.
 
 import base64
 import hashlib
-import os
 import re
-import secrets
 import urllib.parse
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple, NotRequired, Protocol, TypedDict
-
-import tonio.colored as tonio
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
@@ -35,12 +31,12 @@ from pidrei_mcp import CallToolResult, ContentBlock, LlmContent, Tool, to_llm_co
 from pidrei_tui import Container, Spacer, Text
 from pidrei_utils.cancel import CancelToken
 
-from ...config import TEMP_DIR
 from ...core.extensions.types import ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace, ToolRenderers
 from ...core.tools.render_utils import format_tool_call_with_args, get_text_output, replace_tabs
 from ...core.tools.truncate import format_size, truncate_middle
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.components.visual_truncate import VisualLinePreview
+from ...utils.output_files import write_output_file
 from .config import McpExposure
 
 
@@ -75,17 +71,8 @@ class McpToolDetails(TypedDict):
 type McpOutputSaver = Callable[[str | bytes, str], Awaitable[str]]
 
 
-def _save_blocking(path: str, data: str | bytes) -> None:
-    # Results can carry private data, so only the user may read the file.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as file:
-        file.write(data.encode("utf-8") if isinstance(data, str) else data)
-
-
-async def save_to_temp_file(data: str | bytes, extension: str) -> str:
-    path = str(TEMP_DIR / f"pidrei-mcp-{secrets.token_hex(8)}{extension}")
-    await tonio.spawn_blocking(_save_blocking, path, data)
-    return path
+def save_to_temp_file(data: str | bytes, extension: str) -> Awaitable[str]:
+    return write_output_file("pidrei-mcp", extension, data)
 
 
 class McpToolCaller(Protocol):

@@ -6,7 +6,8 @@ class below, which POSTs to `{baseURL}/responses` over the punkreq seam — the
 same transport `api/openai_responses.py` already uses, reusing its response
 wrapper, its error shape and its SSE iteration. Azure's own differences are the
 `api-key` header (rather than a bearer token), the `api-version` query
-parameter, and the base-URL normalization pi's spec pins.
+parameter, and the base-URL normalization pi's spec pins (in
+`api/azure_openai_config.py`, shared with the Azure provider).
 
 The config keys stay the SDK's own camelCase (`apiKey`, `apiVersion`,
 `baseURL`, `defaultHeaders`) because that record is what pi's
@@ -15,8 +16,9 @@ azure-openai-base-url spec asserts on.
 
 from dataclasses import dataclass, fields
 from typing import Any
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import urlencode
 
+from pidrei_ai.api.azure_openai_config import AzureEndpointOptions, resolve_azure_config, resolve_deployment_name
 from pidrei_ai.api.constrained_sampling import create_grammar_tool_input_properties
 from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.openai_responses import (
@@ -47,7 +49,6 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
-from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_ai.utils.user_agent import set_default_user_agent
@@ -56,24 +57,16 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
 
-DEFAULT_AZURE_API_VERSION = "v1"
-AZURE_TOOL_CALL_PROVIDERS = frozenset({"openai", "openai-codex", "opencode", "azure-openai-responses"})
+AZURE_TOOL_CALL_PROVIDERS = frozenset({"openai", "openai-codex", "opencode", "azure"})
 # OpenAI Responses rejects max_output_tokens below 16.
 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16
 
-_AZURE_HOST_SUFFIXES = (".openai.azure.com", ".cognitiveservices.azure.com", ".ai.azure.com")
-_AZURE_ROOT_PATHS = ("", "/", "/openai", "/openai/v1/responses")
-
 
 @dataclass(slots=True)
-class AzureOpenAIResponsesOptions(StreamOptions):
+class AzureOpenAIResponsesOptions(AzureEndpointOptions):
     reasoning_effort: str | None = None
     tool_choice: Any = None
     reasoning_summary: str | None = None
-    azure_api_version: str | None = None
-    azure_resource_name: str | None = None
-    azure_base_url: str | None = None
-    azure_deployment_name: str | None = None
 
 
 class AzureOpenAI:
@@ -126,33 +119,6 @@ class _Responses:
                 error=error_field if isinstance(error_field, dict) else None,
             )
         return _PunkreqResponse(status=response.status_code, headers=dict(response.headers), _response=response)
-
-
-def _parse_deployment_name_map(value: str | None) -> dict[str, str]:
-    result: dict[str, str] = {}
-    if not value:
-        return result
-    for entry in value.split(","):
-        trimmed = entry.strip()
-        if not trimmed:
-            continue
-        parts = trimmed.split("=", 1)
-        if len(parts) != 2:
-            continue
-        model_id, deployment_name = parts
-        if not model_id or not deployment_name:
-            continue
-        result[model_id.strip()] = deployment_name.strip()
-    return result
-
-
-def resolve_deployment_name(model: Model, options: AzureOpenAIResponsesOptions | None = None) -> str:
-    if options is not None and options.azure_deployment_name:
-        return options.azure_deployment_name
-    mapped = _parse_deployment_name_map(
-        get_provider_env_value("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", options.env if options else None)
-    ).get(model.id)
-    return mapped or model.id
 
 
 def _format_azure_openai_error(error: Any) -> str:
@@ -271,58 +237,6 @@ def stream_simple(
     opts.tool_choice = options.tool_choice if options else None
     opts.reasoning_effort = reasoning_effort
     return stream(model, context, opts, into=into)
-
-
-def normalize_azure_base_url(base_url: str) -> str:
-    trimmed = base_url.strip().rstrip("/")
-    parsed = urlparse(trimmed)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f"Invalid Azure OpenAI base URL: {base_url}")
-
-    hostname = (parsed.hostname or "").lower()
-    is_azure_host = hostname.endswith(_AZURE_HOST_SUFFIXES)
-    normalized_path = parsed.path.rstrip("/")
-
-    # Azure hosts need /openai/v1 as the base path so `/deployments/<model>/...`
-    # and `?api-version=v1` append correctly.
-    if is_azure_host and normalized_path in _AZURE_ROOT_PATHS:
-        parsed = parsed._replace(path="/openai/v1", query="")
-
-    return urlunparse(parsed).rstrip("/")
-
-
-def build_default_base_url(resource_name: str) -> str:
-    return f"https://{resource_name}.openai.azure.com/openai/v1"
-
-
-def resolve_azure_config(model: Model, options: AzureOpenAIResponsesOptions | None = None) -> tuple[str, str]:
-    """Returns `(base_url, api_version)`."""
-    env = options.env if options else None
-    api_version = (
-        (options.azure_api_version if options else None)
-        or get_provider_env_value("AZURE_OPENAI_API_VERSION", env)
-        or DEFAULT_AZURE_API_VERSION
-    )
-
-    base_url = (options.azure_base_url.strip() if options and options.azure_base_url else None) or (
-        (get_provider_env_value("AZURE_OPENAI_BASE_URL", env) or "").strip() or None
-    )
-    resource_name = (options.azure_resource_name if options else None) or get_provider_env_value(
-        "AZURE_OPENAI_RESOURCE_NAME", env
-    )
-
-    resolved_base_url = base_url
-    if not resolved_base_url and resource_name:
-        resolved_base_url = build_default_base_url(resource_name)
-    if not resolved_base_url and model.base_url:
-        resolved_base_url = model.base_url
-    if not resolved_base_url:
-        raise RuntimeError(
-            "Azure OpenAI base URL is required. Set AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME, "
-            "or pass azure_base_url, azure_resource_name, or model.base_url."
-        )
-
-    return normalize_azure_base_url(resolved_base_url), api_version
 
 
 def create_client(model: Model, api_key: str, options: AzureOpenAIResponsesOptions | None = None) -> AzureOpenAI:

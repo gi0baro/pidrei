@@ -172,7 +172,8 @@ def _describe_globals(models: bool) -> str:
         "Globals:",
         (
             "- `text(value)`, `image(data_url_or_image_block)`, `print(...)`, and a final expression line add "
-            "output; `exit()` ends the script."
+            "output; `exit()` ends the script. `image()` also saves the image to a temp file and the result "
+            "names its path."
         ),
         (
             "- `store(key, value)` and `load(key)` keep JSON values across codemode calls; `store(key, None)` "

@@ -666,7 +666,13 @@ class ProcessTerminal:
                 continue
             except InterruptedError:
                 continue
-            except OSError:
+            except OSError as error:
+                # pi's stdin error listener: once the terminal is gone, reads
+                # fail with EIO (orphaned background process group) or ENOTTY
+                # (revoked tty). The crash handler exits quietly for those and
+                # reports anything else as a crash.
+                if (on_error := self._error_handler) is not None:
+                    on_error(error)
                 return
             if not chunk:
                 return

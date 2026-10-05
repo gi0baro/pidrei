@@ -95,13 +95,14 @@ the transcript's top or bottom edge auto-scrolls into off-screen content.
 | `enter`, `ctrl+g` | `tui.altScreen.searchNext` | Select the next search match while searching |
 | `shift+enter`, `ctrl+shift+g` | `tui.altScreen.searchPrevious` | Select the previous search match while searching |
 | `escape` | `tui.altScreen.searchClose` | Close transcript search |
-| `home` | `tui.altScreen.top` | Scroll to the beginning of the transcript |
-| `end` | `tui.altScreen.bottom` | Scroll to the transcript end and follow new output |
+| `ctrl+home` | `tui.altScreen.top` | Scroll to the beginning of the transcript |
+| `ctrl+end` | `tui.altScreen.bottom` | Scroll to the transcript end and follow new output |
 
-These bindings take precedence over the editor's, so in fullscreen mode the
-unmodified navigation keys drive the transcript and their `ctrl` variants
-(`ctrl+home`, `ctrl+end`, `ctrl+pageUp`, `ctrl+pageDown`) drive the editor.
-In regular mode, both variants drive the editor.
+These bindings take precedence over the editor's, so in fullscreen mode
+`pageUp` and `pageDown` drive the transcript and their `ctrl` variants
+(`ctrl+pageUp`, `ctrl+pageDown`) drive the editor. In regular mode, both
+variants drive the editor. `home` and `end` move the editor cursor in every
+mode.
 
 The routing is just action bindings, so it is configurable:
 `"tui.altScreen.pageUp": "ctrl+pageUp"` gives `pageUp` back to the editor, and
@@ -117,7 +118,7 @@ The prompt editor and every list share these `tui.*` actions:
 |------|--------|
 | `left`, `ctrl+b` / `right`, `ctrl+f` | `tui.editor.cursorLeft` / `cursorRight` |
 | `alt+left`, `ctrl+left`, `alt+b` / `alt+right`, `ctrl+right`, `alt+f` | `tui.editor.cursorWordLeft` / `cursorWordRight` |
-| `home`, `ctrl+home`, `ctrl+a` / `end`, `ctrl+end`, `ctrl+e` | `tui.editor.cursorLineStart` / `cursorLineEnd` |
+| `home`, `ctrl+a` / `end`, `ctrl+e` | `tui.editor.cursorLineStart` / `cursorLineEnd` |
 | `ctrl+]` / `ctrl+alt+]` | `tui.editor.jumpForward` / `jumpBackward` (to a typed character) |
 | `pageUp`, `ctrl+pageUp` / `pageDown`, `ctrl+pageDown` | `tui.editor.pageUp` / `pageDown` |
 | `backspace` / `delete`, `ctrl+d` | `tui.editor.deleteCharBackward` / `deleteCharForward` |

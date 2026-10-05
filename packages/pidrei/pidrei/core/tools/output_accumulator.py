@@ -2,19 +2,14 @@
 
 import codecs
 import os
-import secrets
 import threading
 from dataclasses import dataclass, replace
 
 import tonio.colored as tonio
 
-from ...config import TEMP_DIR
+from ...utils.output_files import create_output_file_stream
 from ...utils.temp_file_writer import TempFileWriter
 from .truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, truncate_tail
-
-
-def _default_temp_file_path(prefix: str) -> str:
-    return str(TEMP_DIR / f"{prefix}-{secrets.token_hex(8)}.log")
 
 
 def _byte_length(text: str) -> int:
@@ -191,10 +186,11 @@ class OutputAccumulator:
     def _ensure_temp_file(self) -> None:
         if self._temp_file_path is not None:
             return
-        self._temp_file_path = _default_temp_file_path(self._temp_file_prefix)
         # `TempFileWriter.write` is a channel send, so this stays callable from
         # the sync streaming path — pi's `createWriteStream` behaves the same.
-        self._temp_file = TempFileWriter(self._temp_file_path)
+        path, stream = create_output_file_stream(self._temp_file_prefix, ".log")
+        self._temp_file_path = path
+        self._temp_file = stream
         for chunk in self._raw_chunks:
             self._temp_file.write(chunk)
         self._raw_chunks = []

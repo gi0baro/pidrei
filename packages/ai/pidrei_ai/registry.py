@@ -28,7 +28,12 @@ from tonio.colored import sync
 from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.auth.context import default_provider_auth_context
 from pidrei_ai.auth.credential_store import InMemoryCredentialStore
-from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError, resolve_provider_auth
+from pidrei_ai.auth.resolve import (
+    AuthResolutionOverrides,
+    ModelsError,
+    refresh_stored_oauth_credential,
+    resolve_provider_auth,
+)
 from pidrei_ai.auth.types import (
     ApiKeyCredential,
     AuthCheck,
@@ -696,14 +701,15 @@ class Models:
                 return stored
             if cancel.cancelled:
                 return None
-
-            async def _refresh(current: Credential | None) -> Credential | None:
-                if current is None or current.type != "oauth" or clock.now_ms() < current.expires:
-                    return None
-                return await oauth.refresh(current, cancel)
-
-            post = await self._credentials.modify(provider.id, _refresh, AuthOperationOptions(cancel=cancel))
-            return post if post is not None and post.type == "oauth" else None
+            # A refresh that has started survives cancellation or a superseding model refresh, so a
+            # rotated refresh token is always persisted. A newer refresh then sees the fresh credential.
+            return await refresh_stored_oauth_credential(
+                self._credentials,
+                provider.id,
+                oauth,
+                lambda current: clock.now_ms() >= current.expires,
+                cancel,
+            )
 
         api_key = provider.auth.api_key
         if api_key is None:

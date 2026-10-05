@@ -17,7 +17,9 @@ Translations from pi's cases:
   it on, the checker rejects them before the script runs.
 """
 
+import base64
 import json
+import re
 import threading
 
 import pytest
@@ -64,6 +66,27 @@ STATS_OUTPUT_SCHEMA = {
     "properties": {"files": {"type": "number"}, "names": {"type": "array", "items": {"type": "string"}}},
     "required": ["files", "names"],
 }
+
+
+TINY_PNG_LABEL = re.compile(r"^\[Image saved to (\S+\.png) \(image/png, \d+B\)\]$")
+
+
+async def check_saved_images(text: str) -> str:
+    """Replace the `[Image saved to ...]` labels in `text` with `<saved>` after
+    checking that each file holds the tiny PNG, and remove the files."""
+    lines = []
+    for line in text.split("\n"):
+        match = TINY_PNG_LABEL.match(line)
+        if match is None:
+            lines.append(line)
+            continue
+        path = fs.Path(match[1])
+        try:
+            assert base64.b64encode(await path.read_bytes()).decode() == TINY_PNG_BASE64
+        finally:
+            await path.unlink(missing_ok=True)
+        lines.append("<saved>")
+    return "\n".join(lines)
 
 
 def usage(input_tokens: int, cost: float) -> Usage:
@@ -343,8 +366,11 @@ async def test_keeps_structured_content_that_tool_result_handlers_replace_along_
     assert json.loads(result_text(result)) == {"files": 0, "names": []}
 
 
+# Saved images: https://github.com/earendil-works/pi/issues/10310
 @pytest.mark.tonio
-async def test_attaches_only_the_images_the_script_passes_to_image_in_output_order(harnesses):
+async def test_attaches_only_the_images_the_script_passes_to_image_in_output_order_each_after_its_saved_path(
+    harnesses,
+):
     harness = await setup(harnesses, [register_tools])
 
     result = await run(
@@ -353,11 +379,15 @@ async def test_attaches_only_the_images_the_script_passes_to_image_in_output_ord
 shot = await tools.screenshot()
 text(shot)
 image('data:image/png;base64,{TINY_PNG_BASE64}')
+image('data:image/png;base64,{TINY_PNG_BASE64}')
 text('after')""",
     )
 
-    assert result_text(result) == "captured\n<image>\nafter"
-    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    # The same image shown twice is saved once, so both labels name one file.
+    lines = result_text(result).split("\n")
+    assert lines == ["captured", lines[1], "<image>", lines[1], "<image>", "after"]
+    assert await check_saved_images(lines[1]) == "<saved>"
+    assert result.content[3] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
 
 
 @pytest.mark.tonio
@@ -554,8 +584,9 @@ image('data:image/png;base64,{TINY_PNG_BASE64}')""",
         assert "row 99\n" in text
         assert "row 50\n" not in text
         assert f"[Full output: {path} (read with offset/limit)]" in text
-        # Images follow the truncated text.
+        # Images follow the truncated text, each after the path it was saved to.
         assert result.content[-1] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+        assert await check_saved_images(text.split("\n")[-2]) == "<saved>"
         assert await fs.Path(path).read_text() == "\n".join(f"row {i}" for i in range(100))
     finally:
         await fs.Path(path).unlink(missing_ok=True)
@@ -843,8 +874,9 @@ except Exception as error:
     )
 
     assert result.is_error is False
-    first, image_marker, *rest = result_text(result).split("\n")
+    first, saved, image_marker, *rest = (await check_saved_images(result_text(result))).split("\n")
     assert first == "painted a fox"
+    assert saved == "<saved>"
     assert image_marker == "<image>"
     assert json.loads("\n".join(rest)) == {
         "id": "painter",
@@ -853,7 +885,7 @@ except Exception as error:
         "wrongType": '"scorer/judge" is a classifier model, not an image model. List the image models you can use '
         'with models.get_available_of_type("image").',
     }
-    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    assert result.content[3] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
     assert [(request["base_url"], request["api_key"]) for request in provider.image_requests] == [
         ("https://images.test/v1", "secret-key"),
         ("https://images.test/v1", "secret-key"),

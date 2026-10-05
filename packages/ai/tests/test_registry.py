@@ -1,6 +1,7 @@
 """Tests for the models registry port (registry.py)."""
 
 import threading
+from dataclasses import replace
 
 import pytest
 import tonio.colored as tonio
@@ -677,6 +678,89 @@ async def test_lets_providers_choose_persistent_deletion_and_ephemeral_publicati
 
 
 @pytest.mark.tonio
+async def test_refreshes_expired_oauth_before_refreshing_models():
+    credentials = InMemoryCredentialStore()
+    received: dict = {}
+
+    async def seed(_current):
+        return OAuthCredential(access="expired", refresh="refresh", expires=0)
+
+    await credentials.modify("oauth-dynamic", seed)
+
+    async def refresh(_credential, _cancel):
+        return OAuthCredential(access="fresh", refresh="rotated", expires=_far_future_ms())
+
+    async def login(_interaction, _options=None):
+        raise RuntimeError("not used")
+
+    async def to_auth(credential):
+        return ModelAuth(api_key=credential.access)
+
+    async def refresh_models(context) -> None:
+        if context.allow_network:
+            received["credential"] = context.credential
+
+    models = create_models(credentials=credentials)
+    models.set_provider(
+        DynamicTestProvider(
+            "oauth-dynamic",
+            refresh_models,
+            auth=ProviderAuth(oauth=OAuthAuth(name="Test OAuth", login=login, refresh=refresh, to_auth=to_auth)),
+        )
+    )
+
+    assert (await models.refresh()).errors == {}
+    credential = received["credential"]
+    assert credential.type == "oauth" and credential.access == "fresh" and credential.refresh == "rotated"
+    stored = await credentials.read("oauth-dynamic")
+    assert stored is not None and stored.access == "fresh" and stored.refresh == "rotated"
+
+
+def _rotating_oauth_provider(controller: CancelToken) -> DynamicTestProvider:
+    """pi's `testProvider` with a `testOAuth` whose refresh cancels the caller
+    once the provider has rotated `old-refresh`."""
+
+    async def refresh(credential, _cancel):
+        # The provider has rotated old-refresh by the time the request is cancelled.
+        controller.cancel()
+        return replace(credential, access="new", refresh="new-refresh", expires=_far_future_ms())
+
+    async def login(_interaction, _options=None):
+        raise RuntimeError("not used")
+
+    async def to_auth(credential):
+        return ModelAuth(api_key=credential.access)
+
+    return DynamicTestProvider(
+        "p1",
+        _noop_refresh,
+        auth=ProviderAuth(oauth=OAuthAuth(name="Test OAuth", login=login, refresh=refresh, to_auth=to_auth)),
+    )
+
+
+async def _seed_expired_oauth(credentials: InMemoryCredentialStore) -> None:
+    async def seed(_current):
+        return OAuthCredential(access="old", refresh="old-refresh", expires=0)
+
+    await credentials.modify("p1", seed)
+
+
+@pytest.mark.tonio
+async def test_persists_an_oauth_refresh_that_started_before_the_model_refresh_was_cancelled(raced_operations):
+    credentials = InMemoryCredentialStore()
+    await _seed_expired_oauth(credentials)
+    controller = CancelToken()
+    models = create_models(credentials=credentials)
+    models.set_provider(_rotating_oauth_provider(controller))
+
+    assert (await models.refresh(ModelsRefreshOptions(cancel=controller))).aborted is True
+    # pidrei: pi's `vi.waitFor`; wait for the abandoned refresh to finish instead of polling.
+    await raced_operations.settle()
+    stored = await credentials.read("p1")
+    assert stored is not None and stored.type == "oauth" and stored.refresh == "new-refresh"
+
+
+@pytest.mark.tonio
 async def test_always_gives_providers_a_concrete_cancel():
     received: dict = {}
     models = create_models()
@@ -1038,64 +1122,21 @@ async def test_cancels_queued_credential_mutations_without_running_them_later(ra
     assert await credentials.read("p1") == ApiKeyCredential(key="first")
 
 
+# Radius bug report 01a10855-43d8-7447-a710-2acf5ee0b2ee: refresh_token_invalidated after a cancelled refresh.
 @pytest.mark.tonio
-async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_credential(raced_operations):
+async def test_persists_an_oauth_refresh_that_started_before_the_request_was_cancelled(raced_operations):
     credentials = InMemoryCredentialStore()
-    previous = OAuthCredential(access="old", refresh="old-refresh", expires=0)
-
-    async def seed(_current):
-        return previous
-
-    await credentials.modify("p1", seed)
-    refresh_started = tonio.Event()
-    blocked_refresh = tonio.Event()
-    received: dict = {}
-
-    async def refresh(_credential, cancel):
-        received["cancel"] = cancel
-        refresh_started.set()
-        await blocked_refresh.wait()
-        return OAuthCredential(access="new", refresh="old-refresh", expires=_far_future_ms())
-
-    async def login(_interaction, _options=None):
-        raise RuntimeError("not used")
-
-    async def to_auth(credential):
-        return ModelAuth(api_key=credential.access)
-
-    models = create_models(credentials=credentials)
-    models.set_provider(
-        DynamicTestProvider(
-            "p1",
-            _noop_refresh,
-            auth=ProviderAuth(oauth=OAuthAuth(name="Test OAuth", login=login, refresh=refresh, to_auth=to_auth)),
-        )
-    )
+    await _seed_expired_oauth(credentials)
     controller = CancelToken()
-    outcome: dict = {}
+    models = create_models(credentials=credentials)
+    models.set_provider(_rotating_oauth_provider(controller))
 
-    async def run_auth() -> None:
-        try:
-            await models.get_auth("p1", AuthResolutionOverrides(cancel=controller))
-            outcome["error"] = None
-        except BaseException as error:
-            outcome["error"] = error
-
-    async def drive() -> None:
-        await refresh_started.wait()
-        controller.cancel()
-
-    await tonio.spawn(run_auth(), drive())
-
-    assert isinstance(outcome["error"], AbortError)
-    # d3da2e968: the refresh receives a composite token carrying the caller's reason.
-    assert isinstance(received["cancel"], CancelToken)
-    assert received["cancel"].cancelled is True
-    assert received["cancel"].reason is controller.reason
-    blocked_refresh.set()
-    # pidrei: wait for the abandoned refresh to finish instead of sleeping.
+    with pytest.raises(AbortError):
+        await models.get_auth("p1", AuthResolutionOverrides(cancel=controller))
+    # pidrei: pi's `vi.waitFor`; wait for the abandoned refresh to finish instead of polling.
     await raced_operations.settle()
-    assert await credentials.read("p1") == previous
+    stored = await credentials.read("p1")
+    assert stored is not None and stored.type == "oauth" and stored.refresh == "new-refresh"
 
 
 # -- availability --------------------------------------------------------------

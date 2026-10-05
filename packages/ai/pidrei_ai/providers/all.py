@@ -16,7 +16,7 @@ from pidrei_ai.models_generated import CLASSIFIER_MODELS, IMAGE_MODELS, MODELS
 from pidrei_ai.providers.amazon_bedrock import amazon_bedrock_provider
 from pidrei_ai.providers.ant_ling import ant_ling_provider
 from pidrei_ai.providers.anthropic import anthropic_provider
-from pidrei_ai.providers.azure_openai_responses import azure_openai_responses_provider
+from pidrei_ai.providers.azure import azure_provider
 from pidrei_ai.providers.baseten import baseten_provider
 from pidrei_ai.providers.cerebras import cerebras_provider
 from pidrei_ai.providers.cloudflare_ai_gateway import cloudflare_ai_gateway_provider
@@ -136,7 +136,7 @@ def builtin_providers() -> list[Provider]:
         amazon_bedrock_provider(),
         ant_ling_provider(),
         anthropic_provider(),
-        azure_openai_responses_provider(),
+        azure_provider(),
         baseten_provider(),
         cerebras_provider(),
         cloudflare_ai_gateway_provider(),

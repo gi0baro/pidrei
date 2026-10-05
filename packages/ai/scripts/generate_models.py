@@ -171,6 +171,15 @@ DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP: dict[str, str | None] = {
     **DEEPSEEK_V4_THINKING_LEVEL_MAP,
     "low": "low",
 }
+# Azure Foundry rejects DeepSeek's own max effort.
+AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP: dict[str, str | None] = {
+    "minimal": None,
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": None,
+    "max": None,
+}
 # Verified against Fireworks Messages raw_output on 2026-09-10 (#9323).
 # Fall back to verified support when models.dev omits effort metadata; this is
 # not an allowlist. Any Fireworks Messages model advertising effort uses adaptive thinking.
@@ -824,6 +833,8 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
     if model["api"] == "openai-completions" and "deepseek-v4" in model_id and model.get("thinkingLevelMap") is None:
         if provider == "openrouter":
             level_map = {**DEEPSEEK_V4_THINKING_LEVEL_MAP, "xhigh": "xhigh", "max": None}
+        elif provider == "azure":
+            level_map = dict(AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP)
         elif provider in ("deepseek", "opencode", "opencode-go") and "deepseek-v4-flash" in model_id:
             level_map = dict(DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP)
         else:
@@ -900,7 +911,7 @@ def apply_strict_tool_compat_metadata(model: dict[str, Any]) -> None:
 OPENAI_GRAMMAR_TOOL_PROVIDERS = {
     "openai",
     "openai-codex",
-    "azure-openai-responses",
+    "azure",
     "github-copilot",
     "opencode",
     "cloudflare-ai-gateway",
@@ -3005,7 +3016,7 @@ def build_azure_clones(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         clone = dict(model)
         clone["api"] = "azure-openai-responses"
-        clone["provider"] = "azure-openai-responses"
+        clone["provider"] = "azure"
         clone["baseUrl"] = ""
         clone["cost"] = {
             "input": model["cost"]["input"],
@@ -3014,6 +3025,33 @@ def build_azure_clones(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "cacheWrite": model["cost"]["cacheWrite"],
         }
         clone["contextWindow"] = AZURE_CONTEXT_WINDOW_OVERRIDES.get(model["id"], model["contextWindow"])
+        clones.append(clone)
+    return clones
+
+
+# Azure resells DeepSeek at its own rates. US data zone, checked 2026-09-16.
+# https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/deepseek/
+AZURE_DEEPSEEK_V4_PRO_COST: dict[str, float] = {"input": 1.925, "output": 3.828, "cacheRead": 0.165, "cacheWrite": 0}
+
+
+def build_azure_deepseek_clones(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Azure 400s on DeepSeek's `thinking` field and on every prompt cache parameter, discards a
+    # `developer` system message unbilled once reasoning_effort is set, and honours mid-convo ones (#9645).
+    clones = []
+    for model in models:
+        if model["provider"] != "deepseek" or model["id"] != "deepseek-v4-pro":
+            continue
+        clone = dict(model)
+        clone["provider"] = "azure"
+        clone["baseUrl"] = ""
+        clone["cost"] = dict(AZURE_DEEPSEEK_V4_PRO_COST)
+        clone["compat"] = {
+            **(model.get("compat") or {}),
+            "supportsDeveloperRole": False,
+            "supportsMidConvoSystemMessages": True,
+            "thinkingFormat": "openai",
+            "supportsLongCacheRetention": False,
+        }
         clones.append(clone)
     return clones
 
@@ -3247,6 +3285,7 @@ async def main() -> None:
         )
 
     all_models.extend(build_azure_clones(all_models))
+    all_models.extend(build_azure_deepseek_clones(all_models))
 
     apply_model_metadata(all_models, reasoning_options)
 
