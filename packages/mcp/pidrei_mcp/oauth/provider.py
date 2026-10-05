@@ -15,8 +15,14 @@ from tonio.colored import sync
 from pidrei_utils import clock
 
 from ..url import parse_url
-from .flow import CredentialsKind, OAuthClientProvider
-from .types import OAuthClientInformationMixed, OAuthClientMetadata, OAuthDiscoveryState, OAuthTokens
+from .flow import CredentialsKind, OAuthClientMetadataDocument, OAuthClientProvider
+from .types import (
+    AuthorizationServerMetadata,
+    OAuthClientInformationMixed,
+    OAuthClientMetadata,
+    OAuthDiscoveryState,
+    OAuthTokens,
+)
 
 
 class McpOAuthState(TypedDict):
@@ -58,12 +64,17 @@ class McpOAuthProvider(OAuthClientProvider):
         redirect_url: str,
         client_metadata: OAuthClientMetadata,
         on_redirect: Callable[[str], Awaitable[None]],
+        client_metadata_document: (
+            Callable[[AuthorizationServerMetadata | None], OAuthClientMetadataDocument | None] | None
+        ) = None,
         client_id: str | None = None,
         client_secret: str | None = None,
         store: McpOAuthStateStore | None = None,
     ) -> None:
         self._server_url = parse_url(server_url).href
         self.redirect_url = redirect_url
+        # See `OAuthClientProvider.client_metadata_document`.
+        self.client_metadata_document = client_metadata_document
 
         def given(key: str, default: object) -> object:
             value = client_metadata.get(key)

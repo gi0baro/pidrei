@@ -515,6 +515,7 @@ context.
 | `register_message_renderer(custom_type, renderer)` | Render a custom message |
 | `register_markdown_transformer(transformer)` | Rewrite Markdown before Pidrei renders it |
 | `register_entry_renderer(custom_type, renderer)` | Render a custom session entry |
+| `register_tool_renderer(resolver)` | Choose how tool calls are drawn (see [Tool rendering](#tool-rendering)) |
 | `get_flag(name)` | Read a registered flag's value |
 
 ### Actions
@@ -746,6 +747,18 @@ another tool can implement the same behavior under a different name. The
 exposure types, `ToolLoadout` and `ToolLoadoutChanges` come from
 `pidrei.core.extensions.types`.
 
+### Tool rendering
+
+A tool's `render_call` and `render_result` draw its calls in the interactive
+transcript and in HTML exports. `pi.register_tool_renderer(resolver)` chooses
+renderers for calls to any tool, including tools that are not registered yet,
+such as MCP tools in a resumed session before their server connected. The
+resolver is `resolver(tool_name, next)` and returns a `ToolRenderers` (from
+`pidrei.core.extensions.types`) or `None`; `next()` returns what the
+remaining resolvers (in extension load order), then the registered tool,
+would use, so returning `next()` when it is not `None`, and yours otherwise,
+only fills in. Resolvers are synchronous, like the renderers they return.
+
 ## Commands, shortcuts and flags
 
 ```python
@@ -876,6 +889,7 @@ components, and hands it `tui` — a guarded handle, not the TUI itself:
 | `finish_before_next_input(handle)` | From `handle_input` only: hold the next key until the spawned work finishes |
 | `await stop()` / `await start()` | Give the terminal away and take it back |
 | `terminal.rows` / `terminal.columns` | The terminal's size |
+| `terminal.write_sync(data)` | Write to the terminal, queued behind its other output |
 
 The rules:
 

@@ -273,3 +273,25 @@ def _parses_as_timestamp(value: str) -> bool:
 
 def validate_generated_model_data(data_dir: Path) -> None:
     validate_model_data_directory(read_model_data_structure(data_dir), data_dir)
+
+
+def group_provider_model_data(
+    provider_id: str, models: Iterable[dict[str, Any]]
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, str]]:
+    """Group one provider's typed catalog entries by API and key them by `type:id`,
+    the layout of `providers/data/<provider>.json`. Returns `(groups, structure)`."""
+    models = list(models)
+    groups: dict[str, dict[str, dict[str, Any]]] = {}
+    structure: dict[str, str] = {}
+    for api in sorted({model["api"] for model in models}):
+        group: dict[str, dict[str, Any]] = {}
+        for model in models:
+            if model["api"] != api:
+                continue
+            identity = f"{model['type']}:{model['id']}"
+            if identity in group:
+                raise RuntimeError(f"{provider_id}/{identity} has duplicate {api} catalog entries")
+            group[identity] = model
+            structure[identity] = api
+        groups[api] = group
+    return groups, structure

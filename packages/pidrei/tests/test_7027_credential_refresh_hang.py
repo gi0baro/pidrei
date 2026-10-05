@@ -188,7 +188,6 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
         show_error=lambda message: None,
         show_warning=warning_calls.append,
         _maybe_warn_about_anthropic_subscription_auth=noop_async,
-        _check_daxnuts_easter_egg=lambda model, **_kwargs: None,
         # The refresh continuation ends with the render request (the login flow's
         # own UI updates here are stubbed and do not render).
         ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), state_lock=threading.RLock()),
@@ -357,7 +356,6 @@ async def _start_login():
         _footer=SimpleNamespace(invalidate=lambda: None),
         _update_editor_border_color=lambda: None,
         _maybe_warn_about_anthropic_subscription_auth=noop_async,
-        _check_daxnuts_easter_egg=lambda model, **_kwargs: None,
         # The refresh continuation ends with the render request.
         ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), state_lock=threading.RLock()),
         # Spawned flows run detached, as `_spawn_flow` runs them.

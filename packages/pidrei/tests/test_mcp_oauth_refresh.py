@@ -6,7 +6,10 @@ a pasted redirect URL waits (bounded) until sign-in cancels it, as pi's waits
 for its abort signal.
 """
 
+import base64
+import hashlib
 import os
+from dataclasses import replace
 
 import pytest
 import tonio.colored as tonio
@@ -171,3 +174,129 @@ async def test_uses_the_configured_authorization_server_metadata_url(monkeypatch
 
         with pytest.raises(Exception, match="HTTP 404 loading authorization server metadata"):
             await _sign_in(oauth_servers, settings=settings)
+
+
+# #10302: MCP OAuth client ID metadata documents.
+
+_CIMD = McpOAuthSettings(client_registration="cimd")
+
+
+class _PastePrompt:
+    """Pastes the redirect URL `paste(shown)` builds from the shown authorization URL; no browser."""
+
+    def __init__(self, paste) -> None:
+        self._paste = paste
+        self._shown: str | None = None
+
+    def show_authorization_url(self, url: str) -> None:
+        self._shown = url
+
+    async def prompt_for_redirect_url(self, cancel: CancelToken) -> str | None:
+        assert self._shown is not None
+        return self._paste(parse_url(self._shown))
+
+
+async def _start_cimd_server(oauth_servers, **options):
+    server = await oauth_servers.start(**options)
+    store = McpOAuthCredentialStore(InMemoryAuthStorageBackend()).for_server("test", server.url)
+
+    async def sign_in(settings: McpOAuthSettings, prompt=None) -> None:
+        await sign_in_mcp_server(
+            server_url=server.url,
+            store=store,
+            settings=settings,
+            prompt=prompt if prompt is not None else _Prompt(oauth_servers.browse),
+        )
+
+    return server, store, sign_in
+
+
+@pytest.mark.tonio
+async def test_registers_dynamically_by_default_even_when_the_server_supports_documents(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, _store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
+        await sign_in(McpOAuthSettings())
+        assert len(server.registrations) == 1
+        assert server.authorizations[0]["client_id"] == "client-1"
+
+
+@pytest.mark.tonio
+async def test_uses_pis_document_when_authorization_responses_name_their_issuer(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
+        await sign_in(_CIMD)
+        [authorization] = server.authorizations
+        assert authorization["client_id"] == "https://pi.dev/oauth/client.json"
+        redirect = parse_url(authorization["redirect_uri"])
+        assert f"{redirect.hostname}{redirect.pathname}" == "127.0.0.1/callback"
+        assert redirect.port != ""
+        assert server.registrations == []
+        assert server.token_requests[0]["client_id"] == "https://pi.dev/oauth/client.json"
+        assert server.token_requests[0]["redirect_uri"] == redirect.href
+        # The document is not stored, so signing in again refreshes the tokens instead of discarding them.
+        assert "clientInformation" not in (await store.load())
+        await sign_in(_CIMD)
+        assert len(server.authorizations) == 1
+        assert server.token_requests[1]["grant_type"] == "refresh_token"
+        assert server.token_requests[1]["client_id"] == "https://pi.dev/oauth/client.json"
+
+
+@pytest.mark.tonio
+async def test_uses_a_document_and_callback_path_specific_to_the_mcp_server_without_the_iss_parameter(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, _store, sign_in = await _start_cimd_server(oauth_servers, cimd=True)
+        await sign_in(_CIMD)
+        # Computed like Codex: the first 9 bytes of the SHA-256 of the MCP server URL.
+        digest = hashlib.sha256(server.url.encode()).digest()[:9]
+        callback_id = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+        [authorization] = server.authorizations
+        assert authorization["client_id"] == f"https://pi.dev/oauth/{callback_id}/client.json"
+        redirect = parse_url(authorization["redirect_uri"])
+        assert redirect.pathname == f"/callback/{callback_id}"
+        assert server.registrations == []
+        assert server.token_requests[0]["redirect_uri"] == redirect.href
+
+
+@pytest.mark.tonio
+async def test_replaces_a_registered_client_when_switching_to_the_document(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
+        await sign_in(McpOAuthSettings())
+        assert (await store.load())["clientInformation"]["client_id"] == "client-1"
+        await sign_in(_CIMD)
+        # The registered client's tokens are not refreshed with another client.
+        assert [authorization["client_id"] for authorization in server.authorizations] == [
+            "client-1",
+            "https://pi.dev/oauth/client.json",
+        ]
+        assert "clientInformation" not in (await store.load())
+
+
+@pytest.mark.tonio
+async def test_accepts_the_authorization_response_only_on_the_server_specific_redirect_uri(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        # A mixed-up authorization server redirects to the shared callback path.
+        _server, _store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, redirect_path="/callback")
+        with pytest.raises(Exception, match="arrived on another redirect URI"):
+            await sign_in(_CIMD)
+
+        # The same for a redirect URL pasted from the browser.
+        _server, _store, sign_in_by_paste = await _start_cimd_server(oauth_servers, cimd=True)
+
+        def paste(shown) -> str:
+            redirect = parse_url(shown.search_param("redirect_uri") or "")
+            return replace(
+                redirect, pathname="/callback", query=f"code=code-1&state={shown.search_param('state')}"
+            ).href
+
+        with pytest.raises(Exception, match="does not match this sign-in's redirect URI"):
+            await sign_in_by_paste(_CIMD, _PastePrompt(paste))
+
+
+@pytest.mark.tonio
+async def test_fails_instead_of_registering_when_the_server_does_not_support_documents(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, _store, sign_in = await _start_cimd_server(oauth_servers, iss_parameter=True)
+        with pytest.raises(Exception, match="does not support Client ID Metadata Documents"):
+            await sign_in(_CIMD)
+        assert server.registrations == []

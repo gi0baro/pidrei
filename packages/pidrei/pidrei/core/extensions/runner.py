@@ -32,6 +32,7 @@ from .types import (
     LoadExtensionsResult,
     RegisteredTool,
     ResolvedCommand,
+    ToolRenderers,
 )
 
 
@@ -1030,6 +1031,17 @@ class ExtensionRunner:
 
     def get_markdown_transformers(self) -> list[Any]:
         return [ext.markdown_transformer for ext in self._extensions if ext.markdown_transformer is not None]
+
+    def resolve_tool_renderers(self, tool_name: str, base: Callable[[], Any]) -> ToolRenderers | Any | None:
+        """Renderers of calls to `tool_name`: extension resolvers in load order, then `base`."""
+        resolvers = [resolver for ext in self._extensions for resolver in ext.tool_renderers]
+
+        def resolve(index: int) -> Any:
+            if index < len(resolvers):
+                return resolvers[index](tool_name, lambda: resolve(index + 1))
+            return base()
+
+        return resolve(0)
 
     def get_entry_renderer(self, custom_type: str) -> Any:
         for ext in self._extensions:

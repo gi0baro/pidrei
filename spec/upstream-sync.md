@@ -321,6 +321,9 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Telemetry** of any kind (the `no-telemetry` recipe).
 - **Radius**: provider, presence and session sharing.
 - **The llama.cpp extension**, and its consumers (llama.cpp classify).
+- **The 3D easter eggs** (`armin-3d`/`easter-egg-3d`: the 3D Armin of
+  `/arminsayshi` and the 3D pi logo) and the animated header logo
+  (`pi-logo-animation`): deferred. `/arminsayshi` stays 2D.
 - **Native helpers** (`tui/native`, darwin clipboard file paths): code that
   calls them gets a `None` answer.
 - Live-API tests, Pi's eval harness, storage backends, manual probe scripts,
@@ -805,6 +808,14 @@ machinery and the text that shows JavaScript do not.
   line as the script's value (Monty's checker rejects top-level `return`);
   keyword-only tool calls; the 60 s execution cap; the uncatchable memory
   limit; the pool opened on `session_start` and closed on `session_shutdown`.
+- **Output limits** (`MAX_OUTPUT_CHARS`, `MAX_OUTPUT_ITEMS`) are counted
+  host-side in `_Execution` (`runtime/host.py`) under its guard, in `_emit`
+  (`text()`/`image()`) and `_on_print`. Past a limit the script ends through
+  `stop()` (worker killed, so catching the error cannot resume output) with
+  a `RuntimeError`, Python's nearest to pi's `RangeError`. Monty hands
+  `print()` output over in buffered chunks (about 8 KiB, mid-feed), not one
+  call per `print()`, so print output counts by characters only and the item
+  limit counts `text()`/`image()` calls; the error text says so.
 - **Tests**: Pi's script cases translate to Python scripts and Python error
   strings. A JS-only case is dropped or re-specified, and the test module's
   docstring says which.
@@ -927,6 +938,47 @@ awaits. Here those run on parallel coroutines.
 - **Script API names in text** (`searchTools()`, `describeNamespace()`, the
   `scriptNeedsServer` regex) follow recipe `codemode-python`; the regex also
   matches `call_tool` and `has_tool`.
+- **Client ID Metadata Documents stay pi's**: `CLIENT_METADATA_BASE_URL` in
+  `oauth.py` is `https://pi.dev/oauth`, the one place where PiDrei presents
+  itself as pi (ruled for 1.0.2: PiDrei has no document of its own). A
+  rename pass must not change it, nor the document paths derived from it;
+  dynamic registration keeps `APP_NAME`.
 - **Tests**: waits are Events (a wrapped `ExtensionAPI.register_tool`, a fake
   server released by the test at the event under test), never polling; the
   harness binds once with the UI context the case needs.
+
+### `image-conversion` (`tui/src/components/image.ts`, `coding-agent/src/utils/image-convert.ts`)
+
+Kitty-protocol terminals accept PNG only. Pi's `Image.render()` converts
+other formats synchronously through a module-level transcoder
+(`setImageTranscoder`, a 32-entry module cache), which coding-agent registers
+once photon loads (`ensurePngTranscoder`). Rendering is synchronous and under
+the UI lock here, and Pillow runs on the blocking pool, so the conversion is
+async and `Image` owns it through its TUI.
+
+- **`Image(tui, base64_data, mime_type, theme, options, dimensions)`**: the
+  TUI comes first, as in `Editor(tui, ...)`. It reads `tui.image_conversions`
+  (`ImageConversions` in `pidrei_tui/tui.py`: the converter and a 32-entry
+  cache keyed by source data, with a pending marker), under the state lock.
+- Without its PNG, `render()` shows the text fallback and, once, starts a
+  detached coroutine: it awaits the converter, stores the PNG (or None for a
+  failure) through `tui.apply`, and requests a frame. A raising converter goes
+  to `tui.report_error`. An image without its PNG looks it up in the cache on
+  each render, so an owner that rebuilds its images converts once.
+- **The TUI**: `set_image_converter(convert)` (clears the cache, like pi's
+  `setImageTranscoder`), set by interactive mode at construction;
+  `set_image_conversions(...)` hands converter and cache to the next renderer
+  on a mode switch; `ExtensionTui.image_conversions` forwards the read.
+- **The converter** is `convert_image_to_png_base64` in
+  `utils/image_process.py` (Pillow, EXIF orientation applied); pi's
+  `loadPngTranscoder`/`ensurePngTranscoder` and their `onRegistered`
+  re-render have no counterpart.
+- **Upstream diffs**: changes to *what* `Image` draws (sizing, fallback text,
+  the PNG's dimensions) port into `render()`; changes to *when or how* pi
+  transcodes land in `_kitty_png`/`_convert` and `ImageConversions`. Callers
+  that build an `Image` pass a TUI (`ToolExecutionComponent` its `ui`,
+  extensions their factory's `tui`).
+- **Divergence to keep**: the fallback shows for the frames until the
+  conversion ends, where pi draws the PNG in the same frame.
+- **Tests**: pi's transcoder cases run with an async converter on a fake TUI;
+  each waits for the conversion's render request (an Event), never on time.

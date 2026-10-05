@@ -624,6 +624,19 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/src/modes/interactive/components/pi-logo-animation",
         "header logo easter egg deferred (1.0.0 delta port)",
     ),
+    # 1.0.2 renamed it (armin-3d, then easter-egg-3d) and added the 3D Armin of /arminsayshi
+    (
+        "packages/coding-agent/src/modes/interactive/components/armin-3d",
+        "3D easter eggs deferred (1.0.2 delta port)",
+    ),
+    (
+        "packages/coding-agent/src/modes/interactive/components/easter-egg-3d",
+        "3D easter eggs deferred (1.0.2 delta port)",
+    ),
+    (
+        "packages/ai/scripts/hydrate-model-catalog.ts",
+        "offline catalog hydration for pi's Nix build; PiDrei's catalog is committed (1.0.2 delta port)",
+    ),
 )
 
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
@@ -676,6 +689,8 @@ RENAMES = {
     # EXIF orientation is Pillow's `ImageOps.exif_transpose` inside the image
     # pipeline; pi's hand-rolled APP1 scanner has no separate mirror.
     "packages/coding-agent/src/utils/exif-orientation.ts": "packages/pidrei/pidrei/utils/image_process.py",
+    # PNG conversion for Kitty lives in the same module (Pillow replaces Photon).
+    "packages/coding-agent/src/utils/image-convert.ts": "packages/pidrei/pidrei/utils/image_process.py",
     # 0.84.4: consolidated into generate_models.py like its models-dev sibling.
     "packages/ai/scripts/openrouter-reasoning-options.ts": "packages/ai/scripts/generate_models.py",
     "packages/ai/src/models.generated.ts": "packages/ai/pidrei_ai/models_generated.py",
@@ -1251,6 +1266,20 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/src/extensions/mcp/cli.ts": (
         ("mcp-extension", "the pasted redirect URL is read with FdReader under run_cancellable"),
     ),
+    "packages/tui/src/components/image.ts": (
+        (
+            "image-conversion",
+            "Image takes its TUI first and converts through tui.image_conversions off the render path (async "
+            "converter, detached conversion, cache on the TUI); no setImageTranscoder or module-level cache",
+        ),
+    ),
+    "packages/coding-agent/src/utils/image-convert.ts": (
+        (
+            "image-conversion",
+            "the transcoder is the async convert_image_to_png_base64 (Pillow on the blocking pool), set on the TUI "
+            "by interactive mode; ensurePngTranscoder/loadPngTranscoder have no counterpart",
+        ),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -1487,6 +1516,9 @@ NOISE_BASENAMES = {
     ".npmignore",
     ".gitignore",
     ".gitattributes",
+    # pi's Nix flake (1.0.2): packaging of pi itself
+    "flake.nix",
+    "flake.lock",
 }
 NOISE_PREFIXES = (
     ".github/",
@@ -1494,6 +1526,8 @@ NOISE_PREFIXES = (
     ".pi/",
     "scripts/",
     "packages/coding-agent/install-lock/",
+    # pi's Nix flake (1.0.2): the package expression and its model catalog pin
+    "nix/",
     # pi-internal design docs, not user documentation
     "packages/agent/docs/",
 )

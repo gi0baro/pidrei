@@ -21,8 +21,8 @@ from pidrei_utils.timers import Interval, Timeout
 __all__ = ["ExtensionTui"]
 
 
-class _TerminalSize:
-    """The terminal's size, read live; not the terminal itself."""
+class _ExtensionTerminal:
+    """The terminal's size, read live, and queued writes; not the terminal itself."""
 
     __slots__ = ("_tui",)
 
@@ -36,6 +36,11 @@ class _TerminalSize:
     @property
     def columns(self) -> int:
         return self._tui.terminal.columns
+
+    def write_sync(self, data: str) -> None:
+        """Queue `data` behind the terminal's other output (never inside a frame);
+        needs no lock. pi's extensions reach `tui.terminal.write`."""
+        self._tui.terminal.write_sync(data)
 
 
 class _TimerHandle:
@@ -68,11 +73,18 @@ class ExtensionTui:
 
     def __init__(self, tui) -> None:
         self._tui = tui
-        self._terminal = _TerminalSize(tui)
+        self._terminal = _ExtensionTerminal(tui)
 
     @property
-    def terminal(self) -> _TerminalSize:
+    def terminal(self) -> _ExtensionTerminal:
         return self._terminal
+
+    @property
+    def image_conversions(self):
+        """The TUI's image converter and converted images, so an `Image` an
+        extension builds with this handle converts like pidrei's own. `Image`
+        reads it under the UI state lock, in `render()`."""
+        return self._tui.image_conversions
 
     def request_render(self, force: bool = False) -> None:
         self._tui.request_render(force)

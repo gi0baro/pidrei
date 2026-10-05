@@ -18,6 +18,7 @@ import hashlib
 import json
 import sys
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
@@ -42,13 +43,26 @@ async def _json(request: Any, status: int, body: Any, headers: dict[str, str] | 
 
 
 class OAuthMcpServer:
-    """`iss` is sent as the `iss` parameter of authorization responses (RFC 9207)."""
+    """`iss` is sent as the `iss` parameter of authorization responses (RFC
+    9207). `iss_parameter` advertises that parameter and sends the server's
+    issuer. `cimd` advertises Client ID Metadata Documents. `redirect_path`
+    replaces the path of the redirect URI, like a mixed-up authorization
+    server."""
 
-    def __init__(self, iss: str | None) -> None:
+    def __init__(
+        self, iss: str | None, *, iss_parameter: bool = False, cimd: bool = False, redirect_path: str | None = None
+    ) -> None:
         self._iss = iss
+        self._iss_parameter = iss_parameter
+        self._cimd = cimd
+        self._redirect_path = redirect_path
         self.log: list[str] = []
         # Client metadata of dynamic client registrations.
         self.registrations: list[dict[str, Any]] = []
+        # Query parameters of authorization requests.
+        self.authorizations: list[dict[str, str]] = []
+        # Parameters of token requests.
+        self.token_requests: list[dict[str, str]] = []
         self._valid_tokens: set[str] = set()
         self._refresh_tokens: set[str] = set()
         self._challenges: dict[str, str] = {}
@@ -122,6 +136,8 @@ class OAuthMcpServer:
                         "response_types_supported": ["code"],
                         "code_challenge_methods_supported": ["S256"],
                         "token_endpoint_auth_methods_supported": ["none"],
+                        **({"client_id_metadata_document_supported": True} if self._cimd else {}),
+                        **({"authorization_response_iss_parameter_supported": True} if self._iss_parameter else {}),
                     },
                 )
             case "/register":
@@ -130,15 +146,20 @@ class OAuthMcpServer:
                 self.registrations.append(metadata)
                 await _json(request, 201, {**metadata, "client_id": "client-1"})
             case "/authorize":
+                self.authorizations.append(query)
                 code = f"code-{len(self._challenges) + 1}"
                 self._challenges[code] = query.get("code_challenge", "")
                 redirect = parse_url(query.get("redirect_uri", ""))
+                if self._redirect_path:
+                    redirect = replace(redirect, pathname=self._redirect_path)
                 redirect = redirect.with_search_param("code", code).with_search_param("state", query.get("state", ""))
-                if self._iss:
-                    redirect = redirect.with_search_param("iss", self._iss)
+                iss = self._iss if self._iss is not None else origin if self._iss_parameter else None
+                if iss:
+                    redirect = redirect.with_search_param("iss", iss)
                 await request.respond(302, headers={"location": redirect.href})
             case "/token":
                 params = dict(parse_qsl(await read_body(request), keep_blank_values=True))
+                self.token_requests.append(params)
                 if params.get("grant_type") == "authorization_code":
                     challenge = self._challenges.get(params.get("code", ""))
                     digest = hashlib.sha256(params.get("code_verifier", "").encode()).digest()
@@ -168,8 +189,15 @@ class OAuthServers:
         self._servers = servers
         self._browsing: list[Any] = []
 
-    async def start(self, *, iss: str | None = None) -> OAuthMcpServer:
-        server = OAuthMcpServer(iss)
+    async def start(
+        self,
+        *,
+        iss: str | None = None,
+        iss_parameter: bool = False,
+        cimd: bool = False,
+        redirect_path: str | None = None,
+    ) -> OAuthMcpServer:
+        server = OAuthMcpServer(iss, iss_parameter=iss_parameter, cimd=cimd, redirect_path=redirect_path)
 
         async def handle(request: Any, origin: str) -> None:
             try:

@@ -3,8 +3,6 @@
 import json
 from dataclasses import replace
 
-import tonio.colored as tonio
-
 from pidrei_tui import (
     Box,
     Container,
@@ -17,7 +15,6 @@ from pidrei_tui import (
     get_capabilities,
 )
 
-from ....utils.image_process import convert_to_png
 from ..theme import theme
 from .keybinding_hints import key_hint
 
@@ -65,13 +62,15 @@ class ToolExecutionComponent(Container):
         self._result_renderer_component = None
         self._renderer_state: dict = {}
         self._image_components: list = []
+        # Inputs of `_image_components`, so `_update_display` can reuse images
+        # and keep their converted PNG data (and Kitty image ids).
+        self._image_sources: list[tuple[str, str, int]] = []
         self._image_spacers: list = []
         self._expanded = False
         self._is_partial = True
         self._execution_started = False
         self._args_complete = False
         self._result = None
-        self._converted_images: dict = {}
         self._hide_component = False
 
         self.add_child(Spacer(1))
@@ -177,52 +176,6 @@ class ToolExecutionComponent(Container):
         self._result = result
         self._is_partial = is_partial
         self._update_display()
-        self._maybe_convert_images_for_kitty()
-
-    def _maybe_convert_images_for_kitty(self) -> None:
-        caps = get_capabilities()
-        if caps["images"] != "kitty":
-            return
-        if not self._result:
-            return
-
-        image_blocks = [c for c in self._result["content"] if _block_type(c) == "image"]
-        for i, img in enumerate(image_blocks):
-            if not _block_get(img, "data") or not _block_get(img, "mimeType"):
-                continue
-            source_data = _block_get(img, "data")
-            source_mime_type = _block_get(img, "mimeType")
-            if source_mime_type == "image/png":
-                continue
-            cached = self._converted_images.get(i)
-            if cached and cached["sourceData"] == source_data and cached["sourceMimeType"] == source_mime_type:
-                continue
-
-            async def convert(index=i, source_data=source_data, source_mime_type=source_mime_type) -> None:
-                converted = await tonio.spawn_blocking(convert_to_png, source_data, source_mime_type)
-                if not converted:
-                    return
-
-                # Under the UI state lock, ordered with `update_result`: ignore
-                # a conversion that finishes after its image was replaced.
-                with self._ui.state_lock:
-                    current_images = [c for c in (self._result or {}).get("content", []) if _block_type(c) == "image"]
-                    current = current_images[index] if index < len(current_images) else None
-                    if (
-                        current is None
-                        or _block_get(current, "data") != source_data
-                        or _block_get(current, "mimeType") != source_mime_type
-                    ):
-                        return
-                    self._converted_images[index] = {
-                        "sourceData": source_data,
-                        "sourceMimeType": source_mime_type,
-                        **converted,
-                    }
-                    self._update_display()
-                    self._ui.request_render()
-
-            tonio.spawn.without_tracking(convert())
 
     def set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
@@ -333,9 +286,12 @@ class ToolExecutionComponent(Container):
             self._content_text.set_text(self._format_tool_execution())
             has_content = True
 
+        previous_images = self._image_components
+        previous_sources = self._image_sources
         for img in self._image_components:
             self.remove_child(img)
         self._image_components = []
+        self._image_sources = []
         for spacer in self._image_spacers:
             self.remove_child(spacer)
         self._image_spacers = []
@@ -343,31 +299,26 @@ class ToolExecutionComponent(Container):
         if self._result:
             image_blocks = [c for c in self._result["content"] if _block_type(c) == "image"]
             caps = get_capabilities()
-            for i, img in enumerate(image_blocks):
+            for img in image_blocks:
                 if caps["images"] and self._show_images and _block_get(img, "data") and _block_get(img, "mimeType"):
-                    cached = self._converted_images.get(i)
-                    converted = (
-                        cached
-                        if cached
-                        and cached["sourceData"] == _block_get(img, "data")
-                        and cached["sourceMimeType"] == _block_get(img, "mimeType")
-                        else None
-                    )
-                    image_data = converted["data"] if converted else _block_get(img, "data")
-                    image_mime_type = converted["mimeType"] if converted else _block_get(img, "mimeType")
-                    if caps["images"] == "kitty" and image_mime_type != "image/png":
-                        continue
-
                     spacer = Spacer(1)
                     self.add_child(spacer)
                     self._image_spacers.append(spacer)
-                    image_component = Image(
-                        image_data,
-                        image_mime_type,
-                        {"fallbackColor": lambda s: theme.fg("toolOutput", s)},
-                        {"maxWidthCells": self._image_width_cells},
+                    source = (_block_get(img, "data"), _block_get(img, "mimeType"), self._image_width_cells)
+                    index = len(self._image_components)
+                    image_component = (
+                        previous_images[index]
+                        if index < len(previous_sources) and previous_sources[index] == source
+                        else Image(
+                            self._ui,
+                            source[0],
+                            source[1],
+                            {"fallbackColor": lambda s: theme.fg("toolOutput", s)},
+                            {"maxWidthCells": source[2]},
+                        )
                     )
                     self._image_components.append(image_component)
+                    self._image_sources.append(source)
                     self.add_child(image_component)
 
         if self._has_renderer_definition() and not has_content and not self._image_components:

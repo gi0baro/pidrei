@@ -107,7 +107,7 @@ because the terminal owns its scrollback.
 | `MouseRegion` | Adds mouse handling to a component without changing its rendering |
 | `Editor` / `Input` | Multi-line and single-line text entry |
 | `Loader` / `CancellableLoader` | Progress spinners |
-| `Image` | Inline image, where the terminal supports it |
+| `Image` | Inline image, where the terminal supports it. `Image(tui, base64_data, mime_type, theme, options=None, dimensions=None)` takes the `tui` first: on Kitty-protocol terminals, which accept PNG only, it converts other formats through it and shows its text fallback until the PNG is ready |
 
 Helpers: `fuzzy_filter` / `fuzzy_match` for list filtering,
 `get_capabilities()` for what the terminal supports, and

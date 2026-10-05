@@ -4385,7 +4385,9 @@ class AgentSession:
         # Create tool renderer for custom tool HTML rendering
         tool_renderer = create_tool_html_renderer(
             {
-                "getToolDefinition": self.get_tool_definition,
+                "getToolRenderers": lambda name: self._extension_runner.resolve_tool_renderers(
+                    name, lambda: self.get_tool_definition(name)
+                ),
                 "theme": theme,
                 "cwd": self.session_manager.get_cwd(),
             }

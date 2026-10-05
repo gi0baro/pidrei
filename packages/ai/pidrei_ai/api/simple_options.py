@@ -2,7 +2,17 @@
 
 from collections.abc import Mapping
 
-from pidrei_ai.types import Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel, TranscriptContext
+from pidrei_ai.registry import clamp_thinking_level
+from pidrei_ai.types import (
+    Model,
+    ModelThinkingLevel,
+    SamplingParams,
+    SimpleStreamOptions,
+    StreamOptions,
+    ThinkingBudgets,
+    ThinkingLevel,
+    TranscriptContext,
+)
 from pidrei_ai.utils.estimate import estimate_context_tokens
 
 
@@ -17,6 +27,17 @@ def clamp_max_tokens_to_context(model: Model, context: TranscriptContext, max_to
     return min(max_tokens, max(MIN_MAX_TOKENS, available))
 
 
+def resolve_sampling_params(
+    model: Model, thinking_level: ModelThinkingLevel, request_params: SamplingParams | None = None
+) -> SamplingParams | None:
+    effective_thinking_level = clamp_thinking_level(model, thinking_level)
+    thinking_level_params = (model.sampling_params_by_thinking_level or {}).get(effective_thinking_level)
+    # pi: `model.samplingParams || thinkingLevelParams || requestParams` — an empty object is truthy.
+    if model.sampling_params is None and thinking_level_params is None and request_params is None:
+        return None
+    return {**(model.sampling_params or {}), **(thinking_level_params or {}), **(request_params or {})}
+
+
 def build_base_options(
     model: Model,
     context: TranscriptContext,
@@ -24,9 +45,14 @@ def build_base_options(
     api_key: str | None = None,
 ) -> StreamOptions:
     requested_max = options.max_tokens if options is not None and options.max_tokens is not None else model.max_tokens
+    sampling_params = resolve_sampling_params(
+        model,
+        options.reasoning if options is not None and options.reasoning is not None else "off",
+        options.sampling_params if options else None,
+    )
     return StreamOptions(
         temperature=options.temperature if options else None,
-        sampling_params=options.sampling_params if options else None,
+        sampling_params=sampling_params,
         max_tokens=clamp_max_tokens_to_context(model, context, requested_max),
         cancel=options.cancel if options else None,
         # pi: `apiKey: apiKey || options?.apiKey` — deliberately falsy `||`.

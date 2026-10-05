@@ -6,13 +6,16 @@ sequence on first line...", tool-output integration) land with the
 components slice.
 """
 
+import base64
 import contextlib
 import os
 import re
+import threading
 
 import pytest
+import tonio.colored as tonio
 
-from pidrei_tui import terminal_image
+from pidrei_tui import ImageConversions, terminal_image
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
     crop_kitty_image_line,
@@ -25,6 +28,7 @@ from pidrei_tui.terminal_image import (
     get_capabilities,
     get_kitty_image_metadata,
     get_kitty_image_placement,
+    get_kitty_image_placement_rows,
     hyperlink,
     image_fallback,
     is_image_line,
@@ -39,6 +43,49 @@ from pidrei_tui.terminal_image import (
 from pidrei_tui.utils import visible_width
 
 from .tui_helpers import env_var
+
+
+class _FakeTui:
+    """What `Image` uses of its TUI. `request_render` counts the frames the
+    conversions asked for; `wait_for_renders(n)` waits until `n` were."""
+
+    def __init__(self) -> None:
+        self.state_lock = threading.RLock()
+        self.image_conversions = ImageConversions()
+        self.errors: list[BaseException] = []
+        self._renders = 0
+        self._target: tuple[int, tonio.Event] | None = None
+
+    def apply(self, fn):
+        with self.state_lock:
+            return fn()
+
+    def request_render(self, force: bool = False) -> None:
+        with self.state_lock:
+            self._renders += 1
+            if self._target is not None and self._renders >= self._target[0]:
+                self._target[1].set()
+
+    def report_error(self, error: BaseException) -> None:
+        self.errors.append(error)
+
+    def render(self, component, width: int) -> list[str]:
+        """Render under the state lock, as the TUI's frames do: a conversion
+        stores its result through `apply` from another thread meanwhile."""
+        with self.state_lock:
+            return component.render(width)
+
+    async def wait_for_renders(self, count: int) -> None:
+        event = tonio.Event()
+        with self.state_lock:
+            if self._renders >= count:
+                return
+            self._target = (count, event)
+        await event.wait(5)
+        assert event.is_set(), f"expected {count} render requests"
+
+
+_TUI = _FakeTui()
 
 
 _ENV_KEYS = (
@@ -484,6 +531,11 @@ def test_can_request_no_terminal_side_cursor_movement():
     assert sequence.startswith("\x1b_Ga=T,f=100,q=2,C=1,c=2,r=2;")
 
 
+def test_reads_explicit_placement_rows_without_registered_metadata():
+    sequence = encode_kitty("AAAA", columns=2, rows=3, move_cursor=False)
+    assert get_kitty_image_placement_rows(sequence) == 3
+
+
 def test_suppresses_kitty_replies_for_delete_commands():
     assert delete_kitty_image(42) == "\x1b_Ga=d,d=I,i=42,q=2\x1b\\"
     assert delete_all_kitty_images() == "\x1b_Ga=d,d=A,q=2\x1b\\"
@@ -543,8 +595,10 @@ def test_creates_placement_only_commands_for_uploaded_and_cropped_images():
     line = f"left {crop_kitty_image_line(transmission, 2, 1)} right"
     placement = get_kitty_image_placement(line)
     assert placement
+    assert get_kitty_image_placement_rows(line) == 1
     assert placement["transmissionBytes"] == len(line) - len("left ") - len(" right")
     assert placement["estimatedDecodedBytes"] == 100 * 100 * 4
+    assert placement["rows"] == 1
     assert placement["sequence"] == "\x1b_Ga=p,q=2,C=1,c=3,i=42,y=66,h=34,r=1\x1b\\"
     assert placement["replacementLine"] == f"left {placement['sequence']} right"
     assert "AAAA" not in placement["replacementLine"]
@@ -568,6 +622,7 @@ def test_caps_image_component_height_to_a_square_pixel_box_by_default():
     set_cell_dimensions({"widthPx": 10, "heightPx": 20})
     try:
         image = Image(
+            _TUI,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: value},
@@ -587,6 +642,7 @@ def test_places_image_sequence_on_first_line_with_empty_padding_rows():
     set_cell_dimensions({"widthPx": 10, "heightPx": 10})
     try:
         image = Image(
+            _TUI,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: value},
@@ -625,7 +681,7 @@ def _sized_image(max_width_cells: int, image_id: int | None, dimensions: dict) -
     options: dict = {"maxWidthCells": max_width_cells}
     if image_id is not None:
         options["imageId"] = image_id
-    return Image("AAAA", "image/png", {"fallbackColor": lambda value: value}, options, dimensions)
+    return Image(_TUI, "AAAA", "image/png", {"fallbackColor": lambda value: value}, options, dimensions)
 
 
 def test_reserves_at_least_one_kitty_row_for_thin_images():
@@ -722,6 +778,126 @@ def test_keeps_iterm2_ceiling_based_reserved_lines_and_cursor_offset():
         ]
 
 
+# Image transcoding — Kitty only accepts PNG (f=100); non-PNG images must be
+# transcoded (#10292). Pi's transcoder runs during render; here the TUI's
+# converter is async, so the first render shows the fallback and each case
+# waits for the conversion's render request before rendering again.
+
+_JPEG = base64.b64encode(b"jpeg").decode()
+# Minimal PNG header (signature + IHDR) for a 40x10 image. Enough for get_png_dimensions.
+_PNG = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d49484452000000280000000a")).decode()
+
+
+@pytest.fixture
+def transcoding():
+    set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
+    set_cell_dimensions({"widthPx": 10, "heightPx": 10})
+    calls: list[str] = []
+
+    async def transcode(data: str, _mime_type: str) -> str | None:
+        calls.append(data)
+        return _PNG if data == _JPEG else None
+
+    try:
+        yield calls, transcode
+    finally:
+        reset_capabilities_cache()
+        set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+def _image(tui, data: str, mime_type: str, dimensions: dict | None = None) -> Image:
+    return Image(tui, data, mime_type, {"fallbackColor": lambda value: value}, {}, dimensions)
+
+
+def _is_fallback(line: str) -> bool:
+    return re.match(r"^\[Image: \[image/jpeg\]", line) is not None
+
+
+@pytest.mark.tonio
+async def test_sends_converted_png_data_sized_from_the_png(transcoding):
+    _calls, transcode = transcoding
+    tui = _FakeTui()
+    tui.image_conversions.set_converter(transcode)
+    image = _image(tui, _JPEG, "image/jpeg", {"widthPx": 20, "heightPx": 20})
+    assert _is_fallback(tui.render(image, 80)[0])
+    await tui.wait_for_renders(1)
+    lines = tui.render(image, 20)
+    assert "f=100" in lines[0] and f";{_PNG}\x1b\\" in lines[0]
+    # 40x10 PNG at 18 columns: 5 rows, not the 18 rows of the 20x20 source dimensions.
+    assert len(lines) == 5
+
+
+@pytest.mark.tonio
+async def test_renders_a_text_fallback_until_a_working_converter_is_set(transcoding):
+    _calls, transcode = transcoding
+    tui = _FakeTui()
+    image = _image(tui, _JPEG, "image/jpeg")
+    assert _is_fallback(tui.render(image, 80)[0])
+
+    async def failing(_data: str, _mime_type: str) -> None:
+        return None
+
+    tui.image_conversions.set_converter(failing)
+    image.invalidate()
+    assert _is_fallback(tui.render(image, 80)[0])
+    await tui.wait_for_renders(1)
+    assert _is_fallback(tui.render(image, 80)[0])
+
+    tui.image_conversions.set_converter(transcode)
+    image.invalidate()
+    assert _is_fallback(tui.render(image, 80)[0])
+    await tui.wait_for_renders(2)
+    assert "\x1b_G" in tui.render(image, 80)[0]
+
+
+@pytest.mark.tonio
+async def test_converts_each_image_once(transcoding):
+    calls, transcode = transcoding
+    tui = _FakeTui()
+    tui.image_conversions.set_converter(transcode)
+    image = _image(tui, _JPEG, "image/jpeg")
+    tui.render(image, 80)
+    await tui.wait_for_renders(1)
+    # A new instance hits the shared cache.
+    assert "\x1b_G" in tui.render(_image(tui, _JPEG, "image/jpeg"), 80)[0]
+    # Evicts the shared entry.
+    for index in range(40):
+        tui.render(_image(tui, f"other-{index}", "image/jpeg"), 80)
+    await tui.wait_for_renders(41)
+    image.invalidate()
+    # The instance keeps its own PNG.
+    assert "\x1b_G" in tui.render(image, 40)[0]
+    assert calls.count(_JPEG) == 1
+
+
+def test_does_not_convert_png_data_or_iterm2_output(transcoding):
+    calls, transcode = transcoding
+    tui = _FakeTui()
+    tui.image_conversions.set_converter(transcode)
+    assert f";{_PNG}\x1b\\" in tui.render(_image(tui, _PNG, "image/png", {"widthPx": 20, "heightPx": 20}), 20)[0]
+    set_capabilities({"images": "iterm2", "trueColor": True, "hyperlinks": True})
+    iterm2_lines = tui.render(_image(tui, _JPEG, "image/jpeg", {"widthPx": 20, "heightPx": 20}), 20)
+    assert iterm2_lines[-1].endswith(f":{_JPEG}\x07")
+    assert calls == []
+
+
+@pytest.mark.tonio
+async def test_reports_a_converter_that_raises_and_keeps_the_fallback(transcoding):
+    # pidrei-only: pi's transcoder runs inside render; here its failure goes to the TUI's error handler.
+    tui = _FakeTui()
+
+    async def raising(_data: str, _mime_type: str) -> str:
+        raise RuntimeError("converter exploded")
+
+    tui.image_conversions.set_converter(raising)
+    image = _image(tui, _JPEG, "image/jpeg")
+    assert _is_fallback(tui.render(image, 80)[0])
+    await tui.wait_for_renders(1)
+    assert [str(error) for error in tui.errors] == ["converter exploded"]
+    image.invalidate()
+    assert _is_fallback(tui.render(image, 80)[0])
+
+
 # hyperlink
 
 
@@ -762,6 +938,7 @@ def test_truncates_long_image_fallback_lines_to_render_width():
         )
         width = 40
         image = Image(
+            _TUI,
             "AAAA",
             "image/png",
             {"fallbackColor": lambda value: f"\x1b[33m{value}\x1b[0m"},

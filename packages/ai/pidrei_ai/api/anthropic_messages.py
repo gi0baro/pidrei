@@ -11,7 +11,7 @@ client via `AnthropicOptions.client` exactly like pi's suites do.
 
 import json
 import re
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, Protocol
 
@@ -81,9 +81,7 @@ from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import (
     get_current_tools,
-    get_declared_tools,
     get_initial_system_message,
-    has_tool_redefinitions,
     resolve_transcript,
 )
 from pidrei_ai.utils.user_agent import set_default_user_agent
@@ -125,14 +123,14 @@ INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
 SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01"
 THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
-MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
+INLINE_TOOLS_BETA = "inline-tools-2026-09-15"
 
 
 # Stable deferred tool declared whenever native tool changes are in use. Anthropic adds
-# hidden prompt scaffolding as soon as any tool has `defer_loading`; declaring this
-# placeholder from the first request keeps that scaffolding in the cached prefix, so the
-# first real late tool does not invalidate the cache (measured: full miss without it).
-# It is never activated and the model cannot see it.
+# hidden prompt scaffolding for mid-conversation tool changes; declaring this placeholder
+# from the first request keeps that scaffolding in the cached prefix, so the first tool
+# change does not invalidate the cache (measured: full miss without it). It is never
+# activated and the model cannot see it.
 # Built per request: params reach the user `on_payload` hook, so no nested dict of it may
 # be shared between concurrent requests.
 def _deferred_tool_placeholder() -> dict[str, Any]:
@@ -1004,7 +1002,8 @@ def _convert_messages(
     cache_control: dict | None,
     allow_empty_signature: bool,
     managed_provider: str | None = None,
-    native_tool_changes: bool = False,
+    # Converts tool definitions for native `tool_addition` blocks; None when tool changes are not native.
+    convert_tool_definitions: Callable[[list[Tool]], list[dict[str, Any]]] | None = None,
 ) -> _ConvertedAnthropicMessages:
     params: list[dict[str, Any]] = []
     assistant_levels: dict[int, AnthropicEffort] = {}
@@ -1030,13 +1029,19 @@ def _convert_messages(
             system_blocks: list[dict[str, Any]] = []
             if text:
                 system_blocks.append({"type": "text", "text": sanitize_surrogates(text)})
-            if native_tool_changes:
+            if convert_tool_definitions is not None:
+                added = msg.tools_added or []
+                redefined = {tool.name for tool in added}
                 for tool in msg.tools_removed or []:
+                    # A new definition under the same name replaces the old one, so no removal is needed.
+                    if tool.name in redefined:
+                        continue
                     name = _to_claude_code_name(tool.name) if is_oauth_token else tool.name
                     system_blocks.append({"type": "tool_removal", "tool": {"type": "tool_reference", "name": name}})
-                for tool in msg.tools_added or []:
-                    name = _to_claude_code_name(tool.name) if is_oauth_token else tool.name
-                    system_blocks.append({"type": "tool_addition", "tool": {"type": "tool_reference", "name": name}})
+                for definition in convert_tool_definitions(list(added)):
+                    system_blocks.append(
+                        {"type": "tool_addition", "tool": {"type": "tool_definition", "definition": definition}}
+                    )
             if system_blocks:
                 pending_system_messages.append({"role": "system", "content": system_blocks})
         elif msg.role == "user":
@@ -1199,7 +1204,7 @@ def _get_beta_features(
     if _supports_mid_convo_effort(model):
         features.extend([MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA])
     if native_tool_changes:
-        features.append(MID_CONVERSATION_TOOL_CHANGES_BETA)
+        features.append(INLINE_TOOLS_BETA)
     return list(dict.fromkeys(features))
 
 
@@ -1300,15 +1305,13 @@ def _build_params(
     initial_system_text = get_system_message_text(initial_system_message) if initial_system_message is not None else ""
     transformed_messages = transform_messages(context.messages, model, _normalize_tool_call_id)
     conversation_messages = transformed_messages[1:] if initial_system_message is not None else transformed_messages
-    # Native tool changes reference tools by name, so a redefined name cannot be expressed,
-    # and Anthropic rejects a tool list where every tool is deferred, so there must be an
-    # initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
+    # Native tool changes keep the request-level tool list fixed and define every later tool
+    # by value in a `tool_addition` block, which also expresses same-name redefinitions.
+    # Anthropic rejects a tool list where every tool is deferred, so there must be an initial
+    # active tool to anchor the placeholder. Otherwise the current tool list is sent.
     initial_tools = (initial_system_message.tools_added if initial_system_message is not None else None) or []
     native_tool_changes = (
-        compat.supports_mid_convo_system_messages
-        and compat.supports_mid_convo_tool_changes
-        and len(initial_tools) > 0
-        and not has_tool_redefinitions(context.messages)
+        compat.supports_mid_convo_system_messages and compat.supports_mid_convo_tool_changes and len(initial_tools) > 0
     )
 
     supports_mid_convo_effort = _supports_mid_convo_effort(model)
@@ -1318,7 +1321,13 @@ def _build_params(
         cache_control,
         compat.allow_empty_signature,
         model.provider if supports_mid_convo_effort else None,
-        native_tool_changes,
+        (
+            lambda tools: _convert_tools(
+                tools, is_oauth_token, compat.supports_eager_tool_input_streaming, compat.supports_strict_tools
+            )
+        )
+        if native_tool_changes
+        else None,
     )
     active_effort: AnthropicEffort = options.effort or "high"
     beta_features = _get_beta_features(model, context, is_oauth_token, native_tool_changes, options)
@@ -1370,12 +1379,10 @@ def _build_params(
 
     tool_cache_control = cache_control if compat.supports_cache_control_on_tools else None
     if native_tool_changes:
-        # Initial tools stay active with the cache breakpoint on the last one. Every later
-        # declaration is deferred and only surfaced by its `tool_addition` block; removed
-        # tools stay declared and are withdrawn by `tool_removal`. The request-level list
-        # therefore only grows, keeping the cached prefix intact across tool changes.
-        initial_names = {tool.name for tool in initial_tools}
-        later_tools = [tool for tool in get_declared_tools(context.messages) if tool.name not in initial_names]
+        # Initial tools stay active with the cache breakpoint on the last one, followed by the
+        # placeholder. The list never changes afterwards: later tools are defined by value in
+        # `tool_addition` blocks and withdrawn by `tool_removal`, so the cached prefix survives
+        # every tool change.
         params["tools"] = [
             *_convert_tools(
                 initial_tools,
@@ -1385,15 +1392,6 @@ def _build_params(
                 tool_cache_control,
             ),
             _deferred_tool_placeholder(),
-            *(
-                {**tool, "defer_loading": True}
-                for tool in _convert_tools(
-                    later_tools,
-                    is_oauth_token,
-                    compat.supports_eager_tool_input_streaming,
-                    compat.supports_strict_tools,
-                )
-            ),
         ]
     else:
         tools = get_current_tools(context.messages)

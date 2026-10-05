@@ -6,6 +6,12 @@ projects, from `<project>/.pidrei/mcp.json`. Both use the `mcpServers` shape
 shared by other MCP clients, so existing configurations can be copied over.
 Project entries replace global entries with the same name.
 
+A project entry without `command`, `url`, or `type` overrides only `enabled`,
+`exposure`, and `toolExposure` of the global server with the same name, for
+example to turn it off in one project:
+`{ "mcpServers": { "internal-tools": { "enabled": false } } }`. The rest of the
+global entry is kept, including credentials the project could not set itself.
+
 ```json
 {
   "mcpServers": {
@@ -36,7 +42,7 @@ import json
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from tonio.colored import fs
@@ -80,6 +86,8 @@ class McpServerEntry:
     # registered with `pi.register_mcp_server()`. Changes to extension servers
     # are not saved.
     scope: McpServerScope | None = None
+    # Project `mcp.json` with an override of this global server's `enabled`, `exposure`, or `toolExposure`.
+    override: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +96,16 @@ class LoadedMcpConfig:
     errors: list[str] = field(default_factory=list)
     # Activate the codemode tool when `codemode` servers connect. Default: true.
     auto_enable_codemode: bool | None = None
+    # The project `mcp.json` when the project is trusted, where `/mcp` saves project overrides.
+    project_config: str | None = None
+
+
+_OVERRIDE_KEYS = ("enabled", "exposure", "toolExposure")
+
+
+def _is_override(value: dict[str, Any]) -> bool:
+    """Whether an entry overrides a server defined elsewhere instead of defining one."""
+    return "command" not in value and "url" not in value and "type" not in value
 
 
 def locale_order(text: str) -> tuple[str, str]:
@@ -128,6 +146,20 @@ async def _read_config_file(path: str, scope: Literal["global", "project"], stat
     elif "autoEnableCodemode" in parsed:
         errors.append(f"{path}: autoEnableCodemode must be a boolean")
     for name, value in (parsed.get("mcpServers") or {}).items():
+        if scope == "project" and _is_record(value) and _is_override(value):
+            base = servers.get(name)
+            extra = [key for key in value if key not in _OVERRIDE_KEYS]
+            if base is None:
+                errors.append(f'{path}: server "{name}" needs "command" or "url", or a global server to override')
+            elif extra:
+                errors.append(f'{path}: server "{name}": an override can only set {", ".join(_OVERRIDE_KEYS)}')
+            else:
+                merged = validate_mcp_server_config(name, {**base.config, **value})
+                if isinstance(merged, str):
+                    errors.append(f"{path}: {merged}")
+                else:
+                    servers[name] = replace(base, config=merged, override=path)
+            continue
         config = validate_mcp_server_config(name, value)
         if isinstance(config, str):
             errors.append(f"{path}: {config}")
@@ -151,12 +183,14 @@ async def load_mcp_config(*, agent_dir: str, cwd: str, project_trusted: bool) ->
     servers are included with `enabled: false`, so they can be enabled again."""
     state = _McpConfigState()
     await _read_config_file(os.path.join(agent_dir, "mcp.json"), "global", state)
-    if project_trusted:
-        await _read_config_file(os.path.join(cwd, CONFIG_DIR_NAME, "mcp.json"), "project", state)
+    project_config = os.path.join(cwd, CONFIG_DIR_NAME, "mcp.json") if project_trusted else None
+    if project_config is not None:
+        await _read_config_file(project_config, "project", state)
     return LoadedMcpConfig(
         servers=list(state.servers.values()),
         errors=state.errors,
         auto_enable_codemode=state.auto_enable_codemode,
+        project_config=project_config,
     )
 
 
@@ -176,21 +210,30 @@ class McpServerConfigPatch:
         }
 
 
-async def update_mcp_server_config(path: str, name: str, patch: McpServerConfigPatch) -> None:
-    """Change one server's settings in the `mcp.json` that defines it. Other
-    content is kept; the file is rewritten with its indentation."""
+async def update_mcp_server_config(
+    path: str, name: str, patch: McpServerConfigPatch, *, override: bool = False
+) -> None:
+    """Change one server's settings in the `mcp.json` that defines or overrides
+    it. With `override`, a missing entry is added as an override. Overrides
+    keep default values, since they replace the global server's. Other content
+    is kept; the file is rewritten with its indentation."""
 
-    def edit(servers: dict[str, Any] | None, _parsed: dict[str, Any]) -> bool:
+    def edit(servers: dict[str, Any] | None, parsed: dict[str, Any]) -> bool:
         server = servers.get(name) if servers is not None else None
+        # pi's `server === undefined`: only a missing entry, not a JSON null.
+        if override and (servers is None or name not in servers):
+            server = {}
+            parsed["mcpServers"] = {**(servers or {}), name: server}
         if not _is_record(server):
             raise Exception(f'{path} does not define MCP server "{name}"')
+        keep_defaults = _is_override(server)
         if patch.enabled is not None:
-            if patch.enabled:
+            if patch.enabled and not keep_defaults:
                 server.pop("enabled", None)
             else:
-                server["enabled"] = False
+                server["enabled"] = patch.enabled
         if patch.exposure is not None:
-            if patch.exposure == "codemode":
+            if patch.exposure == "codemode" and not keep_defaults:
                 server.pop("exposure", None)
             else:
                 server["exposure"] = patch.exposure

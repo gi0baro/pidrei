@@ -14,10 +14,11 @@ from pidrei.core.tools.bash import BashExecResult, create_bash_tool_definition
 from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
 from pidrei.core.tools.renderers import with_built_in_renderers
 from pidrei.core.tools.write import create_write_tool_definition
-from pidrei.modes.interactive.components import ToolExecutionComponent, tool_execution
+from pidrei.modes.interactive.components import ToolExecutionComponent
 from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.utils.ansi import strip_ansi
-from pidrei_tui import Text, TuiMouseEvent, reset_capabilities_cache, set_capabilities
+from pidrei.utils.image_process import convert_image_to_png_base64
+from pidrei_tui import ImageConversions, Text, TuiMouseEvent, reset_capabilities_cache, set_capabilities
 from pidrei_utils import clock as clock_module
 
 
@@ -34,6 +35,15 @@ def create_base_tool_definition(name: str = "custom_tool") -> ToolDefinition:
     )
 
 
+# Small 2x2 blue JPEG image
+TINY_JPEG = (
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUV"
+    "DA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+    "FBT/wAARCAACAAIDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAA"
+    "AAAAAAAAAAAGCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AD3VTB3/2Q=="
+)
+
+
 def create_fake_tui():
     return SimpleNamespace(request_render=lambda: None)
 
@@ -47,70 +57,53 @@ CWD = os.getcwd()
 
 
 class TestToolExecutionComponentParity:
-    # Issue #8577: ignore conversions that finish after the image was replaced.
+    # Issue #10292: images convert through the host TUI's converter, so this works in any TUI host.
+    # Issue #8577: a replaced partial image must not resurface.
     @pytest.mark.tonio
-    async def test_keeps_the_final_tool_image_when_a_partial_image_conversion_finishes_late(self, monkeypatch):
-        release = threading.Event()
-        returned = tonio.Event()
-
-        def convert_to_png(_data, _mime_type):
-            # Runs on the blocking pool, so waiting here does not stall the runtime.
-            release.wait(5)
-            returned.set()
-            return {"data": "converted-partial", "mimeType": "image/png"}
-
-        monkeypatch.setattr(tool_execution, "convert_to_png", convert_to_png)
+    async def test_converts_non_png_tool_images_once_the_conversion_finishes(self):
         rendered = tonio.Event()
-        applied = tonio.Event()
+        conversions = ImageConversions()
+        conversions.set_converter(convert_image_to_png_base64)
+        lock = threading.RLock()
 
-        class SignallingLock:
-            # Stands in for `TUI.state_lock`: signals when the late conversion's
-            # apply has run under it, so the checks below see its outcome.
-            def __init__(self) -> None:
-                self._lock = threading.RLock()
+        def apply(fn):
+            with lock:
+                return fn()
 
-            def __enter__(self) -> None:
-                self._lock.acquire()
-
-            def __exit__(self, *_exc) -> None:
-                self._lock.release()
-                applied.set()
-
+        tui = SimpleNamespace(
+            request_render=lambda force=False: rendered.set(),
+            state_lock=lock,
+            apply=apply,
+            report_error=lambda error: None,
+            image_conversions=conversions,
+        )
         set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
         try:
-            component = ToolExecutionComponent(
-                "custom_tool",
-                "tool-image-race",
-                {},
-                {},
-                None,
-                SimpleNamespace(request_render=rendered.set, state_lock=SignallingLock()),
-                CWD,
-            )
-
+            component = ToolExecutionComponent("tool", "id", {}, {}, None, tui, CWD)
             component.update_result(
-                {"content": [{"type": "image", "data": "partial-jpeg", "mimeType": "image/jpeg"}], "isError": False},
+                {"content": [{"type": "image", "data": "cGFydGlhbA==", "mimeType": "image/jpeg"}], "isError": False},
                 True,
             )
             component.update_result(
-                {"content": [{"type": "image", "data": "final-png", "mimeType": "image/png"}], "isError": False}
+                {"content": [{"type": "image", "data": TINY_JPEG, "mimeType": "image/jpeg"}], "isError": False}
             )
-            assert "final-png" in "\n".join(component.render(120))
 
-            release.set()
-            await returned.wait(5)
-            assert returned.is_set()
-            # The late conversion's apply has run; had it been applied, it would
-            # have re-rendered.
-            await applied.wait(5)
-            assert applied.is_set()
-            assert not rendered.is_set()
+            def render() -> str:
+                # Under the state lock, as frames are: the conversion stores its result through `apply`.
+                return apply(lambda: "\n".join(component.render(120)))
 
-            output = "\n".join(component.render(120))
-            assert "final-png" in output
-            assert "converted-partial" not in output
+            # The first render starts the conversion and shows the fallback.
+            assert ";iVBORw0KGgo" not in render()
+            await rendered.wait(5)
+            assert rendered.is_set()
+            output = render()
+            assert ";iVBORw0KGgo" in output
+            assert "cGFydGlhbA==" not in output
+
+            # Invalidation reuses the converted Image, so the Kitty image ID stays the same.
+            apply(component.invalidate)
+            assert render() == output
         finally:
-            release.set()
             reset_capabilities_cache()
 
     def test_stacks_custom_call_and_result_renderers_like_the_old_implementation(self):

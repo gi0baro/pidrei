@@ -442,6 +442,8 @@ async def _report(
         "name": entry.name,
         "scope": entry.scope or "global",
         "source": entry.source,
+        # Project `mcp.json` that overrides `enabled`, `exposure`, or `toolExposure` of this global server.
+        **({"override": entry.override} if entry.override else {}),
         "enabled": entry.config.get("enabled") is not False,
         "exposure": exposure,
         "transport": _describe_transport(entry),
@@ -507,6 +509,8 @@ async def _list(
             state = report["state"]
         log(f"{report['name']}: {state} ({report['exposure']}, {report['scope']})")
         log(f"  {report['transport']}")
+        if report.get("override"):
+            log(f"  project override: {report['override']}")
         if report["state"] == "needs-auth":
             log(f"  sign in with: {APP_NAME} mcp login {report['name']}")
         if tools:

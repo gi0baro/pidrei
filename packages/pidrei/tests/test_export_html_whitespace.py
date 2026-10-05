@@ -36,7 +36,7 @@ class TestExportHtmlToolOutputWhitespace:
             render_call=None,
             render_result=lambda result, options, theme, context: component,
         )
-        renderer = create_tool_html_renderer({"getToolDefinition": lambda name: tool, "theme": object(), "cwd": "/tmp"})
+        renderer = create_tool_html_renderer({"getToolRenderers": lambda name: tool, "theme": object(), "cwd": "/tmp"})
 
         rendered = renderer.render_result("id", "custom", [], None, False)
         assert rendered["expanded"] == (

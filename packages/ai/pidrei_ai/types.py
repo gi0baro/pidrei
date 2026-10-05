@@ -95,6 +95,8 @@ type ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 type ModelThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 # Maps pi thinking levels to provider/model-specific values; None marks a level unsupported.
 type ThinkingLevelMap = Mapping[str, str | None]
+type SamplingParams = dict[str, Any]
+type SamplingParamsByThinkingLevel = dict[ModelThinkingLevel, SamplingParams]
 type ChatTemplateKwargValue = str | float | bool | None | dict[str, Any]
 # Top-level request field used to cap reasoning tokens on OpenAI-compatible servers.
 type ThinkingTokenBudgetField = Literal["thinking_token_budget", "thinking_budget", "thinking_budget_tokens"]
@@ -562,8 +564,9 @@ class AnthropicMessagesCompat:
     # Whether the exact model accepts system-role messages inside the conversation. When
     # False, later system messages are folded into the top-level system prompt. Default False.
     supports_mid_convo_system_messages: bool | None = None
-    # Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal`
-    # blocks. Requires `supports_mid_convo_system_messages`. Default False.
+    # Whether the exact model accepts mid-conversation `tool_addition` blocks with inline tool
+    # definitions (`inline-tools-2026-09-15`) and `tool_removal` blocks. Requires
+    # `supports_mid_convo_system_messages`. Default False.
     supports_mid_convo_tool_changes: bool | None = None
     # Models Anthropic accepts in `fallbacks` for server-side refusal fallback, with
     # local pricing metadata for returned fallback responses. When absent or empty,
@@ -666,7 +669,9 @@ class Model:
     prompt_cache: ModelPromptCache | None = None
     # Default sampling parameters for this model. See StreamOptions.sampling_params;
     # per-request keys override these.
-    sampling_params: dict[str, Any] | None = None
+    sampling_params: SamplingParams | None = None
+    # Sampling parameter overrides selected by the effective pi thinking level.
+    sampling_params_by_thinking_level: SamplingParamsByThinkingLevel | None = None
     thinking_level_map: ThinkingLevelMap | None = None
     headers: dict[str, str] | None = None
     # Compatibility overrides; when None, auto-detected from base_url (API-specific).
@@ -735,7 +740,7 @@ class StreamOptions(ProviderRequestOptions):
     # Merged over `Model.sampling_params` per key. Only applied by
     # OpenAI-compatible adapters (completions, responses, Azure responses);
     # other APIs ignore it.
-    sampling_params: dict[str, Any] | None = None
+    sampling_params: SamplingParams | None = None
     max_tokens: int | None = None
     # Preferred transport for providers that support multiple transports.
     transport: Transport | None = None

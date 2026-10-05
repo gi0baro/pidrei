@@ -18,6 +18,7 @@ from pidrei_utils.cancel import CancelToken
 
 from ....utils.open_browser import open_browser
 from ..theme import theme
+from .auth_url import AuthUrlComponent
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint
 
@@ -33,6 +34,8 @@ class LoginDialogComponent(Container):
         self._tui = tui
         self._on_complete = on_complete
         self._abort_controller = CancelToken()
+        # The shown sign-in URL, which `app.message.copy` copies.
+        self._auth_url: AuthUrlComponent | None = None
         self._input_event: tonio.Event | None = None
         self._input_value: str | None = None
         self._input_error: Exception | None = None
@@ -113,12 +116,8 @@ class LoginDialogComponent(Container):
         def apply() -> None:
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
-            linked_url = f"\x1b]8;;{url}\x07{url}\x1b]8;;\x07"
-            self._content_container.add_child(Text(theme.fg("accent", linked_url), 1, 0))
-
-            click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
-            hyperlink = f"\x1b]8;;{url}\x07{click_hint}\x1b]8;;\x07"
-            self._content_container.add_child(Text(theme.fg("dim", hyperlink), 1, 0))
+            self._auth_url = AuthUrlComponent(self._tui, url)
+            self._content_container.add_child(self._auth_url)
 
             if instructions:
                 self._content_container.add_child(Spacer(1))
@@ -134,6 +133,7 @@ class LoginDialogComponent(Container):
         """
 
         def apply() -> None:
+            self._auth_url = None
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
             verification_uri = info["verificationUri"]
@@ -210,6 +210,7 @@ class LoginDialogComponent(Container):
         """Show informational text before another login step."""
 
         def apply() -> None:
+            self._auth_url = None
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
             for line in lines:
@@ -256,6 +257,10 @@ class LoginDialogComponent(Container):
 
         if kb.matches(data, "tui.select.cancel"):
             self._cancel()
+            return
+        if self._auth_url is not None and kb.matches(data, "app.message.copy"):
+            # pi's `void this.authUrl.copy()`; `copy` reports its own failure in the hint.
+            tonio.spawn.without_tracking(self._auth_url.copy())
             return
 
         # Pass to input

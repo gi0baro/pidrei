@@ -36,6 +36,8 @@ from .types import (
     RegisteredTool,
     ResolvedCommand,
     ToolDefinition,
+    ToolRendererResolver,
+    ToolRenderers,
 )
 from .wrapper import wrap_registered_tool, wrap_registered_tools
 
@@ -62,6 +64,8 @@ __all__ = [
     "ResolvedCommand",
     "ResourcesDiscoverPaths",
     "ToolDefinition",
+    "ToolRendererResolver",
+    "ToolRenderers",
     "clear_extension_cache",
     "create_extension_runtime",
     "discover_and_load_extensions",

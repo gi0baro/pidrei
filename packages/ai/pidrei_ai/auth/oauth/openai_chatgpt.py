@@ -13,6 +13,7 @@ The agent name hint is PiDrei's, not pi's "Pi": OpenAI shows it to the user as
 the connected app (see `utils/user_agent.py`).
 """
 
+import errno
 import math
 import re
 import secrets
@@ -246,16 +247,17 @@ async def _login_openai_chatgpt(
     state = _random_value()
     nonce = _random_value()
     result = OneShotValue()
-    callback: CallbackServer | None = None
+    # Without this server, the browser's callback would reach whatever else holds the port (another
+    # pending login or the Codex CLI), which rejects it as a state mismatch. Fail with a clear error instead.
     try:
         callback = await _start_callback_server(state, result)
-    except Exception as error:
-        interaction.notify(
-            AuthEvent(
-                type="info",
-                message=f"Could not listen on {REDIRECT_URI}; paste the final redirect URL to continue. {error}",
-            )
-        )
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE:
+            raise
+        raise RuntimeError(
+            f"Port {CALLBACK_PORT} is in use, probably by an unfinished login in another pidrei session"
+            " or by the Codex CLI. Cancel that login and try again."
+        ) from None
 
     authorization_url = f"{AUTHORIZE_URL}?" + urlencode(
         {
@@ -302,8 +304,8 @@ async def _login_openai_chatgpt(
     tonio.spawn.without_tracking(run_manual_prompt())
 
     try:
-        # Without a callback server only the manual prompt settles `result`: pi's
-        # `callback ? Promise.race([callback.result, manualCode]) : manualCode`.
+        # The callback and the manual prompt both settle `result`: pi's
+        # `Promise.race([callback.result, manualCode])`.
         outcome, value = await result.wait()
         if outcome == "error":
             raise value
@@ -316,14 +318,13 @@ async def _login_openai_chatgpt(
     finally:
         manual_abort.cancel()
         manual_cancel.cleanup()
-        if callback is not None:
-            callback.close()
-            # close() only stops accepting new connections. Browsers open spare connections ahead of
-            # time, and one that has not sent a request yet stays open and attached to this server.
-            # A later login in the same process starts a new server with a new state, but the browser
-            # may send that login's callback over the spare connection. This server would then handle
-            # it and reject it with "OAuth state mismatch", and the new login would never see it.
-            callback.close_all_connections()
+        callback.close()
+        # close() only stops accepting new connections. Browsers open spare connections ahead of
+        # time, and one that has not sent a request yet stays open and attached to this server.
+        # A later login in the same process starts a new server with a new state, but the browser
+        # may send that login's callback over the spare connection. This server would then handle
+        # it and reject it with "OAuth state mismatch", and the new login would never see it.
+        callback.close_all_connections()
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:

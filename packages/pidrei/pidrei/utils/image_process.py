@@ -9,6 +9,7 @@ import base64
 import io
 from dataclasses import dataclass
 
+import tonio.colored as tonio
 from PIL import Image, ImageOps
 
 from pidrei_ai.types import ModelImageResizeOptions
@@ -79,8 +80,11 @@ def _normalize_supported_image_mime_type(mime_type: str) -> str | None:
 
 
 def convert_image_bytes_to_png(data: bytes) -> bytes | None:
+    """PNG bytes of an image, turned upright per its EXIF orientation (pi's
+    `encodePng` applies `applyExifOrientation`), or None."""
     try:
-        with Image.open(io.BytesIO(data)) as image:
+        with Image.open(io.BytesIO(data)) as raw_image:
+            image = ImageOps.exif_transpose(raw_image)
             buffer = io.BytesIO()
             image.save(buffer, "PNG")
             return buffer.getvalue()
@@ -106,6 +110,14 @@ def convert_to_png(base64_data: str, mime_type: str) -> dict | None:
         return None
 
     return {"data": base64.b64encode(png_bytes).decode("ascii"), "mimeType": "image/png"}
+
+
+async def convert_image_to_png_base64(base64_data: str, mime_type: str) -> str | None:
+    """The converter interactive mode gives its TUI for Kitty-protocol terminals
+    (`TuiBase.set_image_converter`; pi's `loadPngTranscoder`): base64 PNG data,
+    or None if the image cannot be converted. Pillow runs on the blocking pool."""
+    converted = await tonio.spawn_blocking(convert_to_png, base64_data, mime_type)
+    return converted["data"] if converted is not None else None
 
 
 def _encode(image: Image.Image, format: str, quality: int | None = None) -> tuple[str, int, str]:

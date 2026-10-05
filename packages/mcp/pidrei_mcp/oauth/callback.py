@@ -48,12 +48,14 @@ def _plain_text(page: OAuthCallbackPage) -> str:
 
 
 class _PendingCallback:
-    __slots__ = ("outcome", "timer")
+    __slots__ = ("outcome", "path", "timer")
 
-    def __init__(self) -> None:
+    def __init__(self, path: str | None) -> None:
         # `(callback, None)` or `(None, error)`.
         self.outcome = OneShotValue()
         self.timer: timers.Timeout | None = None
+        # The one path the response may arrive on; None accepts every callback path.
+        self.path = path
 
     async def wait(self) -> OAuthCallback:
         callback, error = await self.outcome.wait()
@@ -68,8 +70,9 @@ class OAuthCallbackServer:
     `host` is the address to listen on (default `127.0.0.1`); `redirect_host`
     the host name in `redirect_url`, for example `localhost` for a client
     registered with it while listening on `127.0.0.1` (default: `host`).
-    `render_page` renders the browser page as HTML; the default is a plain
-    text message."""
+    `extra_paths` are more paths that receive the callback, for example a
+    server-specific path of a redirect URI. `render_page` renders the browser
+    page as HTML; the default is a plain text message."""
 
     def __init__(
         self,
@@ -78,6 +81,7 @@ class OAuthCallbackServer:
         redirect_host: str | None = None,
         port: int | None = None,
         path: str = "/callback",
+        extra_paths: list[str] | None = None,
         timeout_ms: float | None = None,
         render_page: Callable[[OAuthCallbackPage], str] | None = None,
     ) -> None:
@@ -85,6 +89,7 @@ class OAuthCallbackServer:
         self._redirect_host = redirect_host if redirect_host is not None else host
         self._port = port
         self._path = path
+        self._paths = (path, *(extra_paths or ()))
         self._timeout_ms = timeout_ms if timeout_ms is not None else 5 * 60_000
         self._render_page = render_page
         self._lock = threading.Lock()
@@ -102,13 +107,17 @@ class OAuthCallbackServer:
         self._server = server
         return self
 
-    def wait_for_callback(self, state: str) -> Awaitable[OAuthCallback]:
-        """Register `state` now, so a redirect arriving before the returned
-        wait is awaited is not lost."""
+    def wait_for_callback(self, state: str, path: str | None = None) -> Awaitable[OAuthCallback]:
+        """Wait for the authorization response with `state`. With `path`, a
+        response on another path fails, so a server-specific redirect URI can
+        tell authorization servers apart (RFC 9700 section 4.4.2.2).
+
+        Registers `state` now, so a redirect arriving before the returned wait
+        is awaited is not lost."""
         with self._lock:
             if state in self._pending:
                 raise RuntimeError("OAuth state is already pending")
-            pending = _PendingCallback()
+            pending = _PendingCallback(path)
             self._pending[state] = pending
             pending.timer = timers.Timeout(self._timeout_ms, lambda: self._expire(state, pending))
         return pending.wait()
@@ -141,7 +150,7 @@ class OAuthCallbackServer:
         return CallbackResponse(status, _plain_text(page), after_sent, _PLAIN_TEXT_HEADERS)
 
     async def _handle(self, request: CallbackRequest) -> CallbackResponse:
-        if request.path != self._path:
+        if request.path not in self._paths:
             return self._reply(404, OAuthCallbackPage(ok=False, message="Not found"))
         state = request.get("state")
         with self._lock:
@@ -152,6 +161,13 @@ class OAuthCallbackServer:
             pending.timer.cancel()
         # The waiter is settled once the page is written: it wakes on another
         # thread and may close this server.
+        if pending.path is not None and request.path != pending.path:
+            mixed_up = RuntimeError("The authorization response arrived on another redirect URI")
+            return self._reply(
+                400,
+                OAuthCallbackPage(ok=False, message="Unexpected redirect URI"),
+                lambda: pending.outcome.settle((None, mixed_up)),
+            )
         error = request.get("error")
         if error:
             description = request.get("error_description")

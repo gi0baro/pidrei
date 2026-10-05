@@ -58,6 +58,23 @@ def rest_response(state: str, result=JEV_OUTPUT) -> dict:
     }
 
 
+# Cloudflare-hosted output observed from a live /ai/run call, question ids renamed to match `CONTEXT`.
+# The envelope carries the output directly, without a run record.
+CLEF_OUTPUT = {
+    "model": "clef",
+    "answers": {
+        "is_urgent": {"type": "noul", "noul": 0.9912},
+        "department": {
+            "type": "choice",
+            "choice": "technical",
+            "probabilities": {"billing": 0.1632, "technical": 0.8368},
+            "confidence": 0.4538,
+        },
+    },
+    "usage": {"input_tokens": 222, "output_tokens": 0},
+}
+
+
 def setup():
     models = create_models()
     models.set_provider(cloudflare_workers_ai_provider())
@@ -97,6 +114,32 @@ async def test_runs_jev_through_the_account_scoped_ai_run_endpoint():
     department = result.answers["department"]
     assert (department.type, department.choice, department.confidence) == ("choice", "billing", 0.8)
     assert (result.usage.input, result.usage.output, result.usage.total_tokens) == (426, 73, 499)
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("model_id", "input_price"), [("@cf/cloudflare/clef", 0.24), ("@cf/cloudflare/clef-flash", 0.09)]
+)
+async def test_runs_clef_through_ai_run_and_parses_its_direct_output(model_id, input_price):
+    models, _jev = setup()
+    clef = models.get_model_of_type("classifier", "cloudflare-workers-ai", model_id)
+    assert clef is not None, f"missing Cloudflare {model_id} model"
+
+    envelope = {"result": CLEF_OUTPUT, "success": True, "errors": [], "messages": []}
+    with stub_system_one(respond_json(envelope)) as requests:
+        result = await models.classify(clef, CONTEXT, auth())
+
+    payload = requests[0].payload
+    assert payload["model"] == model_id
+    assert payload["input"]["state"] == CONTEXT.state
+    assert payload["input"]["questions"]["is_urgent"]["type"] == "noul"
+    assert requests[0].url == "https://api.cloudflare.com/client/v4/accounts/account-id/ai/run"
+    assert result.stop_reason == "stop"
+    assert result.answers["is_urgent"] == ClassifierBoolAnswer(probability=0.9912)
+    department = result.answers["department"]
+    assert (department.type, department.choice, department.confidence) == ("choice", "technical", 0.4538)
+    assert (result.usage.input, result.usage.output, result.usage.total_tokens) == (222, 0, 222)
+    assert result.usage.cost.input == pytest.approx((222 * input_price) / 1_000_000)
 
 
 @pytest.mark.tonio

@@ -105,6 +105,8 @@ from pidrei_utils import clock
 
 EMPTY_TEXT_PLACEHOLDER = "<empty>"
 
+THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
+
 # Matches the placeholder the Anthropic API path uses for redacted thinking.
 REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]"
 
@@ -778,6 +780,13 @@ def _supports_native_xhigh_effort(model: Model) -> bool:
     return any(marker in s for s in candidates for marker in ("opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "fable-5"))
 
 
+def _supports_thinking_block_binding(model: Model) -> bool:
+    """Check if the model accepts `thinking.block_binding`. Opus 4.6 and Sonnet 4.6 reject it with
+    "thinking.adaptive.block_binding: Extra inputs are not permitted"."""
+    candidates = _get_model_match_candidates(model.id, model.name)
+    return any(marker in s for s in candidates for marker in ("opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "fable-5"))
+
+
 def _map_thinking_level_to_effort(model: Model, level: ThinkingLevel | None) -> str:
     if level == "xhigh" and _supports_native_xhigh_effort(model):
         return "xhigh"
@@ -1129,16 +1138,24 @@ def build_additional_model_request_fields(model: Model, options: BedrockOptions)
         return None
 
     # GovCloud Bedrock currently rejects the Claude thinking.display field.
+    is_gov_cloud = _is_gov_cloud_bedrock_target(model, options)
     display = (
-        None
-        if _is_gov_cloud_bedrock_target(model, options)
-        else (options.thinking_display if options.thinking_display is not None else "summarized")
+        None if is_gov_cloud else (options.thinking_display if options.thinking_display is not None else "summarized")
     )
+    # Replayed signed thinking blocks are bound to the system prompt and tools they were
+    # created with. Bedrock 400s on replay after either changes unless stale blocks are
+    # dropped, matching the Anthropic provider. Skipped on GovCloud like display.
+    use_block_binding = not is_gov_cloud and _supports_thinking_block_binding(model)
 
     if _supports_adaptive_thinking(model.id, model.name):
         return {
-            "thinking": {"type": "adaptive", **({"display": display} if display is not None else {})},
+            "thinking": {
+                "type": "adaptive",
+                **({"display": display} if display is not None else {}),
+                **({"block_binding": {"prefix_mismatch_behavior": "drop_block"}} if use_block_binding else {}),
+            },
             "output_config": {"effort": _map_thinking_level_to_effort(model, options.reasoning)},
+            **({"anthropic_beta": [THINKING_BINDING_CONTROLS_BETA]} if use_block_binding else {}),
         }
 
     default_budgets = {

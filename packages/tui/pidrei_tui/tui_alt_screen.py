@@ -58,6 +58,7 @@ from .terminal_image import (
     delete_kitty_image,
     get_capabilities,
     get_kitty_image_placement,
+    get_kitty_image_placement_rows,
     is_image_line,
     replace_capabilities,
 )
@@ -117,6 +118,14 @@ _SGR_MOUSE_RE = re.compile(r"^\x1b\[<(\d+);(\d+);(\d+)([Mm])$")
 
 async def _resolved(value: bool) -> bool:
     return value
+
+
+def _placement_covers_changed_row(line: str, row: int, changed_rows: list[bool]) -> bool:
+    """Whether the image placed on `row` covers a row that changed (pi's inline loop)."""
+    placement_rows = get_kitty_image_placement_rows(line)
+    if placement_rows is None:
+        return False
+    return any(changed_rows[covered] for covered in range(row, min(row + placement_rows, len(changed_rows))))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1755,10 +1764,20 @@ class TuiAltScreen(TuiBase):
         full_redraw = (
             not self._previous_screen or self._previous_screen_width != width or self._previous_screen_height != height
         )
-        images_need_redraw = any(
-            line != self._previous_of(row) and (is_image_line(line) or is_image_line(self._previous_of(row)))
+        changed_rows = [line != self._previous_of(row) for row, line in enumerate(screen)]
+        image_anchors_need_redraw = any(
+            changed_rows[row] and (is_image_line(line) or is_image_line(self._previous_of(row)))
             for row, line in enumerate(screen)
         )
+        is_wezterm = bool(os.environ.get("WEZTERM_PANE")) or os.environ.get("TERM_PROGRAM", "").lower() == "wezterm"
+        image_cells_need_redraw = (
+            not image_anchors_need_redraw
+            and is_wezterm
+            and self._image_protocol == "kitty"
+            and any(changed_rows)
+            and any(_placement_covers_changed_row(line, row, changed_rows) for row, line in enumerate(screen))
+        )
+        images_need_redraw = image_anchors_need_redraw or image_cells_need_redraw
 
         redraw_images = full_redraw or images_need_redraw
         had_uploaded_kitty_images = bool(self._uploaded_kitty_images)
@@ -1783,26 +1802,40 @@ class TuiAltScreen(TuiBase):
                 buffer += delete_all_kitty_placements()
         buffer += evicted_image_deletion
 
-        # WezTerm erases intersecting Kitty image cells when a later EL clears a covered row.
-        # Only separate clearing from drawing for WezTerm frames that place images; preserve the
-        # existing interleaved output for text-only frames and every other terminal.
-        clear_rows_before_kitty_images = (
+        # WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
+        # Draw image placements after every clear and text write so nothing later intersects them; preserve
+        # the existing interleaved output for text-only frames and every other terminal.
+        draw_kitty_images_last = (
             redraw_images
             and self._image_protocol == "kitty"
             and any(is_image_line(line) for line in screen)
-            and (bool(os.environ.get("WEZTERM_PANE")) or os.environ.get("TERM_PROGRAM", "").lower() == "wezterm")
+            and is_wezterm
         )
-        if clear_rows_before_kitty_images:
+
+        def skip(row: int) -> bool:
+            return not full_redraw and not images_need_redraw and screen[row] == self._previous_of(row)
+
+        def prepared(row: int) -> str:
+            return prepared_lines[row] if row < len(prepared_lines) else ""
+
+        if draw_kitty_images_last:
             for row in range(height):
-                if not full_redraw and not images_need_redraw and screen[row] == self._previous_of(row):
+                if skip(row):
                     continue
                 buffer += f"\x1b[{row + 1};1H\x1b[2K"
-
-        for row in range(height):
-            if not full_redraw and not images_need_redraw and screen[row] == self._previous_of(row):
-                continue
-            clear_line = "" if clear_rows_before_kitty_images else "\x1b[2K"
-            buffer += f"\x1b[{row + 1};1H{clear_line}{prepared_lines[row] if row < len(prepared_lines) else ''}"
+            for row in range(height):
+                if skip(row) or is_image_line(prepared(row)):
+                    continue
+                buffer += f"\x1b[{row + 1};1H{prepared(row)}"
+            for row in range(height):
+                if skip(row) or not is_image_line(prepared(row)):
+                    continue
+                buffer += f"\x1b[{row + 1};1H{prepared(row)}"
+        else:
+            for row in range(height):
+                if skip(row):
+                    continue
+                buffer += f"\x1b[{row + 1};1H\x1b[2K{prepared(row)}"
 
         if cursor_pos:
             buffer += f"\x1b[{cursor_pos['row'] + 1};{min(width, cursor_pos['col']) + 1}H"

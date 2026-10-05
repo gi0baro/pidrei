@@ -48,6 +48,7 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         # Generic provider load, HTTP status, and server-side transient failures.
         "overloaded",
         "currently experiencing high demand",
+        "model is at capacity",
         "rate.?limit",
         "too many requests",
         "429",

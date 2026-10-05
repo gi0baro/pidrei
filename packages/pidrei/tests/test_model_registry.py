@@ -718,7 +718,7 @@ class TestModelOverrides:
         assert compat.allowed_fallback_models == []
 
     @pytest.mark.tonio
-    async def test_custom_model_and_model_override_carry_sampling_params(self, registry_env):
+    async def test_custom_models_and_model_overrides_carry_sampling_params(self, registry_env):
         """Adapted: pi exercises both halves on the openrouter builtin; here the
         custom model lives on a demo provider and the override targets an
         anthropic built-in (no openrouter builtin yet)."""
@@ -735,10 +735,29 @@ class TestModelOverrides:
                         {
                             "id": "custom/sampling-model",
                             "samplingParams": {"temperature": 1, "top_p": 0.95, "top_k": 0},
+                            "samplingParamsByThinkingLevel": {
+                                "low": {"temperature": 0.6, "top_p": 0.95},
+                                "high": {"temperature": 0.8},
+                            },
                         }
                     ],
+                    "modelOverrides": {
+                        "custom/sampling-model": {
+                            "samplingParamsByThinkingLevel": {
+                                "low": {"temperature": 0.5, "top_k": 20},
+                                "max": {"temperature": 1},
+                            },
+                        },
+                    },
                 },
-                "anthropic": {"modelOverrides": {first_id: {"samplingParams": {"top_p": 0.9}}}},
+                "anthropic": {
+                    "modelOverrides": {
+                        first_id: {
+                            "samplingParams": {"top_p": 0.9},
+                            "samplingParamsByThinkingLevel": {"high": {"temperature": 0.8}},
+                        }
+                    }
+                },
             },
         )
 
@@ -746,11 +765,20 @@ class TestModelOverrides:
 
         custom = registry.find("demo", "custom/sampling-model")
         assert custom.sampling_params == {"temperature": 1, "top_p": 0.95, "top_k": 0}
+        assert custom.sampling_params_by_thinking_level == {
+            "low": {"temperature": 0.5, "top_p": 0.95, "top_k": 20},
+            "high": {"temperature": 0.8},
+            "max": {"temperature": 1},
+        }
 
         models = models_for_provider(registry, "anthropic")
-        assert next(model for model in models if model.id == first_id).sampling_params == {"top_p": 0.9}
+        first = next(model for model in models if model.id == first_id)
+        assert first.sampling_params == {"top_p": 0.9}
+        assert first.sampling_params_by_thinking_level == {"high": {"temperature": 0.8}}
         # Models without sampling config keep it unset.
-        assert next(model for model in models if model.id == second_id).sampling_params is None
+        second = next(model for model in models if model.id == second_id)
+        assert second.sampling_params is None
+        assert second.sampling_params_by_thinking_level is None
 
     @pytest.mark.tonio
     async def test_custom_model_and_model_override_carry_prompt_cache_lifetimes(self, registry_env):

@@ -367,6 +367,7 @@ _kitty_transmission_generation = 0
 
 _KITTY_CONTROLS_RE = re.compile(r"\x1b_G([^;]*);")
 _KITTY_IMAGE_ID_RE = re.compile(r"(?:^|,)i=(\d+)(?:,|$)")
+_KITTY_ROWS_RE = re.compile(r"(?:^|,)r=(\d+)(?:,|$)")
 _KITTY_CROP_CONTROL_RE = re.compile(r"^[yhr]=")
 
 
@@ -385,15 +386,30 @@ def register_kitty_image_metadata(metadata: dict) -> None:
                 del _kitty_image_metadata[oldest_image_id]
 
 
-def _get_registered_kitty_image_metadata(line: str) -> dict | None:
-    controls = _KITTY_CONTROLS_RE.search(line)
-    if not controls or not controls.group(1):
-        return None
-    image_id = _KITTY_IMAGE_ID_RE.search(controls.group(1))
+def _get_registered_kitty_image_metadata_from_controls(controls: str) -> dict | None:
+    image_id = _KITTY_IMAGE_ID_RE.search(controls)
     if image_id is None:
         return None
     with _kitty_image_metadata_lock:
         return _kitty_image_metadata.get(int(image_id.group(1)))
+
+
+def _get_registered_kitty_image_metadata(line: str) -> dict | None:
+    controls = _KITTY_CONTROLS_RE.search(line)
+    return None if controls is None else _get_registered_kitty_image_metadata_from_controls(controls.group(1))
+
+
+def _get_explicit_kitty_image_rows(controls: str) -> int | None:
+    value = _KITTY_ROWS_RE.search(controls)
+    if value is None:
+        return None
+    rows = int(value.group(1))
+    return rows if rows > 0 else None
+
+
+def _get_kitty_image_rows_from_controls(controls: str, fallback_rows: int) -> int:
+    rows = _get_explicit_kitty_image_rows(controls)
+    return rows if rows is not None else fallback_rows
 
 
 def get_kitty_image_metadata(line: str) -> dict | None:
@@ -417,17 +433,31 @@ _KITTY_PLACEMENT_CONTROL_KEYS = frozenset(
 _KITTY_CHUNK_CONTINUES_RE = re.compile(r"(?:^|,)m=1(?:,|$)")
 
 
+def get_kitty_image_placement_rows(line: str) -> int | None:
+    """Read the number of rows covered by an image placement without scanning its payload."""
+    controls = _KITTY_CONTROLS_RE.search(line)
+    if controls is None:
+        return None
+    explicit_rows = _get_explicit_kitty_image_rows(controls.group(1))
+    if explicit_rows is not None:
+        return explicit_rows
+    metadata = _get_registered_kitty_image_metadata_from_controls(controls.group(1))
+    return metadata["rows"] if metadata is not None else None
+
+
 def get_kitty_image_placement(line: str) -> dict | None:
     """Placement-only command for a `render_image` line, or None.
 
     Returns {"imageId", "transmissionGeneration", "transmissionBytes",
-    "estimatedDecodedBytes", "sequence", "replacementLine"};
+    "estimatedDecodedBytes", "rows", "sequence", "replacementLine"};
     `replacementLine` re-places an already-uploaded image without resending its
     payload.
     """
     match = _KITTY_CONTROLS_RE.search(line)
-    metadata = _get_registered_kitty_image_metadata(line)
-    if not match or not metadata:
+    if not match:
+        return None
+    metadata = _get_registered_kitty_image_metadata_from_controls(match.group(1))
+    if not metadata:
         return None
 
     command_start = match.start()
@@ -456,6 +486,7 @@ def get_kitty_image_placement(line: str) -> dict | None:
         "transmissionGeneration": metadata["transmissionGeneration"],
         "transmissionBytes": transmission_end - match.start(),
         "estimatedDecodedBytes": metadata["widthPx"] * metadata["heightPx"] * 4,
+        "rows": _get_kitty_image_rows_from_controls(match.group(1), metadata["rows"]),
         "sequence": sequence,
         "replacementLine": f"{line[: match.start()]}{sequence}{line[transmission_end:]}",
     }
