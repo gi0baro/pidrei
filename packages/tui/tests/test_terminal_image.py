@@ -69,6 +69,12 @@ class _FakeTui:
     def report_error(self, error: BaseException) -> None:
         self.errors.append(error)
 
+    def render(self, component, width: int) -> list[str]:
+        """Render under the state lock, as the TUI's frames do: a conversion
+        stores its result through `apply` from another thread meanwhile."""
+        with self.state_lock:
+            return component.render(width)
+
     async def wait_for_renders(self, count: int) -> None:
         event = tonio.Event()
         with self.state_lock:
@@ -813,9 +819,9 @@ async def test_sends_converted_png_data_sized_from_the_png(transcoding):
     tui = _FakeTui()
     tui.image_conversions.set_converter(transcode)
     image = _image(tui, _JPEG, "image/jpeg", {"widthPx": 20, "heightPx": 20})
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
     await tui.wait_for_renders(1)
-    lines = image.render(20)
+    lines = tui.render(image, 20)
     assert "f=100" in lines[0] and f";{_PNG}\x1b\\" in lines[0]
     # 40x10 PNG at 18 columns: 5 rows, not the 18 rows of the 20x20 source dimensions.
     assert len(lines) == 5
@@ -826,22 +832,22 @@ async def test_renders_a_text_fallback_until_a_working_converter_is_set(transcod
     _calls, transcode = transcoding
     tui = _FakeTui()
     image = _image(tui, _JPEG, "image/jpeg")
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
 
     async def failing(_data: str, _mime_type: str) -> None:
         return None
 
     tui.image_conversions.set_converter(failing)
     image.invalidate()
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
     await tui.wait_for_renders(1)
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
 
     tui.image_conversions.set_converter(transcode)
     image.invalidate()
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
     await tui.wait_for_renders(2)
-    assert "\x1b_G" in image.render(80)[0]
+    assert "\x1b_G" in tui.render(image, 80)[0]
 
 
 @pytest.mark.tonio
@@ -850,17 +856,17 @@ async def test_converts_each_image_once(transcoding):
     tui = _FakeTui()
     tui.image_conversions.set_converter(transcode)
     image = _image(tui, _JPEG, "image/jpeg")
-    image.render(80)
+    tui.render(image, 80)
     await tui.wait_for_renders(1)
     # A new instance hits the shared cache.
-    assert "\x1b_G" in _image(tui, _JPEG, "image/jpeg").render(80)[0]
+    assert "\x1b_G" in tui.render(_image(tui, _JPEG, "image/jpeg"), 80)[0]
     # Evicts the shared entry.
     for index in range(40):
-        _image(tui, f"other-{index}", "image/jpeg").render(80)
+        tui.render(_image(tui, f"other-{index}", "image/jpeg"), 80)
     await tui.wait_for_renders(41)
     image.invalidate()
     # The instance keeps its own PNG.
-    assert "\x1b_G" in image.render(40)[0]
+    assert "\x1b_G" in tui.render(image, 40)[0]
     assert calls.count(_JPEG) == 1
 
 
@@ -868,9 +874,10 @@ def test_does_not_convert_png_data_or_iterm2_output(transcoding):
     calls, transcode = transcoding
     tui = _FakeTui()
     tui.image_conversions.set_converter(transcode)
-    assert f";{_PNG}\x1b\\" in _image(tui, _PNG, "image/png", {"widthPx": 20, "heightPx": 20}).render(20)[0]
+    assert f";{_PNG}\x1b\\" in tui.render(_image(tui, _PNG, "image/png", {"widthPx": 20, "heightPx": 20}), 20)[0]
     set_capabilities({"images": "iterm2", "trueColor": True, "hyperlinks": True})
-    assert _image(tui, _JPEG, "image/jpeg", {"widthPx": 20, "heightPx": 20}).render(20)[-1].endswith(f":{_JPEG}\x07")
+    iterm2_lines = tui.render(_image(tui, _JPEG, "image/jpeg", {"widthPx": 20, "heightPx": 20}), 20)
+    assert iterm2_lines[-1].endswith(f":{_JPEG}\x07")
     assert calls == []
 
 
@@ -884,11 +891,11 @@ async def test_reports_a_converter_that_raises_and_keeps_the_fallback(transcodin
 
     tui.image_conversions.set_converter(raising)
     image = _image(tui, _JPEG, "image/jpeg")
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
     await tui.wait_for_renders(1)
     assert [str(error) for error in tui.errors] == ["converter exploded"]
     image.invalidate()
-    assert _is_fallback(image.render(80)[0])
+    assert _is_fallback(tui.render(image, 80)[0])
 
 
 # hyperlink

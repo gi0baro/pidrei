@@ -1266,6 +1266,20 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/src/extensions/mcp/cli.ts": (
         ("mcp-extension", "the pasted redirect URL is read with FdReader under run_cancellable"),
     ),
+    "packages/tui/src/components/image.ts": (
+        (
+            "image-conversion",
+            "Image takes its TUI first and converts through tui.image_conversions off the render path (async "
+            "converter, detached conversion, cache on the TUI); no setImageTranscoder or module-level cache",
+        ),
+    ),
+    "packages/coding-agent/src/utils/image-convert.ts": (
+        (
+            "image-conversion",
+            "the transcoder is the async convert_image_to_png_base64 (Pillow on the blocking pool), set on the TUI "
+            "by interactive mode; ensurePngTranscoder/loadPngTranscoder have no counterpart",
+        ),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests

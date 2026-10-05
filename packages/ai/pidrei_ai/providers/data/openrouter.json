@@ -2028,13 +2028,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.29,
-        "output": 1.14,
-        "cacheRead": 0.11,
+        "input": 0.25,
+        "output": 1.0,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 128000,
-      "maxTokens": 115200,
+      "contextWindow": 163840,
+      "maxTokens": 147456,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -2138,13 +2138,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.3,
+        "input": 0.27,
         "output": 1.0,
-        "cacheRead": 0.135,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 131072,
-      "maxTokens": 65536,
+      "contextWindow": 163840,
+      "maxTokens": 147456,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -2225,13 +2225,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.042,
-        "output": 0.084,
-        "cacheRead": 0.0084,
+        "input": 0.0224,
+        "output": 1.28,
+        "cacheRead": 0.0224,
         "cacheWrite": 0.0
       },
-      "contextWindow": 1024000,
-      "maxTokens": 384000,
+      "contextWindow": 1048576,
+      "maxTokens": 943718,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -2261,9 +2261,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.0077,
+        "input": 0.0152,
         "output": 1.28,
-        "cacheRead": 0.0077,
+        "cacheRead": 0.0152,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -2380,13 +2380,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.66,
-        "output": 1.98,
-        "cacheRead": 0.022,
+        "input": 0.85,
+        "output": 5.0,
+        "cacheRead": 0.7,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 393216,
+      "maxTokens": 943718,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -2417,9 +2417,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
-        "cacheRead": 0.006,
+        "input": 0.003,
+        "output": 2.4,
+        "cacheRead": 0.003,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -3795,9 +3795,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.09,
-        "output": 0.3,
-        "cacheRead": 0.05,
+        "input": 0.0675,
+        "output": 0.225,
+        "cacheRead": 0.0375,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -4073,13 +4073,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.06,
-        "output": 0.18,
-        "cacheRead": 0.012,
+        "input": 0.042,
+        "output": 0.1232,
+        "cacheRead": 0.0084,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 235929,
+      "maxTokens": 32768,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -4148,6 +4148,32 @@
             "jpegQuality": 80
           }
         }
+      }
+    },
+    "chat:inclusionai/ling-3.1-flash": {
+      "type": "chat",
+      "id": "inclusionai/ling-3.1-flash",
+      "name": "inclusionAI: Ling 3.1 Flash",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     "chat:kwaipilot/kat-coder-pro-v2.5": {
@@ -4295,9 +4321,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.1,
-        "output": 0.32,
-        "cacheRead": 0.0,
+        "input": 0.22,
+        "output": 0.5,
+        "cacheRead": 0.11,
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
@@ -5732,11 +5758,11 @@
       "cost": {
         "input": 0.6,
         "output": 2.5,
-        "cacheRead": 0.15,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 98304,
+      "maxTokens": 235929,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -5794,9 +5820,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.43415,
-        "output": 1.828,
-        "cacheRead": 0.07312,
+        "input": 0.95,
+        "output": 4.0,
+        "cacheRead": 0.16,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -5881,9 +5907,9 @@
         "image"
       ],
       "cost": {
-        "input": 2.7,
-        "output": 13.5,
-        "cacheRead": 0.27,
+        "input": 0.72,
+        "output": 14.0,
+        "cacheRead": 0.7,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -8595,10 +8621,10 @@
         "image"
       ],
       "cost": {
-        "input": 4.0,
-        "output": 20.0,
-        "cacheRead": 0.4,
-        "cacheWrite": 5.0
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
@@ -11068,8 +11094,8 @@
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 262144,
-      "maxTokens": 235929,
+      "contextWindow": 131072,
+      "maxTokens": 32768,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -11655,12 +11681,12 @@
       ],
       "cost": {
         "input": 0.32,
-        "output": 3.2,
-        "cacheRead": 0.0,
+        "output": 2.7,
+        "cacheRead": 0.03,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 81920,
+      "maxTokens": 262140,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -11972,10 +11998,10 @@
         "image"
       ],
       "cost": {
-        "input": 0.42,
-        "output": 3.0,
+        "input": 0.425,
+        "output": 2.55,
         "cacheRead": 0.085,
-        "cacheWrite": 0.0
+        "cacheWrite": 0.53125
       },
       "contextWindow": 1000000,
       "maxTokens": 131072,
@@ -13856,9 +13882,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.9646,
-        "output": 3.0316,
-        "cacheRead": 0.17914,
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
         "cacheWrite": 0.0
       },
       "contextWindow": 202752,
@@ -13891,13 +13917,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.41,
-        "output": 3.99,
-        "cacheRead": 0.26,
+        "input": 0.0992,
+        "output": 8.0,
+        "cacheRead": 0.0992,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 943718,
+      "maxTokens": 131072,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -14386,9 +14412,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.015,
-        "output": 1.2,
-        "cacheRead": 0.002115,
+        "input": 0.003,
+        "output": 2.4,
+        "cacheRead": 0.003,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -14431,9 +14457,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.132,
-        "output": 0.396,
-        "cacheRead": 0.0042,
+        "input": 0.1901,
+        "output": 4.2,
+        "cacheRead": 0.19,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -14466,9 +14492,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.005775,
-        "output": 1.6,
-        "cacheRead": 0.005775,
+        "input": 0.0152,
+        "output": 1.28,
+        "cacheRead": 0.0152,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -14595,9 +14621,9 @@
         "image"
       ],
       "cost": {
-        "input": 1.39,
+        "input": 0.665,
         "output": 13.0,
-        "cacheRead": 0.8,
+        "cacheRead": 0.45,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -14917,13 +14943,13 @@
         "image"
       ],
       "cost": {
-        "input": 0.02625,
-        "output": 0.9,
-        "cacheRead": 0.01125,
+        "input": 0.0352,
+        "output": 0.5,
+        "cacheRead": 0.0232,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 943718,
+      "maxTokens": 131072,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -14962,13 +14988,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.12,
-        "output": 4.0,
-        "cacheRead": 0.08,
+        "input": 0.08,
+        "output": 5.0,
+        "cacheRead": 0.07,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072,
+      "maxTokens": 943718,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -16798,6 +16824,44 @@
     }
   },
   "typesafe-system-one": {
+    "classifier:cloudflare/clef": {
+      "type": "classifier",
+      "id": "cloudflare/clef",
+      "name": "Cloudflare: Clef",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.24,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 65536
+    },
+    "classifier:cloudflare/clef-flash": {
+      "type": "classifier",
+      "id": "cloudflare/clef-flash",
+      "name": "Cloudflare: Clef Flash",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.09,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 65536
+    },
     "classifier:inception/mercury-decide:free": {
       "type": "classifier",
       "id": "inception/mercury-decide:free",
@@ -16851,6 +16915,25 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 65536
+    },
+    "classifier:perplexity/pplx-decider-v1-27b": {
+      "type": "classifier",
+      "id": "perplexity/pplx-decider-v1-27b",
+      "name": "Perplexity: Decider V1 27B",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.04,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 262144
     },
     "classifier:respan/span-01": {
       "type": "classifier",

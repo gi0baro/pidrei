@@ -88,17 +88,21 @@ class TestToolExecutionComponentParity:
                 {"content": [{"type": "image", "data": TINY_JPEG, "mimeType": "image/jpeg"}], "isError": False}
             )
 
+            def render() -> str:
+                # Under the state lock, as frames are: the conversion stores its result through `apply`.
+                return apply(lambda: "\n".join(component.render(120)))
+
             # The first render starts the conversion and shows the fallback.
-            assert ";iVBORw0KGgo" not in "\n".join(component.render(120))
+            assert ";iVBORw0KGgo" not in render()
             await rendered.wait(5)
             assert rendered.is_set()
-            output = "\n".join(component.render(120))
+            output = render()
             assert ";iVBORw0KGgo" in output
             assert "cGFydGlhbA==" not in output
 
             # Invalidation reuses the converted Image, so the Kitty image ID stays the same.
-            component.invalidate()
-            assert "\n".join(component.render(120)) == output
+            apply(component.invalidate)
+            assert render() == output
         finally:
             reset_capabilities_cache()
 

@@ -6,6 +6,106 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.0.2.0] - 2026-10-05
+
+Tracks [Pi 1.0.2](https://github.com/earendil-works/pi/releases/tag/v1.0.2).
+
+### Added
+
+- Sampling by thinking level: `samplingParamsByThinkingLevel` in `models.json`
+  sets sampling parameters such as `temperature` and `top_p` per thinking
+  level on OpenAI-compatible APIs (`openai-completions`, `openai-responses`,
+  `azure-openai-responses`), merged between the model's `samplingParams` and
+  the request's; `modelOverrides` merges it per level. See the models page.
+- Project overrides for MCP servers: a `.pidrei/mcp.json` entry without
+  `command`, `url`, or `type` sets only `enabled`, `exposure`, and
+  `toolExposure` of the user-level server with the same name, keeping its
+  `env`, `headers`, and `auth`. In a trusted project, `/mcp` can enable or
+  disable a user-level server for that project alone, and `pidrei mcp list`
+  shows the override.
+- MCP Client ID Metadata Documents: `oauth.clientRegistration: "cimd"` signs
+  in with a Client ID Metadata Document instead of dynamic client
+  registration, for authorization servers that allow clients by their
+  document URL. pidrei has no document of its own, so with `cimd` it
+  identifies as Pi's document on pi.dev: the consent screen shows Pi's name
+  and logo. Dynamic registration, the default, keeps registering as
+  `pidrei`. See the MCP page.
+- A copy key (`app.message.copy`, default `ctrl+x`) on the OAuth sign-in
+  screens of `/login`, `/mcp`, and `/mcp login`, which copies the sign-in URL
+  when the browser cannot be opened or the wrapped link cannot be selected.
+- `pi.register_tool_renderer(resolver)` chooses how calls to a tool are drawn
+  in the transcript and in HTML exports, including tools that are not
+  registered yet. See the extensions page.
+- Cloudflare's Clef and Clef Flash classifier models (`@cf/cloudflare/clef`,
+  `@cf/cloudflare/clef-flash`) on `cloudflare-workers-ai`, usable from
+  codemode scripts and extensions.
+- Extension components can write to the terminal with
+  `tui.terminal.write_sync(data)`, queued behind its other output.
+
+### Changed
+
+- **Breaking:** `pidrei_tui.Image` takes the TUI as its first argument:
+  `Image(tui, base64_data, mime_type, theme, options=None, dimensions=None)`.
+  Extensions pass the `tui` their component factory receives. On
+  Kitty-protocol terminals the image converts JPEG, GIF, and WebP data to
+  PNG through it.
+- **Breaking:** `pidrei_mcp.oauth`: `OAuthClientProvider.client_metadata_url`
+  is replaced by `client_metadata_document(metadata)`, which returns the
+  document URL and its redirect URI, or `None` to register dynamically. The
+  document is no longer stored as client information.
+  `OAuthCallbackServer` takes `extra_paths`, and `wait_for_callback(state,
+  path)` rejects a response on another path.
+- Anthropic tools added or redefined mid-conversation are defined inline in
+  the conversation (the `inline-tools-2026-09-15` beta), so redefining a tool
+  under the same name keeps the prompt cache instead of resending the full
+  tool list. `has_tool_redefinitions()` is deprecated.
+- `/mcp login` in the TUI signs in on the MCP manager's sign-in screen.
+- MCP sign-ins accept the authorization response only on the exact redirect
+  URI, from the browser and in a pasted URL.
+- Sign in with ChatGPT fails with a port-in-use error when its callback port
+  is taken by another login, instead of continuing to a prompt the browser's
+  callback never reaches ("OAuth state mismatch").
+- The default NVIDIA model is `nvidia/nemotron-3-ultra-550b-a55b`; NVIDIA no
+  longer serves `nvidia/nemotron-3-super-120b-a12b`.
+- Model catalog regenerated from models.dev.
+
+### Removed
+
+- The daxnuts easter egg shown when selecting `opencode/kimi-k2.5`.
+
+### Fixed
+
+- A `codemode` script that outputs in a loop no longer grows pidrei's memory
+  until it crashes: a script fails once its output passes 16777216
+  characters or 100000 `text()` and `image()` calls.
+- JPEG, GIF, and WebP images, including those extensions render through
+  `Image`, appear on Kitty-protocol terminals (Kitty, Ghostty, WezTerm,
+  Warp), and are turned upright per their EXIF orientation. Until the
+  conversion finishes, or when it fails, the image shows its text fallback.
+- MCP tool calls in resumed sessions and HTML exports no longer render fully
+  expanded until their server connects, or for good if it never does.
+- Fullscreen Kitty images no longer collapse to a one-row strip after
+  scrolling in WezTerm.
+- A trailing comma in `--models` no longer adds an extra model to the model
+  cycle.
+- Models registered by extensions keep their `samplingParams` (and
+  `samplingParamsByThinkingLevel`), and both appear in RPC and JSON output
+  and in the model information codemode scripts read.
+- Provider fixes: "Selected model is at capacity" errors are retried instead
+  of ending the turn; Cloudflare AI Gateway Claude models use dashed model
+  IDs (`claude-opus-5-5`), which Anthropic requires, instead of failing with
+  a 404; Amazon Bedrock models include the pricing tiers models.dev lists, so
+  OpenAI models are no longer costed at the short-context rate above 272k
+  input tokens; Amazon Bedrock Claude Opus 4.7+, Sonnet 5+, and Fable 5 drop
+  stale thinking blocks, so requests no longer fail with "Invalid
+  `signature` in `thinking` block" after the system prompt or tools change.
+
+### Not ported
+
+- The 3D easter eggs (a 3D Armin on `/arminsayshi` and the 3D pi logo).
+- Pi's Nix flake, and the installer hint `pi update` shows npm
+  installations.
+
 ## [1.0.0.0] - 2026-10-02
 
 Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
