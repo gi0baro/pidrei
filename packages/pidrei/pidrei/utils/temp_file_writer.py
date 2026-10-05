@@ -28,11 +28,17 @@ exists precisely to be read afterwards.
 """
 
 import contextlib
+import os
+from typing import BinaryIO
 
 import tonio.colored as tonio
 from tonio.colored import fs
 from tonio.colored.exceptions import RuntimeNotInitializedError
 from tonio.colored.sync import channel
+
+
+# Output can carry private data, so only the user may read the files.
+_PRIVATE_FILE_MODE = 0o600
 
 
 async def discard_temp_file(path: fs.Path) -> None:
@@ -44,8 +50,11 @@ async def discard_temp_file(path: fs.Path) -> None:
         await path.unlink()
 
 
-def _open_binary_blocking(path: str):
-    return open(path, "wb")
+def create_private_file_blocking(path: str) -> BinaryIO:
+    """Create `path` for writing, readable only by the user. The exclusive
+    create (`O_EXCL`) never follows a link someone else placed at the path."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, _PRIVATE_FILE_MODE)
+    return os.fdopen(fd, "wb")
 
 
 class TempFileWriter:
@@ -64,7 +73,7 @@ class TempFileWriter:
         except RuntimeNotInitializedError:
             # No runtime, so no worker to protect — same boundary condition as
             # import-time code. Write straight through.
-            self._sync_handle = _open_binary_blocking(path)
+            self._sync_handle = create_private_file_blocking(path)
             self._finished.set()
 
     def write(self, data: bytes) -> None:
@@ -96,7 +105,7 @@ class TempFileWriter:
         try:
             # Eagerly, so the file exists as soon as the path is handed out —
             # `createWriteStream` creates it on construction.
-            handle = await tonio.spawn_blocking(_open_binary_blocking, self._path)
+            handle = await tonio.spawn_blocking(create_private_file_blocking, self._path)
             while True:
                 try:
                     chunk = await self._receiver.receive()

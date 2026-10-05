@@ -24,7 +24,7 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "ant-ling": "Ring-2.6-1T",
     "anthropic": "claude-opus-4-8",
     "openai": "gpt-5.5",
-    "azure-openai-responses": "gpt-5.4",
+    "azure": "gpt-5.4",
     "openai-codex": "gpt-6.1-sol",
     "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
     "deepseek": "deepseek-v4-pro",

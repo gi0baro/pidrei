@@ -2829,32 +2829,9 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 32000,
-      "type": "chat"
-    },
-    "chat:inclusionai/ling-3.0-flash-sante-free": {
-      "id": "inclusionai/ling-3.0-flash-sante-free",
-      "name": "Ling 3.0 Flash Sante (Free)",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "compat": {
-        "allowEmptySignature": true
-      },
-      "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
+        "input": 0.075,
+        "output": 0.22,
+        "cacheRead": 0.015,
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,

@@ -52,7 +52,7 @@ type KnownProvider = Literal[
     "google",
     "google-vertex",
     "openai",
-    "azure-openai-responses",
+    "azure",
     "openai-codex",
     "typesafe",
     "nvidia",

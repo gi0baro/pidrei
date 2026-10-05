@@ -10,14 +10,15 @@ model usage and the generated image count are guarded by one lock, and each
 update publishes a copy taken under it.
 """
 
+import base64
 import json
 import math
-import secrets
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+import tonio.colored as tonio
 from tonio.colored.sync import Semaphore
 
 from pidrei_agent.types import AgentTool, AgentToolCallOutcome, AgentToolResult
@@ -48,11 +49,12 @@ from pidrei_codemode import (
 )
 from pidrei_utils import clock
 
-from ...config import TEMP_DIR
 from ...core.extensions.types import ToolNamespace
 from ...core.message_wire import to_wire_value
 from ...core.model_wire import model_to_dict
+from ...core.tools.truncate import format_size
 from ...core.usage_totals import combine_usage
+from ...utils.output_files import write_output_file
 from ..tool_search.tool import (
     DEFAULT_TOOL_SEARCH_LIMIT,
     Bm25Ranker,
@@ -328,12 +330,56 @@ def _format_error(error: CodemodeError, calls: Sequence[CodemodeNestedCall]) -> 
 async def _spill_output(text: str) -> tuple[str | None, str | None]:
     """Write the full text output to a temp file, like bash does for truncated
     output. Returns the path, or the error."""
-    path = TEMP_DIR / f"pidrei-codemode-{secrets.token_hex(8)}.txt"
     try:
-        await path.write_text(text, encoding="utf-8")
+        return await write_output_file("pidrei-codemode", ".txt", text), None
     except Exception as error:
         return None, str(error)
-    return str(path), None
+
+
+# File extensions of the image types `image()` accepts. Must list every type the
+# sandbox's `image()` detects.
+_IMAGE_EXTENSIONS: dict[str, str] = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+async def _image_label(image: ImageContent) -> str:
+    # The sandbox's `image()` only lets valid, padded base64 through, so the
+    # decode cannot fail.
+    data = await tonio.spawn_blocking(base64.b64decode, image.data)
+    kind = f"{image.mime_type}, {format_size(len(data))}"
+    extension = _IMAGE_EXTENSIONS.get(image.mime_type)
+    if extension is None:
+        raise ValueError(f"No file extension for image type {image.mime_type}")
+    # A failed write (disk full, unwritable temp dir) must not discard the result
+    # of a script whose tool calls already ran, so it becomes part of the label.
+    try:
+        path = await write_output_file("pidrei-codemode", extension, data)
+    except Exception as error:
+        return f"[Image ({kind}) could not be saved: {error}]"
+    return f"[Image saved to {path} ({kind})]"
+
+
+async def _save_images(items: list[TextContent | ImageContent]) -> list[TextContent | ImageContent]:
+    """Save each image to a temp file and put a text item with its path before
+    it. The model sees the image but has no other way to reach its bytes:
+    scripts cannot write files, and `write` only takes text. Images shown more
+    than once are saved once."""
+    # One write per distinct image, keyed by its data (the type is detected from
+    # the data), in parallel.
+    images = {item.data: item for item in items if item.type == "image"}
+    if not images:
+        return items
+    labels = dict(zip(images, await tonio.map(_image_label, images.values()), strict=True))
+    output: list[TextContent | ImageContent] = []
+    for item in items:
+        if item.type == "image":
+            output.append(TextContent(text=labels[item.data]))
+        output.append(item)
+    return output
 
 
 async def _truncate_output(
@@ -567,10 +613,13 @@ async def execute_codemode(
     items, full_output_path = await _truncate_output(
         items, max_tokens if max_tokens is not None else _DEFAULT_MAX_OUTPUT_TOKENS
     )
+    # After truncation, which joins the text items and moves images after them,
+    # so each path stays next to its image and is never cut.
+    output = await _save_images(items)
     wall_time = f"{clock.monotonic() - started_at:.1f}"
     header = f"{'Script completed' if result.ok else 'Script failed'}\nWall time {wall_time} seconds\nOutput:\n"
     return AgentToolResult(
-        content=[TextContent(text=header), *items],
+        content=[TextContent(text=header), *output],
         details=replace(details, full_output_path=full_output_path),
         usage=model_usage,
         is_error=None if result.ok else True,

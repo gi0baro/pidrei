@@ -17,7 +17,9 @@ Translations from pi's cases:
   it on, the checker rejects them before the script runs.
 """
 
+import base64
 import json
+import re
 import threading
 
 import pytest
@@ -64,6 +66,27 @@ STATS_OUTPUT_SCHEMA = {
     "properties": {"files": {"type": "number"}, "names": {"type": "array", "items": {"type": "string"}}},
     "required": ["files", "names"],
 }
+
+
+TINY_PNG_LABEL = re.compile(r"^\[Image saved to (\S+\.png) \(image/png, \d+B\)\]$")
+
+
+async def check_saved_images(text: str) -> str:
+    """Replace the `[Image saved to ...]` labels in `text` with `<saved>` after
+    checking that each file holds the tiny PNG, and remove the files."""
+    lines = []
+    for line in text.split("\n"):
+        match = TINY_PNG_LABEL.match(line)
+        if match is None:
+            lines.append(line)
+            continue
+        path = fs.Path(match[1])
+        try:
+            assert base64.b64encode(await path.read_bytes()).decode() == TINY_PNG_BASE64
+        finally:
+            await path.unlink(missing_ok=True)
+        lines.append("<saved>")
+    return "\n".join(lines)
 
 
 def usage(input_tokens: int, cost: float) -> Usage:
@@ -343,8 +366,11 @@ async def test_keeps_structured_content_that_tool_result_handlers_replace_along_
     assert json.loads(result_text(result)) == {"files": 0, "names": []}
 
 
+# Saved images: https://github.com/earendil-works/pi/issues/10310
 @pytest.mark.tonio
-async def test_attaches_only_the_images_the_script_passes_to_image_in_output_order(harnesses):
+async def test_attaches_only_the_images_the_script_passes_to_image_in_output_order_each_after_its_saved_path(
+    harnesses,
+):
     harness = await setup(harnesses, [register_tools])
 
     result = await run(
@@ -353,11 +379,15 @@ async def test_attaches_only_the_images_the_script_passes_to_image_in_output_ord
 shot = await tools.screenshot()
 text(shot)
 image('data:image/png;base64,{TINY_PNG_BASE64}')
+image('data:image/png;base64,{TINY_PNG_BASE64}')
 text('after')""",
     )
 
-    assert result_text(result) == "captured\n<image>\nafter"
-    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    # The same image shown twice is saved once, so both labels name one file.
+    lines = result_text(result).split("\n")
+    assert lines == ["captured", lines[1], "<image>", lines[1], "<image>", "after"]
+    assert await check_saved_images(lines[1]) == "<saved>"
+    assert result.content[3] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
 
 
 @pytest.mark.tonio
@@ -554,8 +584,9 @@ image('data:image/png;base64,{TINY_PNG_BASE64}')""",
         assert "row 99\n" in text
         assert "row 50\n" not in text
         assert f"[Full output: {path} (read with offset/limit)]" in text
-        # Images follow the truncated text.
+        # Images follow the truncated text, each after the path it was saved to.
         assert result.content[-1] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+        assert await check_saved_images(text.split("\n")[-2]) == "<saved>"
         assert await fs.Path(path).read_text() == "\n".join(f"row {i}" for i in range(100))
     finally:
         await fs.Path(path).unlink(missing_ok=True)
@@ -675,14 +706,15 @@ def _image_definition() -> dict:
 
 class ScorerProvider:
     """The `scorer` provider's classifier and image implementations, recording
-    what reached them. Classifications wait until the script has issued all of
-    its calls (`all_issued`), so every call the limit lets through is in
-    flight at once."""
+    what reached them. With `saturate_at` set, classifications park until that
+    many are in flight at once (bounded), so a test sees what the limit lets
+    through."""
 
     def __init__(self) -> None:
         self.observed: list[dict] = []
         self.image_requests: list[dict] = []
-        self.all_issued = tonio.Event()
+        self.saturate_at: int | None = None
+        self.saturated = tonio.Event()
         self._guard = threading.Lock()
         self.active = 0
         self.max_active = 0
@@ -691,7 +723,10 @@ class ScorerProvider:
         with self._guard:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
-        await self.all_issued.wait(5)
+            if self.saturate_at is not None and self.active >= self.saturate_at:
+                self.saturated.set()
+        if self.saturate_at is not None:
+            await self.saturated.wait(5)
         with self._guard:
             self.active -= 1
         text = context.state.get("text")
@@ -753,17 +788,8 @@ async def test_declares_models_only_for_the_sessions_own_codemode_tool(harnesses
 @pytest.mark.tonio
 async def test_lists_models_and_classifies_with_catalog_auth_ignoring_script_supplied_fields(harnesses):
     harness, provider = await setup_models(harnesses, type_check=False)
-
-    def on_event(event) -> None:
-        # Every call gets its row before it waits for the limit.
-        if (
-            event.type == "tool_execution_update"
-            and event.tool_name == "codemode"
-            and len(event.partial_result.details.calls) == 6
-        ):
-            provider.all_issued.set()
-
-    harness.session.subscribe(on_event)
+    # The first four calls park until all four are in flight: the limit must let four through at once.
+    provider.saturate_at = 4
     result = await run(
         harness,
         f"""import asyncio
@@ -843,8 +869,9 @@ except Exception as error:
     )
 
     assert result.is_error is False
-    first, image_marker, *rest = result_text(result).split("\n")
+    first, saved, image_marker, *rest = (await check_saved_images(result_text(result))).split("\n")
     assert first == "painted a fox"
+    assert saved == "<saved>"
     assert image_marker == "<image>"
     assert json.loads("\n".join(rest)) == {
         "id": "painter",
@@ -853,7 +880,7 @@ except Exception as error:
         "wrongType": '"scorer/judge" is a classifier model, not an image model. List the image models you can use '
         'with models.get_available_of_type("image").',
     }
-    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    assert result.content[3] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
     assert [(request["base_url"], request["api_key"]) for request in provider.image_requests] == [
         ("https://images.test/v1", "secret-key"),
         ("https://images.test/v1", "secret-key"),

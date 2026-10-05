@@ -196,7 +196,7 @@ def test_drops_namespaces_when_the_target_cannot_replay_their_load_items():
     )
     target_models = [
         replace(MODEL, id="gpt-5.2", name="GPT-5.2"),
-        replace(MODEL, provider="azure-openai-responses"),
+        replace(MODEL, provider="azure"),
         replace(
             MODEL,
             api="openai-codex-responses",

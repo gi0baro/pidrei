@@ -14,8 +14,8 @@ def test_binds_ctrl_j_as_default_newline_alias():
 def test_binds_modified_and_unmodified_editor_viewport_navigation():
     keybindings = KeybindingsManager(TUI_KEYBINDINGS)
 
-    assert keybindings.get_keys("tui.editor.cursorLineStart") == ["home", "ctrl+home", "ctrl+a"]
-    assert keybindings.get_keys("tui.editor.cursorLineEnd") == ["end", "ctrl+end", "ctrl+e"]
+    assert keybindings.get_keys("tui.editor.cursorLineStart") == ["home", "ctrl+a"]
+    assert keybindings.get_keys("tui.editor.cursorLineEnd") == ["end", "ctrl+e"]
     assert keybindings.get_keys("tui.editor.pageUp") == ["pageUp", "ctrl+pageUp"]
     assert keybindings.get_keys("tui.editor.pageDown") == ["pageDown", "ctrl+pageDown"]
 
@@ -42,8 +42,8 @@ def test_binds_unmodified_terminal_viewport_shortcuts_to_alternate_screen_naviga
     assert keybindings.get_keys("tui.altScreen.searchNext") == ["enter", "ctrl+g"]
     assert keybindings.get_keys("tui.altScreen.searchPrevious") == ["shift+enter", "ctrl+shift+g"]
     assert keybindings.get_keys("tui.altScreen.searchClose") == ["escape"]
-    assert keybindings.get_keys("tui.altScreen.top") == ["home"]
-    assert keybindings.get_keys("tui.altScreen.bottom") == ["end"]
+    assert keybindings.get_keys("tui.altScreen.top") == ["ctrl+home"]
+    assert keybindings.get_keys("tui.altScreen.bottom") == ["ctrl+end"]
 
 
 def test_does_not_evict_selector_confirm_when_input_submit_is_rebound():

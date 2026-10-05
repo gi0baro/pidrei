@@ -24,7 +24,7 @@ def create_model() -> Model:
         id="gpt-5-mini",
         name="GPT-5 Mini",
         api="azure-openai-responses",
-        provider="azure-openai-responses",
+        provider="azure",
         base_url="https://example.invalid",
         reasoning=True,
         input=["text"],
@@ -76,7 +76,7 @@ def get_replayed_reasoning(model: Model, assistant: AssistantMessage) -> dict | 
             UserMessage(content="follow-up", timestamp=2),
         ]
     )
-    input_items = convert_responses_messages(model, context, {"azure-openai-responses"})
+    input_items = convert_responses_messages(model, context, {"azure"})
     return next((item for item in input_items if item.get("type") == "reasoning"), None)
 
 

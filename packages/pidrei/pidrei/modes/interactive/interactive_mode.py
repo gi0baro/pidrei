@@ -20,6 +20,7 @@ import posixpath
 import re
 import signal
 import subprocess
+import termios
 import threading
 import traceback
 import unicodedata
@@ -283,11 +284,19 @@ def _is_usage_session_entry(item) -> bool:
     return isinstance(item, dict) and item.get("type") == "usage"
 
 
-_DEAD_TERMINAL_ERRNOS = {errno.EIO, errno.EPIPE, errno.ENOTCONN}
+# EIO: tty reads/ioctls from an orphaned background process group, or writes after hangup.
+# ENOTTY: the tty was revoked (macOS) and stdin is no longer a terminal.
+_DEAD_TERMINAL_ERRNOS = {errno.EIO, errno.EPIPE, errno.ENOTCONN, errno.ENOTTY}
 
 
 def is_dead_terminal_error(error) -> bool:
-    return isinstance(error, OSError) and error.errno in _DEAD_TERMINAL_ERRNOS
+    if isinstance(error, OSError):
+        return error.errno in _DEAD_TERMINAL_ERRNOS
+    # Raw mode fails with `termios.error`, which is not an `OSError`; its first
+    # argument is the errno.
+    if isinstance(error, termios.error):
+        return bool(error.args) and error.args[0] in _DEAD_TERMINAL_ERRNOS
+    return False
 
 
 def _partial_truncation_result(content: str) -> TruncationResult:
@@ -4308,6 +4317,9 @@ class InteractiveMode:
         event; Python has no equivalent hook with the runtime still usable, so
         the interactive run loop calls it from its own crash guard instead.
         """
+        # A dead terminal is not a pidrei crash. Do not try to restore it.
+        if is_dead_terminal_error(error):
+            self._emergency_terminal_exit()
         with self._shutdown_guard:
             already_shutting_down = self._is_shutting_down
             self._is_shutting_down = True

@@ -179,7 +179,7 @@ class TestModelRuntimeAuthOptions:
         assert runtime.is_using_subscription("openrouter") is False
 
     @pytest.mark.tonio
-    async def test_forwards_cancellation_to_extension_oauth_refresh(self):
+    async def test_does_not_cancel_an_extension_oauth_refresh_with_the_request(self):
         credentials = AuthStorage.in_memory(
             {"extension-oauth": OAuthCredential(access="expired", refresh="refresh", expires=0)}
         )
@@ -218,8 +218,8 @@ class TestModelRuntimeAuthOptions:
         assert isinstance(received["cancel"], CancelToken)
         reason = Exception("cancelled")
         controller.cancel(reason)
-        assert received["cancel"].cancelled is True
-        assert received["cancel"].reason is reason
+        # A started refresh may already have rotated the refresh token and must be persisted.
+        assert received["cancel"].cancelled is False
 
     @pytest.mark.tonio
     async def test_constructs_an_api_key_method_for_an_extension_api_key_provider(self):

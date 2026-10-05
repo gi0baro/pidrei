@@ -6,6 +6,55 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.0.3.0] - 2026-10-05
+
+Tracks [Pi 1.0.3](https://github.com/earendil-works/pi/releases/tag/v1.0.3).
+
+### Added
+
+- Azure Foundry Chat Completions: the `azure` provider also serves Foundry
+  deployments that speak Chat Completions, starting with
+  `azure/deepseek-v4-pro` in the built-in catalog. Other Foundry models can
+  be added under `azure` with `"api": "openai-completions"`, and
+  `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` applies to both APIs. See the providers
+  page.
+
+### Changed
+
+- **Breaking:** the Azure provider is renamed from `azure-openai-responses`
+  to `azure`. Rename the provider key in `auth.json` (or sign in again with
+  `/login`), in `models.json`, and in `settings.json` (`defaultProvider`,
+  `enabledModels` patterns, and `modelThinkingLevels` keys). Sessions that
+  used the old provider fall back to another model when resumed, and their
+  prompt cache is not reused. The `azure-openai-responses` API and the
+  `AZURE_OPENAI_*` environment variables are unchanged. In `pidrei_ai`,
+  `azure_provider()` from `pidrei_ai.providers.azure` replaces
+  `azure_openai_responses_provider()`.
+- Codemode's `image()` also saves each image to a temp file and names the
+  path before the image in the result, so later turns can copy or move
+  generated images.
+- Output files (the full text of truncated tool output, binary MCP
+  resources, codemode images) are readable only by the user.
+- `Home`/`End` always move the editor cursor to the line start/end; the
+  fullscreen transcript's top/bottom moved to `Ctrl+Home`/`Ctrl+End`, which
+  no longer move the editor cursor.
+- Model catalog regenerated from models.dev.
+
+### Fixed
+
+- Subscription logins such as Sign in with ChatGPT no longer fail with
+  `refresh_token_invalidated` after a request or model refresh was cancelled
+  during an OAuth token refresh: a token refresh that has started completes
+  and stores the rotated token.
+- When the terminal goes away (the window is closed, or a suspended pidrei
+  is resumed in a closed terminal), interactive sessions exit quietly instead
+  of reporting a crash or staying up without input.
+
+### Not ported
+
+- The restart hint Pi shows when its install is updated or removed while a
+  session runs: pidrei does not update itself.
+
 ## [1.0.2.0] - 2026-10-05
 
 Tracks [Pi 1.0.2](https://github.com/earendil-works/pi/releases/tag/v1.0.2).

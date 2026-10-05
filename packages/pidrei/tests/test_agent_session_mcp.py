@@ -21,6 +21,7 @@ Translations:
   10 ms.
 """
 
+import base64
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from typing import Any
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei.core.agent_session import ExtensionBindings
 from pidrei.core.extensions import ToolDefinition
@@ -387,15 +389,22 @@ text({{
 
     result = get_tool_result(harness, "codemode")
     assert result.is_error is False, get_message_text(result)
-    # Output items keep the order the script produced them in.
-    assert result.content[1] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
-    assert json.loads(result.content[2].text) == {
+    # Output items keep the order the script produced them in; each image follows the path it was saved to.
+    saved = re.match(r"^\[Image saved to (\S+\.png) \(image/png, \d+B\)\]$", result.content[1].text)
+    assert saved is not None
+    saved_path = fs.Path(saved[1])
+    try:
+        assert base64.b64encode(await saved_path.read_bytes()).decode() == TINY_PNG_BASE64
+    finally:
+        await saved_path.unlink(missing_ok=True)
+    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    assert json.loads(result.content[3].text) == {
         "hits": ["mcp guide", "mcp faq", "pi guide", "pi faq"],
         "failed": True,
         "failure": "server exploded",
         "found": [search_name],
     }
-    assert len(result.content) == 3
+    assert len(result.content) == 4
     # The two searches run concurrently (`all_settled`), so the server sees them in either order.
     assert sorted(calls[:2]) == ['search:{"query":"mcp"}', 'search:{"query":"pi"}']
     assert calls[2:] == ["fail:{}", "shot:{}"]

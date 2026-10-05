@@ -87,7 +87,7 @@ pidrei
 | Anthropic | `ANTHROPIC_API_KEY` (or `ANTHROPIC_OAUTH_TOKEN`) | `anthropic` |
 | Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` | `azure` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |

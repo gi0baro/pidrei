@@ -317,7 +317,8 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **RPC mode as a mode**: it is not run or audited, but its code is kept and
   kept correct; contract changes propagate to it.
 - **Self-update** machinery, installer-managed updates, and Node/Bun
-  packaging.
+  packaging, including what only exists because Pi updates itself (the
+  restart hint when the install changed on disk while a session runs).
 - **Telemetry** of any kind (the `no-telemetry` recipe).
 - **Radius**: provider, presence and session sharing.
 - **The llama.cpp extension**, and its consumers (llama.cpp classify).
@@ -618,6 +619,10 @@ untouched: component diffs port 1:1. What diverges:
     `stdin_buffer.py` / `_route_input`; diffs to how stdin is read or
     delivered land in the reader or consumer.
   - `stop()` drops queued items and never waits on input handling.
+  - A failed stdin read goes to the reader's `on_error` (the TUI's
+    `report_error`), Pi's stdin `error` listener: the crash handler exits
+    quietly for a dead terminal and reports anything else as a crash. End of
+    input stays a silent return.
 - **Synchronous input**: `handle_input`/`handle_mouse` and their callbacks
   are synchronous, as in Pi. Where Pi does I/O synchronously inside a key
   handler, PiDrei spawns it and registers the handle with

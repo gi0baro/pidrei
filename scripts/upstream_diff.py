@@ -650,6 +650,8 @@ LIVE_API_AI_TESTS = (
     "image-tool-result",
     "images",
     "openai-completions-thinking-as-text",
+    "openai-responses-tool-result-images",
+    "responseid",
     "stream",
     "tokens",
     "tool-call-without-result",
@@ -1371,7 +1373,9 @@ TEST_HOMES = {
         "steer/follow_up 'queued' is covered in test_agent_session.py)"
     ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
-    "packages/coding-agent/test/model-runtime-auth-options.test.ts": "PARITY GAP: model-runtime auth options unmirrored",
+    "packages/coding-agent/test/model-runtime-auth-options.test.ts": (
+        "covered by packages/pidrei/tests/test_model_runtime.py (the ModelRuntime auth options cases)"
+    ),
     "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": (
         "partial mirror: test_model_runtime_modify_models_compat.py holds the 1.0.0 native-provider "
         "registration case (#9962); the rest of the modifyModels compat suite is a PARITY GAP"
