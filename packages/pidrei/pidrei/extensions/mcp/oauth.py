@@ -4,8 +4,9 @@ remote MCP servers.
 Connections never start a browser flow on their own. They send the stored
 access token and, after a 401, try the stored refresh token. When that is not
 possible they fail with `McpOAuthAuthorizationRequiredError`, and the user
-signs in through `/mcp`, which runs the authorization code flow (PKCE, dynamic
-client registration) against a loopback callback.
+signs in through `/mcp`, which runs the authorization code flow (PKCE, a
+Client ID Metadata Document or dynamic client registration) against a
+loopback callback.
 
 Credentials live in `<agent-dir>/mcp-auth.json`, keyed by server name and URL.
 
@@ -17,13 +18,14 @@ Each request of a refresh is capped by the fetch's own `timeout_ms` (pi's
 while held, as proper-lockfile's does.
 """
 
+import base64
 import hashlib
 import json
 import os
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 import tonio.colored as tonio
@@ -33,6 +35,7 @@ from tonio.colored.exceptions import CancelledError
 from pidrei_ai.utils.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_mcp import AuthProvider, McpFetch, McpResponse, UnauthorizedContext, default_fetch
 from pidrei_mcp.oauth import (
+    AuthorizationServerMetadata,
     McpOAuthAuthorizationRequiredError,
     McpOAuthProvider,
     McpOAuthState,
@@ -42,12 +45,13 @@ from pidrei_mcp.oauth import (
     OAuthCallbackServer,
     OAuthChallenge,
     OAuthClientInformationMixed,
+    OAuthClientMetadataDocument,
     OAuthFlowOptions,
     authorize_mcp,
     parse_www_authenticate,
     step_up_scope,
 )
-from pidrei_mcp.url import parse_url
+from pidrei_mcp.url import Url, parse_url
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
@@ -59,6 +63,11 @@ from ...utils.lockfile import FileLock
 
 _CALLBACK_HOST = "127.0.0.1"
 _CALLBACK_PATH = "/callback"
+# Where pi.dev serves pi's Client ID Metadata Documents: `client.json` and `<callback ID>/client.json`.
+# The one place where PiDrei presents itself as pi, deliberately: with `clientRegistration: "cimd"` the
+# client ID is pi's document (pi's name and logo on the consent screen), since PiDrei has no document of
+# its own. Not renamed by rename passes; dynamic client registration keeps registering as `APP_NAME`.
+CLIENT_METADATA_BASE_URL = "https://pi.dev/oauth"
 # Redirect URI for refreshes when none is stored. Refreshing never redirects the user.
 _FALLBACK_REDIRECT_URL = f"http://{_CALLBACK_HOST}{_CALLBACK_PATH}"
 # Access tokens this close to expiry are refreshed before they are sent.
@@ -84,6 +93,8 @@ class McpOAuthSettings:
     scope: str | None = None
     # `client_name` for dynamic client registration. Default: `APP_NAME`.
     client_name: str | None = None
+    # See `McpOAuthConfig.clientRegistration`: "dcr" or "cimd".
+    client_registration: str | None = None
     # See `McpOAuthConfig.authServerMetadataUrl`.
     auth_server_metadata_url: str | None = None
 
@@ -279,6 +290,39 @@ async def _ignore_redirect(_url: str) -> None:
     pass
 
 
+def _callback_id(server_url: str) -> str:
+    """12 characters identifying an MCP server URL in callback paths, computed like Codex does."""
+    href = parse_url(server_url).without_fragment().href
+    return base64.urlsafe_b64encode(hashlib.sha256(href.encode()).digest()[:9]).decode().rstrip("=")
+
+
+def _client_metadata_document(
+    server_url: str, redirect_url: str, metadata: AuthorizationServerMetadata | None
+) -> OAuthClientMetadataDocument:
+    """pi's Client ID Metadata Document, for `clientRegistration: "cimd"`, chosen
+    like Codex chooses its own. The configuration ensures the default callback
+    path. Without the `iss` parameter in authorization responses (RFC 9207), the
+    redirect URI and the document are specific to the MCP server, so a response
+    cannot be mixed up with one from another authorization server (RFC 9700
+    section 4.4.2.2)."""
+    if (
+        metadata is None
+        or not metadata.get("client_id_metadata_document_supported")
+        or "none" not in (metadata.get("token_endpoint_auth_methods_supported") or [])
+    ):
+        raise Exception(
+            "The authorization server does not support Client ID Metadata Documents for public clients; "
+            'remove oauth.clientRegistration "cimd"'
+        )
+    if metadata.get("authorization_response_iss_parameter_supported"):
+        return OAuthClientMetadataDocument(url=f"{CLIENT_METADATA_BASE_URL}/client.json", redirect_url=redirect_url)
+    callback_id = _callback_id(server_url)
+    redirect = replace(parse_url(redirect_url), pathname=f"{_CALLBACK_PATH}/{callback_id}")
+    return OAuthClientMetadataDocument(
+        url=f"{CLIENT_METADATA_BASE_URL}/{callback_id}/client.json", redirect_url=redirect.href
+    )
+
+
 def _create_provider(
     server_url: str,
     store: McpOAuthStateStore,
@@ -290,6 +334,11 @@ def _create_provider(
         server_url=server_url,
         redirect_url=redirect_url,
         client_metadata={"client_name": settings.client_name if settings.client_name is not None else APP_NAME},
+        client_metadata_document=(
+            (lambda metadata: _client_metadata_document(server_url, redirect_url, metadata))
+            if settings.client_registration == "cimd"
+            else None
+        ),
         client_id=settings.client_id,
         client_secret=settings.client_secret,
         store=store,
@@ -461,12 +510,15 @@ class McpSignInCancelledError(Exception):
 type _AuthorizationResponse = tuple[str, str | None]
 
 
-def _response_from_redirect_url(text: str, state: str) -> _AuthorizationResponse:
+def _response_from_redirect_url(text: str, state: str, redirect_url: Url) -> _AuthorizationResponse:
     """`(code, iss)` from a pasted redirect URL."""
     try:
         url = parse_url(text.strip())
     except ValueError:
         raise Exception("Expected the full redirect URL from the browser address bar") from None
+    # A server-specific redirect URI tells authorization servers apart, so it must match exactly.
+    if url.origin != redirect_url.origin or url.pathname != redirect_url.pathname:
+        raise Exception("The redirect URL does not match this sign-in's redirect URI")
     error = url.search_param("error")
     if error:
         description = url.search_param("error_description")
@@ -499,7 +551,7 @@ class _FirstOutcome:
 
 
 async def _wait_for_authorization_response(
-    from_browser: Awaitable[OAuthCallback], state: str, prompt: McpSignInPrompt
+    from_browser: Awaitable[OAuthCallback], state: str, redirect_url: Url, prompt: McpSignInPrompt
 ) -> _AuthorizationResponse:
     """Wait for the browser callback or a pasted redirect URL, whichever comes
     first. `from_browser` is the callback wait, registered by the caller before
@@ -519,7 +571,7 @@ async def _wait_for_authorization_response(
             text = await prompt.prompt_for_redirect_url(cancel)
             if not text or not text.strip():
                 raise McpSignInCancelledError()
-            outcome.settle(_response_from_redirect_url(text, state))
+            outcome.settle(_response_from_redirect_url(text, state, redirect_url))
         except Exception as error:
             outcome.settle(error=error)
 
@@ -540,7 +592,9 @@ def _render_page(page: OAuthCallbackPage) -> str:
     return oauth_error_html(page.message or "", page.details)
 
 
-async def _listen_for_callback(settings: _CallbackSettings, port: int | None, required: bool) -> OAuthCallbackServer:
+async def _listen_for_callback(
+    settings: _CallbackSettings, extra_paths: list[str], port: int | None, required: bool
+) -> OAuthCallbackServer:
     """Listen on `port`, or on a free port when it is taken and not `required`."""
 
     def server(port: int | None) -> OAuthCallbackServer:
@@ -548,6 +602,7 @@ async def _listen_for_callback(settings: _CallbackSettings, port: int | None, re
             host=settings.host,
             redirect_host=settings.redirect_host,
             path=settings.path,
+            extra_paths=extra_paths,
             port=port,
             render_page=_render_page,
         )
@@ -580,7 +635,14 @@ async def sign_in_mcp_server(
     if preferred_port is None and registered:
         registered_port = parse_url(registered[0]).port
         preferred_port = int(registered_port) if registered_port and int(registered_port) else None
-    callback = await _listen_for_callback(callback_options, preferred_port, callback_options.port is not None)
+    cimd = settings.client_registration == "cimd"
+    callback = await _listen_for_callback(
+        callback_options,
+        # The redirect URI of a server-specific Client ID Metadata Document.
+        [f"{_CALLBACK_PATH}/{_callback_id(server_url)}"] if cimd else [],
+        preferred_port,
+        callback_options.port is not None,
+    )
     redirect_url = (
         callback_options.fixed_redirect_url
         if callback_options.fixed_redirect_url is not None
@@ -590,8 +652,12 @@ async def sign_in_mcp_server(
         if stored:
             # Every sign-in gets a fresh `state` parameter.
             next_state: McpOAuthState = {key: value for key, value in stored.items() if key != "oauthState"}  # type: ignore[assignment]
-            # A registered client cannot use another redirect URI, and its tokens belong to it.
-            if not settings.client_id and redirect_url not in registered:
+            # A registered client cannot use another redirect URI, and its tokens belong to it. A Client ID
+            # Metadata Document is not stored, so with one, a stored client was registered before and is replaced.
+            keep_client = settings.client_id or (
+                not stored.get("clientInformation") if cimd else redirect_url in registered
+            )
+            if not keep_client:
                 for key in ("clientInformation", "tokens", "tokensExpireAt"):
                     next_state.pop(key, None)  # type: ignore[misc]
             await store.save(next_state)
@@ -619,13 +685,17 @@ async def sign_in_mcp_server(
         if not authorization_urls:
             raise Exception("OAuth flow did not produce an authorization URL")
 
+        authorization_url = authorization_urls[-1]
         state = await provider.state()
+        # The flow picks the redirect URI, which may be specific to the MCP server.
+        chosen_redirect_url = parse_url(authorization_url).search_param("redirect_uri")
+        authorization_redirect_url = parse_url(chosen_redirect_url if chosen_redirect_url is not None else redirect_url)
         # Registered before the browser is sent to the authorization page: the
         # browser runs on its own and may reach the callback before this
         # coroutine runs again (pi registers it in the same turn).
-        from_browser = callback.wait_for_callback(state)
-        prompt.show_authorization_url(authorization_urls[-1])
-        code, iss = await _wait_for_authorization_response(from_browser, state, prompt)
+        from_browser = callback.wait_for_callback(state, authorization_redirect_url.pathname)
+        prompt.show_authorization_url(authorization_url)
+        code, iss = await _wait_for_authorization_response(from_browser, state, authorization_redirect_url, prompt)
         await authorize_mcp(provider, OAuthFlowOptions(**flow, authorization_code=code, iss=iss))
     finally:
         callback.close()

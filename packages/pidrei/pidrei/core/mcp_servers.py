@@ -44,6 +44,11 @@ _MCP_EXPOSURE_ALIASES: dict[str, McpExposure] = {"codemode-deferred": "codemode"
 #   server's tools by it, and codemode's `describe_namespace()` returns it.
 # - `oauth.clientName`: `client_name` sent with dynamic client registration,
 #   for servers that only accept known clients. Default: `pidrei`.
+# - `oauth.clientRegistration`: how pidrei identifies itself without
+#   `clientId`. `"dcr"` (default): dynamic client registration. `"cimd"`:
+#   pi's Client ID Metadata Document on pi.dev, for authorization servers that
+#   allow pi by that URL. The server must support it for public clients, and
+#   the callback must use the default path `/callback`.
 # - `oauth.authServerMetadataUrl`: authorization server metadata document
 #   (RFC 8414 or OpenID Connect discovery) to use instead of discovery through
 #   the server, for servers that advertise a wrong authorization server or
@@ -129,6 +134,15 @@ def _validate_oauth(value: Any) -> str | None:
         return "oauth.scope must be a string"
     if "clientName" in value and (not isinstance(value["clientName"], str) or not value["clientName"].strip()):
         return "oauth.clientName must be a non-empty string"
+    if "clientRegistration" in value and value["clientRegistration"] != "dcr":
+        if value["clientRegistration"] != "cimd":
+            return 'oauth.clientRegistration must be "dcr" or "cimd"'
+        if "clientId" in value or "clientName" in value:
+            return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName'
+        callback = _parse_url(value["callbackUrl"]) if isinstance(value.get("callbackUrl"), str) else None
+        # `url.path or "/"`: an http URL's pathname is "/" when it names none.
+        if callback is not None and (_host_of(callback) == "[::1]" or (callback.path or "/") != "/callback"):
+            return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback'
     if "authServerMetadataUrl" in value:
         metadata_url = value["authServerMetadataUrl"]
         url = _parse_url(metadata_url) if isinstance(metadata_url, str) else None

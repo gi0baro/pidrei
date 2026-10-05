@@ -159,6 +159,26 @@ class ToolDefinition:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ToolRenderers:
+    """How a tool's calls are drawn: pi's `Pick<ToolDefinition, "renderShell" |
+    "renderCall" | "renderResult">`. Structural: a `ToolDefinition` has the
+    same three attributes, so a definition and a bare renderer record are
+    equally acceptable wherever renderers are read."""
+
+    render_call: Any = None
+    render_result: Any = None
+    render_shell: str | None = None
+
+
+# Chooses how calls to a tool are drawn, including tools that are not
+# registered: `(tool_name, next) -> renderers | None`, where `next()` returns
+# the renderers the remaining resolvers, then the registered tool, would use.
+# Synchronous, like the renderers it returns; it runs on the render path under
+# the UI lock.
+type ToolRendererResolver = Callable[[str, Callable[[], ToolRenderers | ToolDefinition | None]], Any]
+
+
 # Outcome of the activity that reached a boundary (`turn_end` / `agent_before_settle`).
 type AgentActivityOutcome = Literal["completed", "aborted", "error"]
 
@@ -321,6 +341,8 @@ class Extension:
     flags: dict[str, ExtensionFlag] = field(default_factory=dict)
     shortcuts: dict[str, Any] = field(default_factory=dict)
     message_renderers: dict[str, Any] = field(default_factory=dict)
+    # Rebound whole on each registration, never appended to in place.
+    tool_renderers: tuple[ToolRendererResolver, ...] = ()
     markdown_transformer: Any = None
     entry_renderers: dict[str, Any] = field(default_factory=dict)
 

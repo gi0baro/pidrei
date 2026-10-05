@@ -53,7 +53,6 @@ What diverges from pi's shape:
 import json
 import os
 import re
-import sys
 import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -62,7 +61,6 @@ from typing import Any
 import tonio.colored as tonio
 
 from pidrei_ai.utils.tasks import gather
-from pidrei_tui import hyperlink
 from pidrei_utils import clock
 
 from ...config import get_agent_dir
@@ -98,7 +96,7 @@ from .runtime import (
     create_default_transport,
     sign_in_mcp_server,
 )
-from .tools import create_mcp_tool_definition, create_mcp_tool_name
+from .tools import create_mcp_tool_definition, create_mcp_tool_name, create_mcp_tool_renderers
 from .ui import McpManagerView, McpMenu, Subscribe, show_mcp_manager
 
 
@@ -375,7 +373,8 @@ def create_mcp_extension(
     log_path: str | None = None,
     # Opens the OAuth authorization URL. Defaults to the platform browser.
     open_url: Callable[[str], None] | None = None,
-    # Saves `/mcp` changes to the server's config file. Defaults to editing its `mcp.json`.
+    # Saves `/mcp` changes to the server's config file: its project `override`
+    # when set, else its `source`. Defaults to editing that `mcp.json`.
     update_config: Callable[[McpServerEntry, McpServerConfigPatch], Awaitable[None]] | None = None,
     # How long the first prompt waits for servers with `direct` tools that are
     # still connecting at startup, in milliseconds. Their tools become
@@ -398,8 +397,26 @@ def create_mcp_extension(
     return extension
 
 
+# pi's `/^mcp__(.+?)__(.+)$/`, used with `fullmatch` (JS `$` is the end of input).
+_MCP_TOOL_NAME = re.compile(r"mcp__(.+?)__(.+)")
+
+
+def _resolve_mcp_tool_renderers(tool_name: str, next_renderers: Callable[[], Any]) -> Any:
+    """Calls to `mcp__<server>__<tool>` keep the renderers others choose, else get the MCP ones."""
+    renderers = next_renderers()
+    if renderers is not None:
+        return renderers
+    match = _MCP_TOOL_NAME.fullmatch(tool_name)
+    return create_mcp_tool_renderers(f"{match[1]}/{match[2]}") if match else None
+
+
 def _default_update_config(entry: McpServerEntry, patch: McpServerConfigPatch) -> Awaitable[None]:
-    return update_mcp_server_config(entry.source, entry.name, patch)
+    return update_mcp_server_config(
+        entry.override if entry.override is not None else entry.source,
+        entry.name,
+        patch,
+        override=entry.override is not None,
+    )
 
 
 class _McpExtension:
@@ -429,6 +446,8 @@ class _McpExtension:
         # Servers from `mcp.json`, which take precedence over registered servers of the same name.
         self._configured_entries: list[McpServerEntry] = []
         self._config_errors: list[str] = []
+        # The trusted project's `mcp.json`, where `/mcp` saves project overrides of global servers.
+        self._project_config: str | None = None
         # Registered servers that `mcp.json` overrides, shown in `/mcp`.
         self._overridden: list[str] = []
         # Between session_start and session_shutdown. Registrations before that are read on session_start.
@@ -462,6 +481,8 @@ class _McpExtension:
         # example run by the agent) changes them.
         self._tokens_at_sign_in: dict[McpServerConnection, str] = {}
 
+        # A resumed session renders calls to MCP tools before their server connected, if it ever does.
+        pi.register_tool_renderer(_resolve_mcp_tool_renderers)
         pi.on("session_start", self._on_session_start)
         pi.on("before_agent_start", self._on_before_agent_start)
         pi.on("tool_call", self._on_tool_call)
@@ -870,22 +891,28 @@ class _McpExtension:
             return str(error)
         return None
 
-    async def _save_config(self, server: _McpServer, patch: McpServerConfigPatch) -> str | None:
+    async def _save_config(
+        self, server: _McpServer, patch: McpServerConfigPatch, in_project: bool = False
+    ) -> str | None:
         """Save a config change; returns an error message when the file could
         not be updated. Changes to registered servers only apply to the
-        current session."""
-        if server.entry.scope != "extension":
+        current session. `in_project` adds a project override."""
+        override = self._project_config if in_project else server.entry.override
+        entry = replace(server.entry, override=override) if override else server.entry
+        if entry.scope != "extension":
             try:
-                await self._update_config(server.entry, patch)
+                await self._update_config(entry, patch)
             except Exception as error:
-                return f"Could not update {server.entry.source}: {error}"
+                return f"Could not update {entry.override if entry.override is not None else entry.source}: {error}"
         with self._lock:
-            server.entry = replace(server.entry, config={**server.entry.config, **patch.as_config()})
+            # Re-read: the entry may have changed while the file was written.
+            current = replace(server.entry, override=override) if override else server.entry
+            server.entry = replace(current, config={**current.config, **patch.as_config()})
         return None
 
-    async def _set_enabled(self, server: _McpServer, enabled: bool) -> str | None:
+    async def _set_enabled(self, server: _McpServer, enabled: bool, in_project: bool = False) -> str | None:
         """Returns an error message when the config could not be saved; connection errors show in the state."""
-        failed = await self._save_config(server, McpServerConfigPatch(enabled=enabled))
+        failed = await self._save_config(server, McpServerConfigPatch(enabled=enabled), in_project)
         if failed:
             return failed
         if not enabled:
@@ -943,7 +970,7 @@ class _McpExtension:
                     "label": server.entry.name,
                     "description": (
                         f"{_describe_view(server, view)} · {_exposure_of(server.entry)} · "
-                        f"{server.entry.scope or server.entry.source}"
+                        f"{'global, project override' if server.entry.override else (server.entry.scope or server.entry.source)}"
                     ),
                 }
                 for server, view in servers
@@ -967,13 +994,22 @@ class _McpExtension:
         view = connection.view if connection is not None else None
         if entry.scope == "extension":
             saved = "for this session"
+        elif entry.override:
+            saved = "saved to the project mcp.json"
         elif entry.scope:
             saved = f"saved to the {entry.scope} mcp.json"
         else:
             saved = "saved to mcp.json"
+        # Global servers without an override can be turned on or off for the trusted project alone.
+        in_project = entry.scope == "global" and not entry.override and self._project_config is not None
+        in_project_saved = "saved to the project mcp.json"
         items: list[dict[str, str]] = []
         if not _is_enabled(server):
             items.append({"value": "enable", "label": "Enable", "description": saved})
+            if in_project:
+                items.append(
+                    {"value": "enable-project", "label": "Enable in this project", "description": in_project_saved}
+                )
         else:
             state = view.state if view is not None else None
             if state == "needs-auth":
@@ -986,9 +1022,14 @@ class _McpExtension:
                 items.append({"value": "signout", "label": "Sign out", "description": "deletes the stored credentials"})
             items.append({"value": "exposure", "label": "Exposure", "description": _exposure_of(entry)})
             items.append({"value": "disable", "label": "Disable", "description": saved})
+            if in_project:
+                items.append(
+                    {"value": "disable-project", "label": "Disable in this project", "description": in_project_saved}
+                )
         details = [
             _describe_transport(entry),
             f"{entry.scope or 'config'}: {entry.source}",
+            *([f"project override: {entry.override}"] if entry.override else []),
             f"State: {_describe_view(server, view, False)}",
         ]
         errors = [
@@ -1045,7 +1086,7 @@ class _McpExtension:
         details = (
             f"Applies to this session; the server is registered by {server.entry.source}."
             if server.entry.scope == "extension"
-            else f"Saved to {server.entry.source}."
+            else f"Saved to {server.entry.override if server.entry.override is not None else server.entry.source}."
         )
         choice = await ui.menu(
             lambda: McpMenu(
@@ -1068,27 +1109,31 @@ class _McpExtension:
             return None
         return await self._set_exposure(server, choice)  # type: ignore[arg-type]
 
+    def _sign_in_with_ui(self, ui: McpManagerView, server: _McpServer) -> Awaitable[str | None]:
+        """Sign in with the manager view's sign-in screen, which shows the URL with a copy key."""
+        title = f"Sign in to {server.entry.name}"
+        authorization_url = [""]
+        open_url = self._open_url
+
+        class Prompt:
+            def show_authorization_url(self, url: str) -> None:
+                authorization_url[0] = url
+                open_url(url)
+
+            async def prompt_for_redirect_url(self, cancel: Any) -> str | None:
+                value = await ui.redirect_url(title, authorization_url[0], cancel)
+                ui.status(title, "Connecting…")
+                return value
+
+        ui.status(title, "Contacting the authorization server…")
+        return self._sign_in(server, Prompt())
+
     async def _run_action(self, ui: McpManagerView, ctx: Any, server: _McpServer, action: str) -> None:
         name = server.entry.name
         message: str | None = None
         match action:
             case "signin":
-                title = f"Sign in to {name}"
-                authorization_url = [""]
-                open_url = self._open_url
-
-                class Prompt:
-                    def show_authorization_url(self, url: str) -> None:
-                        authorization_url[0] = url
-                        open_url(url)
-
-                    async def prompt_for_redirect_url(self, cancel: Any) -> str | None:
-                        value = await ui.redirect_url(title, authorization_url[0], cancel)
-                        ui.status(title, "Connecting…")
-                        return value
-
-                ui.status(title, "Contacting the authorization server…")
-                message = await self._sign_in(server, Prompt())
+                message = await self._sign_in_with_ui(ui, server)
             case "reconnect":
                 # A failure shows as the connection's state and error.
                 ui.status(f"MCP server {name}", "Reconnecting…")
@@ -1099,9 +1144,10 @@ class _McpExtension:
                 await self._show_tools(ui, server)
             case "exposure":
                 message = await self._choose_exposure(ui, server)
-            case "enable" | "disable":
-                ui.status(f"MCP server {name}", "Connecting…" if action == "enable" else "Disconnecting…")
-                message = await self._set_enabled(server, action == "enable")
+            case "enable" | "disable" | "enable-project" | "disable-project":
+                enable = action.startswith("enable")
+                ui.status(f"MCP server {name}", "Connecting…" if enable else "Disconnecting…")
+                message = await self._set_enabled(server, enable, action.endswith("-project"))
         with self._lock:
             server.message = message
         self._ensure_discovery_active(ctx)
@@ -1201,28 +1247,31 @@ class _McpExtension:
         if not ctx.has_ui:
             ctx.ui.notify(f'Signing in to MCP server "{name}" requires interactive mode.', "error")
             return
-        open_url = self._open_url
+        failure: str | None = None
+        if ctx.mode == "tui":
 
-        class Prompt:
-            def show_authorization_url(self, url: str) -> None:
-                # Long URLs wrap, which some terminals cannot open; a short link line stays on one line.
-                if ctx.mode == "tui":
-                    click = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
-                    lines = f"{hyperlink(url, url)}\n{hyperlink(click, url)}"
-                else:
-                    lines = url
-                ctx.ui.notify(f'Sign in to MCP server "{name}" in your browser:\n{lines}', "info")
-                open_url(url)
+            async def manage(ui: McpManagerView) -> None:
+                nonlocal failure
+                failure = await self._sign_in_with_ui(ui, server)
 
-            def prompt_for_redirect_url(self, cancel: Any) -> Awaitable[str | None]:
-                return ctx.ui.input(
-                    f'Waiting for sign-in to "{name}". If the browser cannot reach this machine, '
-                    "paste the URL it was redirected to.",
-                    "http://127.0.0.1:.../callback?code=...",
-                    {"signal": cancel},
-                )
+            await show_mcp_manager(ctx, manage)
+        else:
+            open_url = self._open_url
 
-        failure = await self._sign_in(server, Prompt())
+            class Prompt:
+                def show_authorization_url(self, url: str) -> None:
+                    ctx.ui.notify(f'Sign in to MCP server "{name}" in your browser:\n{url}', "info")
+                    open_url(url)
+
+                def prompt_for_redirect_url(self, cancel: Any) -> Awaitable[str | None]:
+                    return ctx.ui.input(
+                        f'Waiting for sign-in to "{name}". If the browser cannot reach this machine, '
+                        "paste the URL it was redirected to.",
+                        "http://127.0.0.1:.../callback?code=...",
+                        {"signal": cancel},
+                    )
+
+            failure = await self._sign_in(server, Prompt())
         if failure:
             ctx.ui.notify(failure, "info" if failure == "Sign-in cancelled." else "error")
             return
@@ -1319,6 +1368,7 @@ class _McpExtension:
         loaded = await self._load_config(ctx)
         with self._lock:
             self._config_errors = loaded.errors
+            self._project_config = loaded.project_config
             self._auto_enable_codemode = loaded.auto_enable_codemode is not False
             self._warned_unreachable = False
             self._waited_for_startup = False

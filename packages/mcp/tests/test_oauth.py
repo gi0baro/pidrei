@@ -541,6 +541,29 @@ async def test_callback_server_renders_plain_text_by_default(monkeypatch):
             callback.close()
 
 
+# #10302
+@pytest.mark.tonio
+async def test_callback_server_rejects_a_response_on_another_path_than_the_expected_one(monkeypatch):
+    async with loopback_servers(monkeypatch):
+        callback = await OAuthCallbackServer(extra_paths=["/callback/server-id"])
+        try:
+            origin = parse_url(callback.redirect_url).origin
+            mixed_up = callback.wait_for_callback("s1", "/callback/server-id")
+            wrong = await http.shared_client().get(f"{origin}/callback?code=abc&state=s1")
+            await wrong.read()
+            assert wrong.status_code == 400
+            with pytest.raises(RuntimeError, match="arrived on another redirect URI"):
+                await mixed_up
+
+            pending = callback.wait_for_callback("s2", "/callback/server-id")
+            right = await http.shared_client().get(f"{origin}/callback/server-id?code=abc&state=s2")
+            await right.read()
+            assert right.status_code == 200
+            assert (await pending).code == "abc"
+        finally:
+            callback.close()
+
+
 @pytest.mark.tonio
 async def test_callback_server_renders_pages_through_render_page(monkeypatch):
     async with loopback_servers(monkeypatch):

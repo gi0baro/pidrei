@@ -61,6 +61,7 @@ from .types import (
     RegisteredCommand,
     RegisteredTool,
     ToolDefinition,
+    ToolRendererResolver,
 )
 
 
@@ -333,6 +334,11 @@ class ExtensionAPI:
     def register_entry_renderer(self, custom_type: str, renderer: Any) -> None:
         self._assert_active()
         self._extension.entry_renderers[custom_type] = renderer
+
+    def register_tool_renderer(self, resolver: ToolRendererResolver) -> None:
+        """Choose how tool calls are drawn. Resolvers run in extension load order."""
+        self._assert_active()
+        self._extension.tool_renderers = (*self._extension.tool_renderers, resolver)
 
     def get_flag(self, name: str) -> Any:
         self._assert_active()

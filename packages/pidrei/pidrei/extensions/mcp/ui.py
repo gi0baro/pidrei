@@ -10,7 +10,6 @@ manage coroutine awaits. The menu builders read the extension's state
 without its lock, so the extension lock is never taken under the UI lock.
 """
 
-import sys
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -18,9 +17,10 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_tui import Container, Input, SelectList, Spacer, Text, hyperlink, truncate_to_width, visible_width
+from pidrei_tui import Container, Input, SelectList, Spacer, Text, truncate_to_width, visible_width
 from pidrei_utils.cancel import CancelToken
 
+from ...modes.interactive.components.auth_url import AuthUrlComponent
 from ...modes.interactive.components.dynamic_border import DynamicBorder
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.theme import get_select_list_theme
@@ -198,12 +198,11 @@ class McpManagerView:
             if answer.settled:
                 return
             field_input = Input()
-            click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
+            link = AuthUrlComponent(self._tui, authorization_url)
             body = [
                 Spacer(1),
                 Text(theme.fg("muted", "Approve access in your browser. If it did not open, visit:"), 1, 0),
-                Text(theme.fg("accent", hyperlink(authorization_url, authorization_url)), 1, 0),
-                Text(theme.fg("dim", hyperlink(click_hint, authorization_url)), 1, 0),
+                link,
                 Spacer(1),
                 Text(
                     theme.fg("muted", "If the browser runs on another machine, paste the URL it was redirected to:"),
@@ -221,6 +220,10 @@ class McpManagerView:
                     return
                 if self._keybindings.matches(data, "tui.select.cancel"):
                     answer.settle(None)
+                    return
+                if self._keybindings.matches(data, "app.message.copy"):
+                    # pi's `void link.copy()`; `copy` reports its own failure in the hint.
+                    self._tui.spawn(link.copy())
                     return
                 field_input.handle_input(data)
 

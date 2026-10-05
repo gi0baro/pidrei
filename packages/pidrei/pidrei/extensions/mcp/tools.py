@@ -36,7 +36,7 @@ from pidrei_tui import Container, Spacer, Text
 from pidrei_utils.cancel import CancelToken
 
 from ...config import TEMP_DIR
-from ...core.extensions.types import ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace
+from ...core.extensions.types import ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace, ToolRenderers
 from ...core.tools.render_utils import format_tool_call_with_args, get_text_output, replace_tabs
 from ...core.tools.truncate import format_size, truncate_middle
 from ...modes.interactive.components.keybinding_hints import key_hint
@@ -312,6 +312,52 @@ def create_mcp_tool_definition(
     annotations = _to_tool_annotations(tool)
     tool_name = tool["name"]
     label = f"{server}/{tool_name}"
+    renderers = create_mcp_tool_renderers(label)
+
+    async def execute(_tool_call_id, params, cancel, on_update, *_rest):
+        client = await get_client()
+
+        async def on_progress(progress: Any) -> None:
+            total = "" if progress.get("total") is None else f"/{_js_number(progress['total'])}"
+            message = progress.get("message")
+            text = message if message is not None else f"Progress {_js_number(progress['progress'])}{total}"
+            if on_update is not None:
+                on_update(
+                    AgentToolResult(content=[TextContent(text=text)], details={"server": server, "tool": tool_name})
+                )
+
+        result = await client.call_tool(
+            tool_name,
+            params if params is not None else {},
+            cancel=cancel,
+            timeout_ms=timeout_ms,
+            on_progress=on_progress,
+        )
+        return await convert_mcp_result(
+            server,
+            tool_name,
+            result,
+            ConvertMcpResultOptions(readable_resources=readable_resources() if readable_resources else False),
+        )
+
+    description = (tool.get("description") or "").strip() or title or f"MCP tool {tool_name} from server {server}"
+    return ToolDefinition(
+        name=name,
+        label=label,
+        description=description,
+        parameters=_to_parameters(tool["inputSchema"]),
+        output_schema=create_mcp_result_schema(tool.get("outputSchema")),
+        exposure=to_tool_exposure(exposure),
+        namespace=namespace,
+        annotations=annotations,
+        render_call=renderers.render_call,
+        render_result=renderers.render_result,
+        execute=execute,
+    )
+
+
+def create_mcp_tool_renderers(label: str) -> ToolRenderers:
+    """Renderers of calls to an MCP tool, labeled `server/tool`, also used before the tool is registered."""
 
     def render_call(args, theme, context):
         last = context.get("lastComponent")
@@ -350,46 +396,7 @@ def create_mcp_tool_definition(
                 component.add_child(Text(theme.fg("muted", f"Full output: {full_output_path}"), 0, 0))
         return component
 
-    async def execute(_tool_call_id, params, cancel, on_update, *_rest):
-        client = await get_client()
-
-        async def on_progress(progress: Any) -> None:
-            total = "" if progress.get("total") is None else f"/{_js_number(progress['total'])}"
-            message = progress.get("message")
-            text = message if message is not None else f"Progress {_js_number(progress['progress'])}{total}"
-            if on_update is not None:
-                on_update(
-                    AgentToolResult(content=[TextContent(text=text)], details={"server": server, "tool": tool_name})
-                )
-
-        result = await client.call_tool(
-            tool_name,
-            params if params is not None else {},
-            cancel=cancel,
-            timeout_ms=timeout_ms,
-            on_progress=on_progress,
-        )
-        return await convert_mcp_result(
-            server,
-            tool_name,
-            result,
-            ConvertMcpResultOptions(readable_resources=readable_resources() if readable_resources else False),
-        )
-
-    description = (tool.get("description") or "").strip() or title or f"MCP tool {tool_name} from server {server}"
-    return ToolDefinition(
-        name=name,
-        label=label,
-        description=description,
-        parameters=_to_parameters(tool["inputSchema"]),
-        output_schema=create_mcp_result_schema(tool.get("outputSchema")),
-        exposure=to_tool_exposure(exposure),
-        namespace=namespace,
-        annotations=annotations,
-        render_call=render_call,
-        render_result=render_result,
-        execute=execute,
-    )
+    return ToolRenderers(render_call=render_call, render_result=render_result)
 
 
 def _js_number(value: float) -> str:

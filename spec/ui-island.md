@@ -310,8 +310,10 @@ Its surface:
   is refused at creation. `cancel()` marks the handle under the lock and
   the fire re-checks the mark under the lock, so a fire already waiting for
   the lock doesn't run, matching `clearTimeout`;
-- `finish_before_next_input(handle)`, async `stop()`/`start()`, and the
-  terminal's size (`rows`, `columns`).
+- `finish_before_next_input(handle)`, async `stop()`/`start()`, the
+  terminal's size (`rows`, `columns`), and `terminal.write_sync(data)`, which
+  queues behind the terminal's other output and needs no lock (pi's
+  extensions reach `tui.terminal.write`).
 
 A new `TUI` member that Pi extensions use lands on the wrapper, either
 guarded (`apply` around any mutation) or needing no lock. Examples never

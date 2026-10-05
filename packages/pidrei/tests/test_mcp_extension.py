@@ -27,7 +27,13 @@ import tonio.colored as tonio
 from pidrei.core.auth_storage import InMemoryAuthStorageBackend
 from pidrei.core.tools.truncate import truncate_middle
 from pidrei.extensions.mcp import MAX_SERVERS_SECTION_CHARS, McpServerListing, render_servers_section, runtime
-from pidrei.extensions.mcp.config import McpServerEntry, get_mcp_tool_exposure, load_mcp_config
+from pidrei.extensions.mcp.config import (
+    McpServerConfigPatch,
+    McpServerEntry,
+    get_mcp_tool_exposure,
+    load_mcp_config,
+    update_mcp_server_config,
+)
 from pidrei.extensions.mcp.runtime import (
     McpOAuthCredentialStore,
     McpServerConnection,
@@ -96,6 +102,35 @@ async def test_merges_global_and_trusted_project_servers_and_validates_entries(t
     # Untrusted projects cannot add or override servers, since stdio servers run commands.
     untrusted = await load_mcp_config(**paths, project_trusted=False)
     assert next(server for server in untrusted.servers if server.name == "shared").config == {"command": "global-cmd"}
+
+
+@pytest.mark.tonio
+async def test_lets_project_entries_override_enabled_and_exposure_of_global_servers(tmp_path):
+    # #10277
+    paths = _setup(
+        tmp_path,
+        {"mcpServers": {"tools": {"command": "x", "env": {"TOKEN": "secret"}}}},
+        # An override cannot change the command, which would run with the global env.
+        {"mcpServers": {"tools": {"enabled": False, "args": ["y"]}, "missing": {"enabled": False}}},
+    )
+    project = os.path.join(paths["cwd"], ".pidrei", "mcp.json")
+    loaded = await load_mcp_config(**paths, project_trusted=True)
+    assert [(server.name, server.override, server.config) for server in loaded.servers] == [
+        ("tools", None, {"command": "x", "env": {"TOKEN": "secret"}}),
+    ]
+    assert len(loaded.errors) == 2
+    assert 'server "tools": an override can only set enabled, exposure, toolExposure' in loaded.errors[0]
+    assert 'server "missing" needs "command" or "url", or a global server to override' in loaded.errors[1]
+
+    with open(project, "w") as file:
+        json.dump({"mcpServers": {"tools": {"enabled": False}}}, file)
+    [tools] = (await load_mcp_config(**paths, project_trusted=True)).servers
+    assert (tools.override, tools.config) == (project, {"command": "x", "env": {"TOKEN": "secret"}, "enabled": False})
+
+    # Overrides keep `enabled: true`, since it replaces the global value.
+    await update_mcp_server_config(project, "tools", McpServerConfigPatch(enabled=True))
+    with open(project) as file:
+        assert json.load(file)["mcpServers"]["tools"] == {"enabled": True}
 
 
 @pytest.mark.tonio
@@ -184,18 +219,35 @@ async def test_validates_the_oauth_callback_url_scope_and_client_name(tmp_path):
                     "url": "https://a.example/mcp",
                     "oauth": {"authServerMetadataUrl": "http://idp.example/m"},
                 },
+                # #10302
+                "cimd": {
+                    "url": "https://a.example/mcp",
+                    "oauth": {"clientRegistration": "cimd", "callbackUrl": "http://localhost/callback"},
+                },
+                "badRegistration": {"url": "https://a.example/mcp", "oauth": {"clientRegistration": "auto"}},
+                "cimdClient": {
+                    "url": "https://a.example/mcp",
+                    "oauth": {"clientRegistration": "cimd", "clientId": "x"},
+                },
+                "cimdPath": {
+                    "url": "https://a.example/mcp",
+                    "oauth": {"clientRegistration": "cimd", "callbackUrl": "http://127.0.0.1/cb"},
+                },
             }
         },
         {},
     )
     loaded = await load_mcp_config(**paths, project_trusted=False)
-    assert [server.name for server in loaded.servers] == ["ok", "ipv6", "same", "named", "metadata"]
+    assert [server.name for server in loaded.servers] == ["ok", "ipv6", "same", "named", "metadata", "cimd"]
     expected = [
         'server "remote": oauth.callbackUrl must be an http URI on localhost',
         'server "both": oauth.callbackUrl and oauth.callbackPort name different ports',
         'server "scope": oauth.scope must be a string',
         'server "unnamed": oauth.clientName must be a non-empty string',
         'server "plainMetadata": oauth.authServerMetadataUrl must be an https URL',
+        'server "badRegistration": oauth.clientRegistration must be "dcr" or "cimd"',
+        'server "cimdClient": oauth.clientRegistration "cimd" cannot be combined',
+        'server "cimdPath": oauth.clientRegistration "cimd" requires oauth.callbackUrl',
     ]
     assert len(loaded.errors) == len(expected)
     for error, fragment in zip(loaded.errors, expected, strict=True):

@@ -56,6 +56,14 @@ type OAuthFlowResult = Literal["AUTHORIZED", "REDIRECT"]
 type _ClientAuthMethod = Literal["client_secret_basic", "client_secret_post", "none"]
 
 
+@dataclass(frozen=True, slots=True)
+class OAuthClientMetadataDocument:
+    """A Client ID Metadata Document: an https URL used as `client_id`, and a redirect URI it lists."""
+
+    url: str
+    redirect_url: str
+
+
 class OAuthClientProvider(ABC):
     """pi's optional members are the attributes that default to `None`: a
     provider that has one overrides it (with a method, for the callables),
@@ -63,7 +71,14 @@ class OAuthClientProvider(ABC):
 
     redirect_url: str
     client_metadata: OAuthClientMetadata
-    client_metadata_url: str | None = None
+    # Client ID Metadata Document to identify as instead of registering
+    # dynamically, or None (returned) to register. Called when no client
+    # information is stored; the document is not stored. `metadata` is None
+    # when the authorization server has none; check
+    # `client_id_metadata_document_supported`.
+    client_metadata_document: (
+        Callable[[AuthorizationServerMetadata | None], OAuthClientMetadataDocument | None] | None
+    ) = None
     state: Callable[[], Awaitable[str]] | None = None
     save_client_information: Callable[[OAuthClientInformationMixed], Awaitable[None]] | None = None
     add_client_authentication: AddClientAuthentication | None = None
@@ -368,32 +383,32 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         or provider.client_metadata.get("scope")
         or None
     )
-    client = await provider.client_information()
-    if not client:
+    stored = await provider.client_information()
+    client_document = (
+        None
+        if stored is not None or provider.client_metadata_document is None
+        else provider.client_metadata_document(metadata)
+    )
+    if client_document is not None:
+        url = parse_url(client_document.url)
+        if url.protocol != "https:" or url.pathname == "/":
+            raise RuntimeError("Invalid OAuth client metadata URL")
+    client = stored if stored is not None else ({"client_id": client_document.url} if client_document else None)
+    if client is None:
         if options.authorization_code:
             raise RuntimeError("OAuth client information is missing during code exchange")
-        if (
-            metadata is not None
-            and metadata.get("client_id_metadata_document_supported")
-            and provider.client_metadata_url
-        ):
-            url = parse_url(provider.client_metadata_url)
-            if url.protocol != "https:" or url.pathname == "/":
-                raise RuntimeError("Invalid OAuth client metadata URL")
-            client = {"client_id": provider.client_metadata_url}
-            if provider.save_client_information is not None:
-                await provider.save_client_information(client)
-        else:
-            if provider.save_client_information is None:
-                raise RuntimeError("OAuth client information cannot be persisted")
-            client = await register_client(
-                discovered["authorizationServerUrl"],
-                metadata=metadata,
-                client_metadata=provider.client_metadata,
-                scope=scope,
-                fetch=options.fetch,
-            )
-            await provider.save_client_information(client)
+        if provider.save_client_information is None:
+            raise RuntimeError("OAuth client information cannot be persisted")
+        client = await register_client(
+            discovered["authorizationServerUrl"],
+            metadata=metadata,
+            client_metadata=provider.client_metadata,
+            scope=scope,
+            fetch=options.fetch,
+        )
+        await provider.save_client_information(client)
+    # The document's redirect URI may differ from the provider's, for example by a server-specific path.
+    redirect_url = client_document.redirect_url if client_document is not None else provider.redirect_url
     token_options = TokenRequestOptions(
         client_information=client,
         metadata=metadata,
@@ -414,7 +429,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
             token_options,
             code=options.authorization_code,
             code_verifier=await provider.code_verifier(),
-            redirect_url=provider.redirect_url,
+            redirect_url=redirect_url,
         )
         # A response without `scope` grants the requested scope (RFC 6749
         # §5.1). Recorded so a step-up can keep it. Callers pass the options
@@ -443,7 +458,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         discovered["authorizationServerUrl"],
         metadata=metadata,
         client_information=client,
-        redirect_url=provider.redirect_url,
+        redirect_url=redirect_url,
         scope=scope,
         state=state_value,
         resource=resource,

@@ -29,11 +29,13 @@ def _trim_rendered_result_lines(lines: list) -> list:
 class ToolHtmlRenderer:
     """Renders custom tools via their render_call/render_result hooks.
 
-    ``deps`` is ``{"getToolDefinition", "theme", "cwd", "width"?}``.
+    ``deps`` is ``{"getToolRenderers", "theme", "cwd", "width"?}``;
+    ``getToolRenderers(name)`` returns the renderers of calls to a tool, as
+    resolved by extensions and the registered tool.
     """
 
     def __init__(self, deps: dict) -> None:
-        self._get_tool_definition = deps["getToolDefinition"]
+        self._get_tool_renderers = deps["getToolRenderers"]
         self._theme = deps["theme"]
         self._cwd = deps["cwd"]
         self._width = deps.get("width", 100)
@@ -71,7 +73,7 @@ class ToolHtmlRenderer:
         """Render a tool call to HTML; None if the tool has no renderer."""
         try:
             self._rendered_args[tool_call_id] = args
-            tool_def = self._get_tool_definition(tool_name)
+            tool_def = self._get_tool_renderers(tool_name)
             if tool_def is None or getattr(tool_def, "render_call", None) is None:
                 return None
 
@@ -93,7 +95,7 @@ class ToolHtmlRenderer:
     def render_result(self, tool_call_id: str, tool_name: str, result: list, details, is_error: bool) -> dict | None:
         """Render a tool result to ``{"collapsed"?, "expanded"}`` HTML."""
         try:
-            tool_def = self._get_tool_definition(tool_name)
+            tool_def = self._get_tool_renderers(tool_name)
             if tool_def is None or getattr(tool_def, "render_result", None) is None:
                 return None
 

@@ -29,7 +29,7 @@ from pidrei.core.extensions.loader import (
     load_extensions,
 )
 from pidrei.core.extensions.runner import ExtensionRunner, emit_project_trust_event
-from pidrei.core.extensions.types import BoundaryContextPreview
+from pidrei.core.extensions.types import BoundaryContextPreview, ToolRenderers
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import ProjectedSessionEntry, SessionManager
 from pidrei.core.system_prompt import BuildSystemPromptOptions, build_system_prompt
@@ -807,6 +807,35 @@ async def extension(pi):
     assert errors == []
     assert chained["messages"] == []
     assert re.search(r"base[\s\S]*\nfirst\nsecond$", build_system_prompt(chained["systemPromptOptions"]))
+
+
+@pytest.mark.tonio
+async def test_resolves_tool_renderers_in_extension_load_order_each_able_to_defer_to_the_next(fx):
+    # Issue #10285: the MCP extension renders calls to tools that are not registered.
+    def render_call(*_args):
+        return SimpleNamespace(render=lambda _width: [], invalidate=lambda: None)
+
+    async def first(pi):
+        pi.register_tool_renderer(
+            lambda tool_name, next_renderers: (
+                ToolRenderers(render_call=render_call) if tool_name == "a" else next_renderers()
+            )
+        )
+
+    async def second(pi):
+        def resolve(_tool_name, next_renderers):
+            renderers = next_renderers()
+            return renderers if renderers is not None else ToolRenderers(render_shell="self")
+
+        pi.register_tool_renderer(resolve)
+
+    runner = await _load_factories(fx, first, second)
+
+    assert runner.resolve_tool_renderers("a", lambda: None) == ToolRenderers(render_call=render_call)
+    assert runner.resolve_tool_renderers("b", lambda: None) == ToolRenderers(render_shell="self")
+    assert runner.resolve_tool_renderers("b", lambda: ToolRenderers(render_call=render_call)) == ToolRenderers(
+        render_call=render_call
+    )
 
 
 # -- boundary chaining -------------------------------------------------------------

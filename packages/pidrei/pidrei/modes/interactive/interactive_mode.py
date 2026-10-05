@@ -2265,7 +2265,9 @@ class InteractiveMode:
         The renderer components take whatever this returns, so they never
         reach into the tool registry themselves.
         """
-        return with_built_in_renderers(tool_name, self.session.get_tool_definition(tool_name))
+        return self.session.extension_runner.resolve_tool_renderers(
+            tool_name, lambda: with_built_in_renderers(tool_name, self.session.get_tool_definition(tool_name))
+        )
 
     def _get_markdown_transformers(self) -> list:
         return self.session.extension_runner.get_markdown_transformers()

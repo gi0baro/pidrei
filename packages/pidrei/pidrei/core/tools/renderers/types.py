@@ -1,24 +1,12 @@
-"""The renderer pair a tool definition contributes to the TUI.
+"""The renderer record a tool definition contributes to the TUI.
 
-pi types this twice — `Pick<ToolDefinition, "renderCall" | "renderResult">`
-in `renderers/index.ts` and the `ToolRenderers` interface (plus `renderShell`)
-in `tool-execution.ts`; both are structural, so one record serves here. It
-lives in its own module so the per-tool renderer modules and the package
-`__init__` share it without a cycle.
+pi moved `ToolRenderers` to `core/extensions/types.ts` and re-exports it from
+`renderers/index.ts` and `tool-execution.ts`; this module re-exports it for
+the per-tool renderer modules, so they and the package `__init__` share it
+without a cycle.
 """
 
-from dataclasses import dataclass
-from typing import Any
+from ...extensions.types import ToolRenderers
 
 
-@dataclass(frozen=True, slots=True)
-class ToolRenderers:
-    """What ToolExecutionComponent needs from a tool: how to draw it.
-
-    A `ToolDefinition` satisfies the same three attributes, so a definition
-    and a bare renderer pair are equally acceptable to the component.
-    """
-
-    render_call: Any = None
-    render_result: Any = None
-    render_shell: str | None = None
+__all__ = ["ToolRenderers"]
