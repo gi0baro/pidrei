@@ -1010,6 +1010,7 @@ def _build_cli_highlight_theme(t: Theme) -> dict:
         "number": lambda s: t.fg("syntaxNumber", s),
         "regexp": lambda s: t.fg("syntaxString", s),
         "string": lambda s: t.fg("syntaxString", s),
+        "subst": lambda s: t.fg("text", s),
         "comment": lambda s: t.fg("syntaxComment", s),
         "doctag": lambda s: t.fg("syntaxComment", s),
         "meta": lambda s: t.fg("muted", s),

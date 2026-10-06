@@ -324,17 +324,24 @@ def format_skills_for_prompt(skills: list[Skill], file_read_tool: str = "read") 
 
     Skills with disable_model_invocation=True are excluded from the prompt
     (they can only be invoked explicitly via /skill:name commands).
+
+    `file_read_tool` names the tool that loads skill files (`read` or `bash`);
+    `indirect` names none, for a reader that is reachable only through another tool.
     """
     visible_skills = [skill for skill in skills if not skill.disable_model_invocation]
 
     if not visible_skills:
         return ""
 
+    if file_read_tool == "read":
+        load_hint = "Use the read tool to load a skill's file when the task matches its description."
+    elif file_read_tool == "bash":
+        load_hint = "Use bash to load a skill's file when the task matches its description."
+    else:
+        load_hint = "Load a skill's file when the task matches its description."
     lines = [
         "\n\nThe following skills provide specialized instructions for specific tasks.",
-        "Use the read tool to load a skill's file when the task matches its description."
-        if file_read_tool == "read"
-        else "Use bash to load a skill's file when the task matches its description.",
+        load_hint,
         (
             "When a skill file references a relative path, resolve it against the skill directory "
             "(parent of SKILL.md / dirname of the path) and use that absolute path in tool commands."

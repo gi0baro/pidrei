@@ -64,7 +64,8 @@ What a call returns depends on the tool:
 
 - Tools with an output schema return a structured value, usually a `dict`. `bash` returns `{'output', 'truncated', 'full_output_path'?, 'exit_code', 'wall_time_seconds'}`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
 - MCP tools return their `CallToolResult`, including `isError` and `structuredContent`.
-- Other tools, such as `read`, `edit`, and `write`, return their text output.
+- `read` returns the file's text, or for an image an image block `{'type': 'image', 'data': ..., 'mimeType': ..., 'note': ...}` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
+- Other tools, such as `edit` and `write`, return their text output.
 
 Keys inside returned values keep their wire spelling (`structuredContent`, `mimeType`, `stopReason`).
 
@@ -81,7 +82,7 @@ for result in results:
 
 The `codemode` description lists tools with their Python declarations, grouped by namespace (for example one MCP server). Tools with `deferred` exposure, which includes MCP tools with the default `codemode` exposure, are not listed, so the description stays the same while MCP servers connect. Listed declarations share a budget of 3000 estimated tokens (`codemode.inlineBudget`). Scripts find the other tools with `search_tools()`, `describe_tool()`, `describe_namespace()`, or by filtering `ALL_TOOLS`.
 
-While `codemode` is active, `codemode.mode` decides how the other tools are presented. With `on` (default) declared tools stay declared, and their descriptions say how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts.
+While `codemode` is active, `codemode.mode` decides how the other tools are presented. With `on` (default) declared tools stay declared, and their descriptions say how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts. Tool declarations in the `codemode` description, `describe_tool()`, and `ALL_TOOLS` carry the tools' prompt guidelines, since the system prompt rules only cover declared tools.
 
 ## Store values
 

@@ -616,7 +616,7 @@ class ExtensionRunner:
         runtime.get_settings = actions["get_settings"]
         runtime.set_active_tools = actions["set_active_tools"]
         runtime.update_active_tools = actions["update_active_tools"]
-        runtime.refresh_tools = actions["refresh_tools"]
+        runtime.register_tools = actions["register_tools"]
         runtime.get_commands = actions["get_commands"]
         runtime.set_model = actions["set_model"]
         runtime.get_thinking_level = actions["get_thinking_level"]

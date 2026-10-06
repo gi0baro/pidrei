@@ -111,6 +111,8 @@ class CodemodeToolOptions:
     get_pool: Callable[[], CodemodePool | None]
     # Namespace of a tool, for `search_tools()` ranking and its `namespace` filter.
     get_tool_namespace: Callable[[str], ToolNamespace | None] | None = None
+    # Prompt guidelines of every tool, by tool name, shown with declarations by `describe_tool()` and `ALL_TOOLS`.
+    get_tool_guidelines: Callable[[], Mapping[str, Sequence[str]]] | None = None
     # Expose the `models` namespace to scripts, backed by the session's model
     # registry (`ctx.model_registry`). Without it, `models` is not declared.
     models: bool = False
@@ -321,14 +323,16 @@ async def _declared_only(_args: dict[str, Any]) -> Any:
     raise RuntimeError("A codemode declaration is not callable")
 
 
-def to_codemode_declaration(tool: AgentTool) -> CodemodeTool:
-    """What a script sees of a tool. Tools without an output schema resolve to
-    their text output. Its `execute` is not callable: the executor builds the
-    callable tools."""
+def to_codemode_declaration(tool: AgentTool, guidelines: Sequence[str] = ()) -> CodemodeTool:
+    """What a script sees of a tool: its description followed by its prompt
+    guidelines, which the system prompt only has for declared tools. Tools
+    without an output schema resolve to their text output. Its `execute` is
+    not callable: the executor builds the callable tools."""
+    bullets = [f"- {guideline.strip()}" for guideline in guidelines if guideline.strip()]
     return CodemodeTool(
         name=tool.name,
         execute=_declared_only,
-        description=tool.description,
+        description=(f"{tool.description.strip()}\n\n" + "\n".join(bullets)) if bullets else tool.description,
         input_schema=tool.parameters,
         output_schema=tool.output_schema if tool.output_schema is not None else TEXT_OUTPUT_SCHEMA,
     )
@@ -403,6 +407,7 @@ def create_codemode_description(
     type_check: bool = True,
     namespaces: Mapping[str, ToolNamespace] | None = None,
     unlisted: Iterable[str] = (),
+    guidelines: Mapping[str, Sequence[str]] | None = None,
     inline_budget: float | None = None,
 ) -> str:
     """Model-facing description: the helper list, guidance for finding tools
@@ -412,13 +417,18 @@ def create_codemode_description(
     Every callable tool in `tools` is rendered, so its declaration names match
     the stubs; `unlisted` ones (`deferred` exposure, and `direct` ones in mode
     "on") are not listed and do not affect the description at all, so it stays
-    the same while MCP servers connect or change their tools. Tool sections are
-    limited to `inline_budget`."""
+    the same while MCP servers connect or change their tools. `guidelines` are
+    each tool's prompt guidelines, listed after its description. Tool sections
+    are limited to `inline_budget`."""
     unlisted = set(unlisted)
     rendered = [
         item
         for item in render_codemode_tools(
-            (to_codemode_declaration(tool) for tool in get_codemode_callable_tools(tools)), models=models
+            (
+                to_codemode_declaration(tool, guidelines.get(tool.name, ()) if guidelines is not None else ())
+                for tool in get_codemode_callable_tools(tools)
+            ),
+            models=models,
         )
         if item.tool.name not in unlisted
     ]
@@ -498,6 +508,9 @@ def _prepare_codemode_loadout(loadout: ToolLoadout, options: CodemodeToolOptions
     - "only": the codemode description lists every callable tool, and requests
       leave out the declarations of active "direct" tools.
 
+    Listed tools carry their prompt guidelines, which the system prompt only
+    has for declared tools.
+
     Listing by exposure, not by the active set, keeps the codemode description
     unchanged when `tool_search` loads a tool, so loads do not redeclare
     codemode."""
@@ -523,12 +536,14 @@ def _prepare_codemode_loadout(loadout: ToolLoadout, options: CodemodeToolOptions
     namespaces = {
         tool.name: namespace for tool in listed if (namespace := loadout.get_namespace(tool.name)) is not None
     }
+    guidelines = {tool.name: loadout.get_prompt_guidelines(tool.name) for tool in listed}
     budget = options.get_inline_budget() if options.get_inline_budget is not None else None
     descriptions[CODEMODE_TOOL_NAME] = create_codemode_description(
         callable_tools,
         models=options.models,
         type_check=type_check_enabled(options),
         namespaces=namespaces,
+        guidelines=guidelines,
         unlisted={
             tool.name
             for tool in callable_tools

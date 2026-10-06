@@ -819,9 +819,9 @@ async def test_a_failing_change_listener_fails_the_call_that_needed_a_sign_in_wi
 
 @pytest.mark.tonio
 async def test_close_returns_once_the_connect_in_flight_has_ended():
-    """pidrei-only: pi leaves a connect in flight running after the close.
-    Here the close ends it and waits for it, so nothing of the connection
-    runs once `close()` has returned."""
+    """The close ends a connect in flight and waits for it, so nothing of the
+    connection runs once `close()` has returned: the connect's own last change
+    comes before the close returns."""
     creating = tonio.Event()
     release = tonio.Event()
     states: list[str] = []
@@ -1083,10 +1083,13 @@ async def test_appends_server_log_messages_to_the_log_file(fake_servers, tmp_pat
     await connection.close()
 
 
+# #10249
 @pytest.mark.tonio
-async def test_closing_ends_a_connect_in_flight(fake_servers):
-    # PiDrei-only: pi leaves the connect running until its request times out.
+async def test_closes_a_connection_that_is_still_initializing_before_close_returns(fake_servers):
+    # The server receives initialize but never answers it.
     initializing = tonio.Event()
+    # Close listeners run on the transport's delivery coroutine, after its close.
+    transport_closed = tonio.Event()
 
     async def silent():
         client, server = create_in_memory_transport_pair()
@@ -1094,7 +1097,11 @@ async def test_closing_ends_a_connect_in_flight(fake_servers):
         async def on_message(_message):
             initializing.set()
 
+        async def on_close():
+            transport_closed.set()
+
         server.on_message(on_message)
+        client.on_close(on_close)
         await server.start()
         return client
 
@@ -1105,11 +1112,53 @@ async def test_closing_ends_a_connect_in_flight(fake_servers):
     await initializing.wait(_WAIT_S)
     assert initializing.is_set()
     await connection.close()
+    await transport_closed.wait(_WAIT_S)
+    assert transport_closed.is_set()
     with pytest.raises(ExceptionGroup) as raised:
         await opening
     (error,) = raised.value.exceptions
     assert str(error) == 'MCP server "fake" failed to connect: MCP connection closed'
     assert connection.state == "closed"
+
+
+# #10249
+@pytest.mark.tonio
+async def test_stops_waiting_to_retry_a_connection_when_closed(fake_servers, monkeypatch):
+    # A retry delay the close must cut short for the test to end in time.
+    monkeypatch.setattr(runtime, "_CONNECT_RETRY_DELAYS_MS", (30_000, 30_000))
+    connection = _Connected(
+        _http_entry(headers={"Authorization": "x"}),
+        [_failing(fake_servers, McpHttpError(503, "MCP HTTP request failed with status 503"))],
+    ).connection
+    # pi sleeps 10 ms for the first attempt to fail; here the attempt reports it.
+    failed = tonio.Event()
+    connect_once = connection._connect_once
+
+    async def failing_connect_once():
+        try:
+            return await connect_once()
+        except Exception:
+            failed.set()
+            raise
+
+    connection._connect_once = failing_connect_once
+    closed = tonio.Event()
+
+    async def close() -> None:
+        await connection.close()
+        closed.set()
+
+    opening = tonio.spawn(connection.get_client())
+    await failed.wait(_WAIT_S)
+    assert failed.is_set()
+    async with tonio.scope(cancel_on_exc=True) as scope:
+        scope.spawn(close())
+        await closed.wait(_WAIT_S)
+        assert closed.is_set()
+    with pytest.raises(ExceptionGroup) as raised:
+        await opening
+    (error,) = raised.value.exceptions
+    assert "status 503" in str(error)
 
 
 @pytest.mark.tonio

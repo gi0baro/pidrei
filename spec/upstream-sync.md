@@ -846,7 +846,9 @@ session's loadout guard and sets what it returns (`None` sets nothing).
 - The MCP extension's three (`ensureDiscoveryActive`, `syncResourceTools`,
   `setExposure`) compute what they need from the extension's state before the
   call; the update itself only filters or extends `active`, and records what
-  `ensureDiscoveryActive`'s warning reads afterwards.
+  `ensureDiscoveryActive`'s warning reads afterwards. The last two follow a
+  registration, so their update rides on that `register_tools` call as
+  `update_active` (see `mcp-extension`).
 
 ### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`)
 
@@ -910,6 +912,14 @@ awaits. Here those run on parallel coroutines.
   only; the server list is a tuple rebound whole and readers pin it. Lock
   order: this lock, then the session's loadout guard; `update_active_tools`
   callbacks and the manager's menu builders never take it.
+- **Tool registration**: pi's loops of `registerTool()` (a server's tools, the
+  ones it dropped re-registered as hidden, the resource tools, then any
+  `setActiveTools()` after them) run on one thread, so nothing sees part of
+  them. Here each server update is one `pi.register_tools(definitions,
+  update_active=...)` call (`_publish_tools_locked`), which the session applies
+  in one hold of its loadout guard. An upstream hunk that registers tools in
+  that flow adds its definitions to the batch; one that changes the active
+  tools after a registration goes in `update_active`.
 - **A server's `ready`** is an Event set when the connection started for it
   connected or failed. Background connects run detached (pi's `void`); the
   first-prompt wait bounds each `ready` by one deadline; a tool call's wait
@@ -918,9 +928,7 @@ awaits. Here those run on parallel coroutines.
   resources, instructions) under its lock; a reader of more than one field
   takes it once (`view`). Pi's shared `opening` promise is a detached open
   that callers join through an Event; `close()` also closes the client still
-  connecting, wakes a retry delay, and waits for that connect to end (pi
-  leaves the connect to its request timeout, which here would outlive
-  shutdown). The client of an expired session, which pi detaches and never
+  connecting, wakes a retry delay, and waits for that connect to end. The client of an expired session, which pi detaches and never
   closes, is kept and closed by `close()`. `on_change` is
   async and awaited where the state changes; the extension re-checks the
   state before recording the stored-token snapshot.

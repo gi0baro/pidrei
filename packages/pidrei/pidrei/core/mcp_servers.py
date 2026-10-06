@@ -20,6 +20,28 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 
+def create_tool_name_matcher(entries: list[str] | tuple[str, ...]) -> Callable[[str], bool]:
+    """Whether a tool name matches any of the entries, each an exact name or a pattern."""
+    names = {entry for entry in entries if "*" not in entry}
+    patterns = [_tool_pattern(entry) for entry in entries if "*" in entry]
+    return lambda name: name in names or any(pattern.match(name) for pattern in patterns)
+
+
+# MCP resource tools, which reach every server with resources.
+LIST_MCP_RESOURCES_TOOL = "list_mcp_resources"
+LIST_MCP_RESOURCE_TEMPLATES_TOOL = "list_mcp_resource_templates"
+READ_MCP_RESOURCE_TOOL = "read_mcp_resource"
+
+_MCP_RESOURCE_TOOLS: frozenset[str] = frozenset(
+    (LIST_MCP_RESOURCES_TOOL, LIST_MCP_RESOURCE_TEMPLATES_TOOL, READ_MCP_RESOURCE_TOOL)
+)
+
+
+def is_mcp_tool_name(name: str) -> bool:
+    """Whether a tool comes from MCP: a server tool (`mcp__<server>__<tool>`) or a resource tool."""
+    return name.startswith("mcp__") or name in _MCP_RESOURCE_TOOLS
+
+
 # - "codemode": tools are callable from codemode scripts but neither declared
 #   to the model nor listed in the codemode description, which lists only the
 #   server's namespace. Scripts find them with `search_tools()`.
@@ -172,6 +194,8 @@ def _resolve_exposure_aliases(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_pattern(pattern: str) -> re.Pattern[str]:
+    """Regular expression for a tool name pattern where `*` matches any characters, as
+    `toolExposure`, `--tools`, and `--exclude-tools` accept them."""
     return re.compile("^" + ".*".join(re.escape(part) for part in pattern.split("*")) + "$")
 
 

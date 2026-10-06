@@ -419,6 +419,32 @@ class TestExtensionReplacementAndBuiltins:
         assert loaded == ["llama"]
 
     @pytest.mark.tonio
+    async def test_skips_disabled_builtin_extensions_even_when_settings_or_e_enable_them(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        write(cwd / ".pidrei" / "settings.json", json.dumps({"extensions": ["+builtin:mcp"]}))
+        loaded: list[str] = []
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            disabled_builtin_extensions=["mcp"],
+            additional_extension_paths=["builtin:mcp"],
+            extension_factories=[
+                InlineExtension(name="mcp", builtin=True, factory=_recording_factory("mcp", loaded)),
+                InlineExtension(name="llama", builtin=True, factory=_recording_factory("llama", loaded)),
+            ],
+        )
+
+        async def trust(_extensions_result):
+            return True
+
+        with fake_home(home):
+            await loader.reload(resolve_project_trust=trust)
+
+        assert _paths(loader) == ["builtin:llama"]
+        assert loader.get_extensions().errors == []
+        assert loaded == ["llama"]
+
+    @pytest.mark.tonio
     async def test_loads_built_in_extensions_after_file_extensions_with_and_without_trust_resolution(self, dirs):
         _tmp, agent_dir, cwd, home = dirs
         user_extension = agent_dir / "extensions" / "user.py"

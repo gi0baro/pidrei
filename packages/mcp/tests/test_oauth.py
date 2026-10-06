@@ -26,6 +26,7 @@ from pidrei_mcp.oauth import (
     adapt_oauth_provider,
     authorize_mcp,
     discover_authorization_server_metadata,
+    register_client,
 )
 from pidrei_mcp.url import parse_url
 from pidrei_utils import clock
@@ -421,6 +422,36 @@ async def test_binds_persisted_credentials_to_the_exact_mcp_server_url():
         on_redirect=on_redirect,
     )
     assert await second.tokens() is None
+
+
+# #10493
+@pytest.mark.tonio
+async def test_registers_with_an_application_type_derived_from_the_redirect_uris_unless_one_is_set(monkeypatch):
+    bodies: list[dict[str, Any]] = []
+    async with loopback_servers(monkeypatch) as http_servers:
+
+        async def handler(request, _origin):
+            metadata = await read_json(request)
+            bodies.append(metadata)
+            await _respond_json(request, {**metadata, "client_id": "client"}, 201)
+
+        origin = await http_servers.listen(handler)
+
+        async def register(redirect_uris: list[str], application_type: str | None = None) -> None:
+            await register_client(
+                origin,
+                client_metadata={
+                    "redirect_uris": redirect_uris,
+                    **({"application_type": application_type} if application_type else {}),
+                },
+            )
+
+        await register(["http://127.0.0.1:1234/callback"])
+        await register(["http://[::1]/callback"])
+        await register(["com.example.app:/callback"])
+        await register(["https://app.example/callback"])
+        await register(["http://localhost/callback"], "web")
+    assert [body["application_type"] for body in bodies] == ["native", "native", "native", "web", "web"]
 
 
 @pytest.mark.tonio

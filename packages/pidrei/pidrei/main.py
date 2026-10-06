@@ -794,6 +794,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                     "additional_prompt_template_paths": resolved_prompt_template_paths,
                     "additional_theme_paths": resolved_theme_paths,
                     "no_extensions": bool(parsed.no_extensions),
+                    "disabled_builtin_extensions": ["mcp"] if parsed.no_mcp else None,
                     "no_skills": bool(parsed.no_skills),
                     "no_prompt_templates": bool(parsed.no_prompt_templates),
                     "no_themes": bool(parsed.no_themes),

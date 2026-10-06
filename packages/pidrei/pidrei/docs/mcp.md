@@ -225,6 +225,8 @@ pidrei activates `codemode` when a server with `codemode` exposure connects. It 
 
 Tools with `codemode` or `deferred` exposure can be reached through either indirect mechanism: codemode scripts can call them, and `tool_search` can load them. Codemode calls do not depend on the active tool set, so they remain available after `/tree`, resume, and fork. Tools loaded by `tool_search` are recorded in the transcript and remain declared on that branch.
 
+`--tools` does not remove MCP tools unless one of its entries starts with `mcp__`; `pidrei --tools read,codemode,'mcp__radius__*'` keeps only the tools of `radius`. `--exclude-tools` accepts the same patterns, and `--no-mcp` disables MCP for one run (see [Tools](cli.md#mcp-tools)).
+
 To keep `codemode` active without MCP servers, add `"defaultTools": ["+codemode"]` to your settings (see [Enable codemode](cli.md#enable-codemode)). To prevent automatic codemode activation, set `"autoEnableCodemode": false` beside `mcpServers`. A project value overrides the user-level value. pidrei warns once when neither `codemode` nor `tool_search` is active and non-direct tools cannot be called.
 
 Text results over 20 KB reach the model with their middle removed around a `…N chars truncated…` marker. The full text is saved to a temporary file named in the result. Codemode scripts receive the complete result and can reduce it before returning output to the model.
@@ -261,7 +263,7 @@ Changes to enabled state or exposure apply only to the current session. A file-c
 
 ### Replace the built-in MCP support
 
-An installed extension that registers `/mcp`, such as a third-party MCP extension, replaces the built-in MCP support for sessions. pidrei then does not read `mcp.json` or connect its servers in a session, and `/mcp` belongs to the extension. Remove the extension to restore the built-in behavior. To disable built-in MCP support without a replacement, disable `mcp` under Built-in in `pidrei config`, or set `"extensions": ["-builtin:mcp"]` in your settings (see [Where extensions live](extensions.md#where-extensions-live)).
+An installed extension that registers `/mcp`, such as a third-party MCP extension, replaces the built-in MCP support for sessions. pidrei then does not read `mcp.json` or connect its servers in a session, and `/mcp` belongs to the extension. Remove the extension to restore the built-in behavior. To disable built-in MCP support without a replacement, disable `mcp` under Built-in in `pidrei config`, or set `"extensions": ["-builtin:mcp"]` in your settings (see [Where extensions live](extensions.md#where-extensions-live)). `--no-mcp` disables it for one run.
 
 An extension that registers `codemode` or `tool_search` similarly replaces the built-in tool with that name. Shell-level `pidrei mcp` commands always use the built-in implementation.
 

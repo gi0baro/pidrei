@@ -254,10 +254,27 @@ async def test_presents_callable_tools_per_codemode_mode(harnesses):
     assert "\n- read: " not in request_prompts[1]
     assert "\n- codemode: " in request_prompts[1]
     assert "\n- read: " not in harness.session.system_prompt
+    # Hidden tools' guidelines move from the rules to their codemode sections (#10343).
+    assert "Use read to examine files" not in request_prompts[1]
+    assert "- Use read to examine files instead of cat or sed." in description("codemode")
 
     # Without codemode, tools keep their plain descriptions.
     harness.session.set_active_tools_by_name(["echo"])
     assert description("echo") == "Echo text back.\n\nSecond paragraph."
+
+
+# #10343
+@pytest.mark.tonio
+async def test_shows_the_guidelines_of_tools_that_do_not_fit_the_inline_budget_through_describe_tool(harnesses):
+    harness = await setup(harnesses, [register_tools])
+    harness.settings_manager.apply_overrides({"codemode": {"mode": "only", "inlineBudget": 0}})
+    harness.session.set_active_tools_by_name(["read", "codemode"])
+    codemode = next(tool for tool in harness.session.agent.state.tools if tool.name == "codemode")
+    assert "### `read`" not in codemode.description
+
+    result = await run(harness, "text(await describe_tool('read'))")
+
+    assert "- Use read to examine files instead of cat or sed." in result_text(result)
 
 
 @pytest.mark.tonio
@@ -608,6 +625,28 @@ text(json.dumps([r['output'], r['exit_code'], type(r['wall_time_seconds']).__nam
 
     assert result.is_error is False
     assert json.loads(result_text(result)) == ["out\n", 3, "float"]
+
+
+# https://github.com/earendil-works/pi/issues/10251
+@pytest.mark.tonio
+async def test_resolves_read_calls_to_text_for_text_files_and_to_image_blocks_that_image_shows(harnesses):
+    harness = await setup(harnesses, tools=["codemode", "read"])
+    await (fs.Path(harness.temp_dir) / "notes.txt").write_text("hello")
+    await (fs.Path(harness.temp_dir) / "pixel.png").write_bytes(base64.b64decode(TINY_PNG_BASE64))
+
+    # `read` returns `str | <image block>`; the type check needs the narrowing pi's script does without.
+    result = await run(
+        harness,
+        """text(await tools.read(path='notes.txt'))
+shot = await tools.read(path='pixel.png')
+assert not isinstance(shot, str)
+text(shot['note'])
+image(shot)""",
+    )
+
+    assert result.is_error is False
+    assert await check_saved_images(result_text(result)) == "hello\nRead image file [image/png]\n<saved>\n<image>"
+    assert result.content[-1] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
 
 
 @pytest.mark.tonio

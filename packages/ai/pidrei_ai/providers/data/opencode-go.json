@@ -790,9 +790,9 @@
       "maxTokens": 131072,
       "type": "chat"
     },
-    "chat:space-bunny-free": {
-      "id": "space-bunny-free",
-      "name": "Space Bunny Free",
+    "chat:space-bunny": {
+      "id": "space-bunny",
+      "name": "Space Bunny",
       "api": "openai-completions",
       "provider": "opencode-go",
       "baseUrl": "https://opencode.ai/zen/go/v1",
@@ -802,9 +802,9 @@
         "image"
       ],
       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
+        "input": 0.15,
+        "output": 0.6,
+        "cacheRead": 0.03,
         "cacheWrite": 0
       },
       "compat": {

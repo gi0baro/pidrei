@@ -13,7 +13,7 @@ Translations:
   timing it. A server that never answers is never released (the fixture
   releases every server at teardown).
 - `vi.waitFor` polling becomes a wait on `Changes`, which the wrapped
-  `ExtensionAPI.register_tool` and the fake transport factory notify.
+  `ExtensionAPI.register_tools` and the fake transport factory notify.
 - pi binds the UI context with `bindExtensions` after creating the harness;
   here the harness binds once, with it.
 - "prefers the mcp.json server over a registered ..." waits for the startup
@@ -33,7 +33,7 @@ import pytest
 import tonio.colored as tonio
 from tonio.colored import fs
 
-from pidrei.core.agent_session import ExtensionBindings
+from pidrei.core.agent_session import AgentSession, ExtensionBindings
 from pidrei.core.extensions import ToolDefinition
 from pidrei.core.extensions.loader import ExtensionAPI
 from pidrei.core.extensions.runner import emit_session_shutdown_event
@@ -93,9 +93,16 @@ class Changes:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._waiters: list[tuple[Callable[[], bool], tonio.Event]] = []
+        # Names of the tools extensions registered, kept by the session or not.
+        self._offered: set[str] = set()
 
-    def notify(self) -> None:
+    def offered(self, name: str) -> bool:
         with self._lock:
+            return name in self._offered
+
+    def notify(self, offered: tuple[str, ...] = ()) -> None:
+        with self._lock:
+            self._offered.update(offered)
             waiters = list(self._waiters)
         for predicate, event in waiters:
             if predicate():
@@ -117,13 +124,13 @@ class Changes:
 @pytest.fixture
 def changes(monkeypatch):
     changes = Changes()
-    original = ExtensionAPI.register_tool
+    original = ExtensionAPI.register_tools
 
-    def register_tool(self, tool):
-        original(self, tool)
-        changes.notify()
+    def register_tools(self, tools, **options):
+        original(self, tools, **options)
+        changes.notify(tuple(tool.name for tool in tools))
 
-    monkeypatch.setattr(ExtensionAPI, "register_tool", register_tool)
+    monkeypatch.setattr(ExtensionAPI, "register_tools", register_tools)
     return changes
 
 
@@ -269,6 +276,10 @@ async def setup(
     *,
     auto_enable_codemode: bool | None = None,
     built_in_tools: list[str] | None = None,
+    allowed_tool_names: list[str] | None = None,
+    excluded_tool_names: list[str] | None = None,
+    session_manager=None,
+    wait_for_tools: bool = True,
     extension_factories: tuple = (),
     tool_exposure: dict[str, str] | None = None,
     resources: bool = False,
@@ -276,6 +287,9 @@ async def setup(
     description: str | None = None,
     instructions: str | None = None,
 ):
+    """`allowed_tool_names`/`excluded_tool_names` are `--tools` and
+    `--exclude-tools`; `session_manager` is a session to continue;
+    `wait_for_tools` waits for `mcp__docs__search` to register."""
     created, _releases = harnesses
     calls: list[str] = []
     notifications: list[str] = []
@@ -298,7 +312,16 @@ async def setup(
     # `built_in_tools` are the built-in tools active at the start. The MCP
     # extension activates codemode or tool_search.
     harness = await create_harness(
-        initial_active_tool_names=built_in_tools if built_in_tools is not None else [],
+        initial_active_tool_names=(
+            allowed_tool_names
+            if allowed_tool_names is not None
+            else built_in_tools
+            if built_in_tools is not None
+            else []
+        ),
+        allowed_tool_names=allowed_tool_names,
+        excluded_tool_names=excluded_tool_names,
+        session_manager=session_manager,
         extension_factories=[
             *extension_factories,
             create_codemode_extension(),
@@ -309,7 +332,8 @@ async def setup(
     )
     created.append(harness)
     # The first prompt waits only for servers with direct tools; wait for the others here.
-    await changes.until(lambda: has_tool(harness, "mcp__docs__search"))
+    if wait_for_tools:
+        await changes.until(lambda: has_tool(harness, "mcp__docs__search"))
     return harness, calls, servers, notifications
 
 
@@ -349,6 +373,147 @@ def codemode_description(harness) -> str:
 
 
 # AgentSession MCP integration
+
+
+def registered_tool_names(harness) -> list[str]:
+    return [tool.name for tool in harness.session.get_all_tools()]
+
+
+@pytest.mark.tonio
+async def test_keeps_mcp_tools_when_tools_names_no_mcp_tool(harnesses, changes):
+    async def check(exposure: str) -> None:
+        harness, *_ = await setup(harnesses, changes, exposure, allowed_tool_names=["read", "codemode"], resources=True)
+        # The server's tools and the resource tools register one at a time.
+        expected = {"mcp__docs__search", "mcp__docs__fail", "list_mcp_resources", "read_mcp_resource"}
+        await changes.until(lambda: expected <= set(nested_tool_names(harness)))
+        assert harness.session.get_active_tool_names() == ["read", "codemode"]
+        assert "bash" not in registered_tool_names(harness)
+
+    for exposure in ("codemode", "deferred"):
+        await check(exposure)
+
+    # A direct MCP tool stays registered but is declared only when --tools names it.
+    harness, *_ = await setup(
+        harnesses, changes, "codemode", allowed_tool_names=["codemode"], tool_exposure={"fail": "direct"}
+    )
+    await changes.until(lambda: "mcp__docs__fail" in registered_tool_names(harness))
+    assert harness.session.get_active_tool_names() == ["codemode"]
+
+
+@pytest.mark.tonio
+async def test_removes_mcp_tools_with_no_tools(harnesses, changes):
+    # The first prompt waits for servers with direct tools, so their tools would be registered by then.
+    harness, _calls, servers, _notifications = await setup(
+        harnesses, changes, "direct", allowed_tool_names=[], wait_for_tools=False
+    )
+    harness.set_responses([faux_assistant_message("done")])
+    await harness.session.prompt("go")
+
+    assert len(servers) == 1
+    assert harness.session.get_all_tools() == []
+    assert harness.session.get_active_tool_names() == []
+
+
+@pytest.mark.tonio
+async def test_does_not_declare_unnamed_mcp_tools_restored_from_the_transcript(harnesses, changes):
+    first, *_ = await setup(harnesses, changes, "direct")
+    first.set_responses([faux_assistant_message("one"), faux_assistant_message("two")])
+    await first.session.prompt("first")
+    await first.session.prompt("second")
+    assert "mcp__docs__search" in declared_tool_names(first)
+
+    # Like `pidrei --tools read,codemode -c` followed by /tree.
+    second, *_ = await setup(
+        harnesses,
+        changes,
+        "direct",
+        allowed_tool_names=["read", "codemode"],
+        session_manager=first.session_manager,
+    )
+    first_assistant = next(
+        entry
+        for entry in second.session_manager.get_branch()
+        if entry["type"] == "message" and entry["message"].role == "assistant"
+    )
+    await second.session.navigate_tree(first_assistant["id"])
+
+    # The transcript's loadout is restored without the MCP tools it declared.
+    assert second.session.get_active_tool_names() == []
+    assert "mcp__docs__search" in registered_tool_names(second)
+
+
+@pytest.mark.tonio
+async def test_lets_tool_search_declare_unnamed_mcp_tools_when_tools_names_it(harnesses, changes):
+    harness, *_ = await setup(harnesses, changes, "deferred", allowed_tool_names=["tool_search"])
+    harness.set_responses(
+        [
+            faux_assistant_message(
+                [faux_tool_call("tool_search", {"query": "search the docs", "limit": 1})], stop_reason="toolUse"
+            ),
+            faux_assistant_message("loaded"),
+        ]
+    )
+    await harness.session.prompt("load")
+
+    assert harness.session.get_active_tool_names() == ["tool_search", "mcp__docs__search"]
+
+
+@pytest.mark.tonio
+async def test_filters_mcp_tools_by_the_mcp_entries_of_tools(harnesses, changes):
+    harness, *_ = await setup(
+        harnesses,
+        changes,
+        "codemode",
+        allowed_tool_names=["codemode", "mcp__docs__s*"],
+        resources=True,
+        tool_exposure={"shot": "direct"},
+    )
+    await changes.until(lambda: harness.session.get_active_tool_names() == ["codemode", "mcp__docs__shot"])
+    await changes.until(lambda: changes.offered("list_mcp_resources"))
+    registered = registered_tool_names(harness)
+    assert "mcp__docs__search" in registered
+    assert "mcp__docs__shot" in registered
+    assert "mcp__docs__fail" not in registered
+    assert "list_mcp_resources" not in registered
+
+
+@pytest.mark.tonio
+async def test_removes_mcp_tools_matching_exclude_tools_patterns(harnesses, changes):
+    harness, *_ = await setup(
+        harnesses, changes, "codemode", allowed_tool_names=["codemode"], excluded_tool_names=["mcp__docs__f*"]
+    )
+    await changes.until(lambda: changes.offered("mcp__docs__fail"))
+    registered = registered_tool_names(harness)
+    assert "mcp__docs__search" in registered
+    assert "mcp__docs__fail" not in registered
+
+
+@pytest.mark.tonio
+async def test_registers_the_tools_of_a_server_update_in_one_step(harnesses, changes, monkeypatch):
+    """PiDrei-only: pi registers a server's tools in one synchronous loop, so
+    nothing sees part of them. Here every registry the session publishes holds
+    all of the server's tools and resource tools, or none."""
+    expected = {
+        "mcp__docs__search",
+        "mcp__docs__fail",
+        "mcp__docs__shot",
+        "list_mcp_resources",
+        "list_mcp_resource_templates",
+        "read_mcp_resource",
+    }
+    published: list[set[str]] = []
+    refresh = AgentSession._refresh_tool_registry_locked
+
+    def recording_refresh(self, *args):
+        refresh(self, *args)
+        published.append(expected & set(self._tool_registry))
+
+    monkeypatch.setattr(AgentSession, "_refresh_tool_registry_locked", recording_refresh)
+    harness, *_ = await setup(harnesses, changes, "codemode", resources=True)
+    await changes.until(lambda: expected <= set(registered_tool_names(harness)))
+
+    assert expected in published
+    assert all(names in (set(), expected) for names in published)
 
 
 @pytest.mark.tonio

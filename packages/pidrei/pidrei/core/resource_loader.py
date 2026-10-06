@@ -267,6 +267,8 @@ class DefaultResourceLoader:
         additional_prompt_template_paths: list[str] | None = None,
         additional_theme_paths: list[str] | None = None,
         no_extensions: bool = False,
+        # Built-in extensions not to load, by name (such as `mcp`), even when settings or `-e` enable them.
+        disabled_builtin_extensions: list[str] | None = None,
         no_skills: bool = False,
         no_prompt_templates: bool = False,
         no_themes: bool = False,
@@ -299,6 +301,7 @@ class DefaultResourceLoader:
         self._additional_prompt_template_paths = additional_prompt_template_paths or []
         self._additional_theme_paths = additional_theme_paths or []
         self._no_extensions = no_extensions
+        self._disabled_builtin_extensions = frozenset(disabled_builtin_extensions or ())
         self._no_skills = no_skills
         self._no_prompt_templates = no_prompt_templates
         self._no_themes = no_themes
@@ -474,6 +477,12 @@ class DefaultResourceLoader:
             extension_paths = cli_enabled_extensions
         else:
             extension_paths = await self._merge_paths(cli_enabled_extensions, enabled_extensions)
+        extension_paths = [
+            path
+            for path in extension_paths
+            if not path.startswith(BUILTIN_PATH_PREFIX)
+            or path[len(BUILTIN_PATH_PREFIX) :] not in self._disabled_builtin_extensions
+        ]
 
         extensions_result = await self._load_final_extension_set(extension_paths, pre_trust_extensions)
         for resolved in await self._missing_local_paths(self._additional_extension_paths):

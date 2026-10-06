@@ -70,6 +70,14 @@ class TestProviderRetryClassification:
     def test_matches_dns_transport_failure_wording(self, text):
         assert is_retryable_assistant_error(error_message(text)) is True
 
+    @pytest.mark.parametrize(
+        "text",
+        ["The pending stream has been canceled", "The pending stream has been canceled (caused by: socket closed)"],
+    )
+    def test_matches_http2_pending_stream_cancellation(self, text):
+        # Regression for #10379.
+        assert is_retryable_assistant_error(error_message(text)) is True
+
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):
         assert is_retryable_assistant_error(error_message(OPENAI_RESPONSES_EARLY_EOF_MESSAGE)) is True
 

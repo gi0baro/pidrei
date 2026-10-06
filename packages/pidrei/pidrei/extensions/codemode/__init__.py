@@ -105,11 +105,15 @@ def create_codemode_extension(
         def get_tool_namespace(name: str) -> Any:
             return next((tool.namespace for tool in pi.get_all_tools() if tool.name == name), None)
 
+        def get_tool_guidelines() -> dict[str, list[str]]:
+            return {tool.name: tool.prompt_guidelines or [] for tool in pi.get_all_tools()}
+
         pi.on("session_start", on_session_start)
         pi.on("session_shutdown", on_session_shutdown)
         options = CodemodeToolOptions(
             get_pool=lambda: pool,
             get_tool_namespace=get_tool_namespace,
+            get_tool_guidelines=get_tool_guidelines,
             models=models,
             append_entry=pi.append_entry,
             get_mode=lambda: mode if mode is not None else _read_mode(pi),

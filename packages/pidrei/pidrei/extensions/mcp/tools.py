@@ -32,6 +32,7 @@ from pidrei_tui import Container, Spacer, Text
 from pidrei_utils.cancel import CancelToken
 
 from ...core.extensions.types import ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace, ToolRenderers
+from ...core.mcp_servers import READ_MCP_RESOURCE_TOOL
 from ...core.tools.render_utils import format_tool_call_with_args, get_text_output, replace_tabs
 from ...core.tools.truncate import format_size, truncate_middle
 from ...modes.interactive.components.keybinding_hints import key_hint
@@ -53,8 +54,6 @@ _MAX_TOOL_NAME_LENGTH = 64
 MCP_OUTPUT_MAX_BYTES = 20 * 1024
 # Visual (wrapped) result lines shown before the output is expanded.
 _OUTPUT_PREVIEW_LINES = 5
-# Tool that reads the resources named by resource links.
-READ_MCP_RESOURCE_TOOL = "read_mcp_resource"
 
 type ModelContent = TextContent | ImageContent
 

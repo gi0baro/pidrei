@@ -2,7 +2,13 @@
 
 JavaScript-only cases are dropped (prelude parse, non-Error throws, microtask
 spinning, the never-settling promise, worker path strings); the rest are
-adapted or re-specified for Monty. A script's value is its last line, not a
+adapted or re-specified for Monty. So are the cases that guard the QuickJS
+worker against a script patching the realm it shares with the prelude (the
+malformed worker payloads, patched built-ins and globals, intrinsics frozen
+through instances, instance overrides of frozen prototypes, and errors whose
+name or message is not a string): here the prelude runs in the host, out of a
+script's reach, values cross as Python objects, and an error's name and
+message are always strings. A script's value is its last line, not a
 `return` (Monty's checker rejects a top-level `return`). Cases with no pi
 counterpart are at the end: the type check, `all_settled`, `call_tool`,
 refused positional arguments, dropped `None` arguments, the execution cap and

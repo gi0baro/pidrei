@@ -85,7 +85,9 @@ def extension_actions() -> dict:
         "get_settings": dict,
         "set_active_tools": lambda *args: None,
         "update_active_tools": lambda *args: None,
-        "refresh_tools": lambda: None,
+        "register_tools": lambda extension, registered, _update_active: extension.tools.update(
+            {tool.definition.name: tool for tool in registered}
+        ),
         "get_commands": list,
         "set_model": _false,
         "get_thinking_level": lambda: "off",
