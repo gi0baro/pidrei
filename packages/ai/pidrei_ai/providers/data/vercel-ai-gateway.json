@@ -1782,7 +1782,7 @@
       },
       "cost": {
         "input": 0.25,
-        "output": 0.9,
+        "output": 0.8,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
@@ -3669,6 +3669,40 @@
       },
       "contextWindow": 262144,
       "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:mistral/mistral-large-4": {
+      "id": "mistral/mistral-large-4",
+      "name": "Mistral Large 4",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.68,
+        "output": 2.09,
+        "cacheRead": 0.07,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 262144,
       "inputLimits": {
         "images": {
           "resize": {
@@ -6408,9 +6442,9 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.1,
-        "output": 0.2,
-        "cacheRead": 0.01,
+        "input": 0.09,
+        "output": 0.18,
+        "cacheRead": 0.009,
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,

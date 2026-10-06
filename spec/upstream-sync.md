@@ -928,9 +928,7 @@ awaits. Here those run on parallel coroutines.
   resources, instructions) under its lock; a reader of more than one field
   takes it once (`view`). Pi's shared `opening` promise is a detached open
   that callers join through an Event; `close()` also closes the client still
-  connecting, wakes a retry delay, and waits for that connect to end (pi
-  leaves the connect to its request timeout, which here would outlive
-  shutdown). The client of an expired session, which pi detaches and never
+  connecting, wakes a retry delay, and waits for that connect to end. The client of an expired session, which pi detaches and never
   closes, is kept and closed by `close()`. `on_change` is
   async and awaited where the state changes; the extension re-checks the
   state before recording the stored-token snapshot.

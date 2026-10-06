@@ -6,6 +6,62 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.0.4.0] - 2026-10-06
+
+Tracks [Pi 1.0.4](https://github.com/earendil-works/pi/releases/tag/v1.0.4).
+
+### Added
+
+- Tool patterns: `--tools` and `--exclude-tools` accept `*` patterns, for
+  example `--tools read,codemode,'mcp__radius__*'` keeps only one MCP
+  server's tools. See the CLI page.
+- `--no-mcp` turns off the built-in MCP support for one run: no servers
+  connect, and there are no MCP tools or `/mcp`.
+- `pi.register_tools(tools, update_active=None)` registers several tools in
+  one step, so the session sees all of them or none; `update_active` is an
+  `update_active_tools()` callback applied in the same step. See the
+  extensions page.
+
+### Changed
+
+- `--tools` keeps MCP tools unless an entry starts with `mcp__`, so
+  `pidrei --tools codemode` can still reach MCP servers. An MCP tool that no
+  entry names or matches is never declared directly; only `tool_search`, if
+  listed, can load it. `--no-tools` still removes every tool.
+- Codemode: `tools.read()` returns an image block for image files
+  (`{'type': 'image', 'data', 'mimeType', 'note'}`), which `image()` shows,
+  and the file's text otherwise. Scripts narrow the result before reading its
+  keys.
+- Model catalog regenerated from models.dev.
+- Bumped the pydantic-monty dependency to 1.1.0.
+
+### Fixed
+
+- Syntax highlighting in fenced code blocks keeps its colours after the first
+  line of multiline strings and comments.
+- MCP OAuth sign-in no longer fails with `invalid_redirect_uri` on servers
+  with OpenID Connect client registration: pidrei registers as a native
+  client. `pidrei_mcp.oauth.register_client()` sends `application_type`,
+  derived from `redirect_uris` when the metadata does not set it: `native`
+  for loopback hosts and custom schemes, otherwise `web`.
+- The system prompt's rules and skills hint no longer name tools hidden by
+  `prepare_loadout`. Hidden tools are left out of the rules, the skills hint
+  names no tool when the file reader is hidden, and codemode shows each
+  tool's prompt guidelines with its declaration (in its description,
+  `describe_tool()` and `ALL_TOOLS`). `ToolLoadout` gains
+  `get_prompt_guidelines()`.
+- Bedrock requests that fail with `The pending stream has been canceled`
+  after a stalled HTTP/2 connection are retried.
+- An extension registering a tool while an MCP server connected could fail
+  with `dictionary changed size during iteration`, and a server's tools could
+  reach the model a few at a time. Each MCP server update now registers its
+  tools in one step.
+
+### Not ported
+
+- Pi's frozen built-ins for codemode scripts: scripts are Python on Monty,
+  where the helpers run in the host and a script cannot patch them.
+
 ## [1.0.3.0] - 2026-10-05
 
 Tracks [Pi 1.0.3](https://github.com/earendil-works/pi/releases/tag/v1.0.3).

@@ -1415,9 +1415,10 @@ TEST_HOMES = {
         "exports at modular dist output; pidrei ships wheels with no bundled interpreter"
     ),
     "packages/coding-agent/test/syntax-highlight.test.ts": (
-        "N/A: engine-specific — it specs highlight.js grammar loading and HTML-span "
-        "re-rendering; pidrei highlights with pygments (see utils/syntax_highlight.py), "
-        "which has no grammar registry and emits no HTML"
+        "partial mirror: the theme-level cases in test_syntax_highlight.py; the renderer "
+        "block is N/A (engine-specific — it specs highlight.js grammar loading and HTML-span "
+        "re-rendering; pidrei highlights with pygments, which has no grammar registry and "
+        "emits no HTML)"
     ),
     # 0.84.4 additions.
     "packages/coding-agent/test/session-manager/file-operations.test.ts": (
