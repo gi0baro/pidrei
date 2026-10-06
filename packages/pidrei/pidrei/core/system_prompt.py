@@ -37,6 +37,9 @@ class BuildSystemPromptOptions:
     force_system_prompt: str | None = None
     # Tools to include in prompt. Default: [read, bash, edit, write].
     selected_tools: list[str] | None = None
+    # Selected tools whose declarations requests leave out (`prepare_loadout` hidden declarations).
+    # They are reachable only through another tool, so the tool list and rules leave them out too.
+    hidden_tools: list[str] | None = None
     # Optional one-line tool snippets keyed by tool name.
     tool_snippets: dict[str, str] | None = None
     # Guideline bullets contributed by each tool, keyed by tool name.
@@ -73,6 +76,7 @@ def normalize_build_system_prompt_options(input: BuildSystemPromptOptions) -> No
         selected_tools=list(
             input.selected_tools if input.selected_tools is not None else ["read", "bash", "edit", "write"]
         ),
+        hidden_tools=list(input.hidden_tools or []),
         tool_snippets=dict(input.tool_snippets or {}),
         tool_guidelines={name: list(guidelines) for name, guidelines in (input.tool_guidelines or {}).items()},
         prompt_guidelines=list(input.prompt_guidelines or []),
@@ -129,6 +133,7 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
     """Build the ordered, independently replaceable sections of the structured system prompt."""
     options = normalize_build_system_prompt_options(input)
     selected_tools = options.selected_tools or []
+    hidden_tools = options.hidden_tools or []
     tool_snippets = options.tool_snippets or {}
     custom_sections = options.sections or {}
 
@@ -136,6 +141,7 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
         if not _SYSTEM_PROMPT_SECTION_NAME.match(name) or name == "preamble":
             raise Exception(f"Invalid system prompt section name: {name}")
 
+    declared_tools = [name for name in selected_tools if name not in hidden_tools]
     prompt_sections: dict[str, str] = {}
     if options.custom_prompt:
         prompt_sections["preamble"] = options.custom_prompt
@@ -144,13 +150,13 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
             "You are an expert coding assistant operating inside pidrei, a coding agent harness. "
             "You help users by reading files, executing commands, editing code, and writing new files."
         )
-        visible_tools = [name for name in selected_tools if tool_snippets.get(name)]
+        visible_tools = [name for name in declared_tools if tool_snippets.get(name)]
         tools = "\n".join(f"- {name}: {tool_snippets[name]}" for name in visible_tools) if visible_tools else "(none)"
         prompt_sections["tools"] = (
             f"{tools}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project."
         )
         prompt_sections["rules"] = _build_rules(
-            selected_tools, options.tool_guidelines or {}, options.prompt_guidelines or []
+            declared_tools, options.tool_guidelines or {}, options.prompt_guidelines or []
         )
         prompt_sections[
             "docs"
@@ -167,7 +173,11 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
         prompt_sections["addendum"] = options.append_system_prompt
     if options.context_files:
         prompt_sections["project_context"] = _render_project_context(options.context_files)
-    skill_file_read_tool = next((tool for tool in ("read", "bash") if tool in selected_tools), None)
+    # A hidden reader is still reachable through another tool, so skills stay but the hint names no tool.
+    readers = ("read", "bash")
+    skill_file_read_tool = next((tool for tool in readers if tool in declared_tools), None) or (
+        "indirect" if any(tool in selected_tools for tool in readers) else None
+    )
     if skill_file_read_tool and options.skills:
         skills_prompt = format_skills_for_prompt(options.skills, skill_file_read_tool).strip()
         if skills_prompt:

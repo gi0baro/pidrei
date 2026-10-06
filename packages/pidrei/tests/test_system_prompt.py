@@ -168,3 +168,34 @@ class TestSkills:
         )
 
         assert "<available_skills>" not in prompt
+
+
+# #10343
+class TestHiddenTools:
+    @staticmethod
+    def build(hidden_tools: list[str]) -> str:
+        return build_system_prompt(
+            BuildSystemPromptOptions(
+                selected_tools=["read", "bash", "run"],
+                hidden_tools=hidden_tools,
+                tool_snippets={"read": "Read files", "bash": "Run commands", "run": "Run a task"},
+                tool_guidelines={"read": ["Use read for files."], "run": ["Prefer run."]},
+                context_files=[],
+                skills=[TEST_SKILL],
+                cwd=os.getcwd(),
+            )
+        )
+
+    def test_leaves_hidden_tools_out_of_the_tool_list_and_rules(self):
+        prompt = self.build(["read", "bash"])
+
+        assert "<tools>\n- run: Run a task\n" in prompt
+        assert "- read: " not in prompt
+        assert "Use read for files." not in prompt
+        assert "Use bash for file operations" not in prompt
+        assert "- Prefer run." in prompt
+
+    def test_keeps_skills_without_naming_a_hidden_reader(self):
+        assert "\nLoad a skill's file when the task matches its description." in self.build(["read", "bash"])
+        assert "Use bash to load a skill's file" in self.build(["read"])
+        assert "Use the read tool to load a skill's file" in self.build([])

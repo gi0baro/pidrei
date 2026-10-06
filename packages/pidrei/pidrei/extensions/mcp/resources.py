@@ -25,12 +25,10 @@ from pidrei_mcp import ListResourcesResult, ListResourceTemplatesResult, ReadRes
 from pidrei_utils.cancel import CancelToken
 
 from ...core.extensions.types import ToolAnnotations, ToolDefinition
+from ...core.mcp_servers import LIST_MCP_RESOURCE_TEMPLATES_TOOL, LIST_MCP_RESOURCES_TOOL, READ_MCP_RESOURCE_TOOL
 from .config import McpExposure, locale_order
-from .tools import READ_MCP_RESOURCE_TOOL, McpToolDetails, limit_mcp_content, to_model_content, to_tool_exposure
+from .tools import McpToolDetails, limit_mcp_content, to_model_content, to_tool_exposure
 
-
-LIST_MCP_RESOURCES_TOOL = "list_mcp_resources"
-LIST_MCP_RESOURCE_TEMPLATES_TOOL = "list_mcp_resource_templates"
 
 __all__ = [
     "LIST_MCP_RESOURCES_TOOL",

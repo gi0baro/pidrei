@@ -557,7 +557,11 @@ async def execute_codemode(
 
     callable_tools = get_codemode_callable_tools(ctx.tools) if ctx is not None else []
     by_name = {tool.name: tool for tool in callable_tools}
-    rendered = render_codemode_tools((to_codemode_declaration(tool) for tool in callable_tools), models=models)
+    # ALL_TOOLS entries and `describe_tool()` carry the declaration with the tool's guidelines.
+    guidelines = options.get_tool_guidelines() if options.get_tool_guidelines is not None else {}
+    rendered = render_codemode_tools(
+        (to_codemode_declaration(tool, guidelines.get(tool.name, ())) for tool in callable_tools), models=models
+    )
     samples = {item.tool.name: item.sample for item in rendered}
     reachable = [by_name[item.tool.name] for item in rendered]
 

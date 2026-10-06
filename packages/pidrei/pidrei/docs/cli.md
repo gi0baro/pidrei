@@ -98,10 +98,10 @@ pidrei --tools read,grep,find,ls -p "Review this project"
 
 | Option | Behavior |
 |--------|----------|
-| `-t`, `--tools <list>` | Allowlist of built-in, extension, or custom tool names |
-| `-xt`, `--exclude-tools <list>` | Disable these names after every other selection |
+| `-t`, `--tools <list>` | Allowlist of built-in, extension, or custom tools: names, or patterns where `*` matches any characters. MCP tools are kept unless an entry starts with `mcp__` (see [MCP tools](#mcp-tools)) |
+| `-xt`, `--exclude-tools <list>` | Disable these names or patterns after every other selection, MCP tools included |
 | `-nbt`, `--no-builtin-tools` | Disable built-in tools, keep extension and custom ones |
-| `-nt`, `--no-tools` | Start with every tool disabled |
+| `-nt`, `--no-tools` | Start with every tool disabled, MCP tools included |
 
 `read`, `bash`, `edit`, and `write` are enabled by default; the `defaultTools`
 setting changes that. `--tools` replaces the whole selection, so name every
@@ -113,6 +113,24 @@ name replaces it.
 `/reload` enables tools newly added to `defaultTools`. It does not disable
 tools removed from it or re-enable unchanged tools you turned off. `--tools`,
 `--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
+
+<a id="mcp-tools"></a>
+
+`--tools` selects the tools declared to the model. It does not remove MCP
+tools, whose reach is set by their [exposure](mcp.md#control-tool-exposure):
+`pidrei --tools read,codemode` keeps every MCP tool callable from codemode
+scripts. An MCP tool that no entry names or matches is never declared directly,
+whatever its exposure; only `tool_search`, if listed, can load it. Once an
+entry starts with `mcp__`, `--tools` filters MCP tools too, so this keeps only
+the tools of the `radius` server:
+
+```sh
+pidrei --tools read,bash,codemode,'mcp__radius__*'
+```
+
+The MCP resource tools (`list_mcp_resources`, `list_mcp_resource_templates`,
+`read_mcp_resource`) count as MCP tools. To remove MCP tools, use
+`--exclude-tools 'mcp__*'` or [`--no-mcp`](#resources).
 
 | Built-in | Purpose |
 |----------|---------|
@@ -183,6 +201,7 @@ pidrei -e ./review.py
 |--------|----------|
 | `-e`, `--extension <path>` | Load an extension file or directory, or a built-in extension such as `builtin:mcp`; repeatable |
 | `-ne`, `--no-extensions` | Skip discovered, configured, and built-in extensions; `-e` still loads, so `pidrei -ne -e builtin:mcp` keeps only the built-in MCP support |
+| `--no-mcp` | Disable the built-in MCP support for this run: no servers connect, and there are no MCP tools or `/mcp`. An extension that replaces the built-in MCP support is not affected |
 | `--skill <path>` | Load a skill file or directory; repeatable |
 | `-ns`, `--no-skills` | Skip discovered and configured skills; `--skill` still loads |
 | `--prompt-template <path>` | Load a prompt template file or directory; repeatable |

@@ -33,7 +33,7 @@ import os
 import re
 import sys
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -262,14 +262,27 @@ class ExtensionAPI:
         return unsubscribe
 
     def register_tool(self, tool: ToolDefinition) -> None:
+        self.register_tools([tool])
+
+    def register_tools(
+        self,
+        tools: Sequence[ToolDefinition],
+        *,
+        update_active: Callable[[list[str]], list[str] | None] | None = None,
+    ) -> None:
+        """Register several tools in one step (PiDrei-only): the session sees all of
+        them or none, as pi's synchronous `registerTool()` loop guarantees. A tool with
+        a registered name replaces it. `update_active` is an `update_active_tools()`
+        callback applied in the same step, after the tools are registered."""
         self._assert_active()
-        if not isinstance(tool.parameters, dict):
-            raise Exception(  # noqa: TRY004 - pi throws a plain Error
-                f'Tool "{tool.name}" registered by extension "{self._extension.path}" '
-                "must define an object parameter schema."
-            )
-        self._extension.tools[tool.name] = RegisteredTool(definition=tool, source_info=self._extension.source_info)
-        self._runtime.refresh_tools()
+        for tool in tools:
+            if not isinstance(tool.parameters, dict):
+                raise Exception(  # noqa: TRY004 - pi throws a plain Error
+                    f'Tool "{tool.name}" registered by extension "{self._extension.path}" '
+                    "must define an object parameter schema."
+                )
+        registered = [RegisteredTool(definition=tool, source_info=self._extension.source_info) for tool in tools]
+        self._runtime.register_tools(self._extension, registered, update_active)
 
     def register_command(
         self,

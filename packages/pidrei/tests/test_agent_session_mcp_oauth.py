@@ -211,6 +211,8 @@ async def test_registers_with_the_configured_client_name(monkeypatch):
         fallback, fallback_server, *_ = await setup(oauth_servers, harnesses, "follow")
         await fallback.session.prompt("/mcp login issues")
         assert [metadata["client_name"] for metadata in fallback_server.registrations] == ["pidrei"]
+        # OpenID Connect servers reject the loopback redirect URI of a `web` client (#10493).
+        assert [metadata["application_type"] for metadata in fallback_server.registrations] == ["native"]
 
 
 @pytest.mark.tonio

@@ -135,6 +135,7 @@ class TestReadTool:
         assert get_text_output(result) == content
         assert "Use offset=" not in get_text_output(result)
         assert result.details is None
+        assert result.structured_content == content
 
     @pytest.mark.tonio
     async def test_handles_non_existent_files(self, tmp_path):
@@ -253,6 +254,13 @@ class TestReadTool:
         assert image_block.mime_type == "image/png"
         assert isinstance(image_block.data, str)
         assert len(image_block.data) > 0
+        # Programmatic callers get the same image as a block. https://github.com/earendil-works/pi/issues/10251
+        assert result.structured_content == {
+            "type": "image",
+            "data": image_block.data,
+            "mimeType": "image/png",
+            "note": get_text_output(result),
+        }
 
     @pytest.mark.tonio
     async def test_reads_bmp_files_from_disk_as_png_image_attachments(self, tmp_path):

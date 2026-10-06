@@ -48,6 +48,9 @@ class OAuthClientMetadata(TypedDict, total=False):
     token_endpoint_auth_method: str
     grant_types: list[str]
     response_types: list[str]
+    # OpenID Connect client type, `native` or `web`. Dynamic client registration
+    # derives it from `redirect_uris` when absent (MCP SEP-837).
+    application_type: str
     client_name: str
     client_uri: str
     logo_uri: str

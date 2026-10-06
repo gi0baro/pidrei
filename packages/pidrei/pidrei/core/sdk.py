@@ -24,6 +24,7 @@ from .auth_guidance import format_no_models_available_message
 from .cache_warmer import CacheWarmer, CacheWarmRequest
 from .defaults import DEFAULT_THINKING_LEVEL
 from .extensions import LoadExtensionsResult
+from .mcp_servers import create_tool_name_matcher
 from .messages import convert_to_llm
 from .model_resolver import find_initial_model
 from .model_runtime import ModelRuntime
@@ -56,9 +57,18 @@ class CreateAgentSessionOptions:
     # Default tool suppression when no explicit allowlist is provided:
     # "all" starts with no tools enabled, "builtin" disables built-ins only.
     no_tools: str | None = None
-    # Optional allowlist of tool names.
+    # Optional allowlist of tool names or patterns, where `*` matches any characters.
+    #
+    # When omitted, pidrei uses the resolved `defaultTools` setting for the initial
+    # selection when configured. Otherwise it enables the default built-in tools
+    # (read, bash, edit, write). Extension/custom tools remain enabled unless
+    # `no_tools` changes that default. When provided, only matching tools are
+    # enabled. MCP tools stay registered for codemode and tool search unless an
+    # entry starts with `mcp__`; then only matching MCP tools are kept. An empty
+    # list, like `no_tools="all"`, disables MCP tools too.
     tools: list[str] | None = None
-    # Optional denylist of tool names (applies after `tools`).
+    # Optional denylist of tool names or patterns to disable. Applies after `tools` when both are
+    # provided, MCP tools included.
     exclude_tools: list[str] | None = None
     # Custom tools to register (in addition to built-in tools).
     custom_tools: list[Any] | None = None
@@ -229,7 +239,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     configured_default_tool_names = settings_manager.get_default_tools()
     allowed_tool_names = options.tools if options.tools is not None else ([] if options.no_tools == "all" else None)
     excluded_tool_names = options.exclude_tools
-    excluded_tool_name_set = set(excluded_tool_names) if excluded_tool_names is not None else None
+    is_excluded_tool = create_tool_name_matcher(excluded_tool_names) if excluded_tool_names is not None else None
     initial_active_tool_names = [
         name
         for name in (
@@ -243,7 +253,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
                 )
             )
         )
-        if excluded_tool_name_set is None or name not in excluded_tool_name_set
+        if is_excluded_tool is None or not is_excluded_tool(name)
     ]
 
     extension_runner_ref = _ExtensionRunnerRef()

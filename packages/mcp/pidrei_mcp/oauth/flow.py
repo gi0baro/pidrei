@@ -19,7 +19,7 @@ from pidrei_http.pkce import generate_pkce
 from ..auth_provider import AuthProvider, UnauthorizedContext
 from ..fetch import McpFetch, default_fetch
 from ..protocol.jsonrpc import is_object, parse_json, stringify
-from ..url import Url, form_encode, parse_url
+from ..url import Url, can_parse, form_encode, parse_url
 from .discovery import (
     discover_authorization_server_metadata,
     discover_oauth_server_info,
@@ -142,6 +142,19 @@ class AuthorizationStart:
 
 def _loopback(hostname: str) -> bool:
     return hostname in ("localhost", "127.0.0.1", "[::1]", "::1")
+
+
+def _application_type(redirect_uris: list[str]) -> str:
+    """The OpenID Connect `application_type` for `redirect_uris` (MCP SEP-837). Without one, OpenID Connect servers
+    assume `web`, which rejects http loopback redirect URIs. Loopback hosts and custom schemes are native (RFC 8252)."""
+
+    def native(uri: str) -> bool:
+        if not can_parse(uri):
+            return False
+        url = parse_url(uri)
+        return url.protocol not in ("http:", "https:") or _loopback(url.hostname)
+
+    return "native" if any(native(uri) for uri in redirect_uris) else "web"
 
 
 def _secure_endpoint(value: str) -> Url:
@@ -278,7 +291,14 @@ async def register_client(
     if metadata is not None and not endpoint:
         raise RuntimeError("Authorization server does not support dynamic client registration")
     url = parse_url(endpoint) if endpoint else parse_url("/register", authorization_server_url)
-    body = {**client_metadata, **({"scope": scope} if scope else {})}
+    application_type = client_metadata.get("application_type")
+    body = {
+        **client_metadata,
+        "application_type": application_type
+        if application_type is not None
+        else _application_type(client_metadata["redirect_uris"]),
+        **({"scope": scope} if scope else {}),
+    }
     response = await (fetch if fetch is not None else default_fetch)(
         url.href,
         method="POST",

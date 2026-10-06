@@ -34,8 +34,11 @@ What diverges from pi's shape:
 - The extension's state (the server list, tool-name assignments, sign-in
   snapshots, flags) is behind one thread lock, held for synchronous stretches
   only. The server list is a tuple, rebound whole; readers pin one read. Lock
-  order: this lock, then the session's tool loadout guard (`register_tool`,
+  order: this lock, then the session's tool loadout guard (`register_tools`,
   `update_active_tools`); `update_active_tools` callbacks never take it.
+- Each server update registers its tools (and the resource tools, and the
+  active-tools change that follows) in one `register_tools` call, so the
+  session never sees part of it, as pi's synchronous loop guarantees.
 - pi's read-then-set of the active tools goes through `update_active_tools`
   (recipe `update-active-tools`).
 - A server's `ready` is an Event set when the connection started for it
@@ -571,79 +574,112 @@ class _McpExtension:
     # -----------------------------------------------------------------------
 
     def _register_tools(self, connection: McpServerConnection) -> None:
-        server = connection.entry.name
         with self._lock:
-            found = self._find_server(server)
-            # The connection checks that it is current before calling this, but
-            # not in the same step: one replaced, disabled or removed in
-            # between had its tools hidden, and registers nothing.
-            if found is None or found.connection is not connection:
-                return
-            entry = found.entry
-            view = connection.view
-            description = (entry.config.get("description") or "").strip()
-            namespace = ToolNamespace(
-                name=mcp_namespace(server), description=description or None, instructions=view.instructions
-            )
-            previous = self._server_tools.get(server, {})
-            current: dict[str, None] = {}
-            tools = view.tools
-            # Like Codex, all tools whose names sanitize to the same name get the
-            # hash suffix, so which one would keep the plain name does not depend
-            # on the order of the list.
-            plain = [create_mcp_tool_name(server, name) for name in dict.fromkeys(tool["name"] for tool in tools)]
+            definitions = self._server_tool_definitions_locked(connection)
+            if definitions is not None:
+                self._publish_tools_locked(definitions)
 
-            def assign_name(tool: str, owner: str) -> str:
-                def is_taken(candidate: str) -> bool:
-                    existing = self._tool_owners.get(candidate)
-                    return (
-                        (existing is not None and existing != owner)
-                        or candidate in current
-                        or plain.count(candidate) > 1
-                    )
+    def _server_tool_definitions_locked(self, connection: McpServerConnection) -> list[ToolDefinition] | None:
+        """The tool definitions of a connection's server, recorded as its tools:
+        the server's tools with their configured exposure, and the ones it
+        dropped as hidden. None for a connection that is no longer the server's."""
+        server = connection.entry.name
+        found = self._find_server(server)
+        # The connection checks that it is current before calling this, but
+        # not in the same step: one replaced, disabled or removed in
+        # between had its tools hidden, and registers nothing.
+        if found is None or found.connection is not connection:
+            return None
+        entry = found.entry
+        view = connection.view
+        description = (entry.config.get("description") or "").strip()
+        namespace = ToolNamespace(
+            name=mcp_namespace(server), description=description or None, instructions=view.instructions
+        )
+        previous = self._server_tools.get(server, {})
+        current: dict[str, None] = {}
+        tools = view.tools
+        # Like Codex, all tools whose names sanitize to the same name get the
+        # hash suffix, so which one would keep the plain name does not depend
+        # on the order of the list.
+        plain = [create_mcp_tool_name(server, name) for name in dict.fromkeys(tool["name"] for tool in tools)]
 
-                name = create_mcp_tool_name(server, tool, is_taken)
-                self._tool_owners[name] = owner
-                current[name] = None
-                return name
-
-            async def get_client() -> McpServerConnection:
-                return connection
-
-            def readable_resources() -> bool:
-                return connection in self._resource_servers()
-
-            for tool in tools:
-                definition = create_mcp_tool_definition(
-                    server=server,
-                    tool=tool,
-                    name=assign_name(tool["name"], f"{server}\0{tool['name']}"),
-                    exposure=get_mcp_tool_exposure(entry.config, tool["name"]),
-                    namespace=namespace,
-                    timeout_ms=connection.timeout_ms,
-                    get_client=get_client,
-                    readable_resources=readable_resources,
+        def assign_name(tool: str, owner: str) -> str:
+            def is_taken(candidate: str) -> bool:
+                existing = self._tool_owners.get(candidate)
+                return (
+                    (existing is not None and existing != owner) or candidate in current or plain.count(candidate) > 1
                 )
-                self._definitions[definition.name] = definition
-                self._pi.register_tool(definition)
-            self._server_tools[server] = current
-            # Tools cannot be unregistered, so tools the server dropped are
-            # re-registered as hidden. When the server offers them again they are
-            # registered with their configured exposure above.
-            for name in previous:
-                definition = self._definitions.get(name)
-                if name not in current and definition is not None:
-                    self._pi.register_tool(replace(definition, exposure="hidden"))
-            self._sync_resource_tools_locked()
+
+            name = create_mcp_tool_name(server, tool, is_taken)
+            self._tool_owners[name] = owner
+            current[name] = None
+            return name
+
+        async def get_client() -> McpServerConnection:
+            return connection
+
+        def readable_resources() -> bool:
+            return connection in self._resource_servers()
+
+        definitions: list[ToolDefinition] = []
+        for tool in tools:
+            definition = create_mcp_tool_definition(
+                server=server,
+                tool=tool,
+                name=assign_name(tool["name"], f"{server}\0{tool['name']}"),
+                exposure=get_mcp_tool_exposure(entry.config, tool["name"]),
+                namespace=namespace,
+                timeout_ms=connection.timeout_ms,
+                get_client=get_client,
+                readable_resources=readable_resources,
+            )
+            self._definitions[definition.name] = definition
+            definitions.append(definition)
+        self._server_tools[server] = current
+        # Tools cannot be unregistered, so tools the server dropped are
+        # re-registered as hidden. When the server offers them again they are
+        # registered with their configured exposure above.
+        for name in previous:
+            definition = self._definitions.get(name)
+            if name not in current and definition is not None:
+                definitions.append(replace(definition, exposure="hidden"))
+        return definitions
 
     def _hide_tools_locked(self, server: str) -> None:
         """Make a removed server's tools unreachable."""
-        for name in self._server_tools.get(server, {}):
-            definition = self._definitions.get(name)
-            if definition is not None:
-                self._pi.register_tool(replace(definition, exposure="hidden"))
+        definitions = [
+            replace(definition, exposure="hidden")
+            for name in self._server_tools.get(server, {})
+            if (definition := self._definitions.get(name)) is not None
+        ]
         self._server_tools[server] = {}
-        self._sync_resource_tools_locked()
+        self._publish_tools_locked(definitions)
+
+    def _publish_tools_locked(
+        self,
+        definitions: list[ToolDefinition],
+        update_active: Callable[[list[str]], list[str] | None] | None = None,
+    ) -> None:
+        """Register `definitions` and the resource tools' update in one step, so the
+        session never sees part of a server's tools, then apply the deactivations
+        and `update_active` in the same step."""
+        resource_definitions, deactivate = self._resource_tool_updates_locked()
+        updates = [update for update in (deactivate, update_active) if update is not None]
+        if not definitions and not resource_definitions and not updates:
+            return
+
+        def update_active_tools(active: list[str]) -> list[str] | None:
+            changed = False
+            for update in updates:
+                result = update(active)
+                if result is not None:
+                    active, changed = result, True
+            return active if changed else None
+
+        self._pi.register_tools(
+            [*definitions, *resource_definitions], update_active=update_active_tools if updates else None
+        )
 
     def _servers_with_resources(self) -> list[tuple[_McpServer, McpServerConnection]]:
         """Enabled servers with resources whose exposure is not `hidden`, which
@@ -660,23 +696,25 @@ class _McpExtension:
     def _resource_servers(self) -> list[McpServerConnection]:
         return [connection for _server, connection in self._servers_with_resources()]
 
-    def _sync_resource_tools_locked(self) -> None:
-        """Register the resource tools with the widest exposure of the servers
-        they reach: `direct` when one of them is direct, and so on. They are
-        hidden when no server has resources."""
+    def _resource_tool_updates_locked(
+        self,
+    ) -> tuple[list[ToolDefinition], Callable[[list[str]], list[str] | None] | None]:
+        """The resource tools to register with the widest exposure of the servers
+        they reach (`direct` when one of them is direct, and so on; hidden when no
+        server has resources), and the update that deactivates them when they stop
+        being direct. Nothing when their exposure is unchanged."""
         exposures = {_exposure_of(server.entry) for server, _connection in self._servers_with_resources()}
         exposure = next((candidate for candidate in ("direct", "codemode", "deferred") if candidate in exposures), None)
         target: McpExposure = exposure if exposure is not None else "hidden"
         if target == self._resource_tools_exposure or (self._resource_tools_exposure is None and target == "hidden"):
-            return
+            return [], None
         was_direct = self._resource_tools_exposure == "direct"
         self._resource_tools_exposure = target
         definitions = create_mcp_resource_tool_definitions(exposure=target, servers=self._resource_servers)
-        for definition in definitions:
-            self._pi.register_tool(definition)
-        if was_direct:
-            names = {definition.name for definition in definitions}
-            self._pi.update_active_tools(lambda active: [name for name in active if name not in names])
+        if not was_direct:
+            return definitions, None
+        names = {definition.name for definition in definitions}
+        return definitions, lambda active: [name for name in active if name not in names]
 
     def _ensure_discovery_active(self, ctx: Any) -> None:
         """Tools that are not declared to the model are reached through the
@@ -932,16 +970,21 @@ class _McpExtension:
         if failed:
             return failed
         connection = server.connection
-        if connection is not None and connection.state == "connected":
-            self._register_tools(connection)
         with self._lock:
-            self._sync_resource_tools_locked()
+            definitions = (
+                self._server_tool_definitions_locked(connection)
+                if connection is not None and connection.state == "connected"
+                else None
+            )
             tools = set(self._server_tools.get(server.entry.name, {}))
-        # Tools no longer exposed directly leave the declared set; direct tools are activated on registration.
-        indirect = {tool.name for tool in self._pi.get_all_tools() if tool.exposure != "direct"}
-        self._pi.update_active_tools(
-            lambda active: [name for name in active if name not in tools or name not in indirect]
-        )
+
+            def drop_indirect(active: list[str]) -> list[str]:
+                # Tools no longer exposed directly leave the declared set; direct tools are activated on
+                # registration. Runs after the registration, in the same step.
+                indirect = {tool.name for tool in self._pi.get_all_tools() if tool.exposure != "direct"}
+                return [name for name in active if name not in tools or name not in indirect]
+
+            self._publish_tools_locked(definitions or [], drop_indirect)
         self._emit_change()
         return None
 

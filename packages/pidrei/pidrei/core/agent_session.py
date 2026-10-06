@@ -102,6 +102,7 @@ from .extensions.types import (
     ToolLoadout,
     ToolNamespace,
 )
+from .mcp_servers import create_tool_name_matcher, is_mcp_tool_name
 from .messages import BashExecutionMessage, CustomMessage, convert_to_llm
 from .model_registry import ModelRegistry
 from .model_runtime import ModelRuntimeAuthOverrides
@@ -368,9 +369,12 @@ class AgentSessionConfig:
     # Whether the initial tools come from the `defaultTools` setting. When true, reload activates
     # tools newly added to the setting. Tools removed from it stay active.
     uses_default_tools: bool = False
-    # Optional allowlist of tool names.
+    # Optional allowlist of tool names or patterns (`*` matches any characters). When provided, only
+    # matching tools are exposed. A non-empty list without `mcp__` entries also keeps MCP tools
+    # registered for codemode and tool_search; only tool_search can declare them. An empty list
+    # exposes no tools.
     allowed_tool_names: list[str] | None = None
-    # Optional denylist of tool names.
+    # Optional denylist of tool names or patterns. When provided, matching tools are not exposed.
     excluded_tool_names: list[str] | None = None
     # Override base tools (useful for custom runtimes).
     base_tools_override: dict[str, AgentTool] | None = None
@@ -620,8 +624,19 @@ class AgentSession:
         self._extension_runner_ref = config.extension_runner_ref
         self._initial_active_tool_names = config.initial_active_tool_names
         self._uses_default_tools = config.uses_default_tools
-        self._allowed_tool_names = set(config.allowed_tool_names) if config.allowed_tool_names is not None else None
-        self._excluded_tool_names = set(config.excluded_tool_names) if config.excluded_tool_names is not None else None
+        # Matches the `--tools` entries: tool names or patterns.
+        self._allowed_tools: Callable[[str], bool] | None = None
+        # Whether the allowlist filters MCP tools: it is empty (`--no-tools`) or names an MCP tool
+        # (`mcp__*`). Otherwise it keeps MCP tools registered for codemode and tool_search.
+        self._allowlist_filters_mcp = False
+        if config.allowed_tool_names is not None:
+            self._allowed_tools = create_tool_name_matcher(config.allowed_tool_names)
+            self._allowlist_filters_mcp = len(config.allowed_tool_names) == 0 or any(
+                entry.startswith("mcp__") for entry in config.allowed_tool_names
+            )
+        self._excluded_tools = (
+            create_tool_name_matcher(config.excluded_tool_names) if config.excluded_tool_names is not None else None
+        )
         self._base_tools_override = config.base_tools_override
         self._session_start_event = (
             config.session_start_event
@@ -1762,9 +1777,22 @@ class AgentSession:
         self._rebuild_system_prompt([tool.name for tool in tools])
 
     def _is_allowed_tool(self, name: str) -> bool:
-        return (self._allowed_tool_names is None or name in self._allowed_tool_names) and not (
-            self._excluded_tool_names is not None and name in self._excluded_tool_names
-        )
+        """Whether `--tools` and `--exclude-tools` keep the tool registered. MCP tools stay registered
+        unless the allowlist filters them (see `_allowlist_filters_mcp`)."""
+        if self._excluded_tools is not None and self._excluded_tools(name):
+            return False
+        if self._allowed_tools is None or self._allowed_tools(name):
+            return True
+        return not self._allowlist_filters_mcp and is_mcp_tool_name(name)
+
+    def _is_activatable(self, name: str) -> bool:
+        """Whether the tool may be active, which declares it to the model. MCP tools the allowlist keeps
+        without matching them are only for codemode and tool_search: they may be declared only when
+        tool_search can load them (non-`direct` exposure and tool_search registered). This also applies
+        to tools restored from the transcript or set by extensions. Callers hold `_tool_loadout_guard`."""
+        if self._allowed_tools is None or self._allowed_tools(name) or not is_mcp_tool_name(name):
+            return True
+        return self._get_tool_exposure(name) != "direct" and "tool_search" in self._tool_registry
 
     def _get_tool_exposure(self, name: str) -> ToolExposure:
         entry = self._tool_definitions.get(name)
@@ -1794,7 +1822,7 @@ class AgentSession:
         tools: list[AgentTool] = []
         for name in dict.fromkeys(tool_names):
             tool = self._tool_registry.get(name)
-            if tool is not None and self._get_tool_exposure(name) != "hidden":
+            if tool is not None and self._get_tool_exposure(name) != "hidden" and self._is_activatable(name):
                 tools.append(tool)
         hooks = [
             entry
@@ -1815,6 +1843,7 @@ class AgentSession:
                 registered=tuple(self._tool_registry.values()),
                 get_exposure=self._get_tool_exposure,
                 get_namespace=get_namespace,
+                get_prompt_guidelines=lambda name: self._tool_prompt_guidelines.get(name) or [],
             )
             descriptions: dict[str, str] = {}
             for entry in hooks:
@@ -1908,8 +1937,8 @@ class AgentSession:
         tool_snippets: dict[str, str] = {}
         for name in self._tool_registry:
             snippet = self._tool_prompt_snippets.get(name)
-            # Tools without a snippet are not listed. Hidden tools are only callable through another tool.
-            if snippet and name not in hidden:
+            # Tools without a snippet are not listed.
+            if snippet:
                 tool_snippets[name] = snippet
 
         loader_system_prompt = self._resource_loader.get_system_prompt()
@@ -1926,6 +1955,7 @@ class AgentSession:
                 custom_prompt=loader_system_prompt,
                 append_system_prompt=append_system_prompt,
                 selected_tools=valid_tool_names,
+                hidden_tools=sorted(hidden),
                 tool_snippets=tool_snippets,
                 tool_guidelines=dict(self._tool_prompt_guidelines),
             )
@@ -1964,8 +1994,8 @@ class AgentSession:
         with self._tool_loadout_guard:
             options.selected_tools = [tool.name for tool in self._apply_tool_loadout(options.selected_tools or [])]
             hidden = self._tool_loadout.hidden_declarations
-        # The tool list must match the declarations the request carries, so hidden tools are not listed.
-        options.tool_snippets = {name: snippet for name, snippet in options.tool_snippets.items() if name not in hidden}
+        # The tool list and rules must match the declarations the request carries.
+        options.hidden_tools = sorted(hidden)
         current = get_current_system_message(messages if messages is not None else self.agent.state.messages)
         sections = diff_system_prompt_sections(
             (current.sections if current is not None else None) or {}, build_system_prompt_sections(options)
@@ -3687,7 +3717,7 @@ class AgentSession:
                 "get_settings": lambda: self.settings_manager.get_settings(),
                 "set_active_tools": lambda tool_names: self.set_active_tools_by_name(tool_names),
                 "update_active_tools": lambda update: self.update_active_tools(update),
-                "refresh_tools": lambda: self._refresh_tool_registry(),
+                "register_tools": self._register_extension_tools,
                 "get_commands": get_commands,
                 "set_model": set_model_action,
                 "get_thinking_level": lambda: self.thinking_level,
@@ -3742,6 +3772,22 @@ class AgentSession:
         with self._tool_loadout_guard:
             self._refresh_tool_registry_locked(active_tool_names, include_all_extension_tools)
 
+    def _register_extension_tools(
+        self,
+        extension: Any,
+        registered: list[Any],
+        update_active: Callable[[list[str]], list[str] | None] | None,
+    ) -> None:
+        """`pi.register_tools()` once the session is bound: the tools are recorded and the
+        session refreshed in one step, so a refresh never walks an extension's tools while
+        they change and readers see every tool of the call or none, then `update_active`
+        is applied in the same hold."""
+        with self._tool_loadout_guard:
+            extension.tools.update({tool.definition.name: tool for tool in registered})
+            self._refresh_tool_registry_locked(None, None)
+            if update_active is not None:
+                self.update_active_tools(update_active)
+
     def _refresh_tool_registry_locked(
         self, active_tool_names: list[str] | None, include_all_extension_tools: bool | None
     ) -> None:
@@ -3751,7 +3797,7 @@ class AgentSession:
             name for name in self._tool_registry if self._is_activated_on_registration(name)
         }
         previous_active_tool_names = self.get_active_tool_names()
-        allowed_tool_names = self._allowed_tool_names
+        allowed_tools = self._allowed_tools
         is_allowed_tool = self._is_allowed_tool
 
         # lazy: import cycle within core
@@ -3820,10 +3866,11 @@ class AgentSession:
             if is_allowed_tool(name)
         ]
 
-        if allowed_tool_names is not None:
+        if allowed_tools is not None:
             for tool_name in self._tool_registry:
-                # Naming a tool activates it even when it is not active by default.
-                if tool_name in allowed_tool_names and self._is_declarable(tool_name):
+                # Naming or matching a tool activates it even when it is not active by default. MCP tools
+                # kept registered without being named stay inactive.
+                if allowed_tools(tool_name) and self._is_declarable(tool_name):
                     next_active_tool_names.append(tool_name)
         elif include_all_extension_tools:
             for tool in wrapped_extension_tools:

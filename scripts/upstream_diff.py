@@ -311,6 +311,9 @@ DROPPED_PREFIXES += tuple(
         "packages/chord/",
         # Pico5 durable package (0.86.0 `08016016` moved pico out of agent)
         "packages/durable/",
+        # pi-env: remote execution environments for Pi Durable (an SSH-deployed
+        # Rust daemon and its ExecutionEnv client); no product consumer (1.0.4)
+        "packages/env/",
         "packages/agent/benchmark/",
         # durable harness runtime (agent)
         "packages/agent/src/harness/agent-harness.ts",
@@ -576,6 +579,8 @@ DROPPED_PREFIXES += tuple(
         "packages/codemode/src/wasm.ts",
         "packages/codemode/src/runtime/worker.ts",
         "packages/codemode/src/runtime/protocol.ts",
+        # a stand-in worker that posts raw bridge payloads to the host (1.0.4 `b223082b`)
+        "packages/codemode/test/fixtures/raw-worker.ts",
         # the worker entry of pi's Bun/Node release builds (config.ts hunks are per-hunk skips)
         "packages/coding-agent/src/extensions/codemode/worker.ts",
         "packages/coding-agent/test/codemode-worker-config.test.ts",

@@ -41,6 +41,9 @@ _TOKEN_SCOPES = [
     (Token.Name.Variable, "variable"),
     (Token.Name.Constant, "variable"),
     (Token.String.Regex, "regexp"),
+    # highlight.js's `subst` (a template's `${...}`); pygments marks only the
+    # delimiters, the inner expression carries its own tokens.
+    (Token.String.Interpol, "subst"),
     (Token.String, "string"),
     (Token.Number, "number"),
     (Token.Generic.Inserted, "addition"),
@@ -119,7 +122,12 @@ def highlight(
         if not text:
             continue
         formatter = _get_active_formatter(_scope_for_token(token_type), theme)
-        output.append(formatter(text) if formatter else text)
+        if not formatter:
+            output.append(text)
+            continue
+        # A multiline token (a docstring, a block comment) is formatted line by
+        # line, so each line keeps its colour once the output is split on "\n".
+        output.append("\n".join(formatter(line) if line else line for line in text.split("\n")))
     return "".join(output)
 
 

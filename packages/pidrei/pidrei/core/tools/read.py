@@ -35,6 +35,26 @@ READ_SCHEMA = {
     "required": ["path"],
 }
 
+# Result for programmatic callers such as codemode scripts: the text for text
+# files, and an image block for images that codemode's `image()` accepts. `note`
+# is the text that goes with the image, such as resize hints. Property
+# descriptions are left out so the type stays on one line in tool descriptions.
+READ_OUTPUT_SCHEMA = {
+    "anyOf": [
+        {"type": "string"},
+        {
+            "type": "object",
+            "properties": {
+                "type": {"const": "image", "type": "string"},
+                "data": {"type": "string"},
+                "mimeType": {"type": "string"},
+                "note": {"type": "string"},
+            },
+            "required": ["type", "data", "mimeType", "note"],
+        },
+    ]
+}
+
 READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
     "snippet": "Read file contents",
     "guidelines": ("Use read to examine files instead of cat or sed.",),
@@ -59,6 +79,15 @@ class LocalReadOperations:
 
     async def detect_image_mime_type(self, absolute_path: str) -> str | None:
         return await tonio.spawn_blocking(detect_supported_image_mime_type_from_file_blocking, absolute_path)
+
+
+def _to_read_output(content: list[TextContent | ImageContent]) -> str | dict[str, str]:
+    """The image block and its note, or the text for text files and images that could not be processed."""
+    text = next((block.text for block in content if isinstance(block, TextContent)), "")
+    image = next((block for block in content if isinstance(block, ImageContent)), None)
+    if image is None:
+        return text
+    return {"type": "image", "data": image.data, "mimeType": image.mime_type, "note": text}
 
 
 def _get_non_vision_image_note(model: Any) -> str | None:
@@ -189,7 +218,7 @@ def create_read_tool_definition(
             content = [TextContent(text=output_text)]
 
         _throw_if_aborted(cancel)
-        return AgentToolResult(content=content, details=details)
+        return AgentToolResult(content=content, details=details, structured_content=_to_read_output(content))
 
     return ToolDefinition(
         name="read",
@@ -203,6 +232,7 @@ def create_read_tool_definition(
         prompt_snippet=READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=list(READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=READ_SCHEMA,
+        output_schema=READ_OUTPUT_SCHEMA,
         constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
         execute=execute,
         render_call=read_renderers.render_call,

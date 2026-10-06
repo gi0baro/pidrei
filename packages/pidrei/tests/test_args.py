@@ -254,6 +254,13 @@ class TestNoExtensionsFlag:
         assert result.extensions == ["foo.ts", "bar.ts"]
 
 
+class TestNoMcpFlag:
+    def test_parses_no_mcp_flag(self):
+        result = parse_args(["--no-mcp"])
+        assert result.no_mcp is True
+        assert len(result.unknown_flags) == 0
+
+
 class TestSkillFlag:
     def test_parses_single_skill(self):
         result = parse_args(["--skill", "./skill-dir"])

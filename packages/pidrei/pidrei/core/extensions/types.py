@@ -91,6 +91,8 @@ class ToolLoadout:
     registered: tuple[Any, ...]
     get_exposure: Callable[[str], ToolExposure]
     get_namespace: Callable[[str], ToolNamespace | None]
+    # A tool's `prompt_guidelines`. Hidden declarations leave them out of the system prompt.
+    get_prompt_guidelines: Callable[[str], Sequence[str]]
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -367,6 +369,11 @@ def _not_initialized(*_args: Any) -> Any:
     raise RuntimeError(RUNTIME_NOT_INITIALIZED)
 
 
+def _record_tools(extension: Extension, registered: list[RegisteredTool], _update_active: Any) -> None:
+    """`register_tools` before the session binds: there is nothing to refresh."""
+    extension.tools.update({tool.definition.name: tool for tool in registered})
+
+
 class ExtensionRuntime:
     """Shared mutable runtime the loader creates and AgentSession binds.
 
@@ -384,9 +391,13 @@ class ExtensionRuntime:
         # Servers registered with `pi.register_mcp_server()`.
         self.mcp_servers = McpServerRegistry()
 
-        # register_tool() is valid during extension load; a refresh is only
-        # needed once the session is bound.
-        self.refresh_tools: Callable[[], None] = lambda: None
+        # register_tools() is valid during extension load, which only records the
+        # tools. Once the session is bound, its action records them and refreshes
+        # the session in one step under the session's tool loadout guard, then
+        # applies `update_active` (an `update_active_tools` callback) in the same hold.
+        self.register_tools: Callable[
+            [Extension, list[RegisteredTool], Callable[[list[str]], list[str] | None] | None], None
+        ] = _record_tools
 
         # Actions copied in by ExtensionRunner.bind_core().
         self.send_message: Callable[..., None] | None = None

@@ -509,6 +509,7 @@ context.
 |--------|---------|
 | `on(event, handler)` | Subscribe to an event; returns an unsubscribe function |
 | `register_tool(tool)` | Add a tool the model can call |
+| `register_tools(tools, *, update_active=None)` | Add several tools in one step: the session sees all of them or none. `update_active` is an `update_active_tools()` callback applied in the same step |
 | `register_command(name, *, handler, description=None, get_argument_completions=None)` | Add a slash command |
 | `register_shortcut(shortcut, *, handler, description=None)` | Bind a key |
 | `register_flag(name, *, type, description=None, default=None)` | Add a CLI flag |
@@ -738,11 +739,14 @@ permission extension can use them to decide which calls to confirm.
 A tool that orchestrates other tools can adjust what the model sees while it is
 active with `prepare_loadout(loadout)`. It runs whenever the active tools
 change and receives a `ToolLoadout`: the declared tools, the callable tools,
-and every registered tool, with `get_exposure(name)` and `get_namespace(name)`.
-It returns a `ToolLoadoutChanges` with replacement `descriptions` for declared
-tools (including its own) and `hidden_declarations`: active tools whose
-declarations requests leave out while they stay active and callable.
-`codemode` uses only this hook, `exposure`, and `ctx.execute_tool()`, so
+and every registered tool, with `get_exposure(name)`, `get_namespace(name)`,
+and `get_prompt_guidelines(name)`. It returns a `ToolLoadoutChanges` with
+replacement `descriptions` for declared tools (including its own) and
+`hidden_declarations`: active tools whose declarations requests leave out
+while they stay active and callable. The default system prompt leaves hidden
+tools out of its tool list and rules, and names no tool in the skills hint when
+the file reader is hidden, so the orchestrating tool should present their
+guidelines itself. `codemode` uses only this hook, `exposure`, and `ctx.execute_tool()`, so
 another tool can implement the same behavior under a different name. The
 exposure types, `ToolLoadout` and `ToolLoadoutChanges` come from
 `pidrei.core.extensions.types`.
