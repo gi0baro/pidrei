@@ -6,6 +6,112 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.1.0.0] - 2026-10-08
+
+Tracks [Pi 1.1.0](https://github.com/earendil-works/pi/releases/tag/v1.1.0).
+
+### Added
+
+- Program status reporting (OSC 7501): terminals and agent dashboards that
+  support it see whether pidrei is working, blocked on a dialog or login,
+  done, or failed. Reports carry only the session name, dialog titles and the
+  first line of errors, never prompts or model output. pidrei sends them only
+  after the terminal answers the protocol's support query;
+  `PIDREI_PROGRAM_STATUS=1|0` overrides that. See the environment variables
+  page.
+- Claude Haiku 5.5 (`anthropic/claude-haiku-5-5`), with adaptive thinking up
+  to `xhigh`/`max` effort, its prompt-length pricing tier, per-message effort,
+  and mid-conversation system messages and tool changes. Bedrock requests for
+  Haiku 5.5 use adaptive thinking, native `xhigh` and prompt caching.
+- `--tools` entries like `pidrei -t +codemode,-write` change the default tool
+  selection instead of replacing it. See the CLI page.
+- OpenAI's GPT-6 Luna is a classifier model through the Decisions API, with
+  `OPENAI_API_KEY`. It needs an API key, so it is not listed as available
+  while `openai` is logged in with Sign in with ChatGPT. See the models page.
+- Codemode's `models.classify()` accepts `images` in its context; classifiers
+  that take images, such as GPT-6 Luna, judge them with the state, and other
+  classifiers return an error result.
+- `agent_settled` events (session, extension and JSON mode) carry `aborted`,
+  so integrations can tell a cancelled run from a finished one.
+- Assistant messages record `duration_ms` (`durationMs` in session files), the
+  time from the start of the request to the final message. Tool results
+  record how long the tool's execution took, without hooks; it is also on
+  `tool_execution_end` events and in the tool render context (`durationMs`).
+- The tool render context carries `outputPad`, the horizontal padding the
+  outputPad setting configures.
+- `Box.set_padding_x()`, `Text.set_padding_x()` and
+  `TuiAltScreen.reset_text_selection()` in `pidrei_tui`.
+- `pidrei_tui.format_program_status()` and `Terminal.set_program_status()`.
+  Custom `Terminal` implementations must provide `set_program_status()`; one
+  without OSC 7501 support can make it a no-op.
+- `LoginOptions.agent_name` replaces pidrei's name in the Sign in with ChatGPT
+  agent name hint and the Codex browser login originator.
+- `pidrei_mcp.oauth.OAuthFlowOptions` gains `cancel`, a cancel token that
+  aborts every request of the flow. A cancelled refresh no longer falls back
+  to a new authorization.
+- Codemode text items produced by `print()` carry `console: True`, so hosts
+  can tell them apart from `text()` output.
+
+### Changed
+
+- The outputPad setting also applies to `!` command output, tool output and
+  summary blocks.
+- `pidrei mcp login --timeout` limits the whole sign-in, including requests to
+  the authorization server, instead of only the wait for the browser.
+- Model catalog regenerated from models.dev.
+
+### Fixed
+
+- `!` command results keep `Took` after reloading a session, and the live
+  `Took` no longer includes wall-clock steps; both show the recorded
+  execution time.
+- Fewer context-limit request failures: output limits estimate input at 3.5
+  characters per token instead of 4.
+- `!!` command headers keep their dim colour once output arrives.
+- Codemode output items no longer run together. With several text items, each
+  starts with a `==> text N/M <==` line, and console output follows the other
+  output in one `<console_output>` block with one line per call.
+- `/mcp` opens without waiting for every server to connect; the manager
+  updates live and stays usable while servers are enabled, reconnected or
+  disabled.
+- `!` and RPC `bash` output no longer keeps fragments of colour codes, such as
+  a stray `m`, when a code was split across output chunks.
+- MCP OAuth sign-ins can be cancelled while waiting on the authorization
+  server: the sign-in screen cancels with Esc at every step, session shutdown
+  aborts a running sign-in, and each request to the authorization server
+  times out after 15 seconds.
+- Shutdown no longer waits up to 15 seconds to refresh an MCP OAuth token
+  that was about to expire, only to close the server's session; closing a
+  Streamable HTTP transport reuses the token of its last request.
+- The fullscreen text selection no longer survives session switches and other
+  transcript rebuilds.
+- OpenAI models on Bedrock follow the thinking level instead of always
+  running at Bedrock's default reasoning effort.
+- Model and caller `headers` override the `originator` and `User-Agent`
+  headers of Codex requests.
+- `server_busy` and `servers are currently busy` provider errors are retried
+  instead of ending the turn.
+- Mistral responses that end with `finish_reason: "error"` are retried.
+- Anthropic browser login falls back to a free loopback port when port 53692
+  is in use.
+- Session costs no longer undercount long prompts on models with
+  prompt-length pricing tiers, such as Claude Haiku 5.5, Gemini 3.1 Pro and
+  GPT-5.4, through OpenCode, OpenCode Go, OpenRouter, Vercel AI Gateway,
+  Google, MiniMax and other providers. OpenRouter time-of-day pricing is not
+  modeled.
+- Markdown links are clickable in Herdr.
+- The error message of a failed lazy provider setup uses the request start as
+  its `timestamp`, not the failure time.
+
+### Removed
+
+- The Termux clipboard paths: Android is not a PiDrei platform.
+
+### Not ported
+
+- Pi's native llama.cpp decision models (classifiers served through
+  `/v1/systemone`): PiDrei has no llama.cpp extension.
+
 ## [1.0.4.0] - 2026-10-06
 
 Tracks [Pi 1.0.4](https://github.com/earendil-works/pi/releases/tag/v1.0.4).

@@ -905,7 +905,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             (
                 "AssistantMessageEventStream.push() is the publication seam "
                 "(freezes event message payloads); `partial` is the "
-                "producer-private builder and _abort handles both shapes"
+                "producer-private builder and _abort handles both shapes; "
+                "_time() sets duration_ms on the final message at the seam "
+                "(a builder before freeze(), a frozen message replaced)"
             ),
         ),
     ),
@@ -962,7 +964,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "stdin is a read-ahead reader (_read_input) plus one consumer "
                 "(_consume_input); parser deadlines are the reader's; the "
                 "Kitty activation is queued in input order; start takes "
-                "on_reply/on_error; stop drops queued items"
+                "on_reply/on_error; stop drops queued items; program status "
+                "(held status, support, pending query) is under _protocol_lock, "
+                "the reader consumes the query's echo there"
             ),
         ),
         (
@@ -1026,6 +1030,17 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "messages are frozen values: pi mutations of a message (e.g. "
                 "the message_end abort decoration) translate to display-only "
                 "dataclasses.replace copies"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/modes/interactive/program-status-reporter.ts": (
+        (
+            "tui-island",
+            (
+                "called under the UI state lock and outside it (logins), so "
+                "its state has its own thread lock, held while it writes to "
+                "the terminal; lock order: UI state lock, reporter lock, "
+                "terminal protocol lock"
             ),
         ),
     ),
@@ -1189,7 +1204,8 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "codemode-python",
             (
                 "script API globals are snake_case with keyword options; model-call hints show Python "
-                "dicts; nested rows, limiter, truncation, spill and store entries port 1:1"
+                "dicts; nested rows, limiter, truncation, spill and store entries port 1:1; console items "
+                "are print() runs, split back into lines in the <console_output> block"
             ),
         ),
     ),
@@ -1236,7 +1252,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "mcp-client",
             "no signal: requests are bounded by MCP_TIMEOUT and run under run_cancellable with a token the "
             "close fires (a head-pending request is cancelled), close spawns the session DELETE (1 s) and the "
-            "closing of held responses and joins both",
+            "closing of held responses and joins both; the DELETE reuses the last request's token",
         ),
     ),
     "packages/mcp/src/client.ts": (
@@ -1252,11 +1268,22 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/mcp/src/oauth/callback.ts": (
         ("mcp-client", "close() is synchronous: waiters settled, server and connections closed"),
     ),
+    "packages/mcp/src/oauth/flow.ts": (
+        (
+            "mcp-client",
+            (
+                "the flow's signal is OAuthFlowOptions.cancel, a CancelToken; a wrapped fetch runs each request "
+                "under run_cancellable, so new per-step signal parameters need no threading"
+            ),
+        ),
+    ),
     "packages/coding-agent/src/extensions/mcp/index.ts": (
         (
             "mcp-extension",
             "state behind one lock (server list a tuple); `ready` is an Event; background connects detached; "
-            "the manager changes its view through tui.apply",
+            "the manager changes its view through tui.apply; attempts are object() compared by identity, "
+            "_run_in_background learns its operation's attempt through on_attempt; the session's "
+            "AbortController is a CancelToken and tracked work registers Events shutdown joins",
         ),
         ("update-active-tools", "the read-then-set of the active tools is one update_active_tools(update)"),
     ),
@@ -1284,7 +1311,13 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         ("mcp-extension", "the view changes through tui.apply; key handlers settle the answer manage() awaits"),
     ),
     "packages/coding-agent/src/extensions/mcp/cli.ts": (
-        ("mcp-extension", "the pasted redirect URL is read with FdReader under run_cancellable"),
+        (
+            "mcp-extension",
+            (
+                "the pasted redirect URL is read with FdReader under run_cancellable; --timeout is a cancel token "
+                "over the whole sign-in"
+            ),
+        ),
     ),
     "packages/tui/src/components/image.ts": (
         (
