@@ -57,6 +57,7 @@ async def test_does_not_subscribe_from_the_stale_startup_rebind():
         ui=SimpleNamespace(state_lock=threading.RLock()),
         _footer_data_provider=SimpleNamespace(resolve_cwd=_resolve_cwd),
         _apply_runtime_settings=lambda _resolved_cwd: False,
+        _program_status=SimpleNamespace(reset=lambda: None),
         _needs_project_trust_warning=_no_trust_warning,
         render_current_session_state=lambda _trust_warning: None,
         _bind_current_session_extensions=bind_current_session_extensions,

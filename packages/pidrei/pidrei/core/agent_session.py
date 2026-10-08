@@ -230,6 +230,8 @@ class SessionAgentEndEvent:
 
 @dataclass(slots=True)
 class AgentSettledEvent:
+    # Whether the run ended because it was aborted, for example with Escape.
+    aborted: bool
     type: Literal["agent_settled"] = "agent_settled"
 
 
@@ -1317,8 +1319,10 @@ class AgentSession:
         with self._state_guard:
             self._is_emitting_agent_settled = True
         try:
-            await self._extension_runner.emit({"type": "agent_settled"})
-            self._emit(AgentSettledEvent())
+            # Still set: the next run resets it.
+            aborted = self._agent_run_abort_requested
+            await self._extension_runner.emit({"type": "agent_settled", "aborted": aborted})
+            self._emit(AgentSettledEvent(aborted=aborted))
         finally:
             # Clearing the flag and taking the list is one critical section, paired
             # with `_defer_until_settled`: an action either lands in the list taken

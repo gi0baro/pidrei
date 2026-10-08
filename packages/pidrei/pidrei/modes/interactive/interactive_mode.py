@@ -178,6 +178,7 @@ from .extension_tui import ExtensionTui, guard_overlay_handle
 from .external_editor import edit_in_external_editor
 from .model_catalog_refresh import refresh_model_catalogs
 from .model_search import get_model_search_text
+from .program_status_reporter import BlockedStatus, ProgramStatusReporter
 from .theme import (
     SYSTEM_THEME_NAME,
     InteractiveThemeController,
@@ -775,6 +776,11 @@ class InteractiveMode:
         # Shutdown state
         self._shutdown_requested = False
 
+        # Reports working, blocked, done, and error states to terminals that support OSC 7501.
+        self._program_status = ProgramStatusReporter(
+            lambda: self.ui.terminal, lambda: self.session_manager.get_session_name()
+        )
+
         # Extension UI state
         self._extension_selector = None
         self._extension_input = None
@@ -1206,6 +1212,7 @@ class InteractiveMode:
         # handlers can use interactive dialogs
         await self.ui.start()
         self._is_initialized = True
+        self._program_status.report()
 
         await self._theme_controller.apply_from_settings()
         # The header and startup notices bake theme colors into their text, so
@@ -2242,6 +2249,7 @@ class InteractiveMode:
             if self._unsubscribe is not None:
                 self._unsubscribe()
             self._unsubscribe = None
+            self._program_status.reset()
             cwd_changed = self._apply_runtime_settings(resolved_cwd)
             if options.get("renderBeforeBind"):
                 self.render_current_session_state(trust_warning)
@@ -2673,12 +2681,16 @@ class InteractiveMode:
         """Create the ExtensionUIContext object for extensions."""
         return ExtensionUIContext(self)
 
-    def _show_extension_selector(self, title: str, options: list, opts: dict | None = None):
+    def _show_extension_selector(
+        self, title: str, options: list, opts: dict | None = None, blocked: BlockedStatus | None = None
+    ):
         """Show a selector for extensions: mounted before this returns (pi's
         synchronous mount, so a key that opens it sends the next key to it);
         returns the spawn handle of the wait for the pick, which the caller
-        may await or drop (spec/ui-island.md, `ctx.ui`)."""
+        may await or drop (spec/ui-island.md, `ctx.ui`). `blocked` is the
+        program status while it is open (default: a question with the title)."""
         opts = opts or {}
+        blocked_status = blocked if blocked is not None else BlockedStatus("question", title)
         done = tonio.Event()
         # Settled by a pick, the countdown or an abort callback on any task:
         # the first settle claims under the guard.
@@ -2724,6 +2736,8 @@ class InteractiveMode:
                 self._editor_container.clear()
                 self._editor_container.add_child(component)
                 self.ui.set_focus(component)
+                # Extension dialogs share the editor slot: opening one replaces the status of a displaced one.
+                self._program_status.set_blocked("extension-dialog", blocked_status)
                 self.ui.request_render()
 
         return tonio.spawn(_wait_for_answer(done, outcome))
@@ -2736,12 +2750,19 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self._extension_selector = None
+            self._program_status.set_blocked("extension-dialog", None)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
     def _show_extension_confirm(self, title: str, message: str, opts: dict | None = None) -> Awaitable[bool]:
         """Show a confirmation dialog for extensions (see `_show_extension_selector`)."""
-        return tonio.spawn(_is_yes(self._show_extension_selector(f"{title}\n{message}", ["Yes", "No"], opts)))
+        return tonio.spawn(
+            _is_yes(
+                self._show_extension_selector(
+                    f"{title}\n{message}", ["Yes", "No"], opts, BlockedStatus("permission", title)
+                )
+            )
+        )
 
     async def _prompt_for_missing_session_cwd(self, error) -> str | None:
         confirmed = await self._show_extension_confirm(
@@ -2793,6 +2814,7 @@ class InteractiveMode:
                 self._editor_container.clear()
                 self._editor_container.add_child(component)
                 self.ui.set_focus(component)
+                self._program_status.set_blocked("extension-dialog", BlockedStatus("question", title))
                 self.ui.request_render()
 
         return tonio.spawn(_wait_for_answer(done, outcome))
@@ -2805,6 +2827,7 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self._extension_input = None
+            self._program_status.set_blocked("extension-dialog", None)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
@@ -2842,6 +2865,7 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(component)
             self.ui.set_focus(component)
+            self._program_status.set_blocked("extension-dialog", BlockedStatus("question", title))
             self.ui.request_render()
 
         return tonio.spawn(_wait_for_answer(done, outcome))
@@ -2854,6 +2878,7 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self._extension_editor = None
+            self._program_status.set_blocked("extension-dialog", None)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
@@ -3448,6 +3473,7 @@ class InteractiveMode:
             return
 
         self._footer.invalidate()
+        self._program_status.handle_event(event)
         event_type = getattr(event, "type", None)
 
         if event_type == "agent_start":
@@ -6351,7 +6377,7 @@ class InteractiveMode:
         self, dialog, provider_id: str, provider_name: str, previous_model, on_back: Callable[[], None] | None
     ) -> None:
         try:
-            await self._login_provider(dialog, provider_id, "api_key")
+            await self._login_provider(dialog, provider_id, provider_name, "api_key")
             # pi restores the editor in the stretch that starts completing the
             # login: it applies in that flow's first hold.
             await self._complete_provider_authentication(
@@ -6448,7 +6474,7 @@ class InteractiveMode:
             else:
                 dialog.show_progress(event.message)
 
-    async def _login_provider(self, dialog, provider_id: str, method: str) -> None:
+    async def _login_provider(self, dialog, provider_id: str, provider_name: str, method: str) -> None:
         mode = self
 
         class DialogInteraction:
@@ -6460,12 +6486,17 @@ class InteractiveMode:
             def notify(self, event) -> None:
                 mode._notify_auth_dialog(dialog, event)
 
-        await self.session.model_runtime.login(
-            provider_id,
-            method,
-            DialogInteraction(),
-            LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
-        )
+        self._program_status.set_blocked("login", BlockedStatus("auth", f"Log in to {provider_name}"))
+        try:
+            await self.session.model_runtime.login(
+                provider_id,
+                method,
+                DialogInteraction(),
+                LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
+            )
+        finally:
+            # Synchronous: also runs when the login is cancelled.
+            self._program_status.set_blocked("login", None)
 
     def _show_login_dialog(
         self, provider_id: str, provider_name: str, on_back: Callable[[], None] | None = None
@@ -6481,7 +6512,7 @@ class InteractiveMode:
         self, dialog, provider_id: str, provider_name: str, previous_model, on_back: Callable[[], None] | None
     ) -> None:
         try:
-            await self._login_provider(dialog, provider_id, "oauth")
+            await self._login_provider(dialog, provider_id, provider_name, "oauth")
             # pi restores the editor in the stretch that starts completing the
             # login: it applies in that flow's first hold.
             await self._complete_provider_authentication(

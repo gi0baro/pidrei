@@ -16,6 +16,7 @@
 | `PIDREI_REASONING_LEVEL` | Default thinking level |
 | `PIDREI_OAUTH_CALLBACK_HOST` | Host the OAuth callback server binds |
 | `PIDREI_HYPERLINKS` | Override OSC 8 hyperlink detection with `1`, `0`, or `auto` |
+| `PIDREI_PROGRAM_STATUS` | Override OSC 7501 program status reporting: `1` always reports, `0` never reports; otherwise pidrei reports only after the terminal confirms support. |
 | `PIDREI_IMAGE_PROTOCOL` | Override inline image detection with `kitty`, `iterm2`, `none`, or `auto` |
 | `PIDREI_TRUE_COLOR` | Override truecolor detection with `1`, `0`, or `auto` |
 | `PIDREI_TUI_ESC_TIMEOUT` | How long to wait after a lone ESC before treating it as Escape, in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
@@ -50,6 +51,20 @@ its own `bin` directory under the agent dir first, if you put them there.
 | `PIDREI_HARDWARE_CURSOR` | Use the terminal's own cursor |
 | `PIDREI_CLEAR_ON_SHRINK` | Clear the screen when the terminal shrinks |
 | `PIDREI_CACHE_RETENTION` | Provider cache retention behaviour |
+
+## Program status
+
+pidrei reports its state with the [Program Status Protocol (OSC 7501)](https://www.superlogical.com/rex/docs/build/program-status), so terminals and agent dashboards can show whether it is working, waiting for you, done, or failed:
+
+| State | When |
+|---|---|
+| `working` | An agent run or compaction is in progress. The message is the session name. |
+| `blocked` | An extension dialog or login waits for you. The message is the dialog title. |
+| `done` | A run finished. The message is the session name. |
+| `error` | A run ended with an error that is not retried. The message is the first line of the error. |
+| `idle` | pidrei started, or you cancelled the run. |
+
+Reports never contain prompts or model output. pidrei sends them only after the terminal answers the protocol's support query; tmux and screen do not forward them. Set `PIDREI_PROGRAM_STATUS=1` to send reports without asking, or `PIDREI_PROGRAM_STATUS=0` to turn them off.
 
 ## Debugging
 

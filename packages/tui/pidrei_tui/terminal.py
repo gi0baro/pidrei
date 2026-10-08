@@ -76,6 +76,7 @@ from pidrei_utils import clock
 from pidrei_utils.timers import Interval
 
 from .keys import set_kitty_protocol_active
+from .program_status import PROGRAM_STATUS_QUERY, ProgramStatus, format_program_status, is_program_status_reply
 from .stdin_buffer import StdinBuffer
 
 
@@ -85,7 +86,9 @@ TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0\x07"
 APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u"
 DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7
 KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150
-KITTY_KEYBOARD_PROTOCOL_QUERY = f"\x1b[>{DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c"
+KITTY_KEYBOARD_PROTOCOL_QUERY = f"\x1b[>{DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u"
+DEVICE_ATTRIBUTES_QUERY = "\x1b[c"
+ENV_PROGRAM_STATUS = "PIDREI_PROGRAM_STATUS"
 
 ENV_WRITE_LOG = "PIDREI_TUI_WRITE_LOG"
 
@@ -225,6 +228,12 @@ class Terminal(Protocol):
         """Progress indicator (OSC 9;4)."""
         ...
 
+    def set_program_status(self, status: ProgramStatus) -> None:
+        """Report what the program is doing (OSC 7501). Sent only to terminals
+        that support it; the latest status is re-sent when support is
+        confirmed or the terminal restarts. Callable from any task."""
+        ...
+
 
 def _append_write_log_blocking(path: str, data: str) -> None:
     try:
@@ -315,6 +324,14 @@ class ProcessTerminal:
         # DA1 replies owed to keyboard protocol queries. Later DA1 replies
         # answer other queries and are forwarded.
         self._pending_keyboard_protocol_device_attributes = 0
+        # Program status (OSC 7501), also under `_protocol_lock`: the reader
+        # confirms support, any task reports a status. The latest status is
+        # kept across stop() so start() can report it again.
+        self._program_status: ProgramStatus | None = None
+        # Whether the terminal confirmed support since the last start(), or `PIDREI_PROGRAM_STATUS=1`.
+        self._program_status_supported = False
+        # The support query was sent and its DA1 sentinel has not arrived yet.
+        self._program_status_query_pending = False
         self._negotiation_buffer = ""
         # pi's negotiation flush `setTimeout`, as the time it would fire.
         self._negotiation_deadline: float | None = None
@@ -463,6 +480,15 @@ class ProcessTerminal:
 
         # Forward individual sequences to the input handler
         def on_data(sequence: str) -> None:
+            if is_program_status_reply(sequence):
+                # Never input, and never a reply for the TUI: a reply after the
+                # DA1 sentinel (or with no query) is swallowed.
+                with self._protocol_lock:
+                    if self._program_status_query_pending:
+                        self._program_status_query_pending = False
+                        self._program_status_supported = True
+                        self._write_program_status_locked()
+                return
             # `deferred` carries a buffered sequence that turned out not to be a
             # negotiation response; it is forwarded before the current one.
             deferred: list[str] = []
@@ -510,13 +536,22 @@ class ProcessTerminal:
         - 1 = disambiguate escape codes
         - 2 = report event types (press/repeat/release)
         - 4 = report alternate keys (shifted key, base layout key)
+
+        The OSC 7501 program status query shares the DA sentinel: a terminal
+        that supports it replies before DA. `PIDREI_PROGRAM_STATUS=1` or `0`
+        skips the query.
         """
         self._setup_stdin_buffer()
+        override = os.environ.get(ENV_PROGRAM_STATUS)
         with self._protocol_lock:
             self._keyboard_protocol_pushed = True
             self._pending_keyboard_protocol_device_attributes += 1
             self._clear_negotiation_buffer()
-        self.write_sync(KITTY_KEYBOARD_PROTOCOL_QUERY)
+            self._program_status_supported = override == "1"
+            self._program_status_query_pending = override not in ("1", "0")
+            program_status_query = PROGRAM_STATUS_QUERY if self._program_status_query_pending else ""
+            self.write_sync(f"{KITTY_KEYBOARD_PROTOCOL_QUERY}{program_status_query}{DEVICE_ATTRIBUTES_QUERY}")
+            self._write_program_status_locked()
 
     def _handle_keyboard_protocol_negotiation_sequence(
         self, negotiation_sequence: KeyboardProtocolNegotiationSequence
@@ -526,6 +561,10 @@ class ProcessTerminal:
             if self._pending_keyboard_protocol_device_attributes == 0:
                 return False
             self._pending_keyboard_protocol_device_attributes -= 1
+            # The last owed DA answers the latest query, which got no program status reply first. Earlier DA
+            # replies belong to queries from before a restart.
+            if self._pending_keyboard_protocol_device_attributes == 0:
+                self._program_status_query_pending = False
         if negotiation_sequence["type"] == "kitty-flags":
             if negotiation_sequence["flags"] != 0:
                 self._disable_modify_other_keys()
@@ -758,6 +797,12 @@ class ProcessTerminal:
     async def stop(self) -> None:
         if self._clear_progress_interval():
             self.write_sync(TERMINAL_PROGRESS_CLEAR_SEQUENCE)
+        with self._protocol_lock:
+            # Remove the status while stopped, for example after exit or while suspended. start() reports it again.
+            if self._program_status_supported and self._program_status is not None:
+                self.write_sync(format_program_status(ProgramStatus(state="clear")))
+            self._program_status_supported = False
+            self._program_status_query_pending = False
 
         # Disable bracketed paste mode
         self.write_sync("\x1b[?2004l")
@@ -869,6 +914,18 @@ class ProcessTerminal:
     def set_title(self, title: str) -> None:
         # OSC 0;title BEL - set terminal window title
         self.write_sync(f"\x1b]0;{title}\x07")
+
+    def set_program_status(self, status: ProgramStatus) -> None:
+        # Under the lock the reader confirms support with, so a confirmation
+        # and a report never interleave: either order writes the latest status.
+        with self._protocol_lock:
+            self._program_status = None if status.state == "clear" else status
+            if self._program_status_supported:
+                self.write_sync(format_program_status(status))
+
+    def _write_program_status_locked(self) -> None:
+        if self._program_status_supported and self._program_status is not None:
+            self.write_sync(format_program_status(self._program_status))
 
     def set_progress(self, active: bool) -> None:
         with self._lock:

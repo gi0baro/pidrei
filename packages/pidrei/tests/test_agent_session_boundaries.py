@@ -785,7 +785,8 @@ async def test_commits_pre_settlement_drafts_but_suppresses_continuation_when_ab
         entry["type"] == "custom" and entry["customType"] == "committed-after-abort" and entry["data"] is True
         for entry in harness.session_manager.get_entries()
     )
-    assert len(harness.events_of_type("agent_settled")) == 1
+    # #10607: settlement reports the abort although the last response succeeded.
+    assert [event.aborted for event in harness.events_of_type("agent_settled")] == [True]
 
 
 # -- durable length recovery ------------------------------------------------------------
@@ -1077,6 +1078,7 @@ async def test_marks_the_exhausted_retry_run_as_final(harnesses):
 
     assert [event.will_retry for event in harness.events_of_type("agent_end")] == [True, False]
     assert any(event.success is False and event.attempt == 1 for event in harness.events_of_type("auto_retry_end"))
+    assert [event.aborted for event in harness.events_of_type("agent_settled")] == [False]
 
 
 @pytest.mark.tonio
