@@ -13,7 +13,7 @@ import pytest
 from tonio.colored import net
 
 from pidrei_ai.auth.oauth.openai_codex import openai_codex_oauth
-from pidrei_ai.auth.types import AuthPrompt, OAuthCredential
+from pidrei_ai.auth.types import AuthPrompt, LoginOptions, OAuthCredential
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
@@ -290,6 +290,32 @@ async def test_reports_token_refresh_failures_through_the_raised_error():
         await openai_codex_oauth.refresh(
             OAuthCredential(access="invalid-access-token", refresh="invalid-refresh-token", expires=0), None
         )
+
+
+@pytest.mark.tonio
+async def test_uses_the_apps_agent_name_as_the_browser_login_originator():
+    def handler(_request: OAuthRequest):
+        return json_response(
+            {"access_token": create_access_token("acct"), "refresh_token": "refresh", "expires_in": 3600}
+        )
+
+    interaction = RecordingInteraction()
+
+    def prompt(prompt: AuthPrompt) -> str:
+        if prompt.type == "select":
+            return "browser"
+        if prompt.type != "manual_code":
+            raise AssertionError(f"Unexpected prompt: {prompt.type}")
+        state = parse_qs(urlsplit(interaction.events_of("auth_url")[0].url).query)["state"][0]
+        return f"http://localhost:1455/auth/callback?code=pasted-code&state={state}"
+
+    interaction._prompt = prompt
+
+    with stub_oauth_http(handler):
+        await openai_codex_oauth.login(interaction, LoginOptions(agent_name="my-app"))
+
+    auth_url = interaction.events_of("auth_url")[0].url
+    assert parse_qs(urlsplit(auth_url).query)["originator"][0] == "my-app"
 
 
 @pytest.mark.tonio

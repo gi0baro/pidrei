@@ -11,6 +11,7 @@ import pytest
 from pidrei_ai.api.mistral_conversations import MistralOptions, stream as stream_mistral
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, UserMessage
+from pidrei_ai.utils.retry import is_retryable_assistant_error
 from tests.mistral_helpers import FakeMistralClient, sse_body
 
 
@@ -50,7 +51,9 @@ async def test_preserves_raw_mistral_finish_reasons_for_provider_error_stops():
 
     assert message.stop_reason == "error"
     assert message.raw_stop_reason == "error"
-    assert message.error_message == "Provider stopped with: error"
+    assert message.error_message == "Provider stopped with: error (server error)"
+    # pi #10487
+    assert is_retryable_assistant_error(message) is True
 
 
 @pytest.mark.tonio
@@ -60,3 +63,4 @@ async def test_treats_unknown_mistral_finish_reasons_as_provider_error_stops():
     assert message.stop_reason == "error"
     assert message.raw_stop_reason == "unmapped_error"
     assert message.error_message == "Provider stopped with: unmapped_error"
+    assert is_retryable_assistant_error(message) is False

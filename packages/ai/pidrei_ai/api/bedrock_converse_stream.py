@@ -1134,53 +1134,85 @@ def build_additional_model_request_fields(model: Model, options: BedrockOptions)
     if not options.reasoning or not model.reasoning:
         return None
 
-    if not _is_anthropic_claude_model(model):
-        return None
+    if _is_anthropic_claude_model(model):
+        # GovCloud Bedrock currently rejects the Claude thinking.display field.
+        is_gov_cloud = _is_gov_cloud_bedrock_target(model, options)
+        display = (
+            None
+            if is_gov_cloud
+            else (options.thinking_display if options.thinking_display is not None else "summarized")
+        )
+        # Replayed signed thinking blocks are bound to the system prompt and tools they were
+        # created with. Bedrock 400s on replay after either changes unless stale blocks are
+        # dropped, matching the Anthropic provider. Skipped on GovCloud like display.
+        use_block_binding = not is_gov_cloud and _supports_thinking_block_binding(model)
 
-    # GovCloud Bedrock currently rejects the Claude thinking.display field.
-    is_gov_cloud = _is_gov_cloud_bedrock_target(model, options)
-    display = (
-        None if is_gov_cloud else (options.thinking_display if options.thinking_display is not None else "summarized")
-    )
-    # Replayed signed thinking blocks are bound to the system prompt and tools they were
-    # created with. Bedrock 400s on replay after either changes unless stale blocks are
-    # dropped, matching the Anthropic provider. Skipped on GovCloud like display.
-    use_block_binding = not is_gov_cloud and _supports_thinking_block_binding(model)
+        if _supports_adaptive_thinking(model.id, model.name):
+            return {
+                "thinking": {
+                    "type": "adaptive",
+                    **({"display": display} if display is not None else {}),
+                    **({"block_binding": {"prefix_mismatch_behavior": "drop_block"}} if use_block_binding else {}),
+                },
+                "output_config": {"effort": _map_thinking_level_to_effort(model, options.reasoning)},
+                **({"anthropic_beta": [THINKING_BINDING_CONTROLS_BETA]} if use_block_binding else {}),
+            }
 
-    if _supports_adaptive_thinking(model.id, model.name):
-        return {
+        default_budgets = {
+            "minimal": 1024,
+            "low": 2048,
+            "medium": 8192,
+            "high": 16384,
+            # Budget-based Claude clamps extended levels to high.
+            "xhigh": 16384,
+            "max": 16384,
+        }
+        level = "high" if options.reasoning in ("xhigh", "max") else options.reasoning
+        custom = getattr(options.thinking_budgets, level, None) if options.thinking_budgets else None
+        budget = custom if custom is not None else default_budgets[options.reasoning]
+
+        result: dict[str, Any] = {
             "thinking": {
-                "type": "adaptive",
+                "type": "enabled",
+                "budget_tokens": budget,
                 **({"display": display} if display is not None else {}),
-                **({"block_binding": {"prefix_mismatch_behavior": "drop_block"}} if use_block_binding else {}),
-            },
-            "output_config": {"effort": _map_thinking_level_to_effort(model, options.reasoning)},
-            **({"anthropic_beta": [THINKING_BINDING_CONTROLS_BETA]} if use_block_binding else {}),
+            }
         }
+        if options.interleaved_thinking is None or options.interleaved_thinking:
+            result["anthropic_beta"] = ["interleaved-thinking-2025-05-14"]
+        return result
 
-    default_budgets = {
-        "minimal": 1024,
-        "low": 2048,
-        "medium": 8192,
-        "high": 16384,
-        # Budget-based Claude clamps extended levels to high.
-        "xhigh": 16384,
-        "max": 16384,
-    }
-    level = "high" if options.reasoning in ("xhigh", "max") else options.reasoning
-    custom = getattr(options.thinking_budgets, level, None) if options.thinking_budgets else None
-    budget = custom if custom is not None else default_budgets[options.reasoning]
+    candidates = _get_model_match_candidates(model.id, model.name)
 
-    result: dict[str, Any] = {
-        "thinking": {
-            "type": "enabled",
-            "budget_tokens": budget,
-            **({"display": display} if display is not None else {}),
-        }
-    }
-    if options.interleaved_thinking is None or options.interleaved_thinking:
-        result["anthropic_beta"] = ["interleaved-thinking-2025-05-14"]
-    return result
+    if any("gpt-oss" in s for s in candidates):
+        return {"reasoning_effort": _OPENAI_GPT_OSS_EFFORT[options.reasoning]}
+
+    if any("gpt-" in s for s in candidates):
+        mapped = (model.thinking_level_map or {}).get(options.reasoning)
+        return {"reasoning": {"effort": mapped if isinstance(mapped, str) else _OPENAI_GPT_EFFORT[options.reasoning]}}
+
+    return None
+
+
+# OpenAI GPT models (GPT-5.x, GPT-6) take a nested `reasoning.effort` and reject `minimal`.
+_OPENAI_GPT_EFFORT: dict[ThinkingLevel, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
+}
+
+# gpt-oss takes a flat `reasoning_effort` and only accepts low, medium and high.
+_OPENAI_GPT_OSS_EFFORT: dict[ThinkingLevel, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "high",
+    "max": "high",
+}
 
 
 _IMAGE_FORMATS = {

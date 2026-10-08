@@ -600,6 +600,28 @@ async def test_clamps_codex_session_id_header_to_64_characters():
 
 
 @pytest.mark.tonio
+async def test_lets_model_and_caller_headers_override_originator_and_user_agent():
+    client = sse_client()
+    token = mock_token()
+    await stream_codex(
+        make_model(headers={"originator": "my-app"}),
+        hello_context(),
+        OpenAICodexResponsesOptions(
+            api_key=token,
+            transport="sse",
+            headers={"user-agent": "my-app/1.0", "Authorization": "Bearer ignored"},
+            client=client,
+        ),
+    ).result()
+
+    # pi reads a `Headers` object; names are case-insensitive there.
+    headers = {name.lower(): value for name, value in client.requests[0].headers.items()}
+    assert headers["originator"] == "my-app"
+    assert headers["user-agent"] == "my-app/1.0"
+    assert headers["authorization"] == f"Bearer {token}"
+
+
+@pytest.mark.tonio
 async def test_preserves_gpt55_xhigh_reasoning_effort_from_simple_options(monkeypatch):
     from pidrei_ai.types import SimpleStreamOptions
 

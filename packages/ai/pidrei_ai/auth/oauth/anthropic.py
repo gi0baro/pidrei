@@ -48,6 +48,8 @@ CLIENT_ID = _decode("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl")
 AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 TOKEN_URL = "https://platform.claude.com/v1/oauth/token"  # noqa: S105 - an endpoint, not a secret
 CALLBACK_HOST = get_provider_env_value("PIDREI_OAUTH_CALLBACK_HOST") or "127.0.0.1"
+# Preferred so the port can be forwarded into containers or over SSH. Anthropic accepts any loopback port,
+# so login falls back to a free port when this one cannot be bound (pi #10571).
 CALLBACK_PORT = 53692
 CALLBACK_PATH = "/callback"
 REDIRECT_URI = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
@@ -154,19 +156,29 @@ async def _exchange_authorization_code(
 async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredential:
     pkce = generate_pkce()
     verifier, challenge = pkce.verifier, pkce.challenge
-    callback: OAuthCallbackServer[str] | None
-    try:
-        callback = await start_oauth_callback_server(
+
+    def start_callback_server(port: int) -> Awaitable[OAuthCallbackServer[str]]:
+        return start_oauth_callback_server(
             provider_name="Anthropic",
             host=CALLBACK_HOST,
-            port=CALLBACK_PORT,
+            port=port,
             path=CALLBACK_PATH,
+            redirect_host="localhost",
             state=verifier,
             complete=keep_code,
             cancel=interaction.cancel,
         )
+
+    # Without a callback server, login continues with the pasted redirect URL.
+    callback: OAuthCallbackServer[str] | None
+    try:
+        callback = await start_callback_server(CALLBACK_PORT)
     except Exception:
-        callback = None
+        try:
+            callback = await start_callback_server(0)
+        except Exception:
+            callback = None
+    redirect_uri = callback.redirect_uri if callback is not None else REDIRECT_URI
 
     try:
         auth_params = urlencode(
@@ -174,7 +186,7 @@ async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredent
                 "code": "true",
                 "client_id": CLIENT_ID,
                 "response_type": "code",
-                "redirect_uri": REDIRECT_URI,
+                "redirect_uri": redirect_uri,
                 "scope": SCOPES,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
@@ -196,7 +208,7 @@ async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredent
             interaction,
             callback,
             message="Complete login in your browser, or paste the authorization code / redirect URL here:",
-            placeholder=REDIRECT_URI,
+            placeholder=redirect_uri,
         )
         code: str | None
         state = verifier
@@ -212,7 +224,7 @@ async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredent
         if not code:
             raise RuntimeError("Missing authorization code")
         interaction.notify(AuthEvent(type="progress", message="Exchanging authorization code for tokens..."))
-        return await _exchange_authorization_code(code, state, verifier, REDIRECT_URI, interaction.cancel)
+        return await _exchange_authorization_code(code, state, verifier, redirect_uri, interaction.cancel)
     finally:
         if callback is not None:
             callback.close()

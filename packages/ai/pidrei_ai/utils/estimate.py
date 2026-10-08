@@ -1,11 +1,12 @@
 """Port of pi's token estimation heuristics (packages/ai/src/utils/estimate.ts).
 
-Estimates use ~4 chars/token and a flat per-image cost; when a recent
+Estimates use ~3.5 chars/token and a flat per-image cost; when a recent
 assistant message carries provider-reported usage that still describes the
 current prefix, that usage is trusted and only trailing messages are estimated.
 """
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,7 @@ from pidrei_ai.types import Message, Tool, ToolReference, TranscriptContext, Usa
 from pidrei_ai.utils.text import get_system_message_text
 
 
-CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 3.5
 ESTIMATED_IMAGE_CHARS = 4800
 
 
@@ -65,11 +66,11 @@ def _estimate_text_and_image_content_chars(content: str | list) -> int:
 
 
 def estimate_text_tokens(text: str) -> int:
-    return -(-len(text) // CHARS_PER_TOKEN)
+    return math.ceil(len(text) / CHARS_PER_TOKEN)
 
 
 def estimate_text_and_image_content_tokens(content: str | list) -> int:
-    return -(-_estimate_text_and_image_content_chars(content) // CHARS_PER_TOKEN)
+    return math.ceil(_estimate_text_and_image_content_chars(content) / CHARS_PER_TOKEN)
 
 
 def estimate_message_tokens(message: Message) -> int:
@@ -90,7 +91,7 @@ def estimate_message_tokens(message: Message) -> int:
             chars += len(block.thinking)
         else:
             chars += len(block.name) + len(_safe_json_stringify(block.arguments))
-    return -(-chars // CHARS_PER_TOKEN)
+    return math.ceil(chars / CHARS_PER_TOKEN)
 
 
 def _get_last_assistant_usage_info(messages: list[Message]) -> tuple[Usage, int] | None:

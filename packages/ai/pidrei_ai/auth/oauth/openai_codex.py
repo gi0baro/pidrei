@@ -377,8 +377,11 @@ async def _login_device_code(interaction: ProviderAuthInteraction) -> OAuthCrede
     )
 
 
-async def _login_browser(interaction: ProviderAuthInteraction) -> OAuthCredential:
-    flow = _create_authorization_flow()
+async def _login_browser(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
+    # pi passes `options?.agentName` to a default parameter: only a missing name falls back.
+    flow = _create_authorization_flow(
+        options.agent_name if options is not None and options.agent_name is not None else ORIGINATOR
+    )
     # Port 1455 is shared with the Codex CLI; when it is taken, fall back to the pasted redirect URL.
     callback: OAuthCallbackServer[str] | None
     try:
@@ -442,7 +445,7 @@ async def _login(interaction: ProviderAuthInteraction, options: LoginOptions | N
     if method != OPENAI_CODEX_BROWSER_LOGIN_METHOD:
         raise RuntimeError(f"Unknown OpenAI Codex login method: {method}")
 
-    return await _login_browser(interaction)
+    return await _login_browser(interaction, options)
 
 
 async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:

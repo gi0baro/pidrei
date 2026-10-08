@@ -104,6 +104,11 @@ def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     if term.startswith("screen"):
         return {"images": None, "trueColor": has_true_color_hint, "hyperlinks": False}
 
+    # Herdr forwards OSC 8 hyperlinks. It runs inside another terminal whose variables, such as
+    # KITTY_WINDOW_ID, may leak into its panes, so check it first and leave image protocols off.
+    if term_program == "herdr":
+        return {"images": None, "trueColor": has_true_color_hint, "hyperlinks": True}
+
     if os.environ.get("KITTY_WINDOW_ID") or term_program == "kitty":
         return {"images": "kitty", "trueColor": True, "hyperlinks": True}
 

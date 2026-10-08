@@ -666,6 +666,13 @@ LIVE_API_AI_TESTS = (
 DROPPED_PREFIXES += tuple(
     (f"packages/ai/test/{name}.test.ts", "live-API test, not ported") for name in LIVE_API_AI_TESTS
 )
+DROPPED_PREFIXES += (
+    # 1.1.0 drops (1.1.0 delta port).
+    (
+        "packages/coding-agent/src/utils/image-resize-worker.ts",
+        "Node worker thread for image resizing; pidrei resizes with Pillow on the blocking pool (image_process.py)",
+    ),
+)
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
 DROPPED_BASENAME_RE = re.compile(r"radius")
@@ -746,6 +753,12 @@ RENAMES = {
     "packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt": (
         "packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt"
     ),
+    # 1.1.0: resizing is Pillow on the blocking pool, in the one image module
+    # (the worker-thread half is dropped below).
+    "packages/coding-agent/src/utils/image-resize-core.ts": "packages/pidrei/pidrei/utils/image_process.py",
+    "packages/coding-agent/src/utils/image-resize.ts": "packages/pidrei/pidrei/utils/image_process.py",
+    # 1.1.0: consolidated into generate_models.py like the OpenRouter catalog helpers.
+    "packages/ai/scripts/ai-gateway-pricing.ts": "packages/ai/scripts/generate_models.py",
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
@@ -1501,6 +1514,10 @@ TEST_HOMES = {
     ),
     "packages/coding-agent/test/suite/regressions/3303-find-nested-gitignore.test.ts": (
         "PARITY GAP: nested .gitignore scoping in find unmirrored (test_tools.py covers the root .gitignore only)"
+    ),
+    "packages/coding-agent/test/suite/regressions/6363-agent-settled-event.test.ts": (
+        "covered by packages/pidrei/tests/test_agent_session_boundaries.py "
+        "(test_marks_the_exhausted_retry_run_as_final and the agent_settled assertions around it)"
     ),
 }
 

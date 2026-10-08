@@ -214,6 +214,9 @@ class LoginOptions:
     # agent host ID. Called only by login flows that need it, so apps can create
     # the ID on first use and must return the same ID on every later call.
     get_device_id: Callable[[], str] | None = None
+    # Name this app introduces itself with during login, e.g. OpenAI's agent name hint and
+    # Codex originator. Defaults to PiDrei's own name.
+    agent_name: str | None = None
 
 
 @dataclass(slots=True)

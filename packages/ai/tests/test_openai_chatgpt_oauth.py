@@ -118,6 +118,19 @@ async def test_registers_a_user_owned_client_and_stores_its_issued_id_and_grante
 
 
 @pytest.mark.tonio
+async def test_uses_the_apps_agent_name_as_the_name_hint():
+    authorize: list[dict[str, str]] = []
+
+    with stub_token_endpoint(token_response()):
+        await openai_chatgpt_oauth.login(
+            login_interaction(callback_client_id="oaiapp_issued", on_authorize=authorize.append),
+            LoginOptions(get_device_id=lambda: DEVICE_ID, agent_name="my-app"),
+        )
+
+    assert authorize[0]["agent_name_hint"] == "my-app"
+
+
+@pytest.mark.tonio
 async def test_rejects_registration_without_an_issued_client_id():
     with (
         stub_token_endpoint(token_response()) as calls,

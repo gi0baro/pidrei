@@ -34,9 +34,9 @@ def test_ignores_stale_assistant_usage_after_newer_message_inserted_before_it():
     )
 
     assert estimate_context_tokens(context) == ContextUsageEstimate(
-        tokens=1_005,
+        tokens=1_149,
         usage_tokens=0,
-        trailing_tokens=1_005,
+        trailing_tokens=1_149,
         last_usage_index=None,
     )
 
@@ -55,9 +55,9 @@ def test_uses_assistant_usage_again_after_response_to_inserted_context():
     )
 
     assert estimate_context_tokens(context) == ContextUsageEstimate(
-        tokens=2_001,
+        tokens=2_002,
         usage_tokens=2_000,
-        trailing_tokens=1,
+        trailing_tokens=2,
         last_usage_index=3,
     )
 
@@ -73,5 +73,5 @@ def test_estimate_message_tokens_counts_tool_call_arguments():
         timestamp=0,
     )
 
-    # chars = len("edit") + len('{"path":"a.py"}') == 4 + 15 -> ceil(19 / 4) == 5
-    assert estimate_message_tokens(message) == 5
+    # chars = len("edit") + len('{"path":"a.py"}') == 4 + 15 -> ceil(19 / 3.5) == 6
+    assert estimate_message_tokens(message) == 6
