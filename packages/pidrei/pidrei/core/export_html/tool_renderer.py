@@ -67,6 +67,7 @@ class ToolHtmlRenderer:
             "expanded": expanded,
             "showImages": False,
             "isError": is_error,
+            "durationMs": None,
             "outputPad": 1,
         }
 

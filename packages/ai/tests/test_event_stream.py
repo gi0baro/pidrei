@@ -330,3 +330,121 @@ async def test_abort_with_a_frozen_partial_publishes_an_aborted_copy():
     assert result.stop_reason == "aborted"
     assert result.error_message == "Request was aborted"
     assert frozen.stop_reason == "pending"
+
+
+# --- AssistantMessageEventStream timing (pi #10549) ---------------------------
+#
+# pi sleeps and asserts on the mutated message; here the clock seams are manual
+# (`clock.now_ms` for the wall-clock start, `clock.monotonic` for the duration),
+# so the durations are exact, and the frozen message is not mutated: the timed
+# value is what the event and `result()` carry (recipe `freeze-at-seam`).
+
+
+class _ManualClock:
+    def __init__(self, monkeypatch) -> None:
+        from pidrei_utils import clock
+
+        self.wall_ms = 1_800_000_000_000
+        self.monotonic_s = 100.0
+        monkeypatch.setattr(clock, "now_ms", lambda: self.wall_ms)
+        monkeypatch.setattr(clock, "monotonic", lambda: self.monotonic_s)
+
+    def advance_ms(self, ms: int) -> None:
+        self.wall_ms += ms
+        self.monotonic_s += ms / 1000
+
+
+def _timed_message(timestamp: int, duration_ms: int | None = None):
+    from pidrei_ai.types import AssistantMessage, Usage
+
+    return AssistantMessage(
+        content=[],
+        api="openai-responses",
+        provider="openai",
+        model="m",
+        usage=Usage(),
+        stop_reason="stop",
+        timestamp=timestamp,
+        duration_ms=duration_ms,
+    )
+
+
+@pytest.mark.tonio
+async def test_sets_duration_ms_on_the_final_done_or_error_message_of_a_response_it_saw_start(monkeypatch):
+    from dataclasses import replace
+
+    from pidrei_ai.builders import AssistantMessageBuilder
+    from pidrei_ai.types import DoneEvent, ErrorEvent
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    clock = _ManualClock(monkeypatch)
+    done = AssistantMessageEventStream()
+    event = DoneEvent(reason="stop", message=_timed_message(clock.wall_ms))
+    clock.advance_ms(20)
+    done.push(event)
+    assert event.message.duration_ms == 20
+    assert (await done.result()).duration_ms == 20
+
+    # A producer's builder gets the field before it is frozen, so both agree.
+    failed = AssistantMessageEventStream()
+    error = AssistantMessageBuilder.from_message(replace(_timed_message(clock.wall_ms), stop_reason="error"))
+    clock.advance_ms(7)
+    failed.push(ErrorEvent(reason="error", error=error))
+    assert error.duration_ms == 7
+    assert (await failed.result()).duration_ms == 7
+
+    ended = AssistantMessageEventStream()
+    ended.end(_timed_message(clock.wall_ms))
+    assert (await ended.result()).duration_ms == 0
+
+
+@pytest.mark.tonio
+async def test_keeps_an_existing_duration_so_a_forwarding_stream_keeps_the_inner_measurement(monkeypatch):
+    from pidrei_ai.types import DoneEvent
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    clock = _ManualClock(monkeypatch)
+    outer = AssistantMessageEventStream()
+    clock.advance_ms(20)
+    inner = AssistantMessageEventStream()
+    inner.push(DoneEvent(reason="stop", message=_timed_message(clock.wall_ms)))
+    measured = await inner.result()
+    clock.advance_ms(5)
+    # The outer stream forwards what the inner one published (the original is frozen).
+    outer.push(DoneEvent(reason="stop", message=measured))
+    assert measured.duration_ms == 0
+    assert (await outer.result()).duration_ms == measured.duration_ms
+
+    preset_stream = AssistantMessageEventStream()
+    preset_stream.push(DoneEvent(reason="stop", message=_timed_message(clock.wall_ms, 1234)))
+    assert (await preset_stream.result()).duration_ms == 1234
+
+
+@pytest.mark.tonio
+async def test_leaves_a_message_untimed_when_it_started_before_the_stream_such_as_a_fetched_deferred_result(
+    monkeypatch,
+):
+    from pidrei_ai.types import DoneEvent
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    clock = _ManualClock(monkeypatch)
+    stream = AssistantMessageEventStream()
+    clock.advance_ms(20)
+    stream.push(DoneEvent(reason="stop", message=_timed_message(clock.wall_ms - 60_000)))
+    assert (await stream.result()).duration_ms is None
+
+
+@pytest.mark.tonio
+async def test_does_not_time_a_message_pushed_after_the_stream_completed(monkeypatch):
+    from pidrei_ai.builders import AssistantMessageBuilder
+    from pidrei_ai.types import DoneEvent
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    clock = _ManualClock(monkeypatch)
+    stream = AssistantMessageEventStream()
+    stream.push(DoneEvent(reason="stop", message=_timed_message(clock.wall_ms)))
+    clock.advance_ms(20)
+    # A builder shows whether the late push timed it (a frozen message is never mutated).
+    late = AssistantMessageBuilder.from_message(_timed_message(clock.wall_ms))
+    stream.push(DoneEvent(reason="stop", message=late))
+    assert late.duration_ms is None

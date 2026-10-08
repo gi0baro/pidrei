@@ -236,6 +236,8 @@ def serialize_message(message: Any) -> Any:
         _put(data, "rawStopReason", message.raw_stop_reason)
         _put(data, "endTurn", message.end_turn)
         _put(data, "deferred", _serialize_deferred_handle(message.deferred))
+        # The response stream assigns it when the response ends, before the agent loop's thinkingLevel.
+        _put(data, "durationMs", message.duration_ms)
         # The agent loop assigns it onto the finished message, so it lands last.
         _put(data, "thinkingLevel", message.thinking_level)
         return data
@@ -249,6 +251,7 @@ def serialize_message(message: Any) -> Any:
         _put(data, "details", to_wire_value(message.details))
         _put(data, "usage", serialize_usage(message.usage))
         data["isError"] = message.is_error
+        _put(data, "durationMs", message.duration_ms)
         data["timestamp"] = message.timestamp
         # pi's session assigns it onto the finished message, so it lands last.
         if message.nested_calls is not None:
@@ -328,6 +331,7 @@ def parse_message(data: Any) -> Any:
             raw_stop_reason=data.get("rawStopReason"),
             end_turn=data.get("endTurn"),
             deferred=_parse_deferred_handle(data.get("deferred")),
+            duration_ms=data.get("durationMs"),
         )
     if role == "toolResult":
         return ToolResultMessage(
@@ -339,6 +343,7 @@ def parse_message(data: Any) -> Any:
             details=data.get("details"),
             usage=parse_usage(data.get("usage")),
             nested_calls=_parse_nested_calls(data.get("nestedCalls")),
+            duration_ms=data.get("durationMs"),
         )
     if role == "custom":
         return CustomMessage(

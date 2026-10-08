@@ -3650,6 +3650,7 @@ class InteractiveMode:
                         "content": result.content if result is not None else [],
                         "details": getattr(result, "details", None) if result is not None else None,
                         "isError": event.is_error,
+                        "durationMs": event.duration_ms,
                     }
                 )
                 self._pending_tools.pop(event.tool_call_id, None)
@@ -4012,8 +4013,14 @@ class InteractiveMode:
                 # Match tool results to pending tool components
                 component = rendered_pending_tools.get(message.tool_call_id)
                 if component is not None:
+                    # pi passes the message itself, so its durationMs reaches the renderer after a reload.
                     component.update_result(
-                        {"content": message.content, "details": message.details, "isError": message.is_error}
+                        {
+                            "content": message.content,
+                            "details": message.details,
+                            "isError": message.is_error,
+                            "durationMs": message.duration_ms,
+                        }
                     )
                     rendered_pending_tools.pop(message.tool_call_id, None)
             else:

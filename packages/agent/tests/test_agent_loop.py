@@ -331,6 +331,55 @@ async def test_should_handle_tool_calls_and_results():
     assert tool_result.usage == patched_tool_usage
 
 
+# pi #10549
+@pytest.mark.tonio
+async def test_records_how_long_execute_took_on_the_tool_result_excluding_hooks(monkeypatch):
+    # pi sleeps 30 ms in the tool and 100 ms in the hook and bounds the result;
+    # here both advance a manual `clock.monotonic`, so the duration is exact.
+    from pidrei_utils import clock
+
+    now = {"s": 100.0}
+    monkeypatch.setattr(clock, "monotonic", lambda: now["s"])
+
+    async def execute(_tool_call_id, params):
+        now["s"] += 0.030
+        return AgentToolResult(content=[TextContent(text=params["value"])], details={"value": params["value"]})
+
+    tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
+
+    async def before_tool_call(ctx, _cancel):
+        now["s"] += 0.100
+        return BeforeToolCallResult(block=True, reason="no") if ctx.tool_call.id == "blocked" else None
+
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, before_tool_call=before_tool_call)
+    call_index = 0
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal call_index
+        if call_index == 0:
+            message = create_assistant_message(
+                [
+                    ToolCall(id="ran", name="echo", arguments={"value": "a"}),
+                    ToolCall(id="blocked", name="echo", arguments={"value": "b"}),
+                ],
+                "toolUse",
+            )
+            stream = done_stream(message, "toolUse")
+        else:
+            stream = done_stream(create_assistant_message([TextContent(text="done")]))
+        call_index += 1
+        return stream
+
+    stream = agent_loop([create_user_message("go")], AgentContext(messages=[], tools=[tool]), config, None, stream_fn)
+    async for _event in stream:
+        pass
+    results = [message for message in await stream.result() if message.role == "toolResult"]
+    ran, blocked = results
+    assert ran.duration_ms == 30
+    assert blocked.is_error is True
+    assert blocked.duration_ms is None
+
+
 @pytest.mark.tonio
 async def test_should_not_execute_tool_calls_from_a_length_truncated_assistant_message():
     executed = []

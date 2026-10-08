@@ -1590,6 +1590,7 @@ class AgentSession:
                         "toolName": event.tool_name,
                         "result": event.result,
                         "isError": event.is_error,
+                        **({} if event.duration_ms is None else {"durationMs": event.duration_ms}),
                     },
                     event,
                 )

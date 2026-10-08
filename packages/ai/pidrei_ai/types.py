@@ -285,7 +285,8 @@ class AssistantMessage:
     model: str
     usage: Usage
     stop_reason: StopReason
-    timestamp: int  # Unix timestamp in milliseconds
+    # Unix timestamp in milliseconds when the request started.
+    timestamp: int
     # Concrete model reported by the provider when different from the requested `model`.
     response_model: str | None = None
     response_id: str | None = None  # Provider-specific response/message identifier
@@ -301,6 +302,10 @@ class AssistantMessage:
     end_turn: bool | None = None
     # Present exactly when stop_reason == "deferred": the provider handle to redeem.
     deferred: DeferredHandle | None = None
+    # Milliseconds from `timestamp` until the response ended, measured with a monotonic clock. Set by
+    # `AssistantMessageEventStream` on the final message of a response it saw start; None for legacy
+    # messages and for deferred results fetched later.
+    duration_ms: int | None = None
     role: Literal["assistant"] = "assistant"
 
 
@@ -336,12 +341,15 @@ class ToolResultMessage:
     tool_name: str
     content: list[ToolResultContent]  # Supports text and images
     is_error: bool
-    timestamp: int  # Unix timestamp in milliseconds
+    # Unix timestamp in milliseconds when the result was created.
+    timestamp: int
     details: Any = None
     # Usage from the tool execution itself, if available. Not part of main LLM context accounting.
     usage: Usage | None = None
     # Calls this tool made to other tools. Kept for the session record; not sent to the model.
     nested_calls: NestedToolCalls | None = None
+    # Milliseconds the tool's execution took, measured with a monotonic clock. None for legacy results.
+    duration_ms: int | None = None
     role: Literal["toolResult"] = "toolResult"
 
 

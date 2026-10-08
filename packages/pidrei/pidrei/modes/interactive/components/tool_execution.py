@@ -126,6 +126,7 @@ class ToolExecutionComponent(Container):
             "expanded": self._expanded,
             "showImages": self._show_images,
             "isError": bool(self._result["isError"]) if self._result else False,
+            "durationMs": None if self._is_partial or not self._result else self._result.get("durationMs"),
             "outputPad": self._output_pad,
         }
 
@@ -175,7 +176,8 @@ class ToolExecutionComponent(Container):
         self._ui.request_render()
 
     def update_result(self, result: dict, is_partial: bool = False) -> None:
-        """``result`` is ``{"content": [...], "details"?, "isError"}``."""
+        """``result`` is ``{"content": [...], "details"?, "isError", "durationMs"?}``; ``durationMs`` is
+        the execution time of a final result."""
         self._result = result
         self._is_partial = is_partial
         self._update_display()

@@ -100,6 +100,8 @@ class AgentToolCallOutcome:
     tool_call: AgentToolCall
     result: AgentToolResult[Any]
     is_error: bool
+    # Milliseconds `execute()` took, measured with a monotonic clock; None when the tool did not run.
+    duration_ms: int | None = None
 
 
 # Callback used by tools to stream partial execution updates. The callback is
@@ -460,6 +462,8 @@ class ToolExecutionEndEvent:
     tool_name: str
     result: Any
     is_error: bool
+    # Milliseconds `execute()` took, measured with a monotonic clock; None when the tool did not run.
+    duration_ms: int | None = None
     parent_tool_call_id: str | None = None
     type: Literal["tool_execution_end"] = "tool_execution_end"
 

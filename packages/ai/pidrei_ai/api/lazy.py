@@ -24,7 +24,7 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
 
-def _create_setup_error_message(model: Model, error: Any) -> AssistantMessage:
+def _create_setup_error_message(model: Model, error: Any, timestamp: int) -> AssistantMessage:
     return AssistantMessage(
         content=[],
         api=model.api,
@@ -33,7 +33,7 @@ def _create_setup_error_message(model: Model, error: Any) -> AssistantMessage:
         usage=Usage(),
         stop_reason="error",
         error_message=str(error),
-        timestamp=clock.now_ms(),
+        timestamp=timestamp,
     )
 
 
@@ -63,9 +63,10 @@ def lazy_stream(
     stream (the next layer accepted `into=`: nothing to forward), `None`
     (it produced directly), or any other event source, which is forwarded.
     """
+    started_at = clock.now_ms()
     outer = into if into is not None else AssistantMessageEventStream()
     if outer.partial is None:
-        outer.partial = _create_setup_error_message(model, "Request was aborted")
+        outer.partial = _create_setup_error_message(model, "Request was aborted", started_at)
 
     async def _run() -> None:
         try:
@@ -74,9 +75,10 @@ def lazy_stream(
                 return
             await _forward_stream(outer, inner)
         except Exception as error:
-            message = _create_setup_error_message(model, error)
-            outer.push(ErrorEvent(reason="error", error=message))
-            outer.end(message)
+            # The push rebinds the event's payload to the timed message; end with that one.
+            event = ErrorEvent(reason="error", error=_create_setup_error_message(model, error, started_at))
+            outer.push(event)
+            outer.end(event.error)
 
     outer.spawn_producer(_run(), cancel)
     return outer

@@ -23,6 +23,7 @@ from tonio.colored.sync import channel
 
 from pidrei_ai.builders import AssistantMessageBuilder, ToolCallBuilder
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent
+from pidrei_utils import clock
 from pidrei_utils.cancel import AbortError, CancelToken
 
 
@@ -178,10 +179,21 @@ class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMe
 
     Completes on a `done` event (result: the final message) or an `error`
     event (result: the error `AssistantMessage` — returned, not raised).
+
+    It also times the response: the final message (`done` or `error` event,
+    or the result passed to `end()`) gets `duration_ms`, measured with a
+    monotonic clock from the stream's creation, unless the message already has
+    one or its `timestamp` predates the stream. A stream that forwards a
+    response which started elsewhere, such as a deferred result fetched later,
+    therefore leaves it untimed. pi sets the field on the message the producer
+    holds; here the timing lands at the freeze seam (recipe `freeze-at-seam`):
+    a builder gets it before `freeze()`, a frozen message is replaced.
     """
 
     def __init__(self) -> None:
         super().__init__(self._event_is_complete, self._event_extract_result)
+        self._started_at = clock.now_ms()
+        self._started_at_monotonic = clock.monotonic()
         # The producer's in-progress message *builder* — producer-private
         # (mutable; only the producing adapter and the abort path below touch
         # it). Set by adapters as soon as it exists so a cancel that lands
@@ -201,11 +213,9 @@ class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMe
         """
         event_type = event.type
         if event_type == "done":
-            if isinstance(event.message, AssistantMessageBuilder):
-                event.message = event.message.freeze()
+            event.message = self._time(event.message)
         elif event_type == "error":
-            if isinstance(event.error, AssistantMessageBuilder):
-                event.error = event.error.freeze()
+            event.error = self._time(event.error)
         else:
             partial = event.partial
             if isinstance(partial, AssistantMessageBuilder):
@@ -223,6 +233,26 @@ class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMe
             elif event_type == "toolcall_end" and isinstance(event.tool_call, ToolCallBuilder):
                 event.tool_call = event.tool_call.freeze()
         super().push(event)
+
+    def end(self, result: AssistantMessage = _UNSET) -> None:
+        if result is not _UNSET:
+            result = self._time(result)
+        super().end(result)
+
+    def _time(self, message: AssistantMessageBuilder | AssistantMessage) -> AssistantMessage:
+        """Time a final message and freeze it: a builder gets `duration_ms` before
+        `freeze()`, a frozen message is replaced. `done` is read before the push
+        takes the lock, as pi reads `this.done`; a push that loses that race is
+        dropped by `EventStream.push`."""
+        duration = None
+        if not self.done and message.duration_ms is None and message.timestamp >= self._started_at:
+            # pi: Math.max(0, Math.round(performance.now() - startedAtMonotonic)); half-up rounding.
+            duration = max(0, int((clock.monotonic() - self._started_at_monotonic) * 1000 + 0.5))
+        if isinstance(message, AssistantMessageBuilder):
+            if duration is not None:
+                message.duration_ms = duration
+            return message.freeze()
+        return message if duration is None else replace(message, duration_ms=duration)
 
     def _abort(self, cancel: CancelToken) -> None:
         message = self.partial

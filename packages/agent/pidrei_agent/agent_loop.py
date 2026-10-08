@@ -540,6 +540,7 @@ _NO_NESTED_CALLS = _NestedCallsRecord()
 class _ExecutedToolCallOutcome:
     result: AgentToolResult[Any]
     is_error: bool
+    duration_ms: int
     nested: _NestedCallsRecord = _NO_NESTED_CALLS
 
 
@@ -549,6 +550,8 @@ class _FinalizedToolCallOutcome:
     result: AgentToolResult[Any]
     is_error: bool
     nested: _NestedCallsRecord = _NO_NESTED_CALLS
+    # Milliseconds `execute()` took; None when the tool did not run.
+    duration_ms: int | None = None
 
 
 # The `before_tool_call` and `after_tool_call` hooks of `AgentLoopConfig`
@@ -604,7 +607,12 @@ async def run_tool_call(tool_call: AgentToolCall, options: RunToolCallOptions) -
     finalized = await _finalize_executed_tool_call(
         options.context, options.assistant_message, preparation, executed, options, cancel
     )
-    return AgentToolCallOutcome(tool_call=finalized.tool_call, result=finalized.result, is_error=finalized.is_error)
+    return AgentToolCallOutcome(
+        tool_call=finalized.tool_call,
+        result=finalized.result,
+        is_error=finalized.is_error,
+        duration_ms=finalized.duration_ms,
+    )
 
 
 async def _ignore_update(_partial_result: AgentToolResult[Any]) -> None:
@@ -883,18 +891,30 @@ async def _execute_prepared_tool_call(
         update_sender.send(None)
         await forwarder
 
+    started_at = clock.monotonic()
+
+    def elapsed() -> int:
+        # pi: Math.round(performance.now() - startedAt); half-up rounding.
+        return int((clock.monotonic() - started_at) * 1000 + 0.5)
+
     try:
         result = await prepared.tool.execute(prepared.tool_call.id, prepared.args, cancel, tool_on_update)
+        duration_ms = elapsed()
         await settle_updates()
         nested = _NO_NESTED_CALLS
         if result.nested_calls is not None or result.nested_usage is not None:
             nested = _NestedCallsRecord(calls=result.nested_calls, usage=result.nested_usage)
             result = replace(result, nested_calls=None, nested_usage=None)
-        return _ExecutedToolCallOutcome(result=result, is_error=result.is_error is True, nested=nested)
+        return _ExecutedToolCallOutcome(
+            result=result, is_error=result.is_error is True, duration_ms=duration_ms, nested=nested
+        )
     except Exception as error:
+        duration_ms = elapsed()
         if accepting_updates:
             await settle_updates()
-        return _ExecutedToolCallOutcome(result=_create_error_tool_result(str(error)), is_error=True)
+        return _ExecutedToolCallOutcome(
+            result=_create_error_tool_result(str(error)), is_error=True, duration_ms=duration_ms
+        )
 
 
 async def _finalize_executed_tool_call(
@@ -940,7 +960,11 @@ async def _finalize_executed_tool_call(
             is_error = True
 
     return _FinalizedToolCallOutcome(
-        tool_call=prepared.tool_call, result=result, is_error=is_error, nested=executed.nested
+        tool_call=prepared.tool_call,
+        result=result,
+        is_error=is_error,
+        nested=executed.nested,
+        duration_ms=executed.duration_ms,
     )
 
 
@@ -955,6 +979,7 @@ def _emit_tool_execution_end(finalized: _FinalizedToolCallOutcome, emit: AgentEv
             tool_name=finalized.tool_call.name,
             result=finalized.result,
             is_error=finalized.is_error,
+            duration_ms=finalized.duration_ms,
         )
     )
 
@@ -975,6 +1000,7 @@ def _create_tool_result_message(finalized: _FinalizedToolCallOutcome) -> ToolRes
         usage=usage,
         nested_calls=nested.calls,
         is_error=finalized.is_error,
+        duration_ms=finalized.duration_ms,
         timestamp=clock.now_ms(),
     )
 
