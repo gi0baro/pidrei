@@ -53,6 +53,8 @@ class CodemodeGlobal:
 @dataclass(frozen=True, slots=True)
 class CodemodeTextItem:
     text: str
+    # `print()` output (pi: `console?: true`).
+    console: bool = False
     type: Literal["text"] = "text"
 
 
@@ -65,7 +67,8 @@ class CodemodeImageItem:
 
 
 # One item of the script's output, in the order the script produced it:
-# `text()` and `print()` produce text items, `image()` image items.
+# `text()` and `print()` produce text items, with `console=True` for `print()`,
+# and `image()` image items.
 type CodemodeOutputItem = CodemodeTextItem | CodemodeImageItem
 
 type CodemodeCallStatus = Literal["ok", "error", "cancelled"]

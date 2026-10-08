@@ -16,7 +16,8 @@ import json
 from collections.abc import Awaitable
 from typing import Any
 
-from pidrei_ai.api.system_one_shared import SystemOneTransport, classify_system_one, is_record
+from pidrei_ai.api.classifier_shared import is_record
+from pidrei_ai.api.system_one_shared import SystemOneTransport, classify_system_one
 from pidrei_ai.types import ClassifierContext, ClassifierModel, ClassifierOptions, ClassifierResult
 
 

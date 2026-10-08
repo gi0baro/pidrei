@@ -52,6 +52,22 @@ async def test_does_not_retry_errors_marked_non_retryable():
 
 
 @pytest.mark.tonio
+async def test_does_not_retry_statuses_listed_in_no_retry_statuses():
+    calls = 0
+    error = ProviderError(504, {"retry-after-ms": "0"})
+
+    async def request():
+        nonlocal calls
+        calls += 1
+        raise error
+
+    with pytest.raises(ProviderError) as excinfo:
+        await retry_provider_request(request, max_retries=2, no_retry_statuses=[504])
+    assert excinfo.value is error
+    assert calls == 1
+
+
+@pytest.mark.tonio
 async def test_rejects_provider_requested_retry_delay_above_the_limit():
     calls = 0
 

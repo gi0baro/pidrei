@@ -69,6 +69,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.headers import merge_headers
 from pidrei_ai.utils.model_operations import (
     assert_chat_model,
+    assert_classifier_input_supported,
     assert_classifier_model,
     assert_image_model,
     classifier_error_result,
@@ -1099,6 +1100,7 @@ class ModelRuntime:
         """Classification with runtime-resolved auth. Never raises."""
         try:
             assert_classifier_model(model)
+            assert_classifier_input_supported(model, context)
             provider, request_model, request_options = await self._prepare_request(model, options, ClassifierOptions)
             if provider.classify is None:
                 raise ModelsError("provider", f"Provider {model.provider} does not support classification")

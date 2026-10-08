@@ -1513,6 +1513,27 @@ CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
     },
 ]
 
+# OpenAI Decisions API (public beta): gpt-6-luna is its only model. It bills input tokens only,
+# with the same long-context multiplier as chat requests. Only API keys work: Sign in with ChatGPT
+# tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
+# The endpoint rejects inputs above 922K tokens (the model's documented maximum input), but
+# requests running longer than about five seconds, currently above roughly 600K input tokens,
+# fail with a gateway timeout.
+# https://developers.openai.com/api/docs/guides/decisions
+OPENAI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
+    {
+        "type": "classifier",
+        "id": "gpt-6-luna",
+        "name": "GPT-6 Luna",
+        "api": "openai-decisions",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "input": ["text", "image"],
+        "cost": with_openai_long_context_pricing({"input": 0.1, "output": 0, "cacheRead": 0, "cacheWrite": 0}),
+        "contextWindow": 922000,
+    },
+]
+
 
 # --- models.dev catalog -------------------------------------------------------
 
@@ -3308,6 +3329,7 @@ async def main() -> None:
         *ai_gateway_catalog["classifiers"],
         *_clone(OPENCODE_CLASSIFIER_MODELS),
         *_clone(CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS),
+        *_clone(OPENAI_CLASSIFIER_MODELS),
     ]
     for model in classifier_models:
         _provider_catalog(model["provider"])["classifier"].setdefault(model["id"], model)

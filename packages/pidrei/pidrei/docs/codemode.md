@@ -28,7 +28,7 @@ A script may start with an options line:
 - `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()` and `image()` calls; write large data to a file with a tool instead.
 - `timeout_ms` is a hard deadline for the whole script, time spent waiting on tools included. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
 
-The result starts with `Script completed` or `Script failed`, the wall time, and the output. A failed script keeps its partial output, followed by `Script error:` and the error, which for an exception is a Python traceback with the script's line numbers. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, including calls that were never awaited.
+The result starts with `Script completed` or `Script failed`, the wall time, and the output. Text and image items appear in order, each on its own line. When the output has more than one text item (from `text()` or the final expression line), each starts with a `==> text N/M <==` line. `print` calls follow in one `<console_output>` block with one line per call. A failed script keeps its partial output, followed by `Script error:` and the error, which for an exception is a Python traceback with the script's line numbers. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, including calls that were never awaited.
 
 ## Globals
 
@@ -37,7 +37,7 @@ The result starts with `Script completed` or `Script failed`, the wall time, and
 | `tools.<name>(...)` | Call a tool. See [Call tools](#call-tools). |
 | `text(value)` | Add a text item to the output. Strings, numbers, booleans and `None` are added as their string form, other values as JSON. |
 | `image(value)` | Add an image to the output: a base64 `data:` URL, an `{'image_url': ...}` dict, or an image block `{'type': 'image', 'data': ..., 'mimeType': ...}` such as those returned by MCP tools and `models.generate_images()`. Remote URLs are not supported. PNG, JPEG, GIF, and WebP are accepted. Each image is also saved to a temp file, and the result names the path before the image. |
-| `print(...)` | Add a text item to the output. Consecutive prints become one item. |
+| `print(...)` | Add a line to the `<console_output>` block after the other output. Arguments are joined with spaces. |
 | last line | If the script's last line is an expression, its value is added like `text()`. `None` adds nothing. |
 | `exit()` | End the script successfully. |
 | `store(key, value)` / `load(key)` | Keep small JSON values across `codemode` calls. See [Store values](#store-values). |
@@ -92,7 +92,7 @@ The store is for small state such as IDs, cursors, or summaries. One value may h
 
 ## Models
 
-`models` reaches the model catalog and runs non-LLM models with the session's credentials: classifiers, which answer typed questions about JSON state, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which classifier and image models exist is described in [Classifier models](models.md#classifier-models).
+`models` reaches the model catalog and runs non-LLM models with the session's credentials: classifiers, which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which classifier and image models exist is described in [Classifier models](models.md#classifier-models).
 
 ```python
 type ModelType = Literal["chat", "image", "classifier"]
@@ -140,6 +140,8 @@ Model IDs differ between providers, for example `typesafe/jev-latest` and `openr
 class ClassifierContext(TypedDict):
     # The data to classify.
     state: dict[str, Any]
+    # Images judged together with `state`. Only models whose `input` includes "image" accept them.
+    images: NotRequired[list[ImageBlock]]  # {"type": "image", "data": <base64>, "mimeType": ...}
     # Questions by ID. One call answers all of them.
     questions: dict[str, ChoiceQuestion | ScoreQuestion | BoolQuestion]
 
@@ -254,6 +256,30 @@ for message, result in zip(messages, results):
     if sentiment["type"] == "choice" and urgency["type"] == "score":
         rows.append({"message": message, "sentiment": sentiment["choice"], "urgency": urgency["score"]})
 rows
+```
+
+Classifiers whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other classifiers return an error result when `images` is not empty.
+
+```python
+luna = await models.get_model_of_type("classifier", "openai", "gpt-6-luna")
+assert luna is not None
+photo = await tools.read(path="screenshot.png")
+assert not isinstance(photo, str)  # an image file reads as an image block
+result = await models.classify(
+    luna,
+    {
+        "state": {"task": "Settings page redesign"},
+        "images": [photo],
+        "questions": {
+            "broken": {
+                "type": "bool",
+                "instructions": "Does the screenshot show a broken layout?",
+                "criteria": {"true": "Overlapping, cut-off, or misaligned elements", "false": "Clean layout"},
+            },
+        },
+    },
+)
+result
 ```
 
 ### Generate images

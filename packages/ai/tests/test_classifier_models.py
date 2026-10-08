@@ -1,14 +1,23 @@
 """Mirror of pi's classifier-models.test.ts.
 
 pi injects `options.fetch`; here the one POST is stubbed at
-`system_one_shared._SystemOneClient` (tests/system_one_helpers.py).
+`classifier_shared._ClassifierClient` (tests/system_one_helpers.py).
 """
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
-from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.auth.credential_store import InMemoryCredentialStore
+from pidrei_ai.auth.types import (
+    ApiKeyAuth,
+    ApiKeyCredential,
+    AuthResult,
+    ModelAuth,
+    OAuthCredential,
+    ProviderAuth,
+)
 from pidrei_ai.providers.all import (
     builtin_models,
     get_all_builtin_models,
@@ -23,10 +32,12 @@ from pidrei_ai.types import (
     ClassifierModel,
     ClassifierOptions,
     ClassifierResult,
+    ImageContent,
     Model,
     ModelCost,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils import clock
 from tests.system_one_helpers import respond_json, stub_system_one
 
 
@@ -170,6 +181,79 @@ async def test_routes_jev_to_its_typesafe_compatible_endpoint(provider, id, url)
     assert requests[0].payload["state"] == CONTEXT.state
     assert result.stop_reason == "stop"
     assert result.answers["approved"] == ClassifierBoolAnswer(probability=0.8)
+
+
+@pytest.mark.tonio
+async def test_rejects_images_for_classifier_models_without_image_input_before_calling_the_provider():
+    classifier = classifier_model("test", "text-only")
+    calls: list[ClassifierContext] = []
+
+    async def classify(model, context, _options=None):
+        calls.append(context)
+        return ClassifierResult(
+            api=model.api, provider=model.provider, model=model.id, answers={}, stop_reason="stop", timestamp=0
+        )
+
+    models = create_models()
+    models.set_provider(
+        create_provider(
+            id="test",
+            auth=_no_auth(),
+            models=[classifier],
+            classifiers={"test-classifier": SimpleNamespace(classify=classify)},
+        )
+    )
+
+    image = ImageContent(data="aW1hZ2U=", mime_type="image/png")
+    result = await models.classify(classifier, replace(CONTEXT, images=[image]))
+    without_images = await models.classify(classifier, replace(CONTEXT, images=[]))
+
+    assert result.stop_reason == "error"
+    assert result.error_message == "Model test/text-only does not accept image input"
+    assert without_images.stop_reason == "stop"
+    assert len(calls) == 1
+
+
+@pytest.mark.tonio
+async def test_routes_openai_gpt_6_luna_through_the_decisions_api_with_images():
+    models = builtin_models()
+    luna = models.get_model_of_type("classifier", "openai", "gpt-6-luna")
+    assert luna is not None, "missing OpenAI Decisions model"
+    assert (luna.api, luna.input, luna.context_window) == ("openai-decisions", ["text", "image"], 922000)
+    # The chat entry with the same id stays separate.
+    assert models.get_model("openai", "gpt-6-luna").api == "openai-responses"
+
+    image = ImageContent(data="aW1hZ2U=", mime_type="image/png")
+    with stub_system_one(
+        respond_json({"answers": [{"type": "predicate", "name": "approved", "probability": 0.8}]})
+    ) as requests:
+        result = await models.classify(luna, replace(CONTEXT, images=[image]), ClassifierOptions(api_key="secret"))
+
+    assert [request.url for request in requests] == ["https://api.openai.com/v1/decisions"]
+    assert result.stop_reason == "stop"
+    assert result.answers["approved"] == ClassifierBoolAnswer(probability=0.8)
+
+
+@pytest.mark.tonio
+async def test_lists_openai_decisions_models_only_for_api_key_credentials():
+    async def api_key(_current):
+        return ApiKeyCredential(key="secret")
+
+    async def oauth(_current):
+        return OAuthCredential(access="access", refresh="refresh", expires=clock.now_ms() + 3_600_000)
+
+    api_key_store = InMemoryCredentialStore()
+    await api_key_store.modify("openai", api_key)
+    oauth_store = InMemoryCredentialStore()
+    await oauth_store.modify("openai", oauth)
+
+    with_api_key = builtin_models(credentials=api_key_store)
+    with_oauth = builtin_models(credentials=oauth_store)
+
+    assert [model.id for model in await with_api_key.get_available_of_type("classifier", "openai")] == ["gpt-6-luna"]
+    assert await with_oauth.get_available_of_type("classifier", "openai") == []
+    # Chat models stay available with ChatGPT OAuth.
+    assert any(model.id == "gpt-6-luna" for model in await with_oauth.get_available("openai"))
 
 
 def test_routes_openrouter_classifier_models_through_the_system_one_api():

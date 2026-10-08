@@ -80,6 +80,7 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
 from pidrei_ai.utils.model_operations import (
     assert_chat_model,
+    assert_classifier_input_supported,
     assert_classifier_model,
     assert_image_model,
     classifier_error_result,
@@ -1093,6 +1094,7 @@ class Models:
         """Classify structured state through the owning provider. Never raises."""
         try:
             assert_classifier_model(model)
+            assert_classifier_input_supported(model, context)
             provider = self._require_provider(model)
             if provider.classify is None:
                 raise ModelsError("provider", f"Provider {model.provider} does not support classification")

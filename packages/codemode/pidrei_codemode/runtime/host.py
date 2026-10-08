@@ -412,13 +412,13 @@ class _Execution:
                 self._printed.append(text)
 
     def _flush_prints_locked(self) -> None:
-        """Consecutive `print()` output becomes one text item, without its final
-        newline, placed before the next `text()`/`image()` item."""
+        """Consecutive `print()` output becomes one console text item, without its
+        final newline, placed before the next `text()`/`image()` item."""
         if not self._printed:
             return
         text = "".join(self._printed).removesuffix("\n")
         self._printed.clear()
-        self._output.append(CodemodeTextItem(text))
+        self._output.append(CodemodeTextItem(text, console=True))
 
     def _emit(self, item: CodemodeOutputItem) -> None:
         chars = len(item.text) if isinstance(item, CodemodeTextItem) else len(item.data)

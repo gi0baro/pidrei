@@ -291,7 +291,10 @@ text(','.join(tool['name'] for tool in ALL_TOOLS))
     )
 
     assert result.is_error is False
-    assert result_text(result) == 'files 2\necho,stats,screenshot\n{"a":"echo: one","b":"echo: two","names":["a","b"]}'
+    assert result_text(result) == (
+        '==> text 1/2 <==\necho,stats,screenshot\n==> text 2/2 <==\n{"a":"echo: one","b":"echo: two","names":["a","b"]}'
+        "\n<console_output>\nfiles 2\n</console_output>"
+    )
     assert sorted((row.name, row.status) for row in call_rows(result)) == [
         ("echo", "ok"),
         ("echo", "ok"),
@@ -402,22 +405,46 @@ text('after')""",
 
     # The same image shown twice is saved once, so both labels name one file.
     lines = result_text(result).split("\n")
-    assert lines == ["captured", lines[1], "<image>", lines[1], "<image>", "after"]
-    assert await check_saved_images(lines[1]) == "<saved>"
-    assert result.content[3] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    assert lines == [
+        "==> text 1/2 <==",
+        "captured",
+        lines[2],
+        "<image>",
+        lines[2],
+        "<image>",
+        "==> text 2/2 <==",
+        "after",
+    ]
+    assert await check_saved_images(lines[2]) == "<saved>"
+    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+
+
+@pytest.mark.tonio
+async def test_marks_where_each_text_item_starts_and_puts_print_lines_last_in_one_text_block(harnesses):
+    harness = await setup(harnesses, [register_tools])
+
+    result = await run(harness, "text('one\\ntwo')\nprint('a')\nprint('b')\ntext('three\\n')\n4")
+
+    # Providers join adjacent text blocks with nothing or a newline, so the output is one block.
+    assert len(result.content) == 2
+    assert result_text(result) == (
+        "==> text 1/3 <==\none\ntwo\n==> text 2/3 <==\nthree\n==> text 3/3 <==\n4\n<console_output>\na\nb\n</console_output>"
+    )
 
 
 @pytest.mark.tonio
 async def test_reports_script_failures_as_results_that_keep_partial_output_and_the_calls_that_ran(harnesses):
     harness = await setup(harnesses, [register_tools])
 
-    result = await run(harness, "text('partial')\nawait tools.echo(text='x')\nraise Exception('boom')")
+    result = await run(harness, "text('partial')\nprint('log')\nawait tools.echo(text='x')\nraise Exception('boom')")
 
     assert result.is_error is True
     assert result.content[0].text.startswith("Script failed\n")
     text = result_text(result)
-    assert text.startswith("partial\nScript error:\nTraceback (most recent call last):\n")
-    assert '", line 3, in <module>' in text
+    assert text.startswith(
+        "partial\n<console_output>\nlog\n</console_output>\nScript error:\nTraceback (most recent call last):\n"
+    )
+    assert '", line 4, in <module>' in text
     assert "\nException: boom\n" in text
     assert text.endswith("Tool calls made before the failure (they are not undone): echo (ok)")
     assert [row.name for row in call_rows(result)] == ["echo"]
@@ -585,7 +612,7 @@ async def test_truncates_output_to_the_token_budget_and_spills_the_full_text(har
 
     result = await run(
         harness,
-        f"""# @options: {{"max_output_tokens": 10}}
+        f"""# @options: {{"max_output_tokens": 30}}
 for i in range(100):
     text(f'row {{i}}')
 image('data:image/png;base64,{TINY_PNG_BASE64}')""",
@@ -604,7 +631,7 @@ image('data:image/png;base64,{TINY_PNG_BASE64}')""",
         # Images follow the truncated text, each after the path it was saved to.
         assert result.content[-1] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
         assert await check_saved_images(text.split("\n")[-2]) == "<saved>"
-        assert await fs.Path(path).read_text() == "\n".join(f"row {i}" for i in range(100))
+        assert await fs.Path(path).read_text() == "\n".join(f"==> text {i + 1}/100 <==\nrow {i}" for i in range(100))
     finally:
         await fs.Path(path).unlink(missing_ok=True)
 
@@ -645,7 +672,9 @@ image(shot)""",
     )
 
     assert result.is_error is False
-    assert await check_saved_images(result_text(result)) == "hello\nRead image file [image/png]\n<saved>\n<image>"
+    assert await check_saved_images(result_text(result)) == (
+        "==> text 1/2 <==\nhello\n==> text 2/2 <==\nRead image file [image/png]\n<saved>\n<image>"
+    )
     assert result.content[-1] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
 
 
@@ -908,18 +937,20 @@ except Exception as error:
     )
 
     assert result.is_error is False
-    first, saved, image_marker, *rest = (await check_saved_images(result_text(result))).split("\n")
+    header, first, saved, image_marker, *rest = (await check_saved_images(result_text(result))).split("\n")
+    assert header == "==> text 1/2 <=="
     assert first == "painted a fox"
     assert saved == "<saved>"
     assert image_marker == "<image>"
-    assert json.loads("\n".join(rest)) == {
+    assert rest[0] == "==> text 2/2 <=="
+    assert json.loads("\n".join(rest[1:])) == {
         "id": "painter",
         "stopReason": "stop",
         "failed": ["error", "painter exploded"],
         "wrongType": '"scorer/judge" is a classifier model, not an image model. List the image models you can use '
         'with models.get_available_of_type("image").',
     }
-    assert result.content[3] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
+    assert result.content[2] == ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")
     assert [(request["base_url"], request["api_key"]) for request in provider.image_requests] == [
         ("https://images.test/v1", "secret-key"),
         ("https://images.test/v1", "secret-key"),
@@ -962,6 +993,14 @@ async def test_reports_provider_errors_as_results_and_invalid_arguments_as_excep
         harness,
         f"""model = await models.get_model_of_type('classifier', 'scorer', 'judge')
 failed = await models.classify(model, {{'state': {{'text': 'explode'}}, 'questions': {QUESTIONS}}})
+text_only = await models.classify(
+    model,
+    {{
+        'state': {{'text': 'good'}},
+        'images': [{{'type': 'image', 'data': 'aW1hZ2U=', 'mimeType': 'image/png'}}],
+        'questions': {QUESTIONS},
+    }},
+)
 
 async def attempt(call):
     try:
@@ -972,6 +1011,10 @@ async def attempt(call):
 
 {{
     'failed': [failed['stopReason'], failed['errorMessage']],
+    'textOnly': [text_only['stopReason'], text_only['errorMessage']],
+    'badClassifierImage': await attempt(
+        models.classify(model, {{'state': {{}}, 'images': [{{'data': 'aW1hZ2U='}}], 'questions': {QUESTIONS}}})
+    ),
     'badType': await attempt(models.get_models_of_type('video')),
     'unknown': await attempt(models.classify({{'provider': 'scorer', 'id': 'nope'}}, {{}})),
     'noModel': await attempt(models.classify('judge', {{}})),
@@ -988,6 +1031,11 @@ async def attempt(call):
     assert result.is_error is False
     value = json.loads(result_text(result))
     assert value["failed"] == ["error", "classifier exploded"]
+    assert value["textOnly"] == ["error", "Model scorer/judge does not accept image input"]
+    assert (
+        "models.classify() context['images'][0] must be an image block, got a dict with keys 'data'."
+        in value["badClassifierImage"]
+    )
     assert 'Unknown model type "video"' in value["badType"]
     assert value["unknown"] == (
         'Unknown classifier model "scorer/nope". List the classifier models you can use with '
@@ -1006,6 +1054,7 @@ async def attempt(call):
     )
     assert "The provider and the id are separate arguments" in value["badSplit"]
     assert [(row.name, row.status, row.error) for row in call_rows(result)] == [
-        ("models.classify", "error", "classifier exploded")
+        ("models.classify", "error", "classifier exploded"),
+        ("models.classify", "error", "Model scorer/judge does not accept image input"),
     ]
     assert result.usage is None

@@ -1,6 +1,14 @@
 """Port of pi's model operations (packages/ai/src/utils/model-operations.ts)."""
 
-from pidrei_ai.types import AnyModel, AssistantImages, ClassifierModel, ClassifierResult, ImageModel, ModelType
+from pidrei_ai.types import (
+    AnyModel,
+    AssistantImages,
+    ClassifierContext,
+    ClassifierModel,
+    ClassifierResult,
+    ImageModel,
+    ModelType,
+)
 from pidrei_ai.utils.models_error import ModelsError
 from pidrei_utils import clock
 
@@ -28,6 +36,12 @@ def assert_image_model(model: AnyModel) -> None:
 def assert_classifier_model(model: AnyModel) -> None:
     if not is_model_type(model, "classifier"):
         raise ModelsError("provider", f"Model {model.provider}/{model.id} is not a classifier model")
+
+
+def assert_classifier_input_supported(model: ClassifierModel, context: ClassifierContext) -> None:
+    """Rejects classifier images for models whose catalog entry does not accept image input."""
+    if context.images and "image" not in model.input:
+        raise ModelsError("provider", f"Model {model.provider}/{model.id} does not accept image input")
 
 
 def image_error_result(model: ImageModel, error: BaseException | object, aborted: bool = False) -> AssistantImages:

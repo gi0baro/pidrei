@@ -42,7 +42,9 @@ type Api = str  # KnownApi or any custom string
 type KnownImageApi = Literal["openrouter-images"]
 type ImageApi = str  # KnownImageApi or any custom string
 
-type KnownClassifierApi = Literal["typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify"]
+type KnownClassifierApi = Literal[
+    "typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify", "openai-decisions"
+]
 type ClassifierApi = str  # KnownClassifierApi or any custom string
 
 type KnownProvider = Literal[
@@ -1060,6 +1062,9 @@ type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierScoreQuestion | C
 class ClassifierContext:
     state: dict[str, Any]
     questions: dict[str, ClassifierQuestion]
+    # Images judged together with `state`. Only models whose `input` includes "image" accept
+    # them; other models return an error result.
+    images: list[ImageContent] | None = None
 
 
 @dataclass(slots=True, frozen=True)
