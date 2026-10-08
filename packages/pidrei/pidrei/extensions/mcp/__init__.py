@@ -46,6 +46,11 @@ What diverges from pi's shape:
   report) runs on detached coroutines; the first-prompt wait bounds each
   `ready` by one deadline, a tool call's wait ends early when the run is
   cancelled.
+- Each connection attempt is a fresh `object()` compared by identity (pi's
+  `Symbol()`), and a disabled server's cleanup is a `closing` Event a
+  re-enable waits for. pi's per-session `AbortController` is a `CancelToken`;
+  work it tracks (manager actions, sign-ins) registers an Event that
+  shutdown joins.
 - The MCP client is imported with the extension (pi loads it lazily), so the
   "MCP failed to load" reports have nothing to report and are not ported.
 - The manager (ui.py) changes its view only through `tui.apply`; its menu
@@ -65,6 +70,7 @@ import tonio.colored as tonio
 
 from pidrei_ai.utils.tasks import gather
 from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 from ...config import get_agent_dir
 from ...core.extensions.types import ToolDefinition, ToolNamespace
@@ -122,7 +128,7 @@ class _McpServer:
     """A configured server. Disabled servers have no connection. Its fields
     are written under the extension's state lock."""
 
-    __slots__ = ("connection", "entry", "message", "ready", "registered_config")
+    __slots__ = ("attempt", "closing", "connection", "entry", "message", "ready", "registered_config")
 
     def __init__(self, entry: McpServerEntry, registered_config: str | None = None) -> None:
         self.entry = entry
@@ -131,8 +137,13 @@ class _McpServer:
         self.registered_config = registered_config
         # Result of the last `/mcp` action that failed.
         self.message: str | None = None
+        # Identifies the current connection attempt (pi's `Symbol()`, compared by identity);
+        # disabling or replacing it invalidates earlier work.
+        self.attempt: object | None = None
         # Set when the connection started for the server connected or failed.
         self.ready: tonio.Event | None = None
+        # Set when a detached connection's cleanup ended; a replacement waits for it before opening a transport.
+        self.closing: tonio.Event | None = None
 
 
 def _first_line(text: str) -> str:
@@ -453,8 +464,14 @@ class _McpExtension:
         self._project_config: str | None = None
         # Registered servers that `mcp.json` overrides, shown in `/mcp`.
         self._overridden: list[str] = []
-        # Between session_start and session_shutdown. Registrations before that are read on session_start.
-        self._session_active = False
+        # Lifetime of the current session: cancelled on session_shutdown, and before the first
+        # session_start (registrations before that are read on session_start). Work captures it when
+        # it starts and drops late results once it fired. Work that outlives the command that started
+        # it also stops on it and is tracked (`_track`), so shutdown can wait for its cleanup.
+        self._session = CancelToken()
+        self._session.cancel()
+        # Tracked work (manager actions opening or closing connections, sign-ins): each sets its Event when it ends.
+        self._background_actions: set[tonio.Event] = set()
         self._auto_enable_codemode = True
         # Whether the "codemode tools unreachable" warning was shown since the session started.
         self._warned_unreachable = False
@@ -462,8 +479,6 @@ class _McpExtension:
         self._pending: tonio.Event | None = None
         # Whether a prompt already waited for the startup connections since the session started.
         self._waited_for_startup = False
-        # Bumped on every session start and shutdown so work that finishes late is dropped.
-        self._generation = 0
         # Working directory of the session, for stdio servers.
         self._session_cwd = os.getcwd()
         self._credentials = credentials
@@ -508,6 +523,20 @@ class _McpExtension:
             listeners = list(self._listeners)
         for listener in listeners:
             listener()
+
+    def _track(self) -> tonio.Event:
+        """pi's `track`: register work that shutdown waits for. Call `_untrack`
+        with the returned Event when the work ended, also when it failed."""
+        done = tonio.Event()
+        with self._lock:
+            self._background_actions.add(done)
+        return done
+
+    def _untrack(self, done: tonio.Event) -> None:
+        """Synchronous, so it can end a `finally` reached by cancellation."""
+        with self._lock:
+            self._background_actions.discard(done)
+        done.set()
 
     def _subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
         with self._lock:
@@ -616,11 +645,8 @@ class _McpExtension:
             current[name] = None
             return name
 
-        async def get_client() -> McpServerConnection:
-            return connection
-
         def readable_resources() -> bool:
-            return connection in self._resource_servers()
+            return any(current.entry.name == server for current, _connection in self._servers_with_resources())
 
         definitions: list[ToolDefinition] = []
         for tool in tools:
@@ -631,7 +657,7 @@ class _McpExtension:
                 exposure=get_mcp_tool_exposure(entry.config, tool["name"]),
                 namespace=namespace,
                 timeout_ms=connection.timeout_ms,
-                get_client=get_client,
+                get_client=self._client_resolver(server, tool["name"]),
                 readable_resources=readable_resources,
             )
             self._definitions[definition.name] = definition
@@ -645,6 +671,29 @@ class _McpExtension:
             if name not in current and definition is not None:
                 definitions.append(replace(definition, exposure="hidden"))
         return definitions
+
+    def _client_resolver(self, server: str, tool: str) -> Callable[[], Awaitable[McpServerConnection]]:
+        """A tool's `get_client`. A prepared call can outlive the connection its
+        definition was made from while the readiness hook waits for a disable or
+        re-enable, so the server's current connection is resolved when the call
+        executes."""
+
+        async def get_client() -> McpServerConnection:
+            with self._lock:
+                current = self._find_server(server)
+                enabled = current is not None and _is_enabled(current)
+                client = current.connection if current is not None else None
+                hidden = current is not None and get_mcp_tool_exposure(current.entry.config, tool) == "hidden"
+            if not enabled:
+                raise RuntimeError(f'MCP server "{server}" is disabled.')
+            if client is None:
+                raise RuntimeError(f'MCP server "{server}" is still starting.')
+            view = client.view
+            if hidden or (view.state == "connected" and all(offered["name"] != tool for offered in view.tools)):
+                raise RuntimeError(f'MCP tool "{server}/{tool}" is no longer available.')
+            return client
+
+        return get_client
 
     def _hide_tools_locked(self, server: str) -> None:
         """Make a removed server's tools unreachable."""
@@ -812,7 +861,29 @@ class _McpExtension:
         registry = self._model_registry
         return await registry.get_api_key_for_provider(provider) if registry is not None else None
 
-    def _create_connection_locked(self, server: _McpServer) -> McpServerConnection:
+    def _create_connection_locked(
+        self, server: _McpServer, is_current_locked: Callable[[], bool]
+    ) -> McpServerConnection:
+        """The server's connection for one attempt. Once the attempt is no longer
+        current (disabled, replaced, or the session ended), its tool updates do
+        nothing and its state changes only drop its sign-in snapshot."""
+
+        def on_tools(connection: McpServerConnection) -> None:
+            with self._lock:
+                if not is_current_locked():
+                    return
+                definitions = self._server_tool_definitions_locked(connection)
+                if definitions is not None:
+                    self._publish_tools_locked(definitions)
+
+        async def on_change(connection: McpServerConnection) -> None:
+            with self._lock:
+                current = is_current_locked()
+                if not current:
+                    self._tokens_at_sign_in.pop(connection, None)
+            if current:
+                await self._on_connection_change(connection)
+
         connection = McpServerConnection(
             entry=server.entry,
             cwd=self._session_cwd,
@@ -820,29 +891,50 @@ class _McpExtension:
             credentials=self._credentials_locked(),
             provider_token=self._provider_token,
             log=self._server_log_locked(),
-            on_tools=self._register_tools,
-            on_change=self._on_connection_change,
+            on_tools=on_tools,
+            on_change=on_change,
         )
         server.connection = connection
         return connection
 
-    def _start_connection(self, server: _McpServer) -> tonio.Event:
+    def _start_connection(
+        self,
+        server: _McpServer,
+        after: tonio.Event | None = None,
+        on_attempt: Callable[[object | None], None] | None = None,
+    ) -> tonio.Event:
         """Connect the server in the background. The returned Event (also
         `server.ready`) is set when it connected or failed; failures show in
-        its state. A server that left the session's servers meanwhile (it was
-        removed, or the session ended) is not connected: nothing would close
-        its connection."""
+        its state. It starts once `after` is set, unless the server was
+        disabled, replaced (a newer attempt), or removed, or the session ended
+        meanwhile: nothing would close its connection. `on_attempt` receives
+        the new attempt, under the lock that sets it."""
         ready = tonio.Event()
+        attempt = object()
         with self._lock:
+            session = self._session
+            server.attempt = attempt
             server.ready = ready
+            if on_attempt is not None:
+                on_attempt(attempt)
+
+        def is_current_locked() -> bool:
+            # By identity: a new session and a re-registration list new servers.
+            return (
+                not session.cancelled
+                and server.attempt is attempt
+                and _is_enabled(server)
+                and any(candidate is server for candidate in self._servers)
+            )
 
         async def connect() -> None:
             try:
+                if after is not None:
+                    await after.wait()
                 with self._lock:
-                    # By identity: a new session and a re-registration list new servers.
-                    if not any(candidate is server for candidate in self._servers):
+                    if not is_current_locked():
                         return
-                    connection = self._create_connection_locked(server)
+                    connection = self._create_connection_locked(server, is_current_locked)
                 self._emit_change()
                 try:
                     await connection.get_client()
@@ -856,16 +948,34 @@ class _McpExtension:
         return ready
 
     async def _wait_for_servers(self, waiting: Sequence[_McpServer], cancel: Any) -> None:
-        """Wait for servers still connecting, until they settle or `cancel` fires."""
-        ready = [server.ready for server in waiting if server.ready is not None]
-        if not ready or (cancel is not None and cancel.cancelled):
-            return
-        for event in ready:
-            if cancel is None:
-                await event.wait()
-            else:
-                await tonio.Waiter.any(event, cancel.event)
-                if cancel.cancelled:
+        """Wait for the latest connection attempts of `waiting`, including ones
+        queued while waiting (a reconnect, a re-enable), until they settle or
+        `cancel` fires."""
+        while True:
+            with self._lock:
+                attempts = [
+                    (server, ready)
+                    for server in waiting
+                    if _is_enabled(server)
+                    and any(candidate is server for candidate in self._servers)
+                    and (ready := server.ready) is not None
+                ]
+            if not attempts or (cancel is not None and cancel.cancelled):
+                return
+            for _server, ready in attempts:
+                if cancel is None:
+                    await ready.wait()
+                else:
+                    await tonio.Waiter.any(ready, cancel.event)
+                    if cancel.cancelled:
+                        return
+            with self._lock:
+                if all(
+                    not _is_enabled(server)
+                    or not any(candidate is server for candidate in self._servers)
+                    or ready is server.ready
+                    for server, ready in attempts
+                ):
                     return
 
     def _report_problems(self, ctx: Any, only: Sequence[_McpServer] | None = None) -> None:
@@ -885,23 +995,36 @@ class _McpExtension:
     # Sign-in, sign-out, reconnect
     # -----------------------------------------------------------------------
 
-    async def _sign_in(self, server: _McpServer, prompt: McpSignInPrompt) -> str | None:
+    async def _sign_in(
+        self, server: _McpServer, prompt: McpSignInPrompt, cancel: CancelToken | None = None
+    ) -> str | None:
+        """Sign in, then reconnect. Returns an error message on failure. `cancel`
+        or the session's end stops the sign-in, which shutdown waits for."""
         connection = server.connection
         url = connection.oauth_url if connection is not None else None
         if connection is None or not url:
             return f'MCP server "{server.entry.name}" does not use OAuth.'
+        settings = await connection.oauth_settings()
+        with self._lock:
+            session = self._session
+        combined = combine_cancel_tokens(session, cancel)
+        done = self._track()
         try:
             await sign_in_mcp_server(
                 server_url=url,
                 store=self._get_credentials().for_server(server.entry.name, url),
-                settings=await connection.oauth_settings(),
+                settings=settings,
                 challenge=connection.challenge,
                 prompt=prompt,
+                cancel=combined.token,
             )
         except McpSignInCancelledError:
             return "Sign-in cancelled."
         except Exception as error:
             return f"Sign-in failed: {error}"
+        finally:
+            combined.cleanup()
+            self._untrack(done)
         # The challenge that asked for this sign-in (for example for more scope) is answered.
         connection.challenge = None
         try:
@@ -923,10 +1046,19 @@ class _McpExtension:
         connection = server.connection
         if connection is None:
             return f'MCP server "{server.entry.name}" is disabled.'
+        # Queued behind the previous attempt, and the server's readiness until it ends.
+        ready = tonio.Event()
+        with self._lock:
+            previous = server.ready
+            server.ready = ready
         try:
+            if previous is not None:
+                await previous.wait()
             await connection.reconnect()
         except Exception as error:
             return str(error)
+        finally:
+            ready.set()
         return None
 
     async def _save_config(
@@ -948,22 +1080,63 @@ class _McpExtension:
             server.entry = replace(current, config={**current.config, **patch.as_config()})
         return None
 
-    async def _set_enabled(self, server: _McpServer, enabled: bool, in_project: bool = False) -> str | None:
-        """Returns an error message when the config could not be saved; connection errors show in the state."""
+    async def _set_enabled(
+        self,
+        server: _McpServer,
+        enabled: bool,
+        in_project: bool = False,
+        on_attempt: Callable[[object | None], None] | None = None,
+    ) -> str | None:
+        """Returns an error message when the config could not be saved; connection errors show in the state.
+        `on_attempt` receives the attempt it sets (None when disabling), under the lock that sets it."""
         failed = await self._save_config(server, McpServerConfigPatch(enabled=enabled), in_project)
         if failed:
             return failed
         if not enabled:
             with self._lock:
                 connection = server.connection
+                server.attempt = None
+                if on_attempt is not None:
+                    on_attempt(None)
                 server.connection = None
+                if connection is not None:
+                    # A reconnect may already have detached its old client while awaiting transport
+                    # shutdown. Closing the connection alone does not wait for that reconnect.
+                    server.closing = self._close_detached(connection, server.ready)
+                closing = server.closing
                 self._hide_tools_locked(server.entry.name)
             self._emit_change()
-            if connection is not None:
-                await connection.close()
+            try:
+                if closing is not None:
+                    await closing.wait()
+            finally:
+                with self._lock:
+                    if server.closing is closing:
+                        server.closing = None
             return None
-        await self._start_connection(server).wait()
+        with self._lock:
+            after = server.closing
+        await self._start_connection(server, after, on_attempt).wait()
         return None
+
+    @staticmethod
+    def _close_detached(connection: McpServerConnection, ready: tonio.Event | None) -> tonio.Event:
+        """Close a connection that left its server, and wait for its attempt's
+        readiness (pi: `Promise.all([connection.close(), server.ready])`). The
+        returned Event is set once both ended. Detached, so a re-enable can wait
+        for it after the disabling call is gone."""
+        closed = tonio.Event()
+
+        async def close() -> None:
+            try:
+                await connection.close()
+                if ready is not None:
+                    await ready.wait()
+            finally:
+                closed.set()
+
+        tonio.spawn.without_tracking(close())
+        return closed
 
     async def _set_exposure(self, server: _McpServer, exposure: McpExposure) -> str | None:
         failed = await self._save_config(server, McpServerConfigPatch(exposure=exposure))
@@ -1153,34 +1326,93 @@ class _McpExtension:
         return await self._set_exposure(server, choice)  # type: ignore[arg-type]
 
     def _sign_in_with_ui(self, ui: McpManagerView, server: _McpServer) -> Awaitable[str | None]:
-        """Sign in with the manager view's sign-in screen, which shows the URL with a copy key."""
+        """Sign in with the manager view's sign-in screen, which shows the URL
+        with a copy key and cancels with the cancel key."""
         title = f"Sign in to {server.entry.name}"
+        cancel = CancelToken()
         authorization_url = [""]
         open_url = self._open_url
+
+        def status(message: str) -> None:
+            # The cancel key arrives on the input path; `CancelToken.cancel` is synchronous.
+            ui.status(title, message, cancel.cancel)
 
         class Prompt:
             def show_authorization_url(self, url: str) -> None:
                 authorization_url[0] = url
                 open_url(url)
 
-            async def prompt_for_redirect_url(self, cancel: Any) -> str | None:
-                value = await ui.redirect_url(title, authorization_url[0], cancel)
-                ui.status(title, "Connecting…")
+            async def prompt_for_redirect_url(self, redirect_cancel: Any) -> str | None:
+                value = await ui.redirect_url(title, authorization_url[0], redirect_cancel)
+                status("Connecting…")
                 return value
 
-        ui.status(title, "Contacting the authorization server…")
-        return self._sign_in(server, Prompt())
+        status("Contacting the authorization server…")
+        return self._sign_in(server, Prompt(), cancel)
+
+    def _run_in_background(
+        self,
+        ctx: Any,
+        server: _McpServer,
+        operation: Callable[[Callable[[object | None], None]], Awaitable[str | None]],
+    ) -> None:
+        """Keep the subscribed menu usable while a connection opens or closes:
+        the operation runs detached and tracked, and its result goes to the
+        server's line unless the server was disabled, replaced or removed, or
+        the session ended, meanwhile.
+
+        "Replaced" is judged against the attempt the operation itself set: it
+        reports it through the callback it receives, under the lock. pi reads
+        `server.attempt` after `operation()` ran up to its first await, which
+        includes that change since pi saves the config synchronously; here the
+        save is awaited first. An operation that sets no attempt (reconnect)
+        keeps the one current when it started."""
+        with self._lock:
+            attempt = server.attempt
+            session = self._session
+        done = self._track()
+
+        def on_attempt(new: object | None) -> None:
+            # Called under the lock; read under the lock below.
+            nonlocal attempt
+            attempt = new
+
+        async def run() -> None:
+            try:
+                try:
+                    message = await operation(on_attempt)
+                except Exception as error:
+                    message = str(error)
+                with self._lock:
+                    current = (
+                        not session.cancelled
+                        and server.attempt is attempt
+                        and any(candidate is server for candidate in self._servers)
+                    )
+                    if current:
+                        server.message = message
+                if current:
+                    self._ensure_discovery_active(ctx)
+                    self._emit_change()
+            finally:
+                self._untrack(done)
+
+        tonio.spawn.without_tracking(run())
 
     async def _run_action(self, ui: McpManagerView, ctx: Any, server: _McpServer, action: str) -> None:
-        name = server.entry.name
+        with self._lock:
+            session = self._session
         message: str | None = None
         match action:
             case "signin":
                 message = await self._sign_in_with_ui(ui, server)
             case "reconnect":
-                # A failure shows as the connection's state and error.
-                ui.status(f"MCP server {name}", "Reconnecting…")
-                await self._reconnect(server)
+
+                async def reconnect(_on_attempt: Callable[[object | None], None]) -> None:
+                    # Connection state and error already report failures, including required sign-ins.
+                    await self._reconnect(server)
+
+                self._run_in_background(ctx, server, reconnect)
             case "signout":
                 await self._sign_out(server)
             case "tools":
@@ -1189,8 +1421,13 @@ class _McpExtension:
                 message = await self._choose_exposure(ui, server)
             case "enable" | "disable" | "enable-project" | "disable-project":
                 enable = action.startswith("enable")
-                ui.status(f"MCP server {name}", "Connecting…" if enable else "Disconnecting…")
-                message = await self._set_enabled(server, enable, action.endswith("-project"))
+                in_project = action.endswith("-project")
+                self._run_in_background(
+                    ctx, server, lambda on_attempt: self._set_enabled(server, enable, in_project, on_attempt)
+                )
+        # The session ended meanwhile (for example during a sign-in), which made ctx stale.
+        if session.cancelled:
+            return
         with self._lock:
             server.message = message
         self._ensure_discovery_active(ctx)
@@ -1290,6 +1527,8 @@ class _McpExtension:
         if not ctx.has_ui:
             ctx.ui.notify(f'Signing in to MCP server "{name}" requires interactive mode.', "error")
             return
+        with self._lock:
+            session = self._session
         failure: str | None = None
         if ctx.mode == "tui":
 
@@ -1315,6 +1554,9 @@ class _McpExtension:
                     )
 
             failure = await self._sign_in(server, Prompt())
+        # The session ended meanwhile, which cancelled the sign-in and made ctx stale.
+        if session.cancelled:
+            return
         if failure:
             ctx.ui.notify(failure, "info" if failure == "Sign-in cancelled." else "error")
             return
@@ -1350,22 +1592,27 @@ class _McpExtension:
         ]
         return items or None
 
-    async def _command(self, args: str, ctx: Any) -> None:
+    async def _wait_for_startup(self) -> None:
         pending = self._pending
         if pending is not None:
             await pending.wait()
+
+    async def _command(self, args: str, ctx: Any) -> None:
         words = args.split()
         action = words[0] if words else None
         name = words[1] if len(words) > 1 else None
         if action is None:
+            # The manager opens before the startup connections finish; it shows them as they settle.
             if ctx.mode == "tui":
                 await show_mcp_manager(ctx, lambda ui: self._manage(ui, ctx))
             else:
+                await self._wait_for_startup()
                 ctx.ui.notify(self._format_status(), "info")
             return
         if len(words) > 2:
             ctx.ui.notify(_MCP_USAGE, "warning")
             return
+        await self._wait_for_startup()
         match action:
             case "login":
                 server = await self._pick_oauth_server(name, ctx)
@@ -1417,9 +1664,7 @@ class _McpExtension:
             self._waited_for_startup = False
             self._session_cwd = ctx.cwd
             self._model_registry = ctx.model_registry
-            self._generation += 1
-            current = self._generation
-            self._session_active = True
+            self._session = session = CancelToken()
             self._configured_entries = loaded.servers
             registered, overridden = self._registered_servers_locked()
             self._overridden = overridden
@@ -1435,9 +1680,6 @@ class _McpExtension:
             self._report_problems(ctx)
             return
 
-        def is_current() -> bool:
-            return current == self._generation
-
         readies = [self._start_connection(server) for server in enabled]
         pending = tonio.Event()
         with self._lock:
@@ -1447,7 +1689,7 @@ class _McpExtension:
             try:
                 for ready in readies:
                     await ready.wait()
-                if is_current():
+                if not session.cancelled:
                     self._report_problems(ctx)
             except Exception:
                 # The session may have been disposed meanwhile, which makes ctx stale.
@@ -1495,24 +1737,28 @@ class _McpExtension:
         """A codemode script waits for the servers it names, or for every
         server when it searches or enumerates tools, so their tools are
         registered before the script runs. tool_search and the resource tools
-        reach every server, so they wait for all of them."""
+        reach every server, so they wait for all of them. Direct MCP calls wait
+        only for their own server, including a reconnect still closing its old
+        transport."""
         tool = next((candidate for candidate in self._pi.get_all_tools() if candidate.name == event["toolName"]), None)
         if tool is None:
             return
-        pending_servers = [
-            server
-            for server in self._servers
-            if _is_enabled(server) and not _in_state(server, "connected") and server.ready is not None
-        ]
-        if not pending_servers:
+        # Readiness can be pending while the display state is still connected: a reconnect
+        # first closes the old transport, then opens a new one. Set Events return at once.
+        ready_servers = [server for server in self._servers if _is_enabled(server) and server.ready is not None]
+        if not ready_servers:
             return
         waiting: list[_McpServer] = []
         if is_codemode_tool(tool):
             code = (event.get("input") or {}).get("code")
             source = code if isinstance(code, str) else ""
-            waiting = [server for server in pending_servers if _script_needs_server(source, server.entry.name)]
+            waiting = [server for server in ready_servers if _script_needs_server(source, server.entry.name)]
         elif is_tool_search_tool(tool) or tool.name in _RESOURCE_TOOL_NAMES:
-            waiting = pending_servers
+            waiting = ready_servers
+        else:
+            with self._lock:
+                owner = self._tool_owners.get(event["toolName"], "").split("\0", 1)[0]
+            waiting = [server for server in ready_servers if server.entry.name == owner]
         await self._wait_for_servers(waiting, ctx.signal)
 
     async def _on_turn_start(self, _event: Any, ctx: Any) -> None:
@@ -1523,9 +1769,9 @@ class _McpExtension:
     async def _on_mcp_servers_change(self, _event: Any, ctx: Any) -> None:
         """Servers registered or unregistered during the session connect or disconnect right away."""
         with self._lock:
-            if not self._session_active:
+            session = self._session
+            if session.cancelled:
                 return
-            current = self._generation
             registered, overridden = self._registered_servers_locked()
             self._overridden = overridden
             upcoming = {server.entry.name: server.registered_config for server in registered}
@@ -1546,12 +1792,12 @@ class _McpExtension:
         self._ensure_discovery_active(ctx)
         await _wait_all([connection.close() for server in removed if (connection := server.connection) is not None])
         connecting = [server for server in added if _is_enabled(server)]
-        if current != self._generation or not connecting:
+        if session.cancelled or not connecting:
             return
         readies = [self._start_connection(server) for server in connecting]
         for ready in readies:
             await ready.wait()
-        if current != self._generation:
+        if session.cancelled:
             await _wait_all(
                 [connection.close() for server in connecting if (connection := server.connection) is not None]
             )
@@ -1560,12 +1806,16 @@ class _McpExtension:
 
     async def _on_session_shutdown(self, _event: Any, _ctx: Any) -> None:
         with self._lock:
-            self._session_active = False
-            self._generation += 1
+            session = self._session
             closing = self._connections()
             self._servers = ()
+        # Outside the lock: cancelling runs the token's callbacks (sign-ins in flight) synchronously.
+        session.cancel()
         self._emit_change()
-        await _wait_all([connection.close() for connection in closing])
+        # Tracked work (aborted sign-ins, manager actions) is joined after the cancel, so it is cleaning up.
+        with self._lock:
+            tracked = list(self._background_actions)
+        await _wait_all([*(done.wait() for done in tracked), *(connection.close() for connection in closing)])
 
 
 extension = create_mcp_extension()

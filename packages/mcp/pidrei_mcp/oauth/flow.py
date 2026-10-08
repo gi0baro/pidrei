@@ -8,16 +8,17 @@ Modified to remove SDK/Zod dependencies and use WebCrypto for PKCE.
 import base64
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import tonio.colored as tonio
 
 from pidrei_http.pkce import generate_pkce
+from pidrei_utils.cancel import CancelToken, run_cancellable
 
 from ..auth_provider import AuthProvider, UnauthorizedContext
-from ..fetch import McpFetch, default_fetch
+from ..fetch import McpFetch, McpResponse, default_fetch
 from ..protocol.jsonrpc import is_object, parse_json, stringify
 from ..url import Url, can_parse, form_encode, parse_url
 from .discovery import (
@@ -118,6 +119,9 @@ class OAuthFlowOptions:
     # trusted as configured. Must use https, except on loopback.
     authorization_server_metadata_url: str | None = None
     fetch: McpFetch | None = None
+    # Stops every request of the flow (pi: `signal`, handed to each request).
+    # Requests have no time limit of their own; combine with a timeout as needed.
+    cancel: CancelToken | None = None
     skip_issuer_validation: bool = False
     # Go straight to the authorization redirect instead of refreshing stored
     # tokens, for example when the server asks for scopes the current grant
@@ -356,7 +360,31 @@ def step_up_scope(granted: str | None, challenged: str | None) -> str | None:
     return " ".join(dict.fromkeys(scopes))
 
 
+def _cancellable(fetch: McpFetch, cancel: CancelToken | None) -> McpFetch:
+    """`fetch` with every request run under `cancel`, where pi hands each
+    request the flow's `signal`. Only the requests are torn: the provider's
+    saves between them always complete."""
+    if cancel is None:
+        return fetch
+
+    def fetching(
+        url: str,
+        *,
+        method: str = "GET",
+        headers: Mapping[str, str] | None = None,
+        body: bytes | None = None,
+        timeout_ms: float | None = None,
+    ) -> Awaitable[McpResponse]:
+        return run_cancellable(
+            fetch(url, method=method, headers=headers, body=body, timeout_ms=timeout_ms),  # type: ignore[arg-type]
+            cancel,
+        )
+
+    return fetching
+
+
 async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) -> OAuthFlowResult:
+    fetch = _cancellable(options.fetch if options.fetch is not None else default_fetch, options.cancel)
     metadata_url = (
         _secure_endpoint(options.authorization_server_metadata_url)
         if options.authorization_server_metadata_url
@@ -372,7 +400,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         if cached_metadata is None:
             cached_metadata = await discover_authorization_server_metadata(
                 cached["authorizationServerUrl"],
-                fetch=options.fetch,
+                fetch=fetch,
                 skip_issuer_validation=options.skip_issuer_validation,
             )
         discovered = {"authorizationServerUrl": cached["authorizationServerUrl"]}
@@ -385,7 +413,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
             options.server_url,
             resource_metadata_url=options.resource_metadata_url,
             authorization_server_metadata_url=metadata_url.href if metadata_url is not None else None,
-            fetch=options.fetch,
+            fetch=fetch,
             skip_issuer_validation=options.skip_issuer_validation,
         )
     if metadata_url is None and provider.save_discovery_state is not None:
@@ -424,7 +452,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
             metadata=metadata,
             client_metadata=provider.client_metadata,
             scope=scope,
-            fetch=options.fetch,
+            fetch=fetch,
         )
         await provider.save_client_information(client)
     # The document's redirect URI may differ from the provider's, for example by a server-specific path.
@@ -434,7 +462,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         metadata=metadata,
         resource=resource,
         add_client_authentication=provider.add_client_authentication,
-        fetch=options.fetch,
+        fetch=fetch,
     )
     if options.authorization_code:
         # RFC 9207: never send a code from another authorization server to this one.
@@ -468,11 +496,13 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         except OAuthInsecureEndpointError:
             raise
         except OAuthError as error:
-            if error.code != "server_error":
+            if (options.cancel is not None and options.cancel.cancelled) or error.code != "server_error":
                 raise
         except Exception:
+            # A cancelled refresh never falls back to a new authorization.
+            if options.cancel is not None and options.cancel.cancelled:
+                raise
             # Any other failure falls through to a new authorization, as in pi.
-            pass
     state_value = await provider.state() if provider.state is not None else None
     authorization = start_authorization(
         discovered["authorizationServerUrl"],

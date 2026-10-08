@@ -179,12 +179,24 @@ class McpManagerView:
                 unsubscribe()
         return answer.value
 
-    def status(self, title: str, message: str) -> None:
-        """Show a message while an operation runs."""
+    def status(self, title: str, message: str, on_cancel: Callable[[], None] | None = None) -> None:
+        """Show a message while an operation runs. With `on_cancel`, the cancel
+        key calls it (on the input path: it must be synchronous)."""
         theme = self._theme
-        self._tui.apply(
-            lambda: self._set_content(_frame(theme, title, [Spacer(1), Text(theme.fg("muted", message), 1, 0)]))
-        )
+
+        def show() -> None:
+            body = [Spacer(1), Text(theme.fg("muted", message), 1, 0)]
+            if on_cancel is None:
+                self._set_content(_frame(theme, title, body))
+                return
+
+            def on_input(data: str) -> None:
+                if self._keybindings.matches(data, "tui.select.cancel"):
+                    on_cancel()
+
+            self._set_content(_frame(theme, title, body, key_hint("tui.select.cancel", "cancel")), on_input)
+
+        self._tui.apply(show)
 
     async def redirect_url(self, title: str, authorization_url: str, cancel: CancelToken) -> str | None:
         """Show the authorization URL and wait for a pasted redirect URL. None

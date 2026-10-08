@@ -30,6 +30,7 @@ from pidrei_mcp.oauth import (
 )
 from pidrei_mcp.url import parse_url
 from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 class TestOAuthProvider(OAuthClientProvider):
@@ -556,6 +557,63 @@ async def test_exchanges_a_code_only_when_its_iss_parameter_names_the_authorizat
         # Servers that do not promise the parameter may omit it.
         assert await exchange("omitted", None, False) == "AUTHORIZED"
         assert codes == ["matching", "omitted"]
+
+
+# pi #10565
+@pytest.mark.tonio
+async def test_stops_when_its_cancel_token_fires_without_falling_back_to_a_redirect(monkeypatch):
+    async with loopback_servers(monkeypatch) as http_servers:
+        stalled: list[str] = []
+        arrived: list[tonio.Event] = []
+
+        hung_up: list[tonio.Event] = []
+
+        async def handler(request, _origin):
+            # Accepts every request and never answers. The body is read first:
+            # the client's hang-up shows only once nothing is left to read.
+            stalled.append(_path(request))
+            event = tonio.Event()
+            hung_up.append(event)
+            await request.read()
+            arrived[-1].set()
+            await request.peer_closed()
+            event.set()
+
+        origin = await http_servers.listen(handler)
+
+        async def run(provider: TestOAuthProvider) -> str:
+            cancel = CancelToken()
+            arrived.append(tonio.Event())
+            flow = tonio.spawn(authorize_mcp(provider, OAuthFlowOptions(server_url=f"{origin}/mcp", cancel=cancel)))
+            await arrived[-1].wait(5)
+            assert arrived[-1].is_set(), "the flow never reached the server"
+            cancel.cancel()
+            with pytest.raises(ExceptionGroup) as raised:
+                await flow
+            assert [type(error) for error in raised.value.exceptions] == [AbortError]
+            assert provider.authorization_url is None
+            # The request is aborted instead of left open.
+            await hung_up[-1].wait(5)
+            assert hung_up[-1].is_set()
+            return stalled[-1]
+
+        # Discovery.
+        assert await run(TestOAuthProvider("http://127.0.0.1/callback")) == "/.well-known/oauth-protected-resource/mcp"
+
+        # A failed refresh otherwise falls back to a new authorization.
+        refreshing = TestOAuthProvider("http://127.0.0.1/callback")
+        refreshing.client = {"client_id": "client"}
+        refreshing.token_set = {"access_token": "a1", "refresh_token": "r1", "token_type": "Bearer"}
+        refreshing.discovery = {
+            "authorizationServerUrl": origin,
+            "authorizationServerMetadata": {
+                "issuer": origin,
+                "authorization_endpoint": f"{origin}/authorize",
+                "token_endpoint": f"{origin}/token",
+                "response_types_supported": ["code"],
+            },
+        }
+        assert await run(refreshing) == "/token"
 
 
 @pytest.mark.tonio

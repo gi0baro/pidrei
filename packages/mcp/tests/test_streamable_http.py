@@ -189,6 +189,31 @@ async def test_handles_json_and_sse_responses_with_session_and_protocol_headers(
         assert any(entry["method"] == "DELETE" for entry in log.snapshot())
 
 
+# pi #10565: the auth provider may refresh over the network, which closing must not wait for.
+@pytest.mark.tonio
+async def test_closes_the_session_with_the_last_requests_token_without_asking_the_auth_provider(monkeypatch):
+    async with loopback_servers(monkeypatch) as http_servers:
+        url, log = await start_server(http_servers, protocol_handler)
+        calls = 0
+
+        async def token() -> str:
+            nonlocal calls
+            calls += 1
+            return f"token-{calls}"
+
+        client = McpClient(name="http-test", version="1.0.0")
+        await client.connect(
+            StreamableHttpTransport(url, open_get_stream=False, auth_provider=AuthProvider(token=token))
+        )
+        before = calls
+        await client.close()
+
+        assert calls == before
+        deletes = [entry for entry in log.snapshot() if entry["method"] == "DELETE"]
+        assert [entry["headers"].get("authorization") for entry in deletes] == [f"Bearer token-{before}"]
+        assert deletes[0]["headers"].get("mcp-session-id") == "session-1"
+
+
 @pytest.mark.tonio
 async def test_classifies_authentication_failures(monkeypatch):
     async with loopback_servers(monkeypatch) as http_servers:

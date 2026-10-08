@@ -1685,15 +1685,22 @@ async def test_enabling_a_server_does_not_connect_it_once_the_session_ended(harn
         await saved.wait(_WAIT_S)
 
     class EnablesDocs:
-        """The manager view of a user who opens `docs` and picks Enable."""
+        """The manager view of a user who opens `docs` and picks Enable.
+
+        Enabling runs in the background and shutdown waits for it, so the save
+        is released by the change shutdown announces: the servers menu is empty
+        once the session ended."""
 
         def __init__(self) -> None:
             self._answers = iter(["docs", "enable"])
 
-        async def menu(self, _build, _subscribe=None) -> str | None:
-            return next(self._answers, None)
+        async def menu(self, build, subscribe=None) -> str | None:
+            answer = next(self._answers, None)
+            if answer == "docs" and subscribe is not None:
+                subscribe(lambda: saved.set() if not build().items else None)
+            return answer
 
-        def status(self, _title: str, _message: str) -> None:
+        def status(self, _title: str, _message: str, _on_cancel=None) -> None:
             pass
 
     async def show_mcp_manager(_ctx, manage) -> None:
@@ -1718,6 +1725,7 @@ async def test_enabling_a_server_does_not_connect_it_once_the_session_ended(harn
         await emit_session_shutdown_event(
             harness.session.extension_runner, {"type": "session_shutdown", "reason": "quit"}
         )
-        saved.set()
+        # Released by the shutdown, not by the save's bound.
+        assert saved.is_set()
 
     assert connected == []
