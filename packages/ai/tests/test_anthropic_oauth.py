@@ -1,13 +1,16 @@
 """Mirror of pi's anthropic-oauth.test.ts.
 
-Every browser-login case really opens the loopback callback server on the fixed
-port — pi's suite does the same — and the browser-callback case fetches it.
+Every browser-login case really opens the loopback callback server on the
+preferred port (or a free one when it is taken) — pi's suite does the same —
+and the browser-callback cases fetch it.
 """
 
-from urllib.parse import parse_qs, urlsplit
+from dataclasses import dataclass
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import net
 
 from pidrei_ai.auth.oauth.anthropic import anthropic_oauth
 from pidrei_ai.auth.types import AuthEvent, AuthPrompt, AuthPromptOption, OAuthCredential
@@ -171,13 +174,57 @@ async def test_login_resolves_through_the_manual_code_prompt_and_aborts_it_after
 
 @pytest.mark.tonio
 async def test_completes_login_through_the_browser_callback_and_shows_the_sign_in_page():
-    exchanged_codes: list[str] = []
+    login = await login_through_browser_callback()
+
+    assert login.credential.access == "access"
+    assert login.exchanged_code == "browser-code"
+    assert login.exchanged_redirect_uri == login.redirect_uri
+    assert login.page_status == 200
+    assert "Signed in to Anthropic." in login.page_text
+
+
+# pi #10571
+@pytest.mark.tonio
+async def test_falls_back_to_a_free_callback_port_when_the_preferred_port_cannot_be_bound():
+    # Occupy the preferred port unless something already holds it; the fallback runs either way.
+    try:
+        blockers = await net.open_tcp_listeners(53692, host="127.0.0.1")
+    except OSError:
+        blockers = []
+    try:
+        login = await login_through_browser_callback()
+        redirect_uri = urlsplit(login.redirect_uri)
+
+        assert redirect_uri.hostname == "localhost"
+        assert redirect_uri.path == "/callback"
+        assert redirect_uri.port != 53692
+        assert login.credential.access == "access"
+        assert login.exchanged_redirect_uri == login.redirect_uri
+        assert login.page_status == 200
+    finally:
+        for blocker in blockers:
+            blocker.close()
+
+
+@dataclass(slots=True)
+class BrowserCallbackLogin:
+    credential: OAuthCredential
+    redirect_uri: str
+    exchanged_code: str | None
+    exchanged_redirect_uri: str | None
+    page_status: int | None
+    page_text: str
+
+
+async def login_through_browser_callback() -> BrowserCallbackLogin:
+    exchanged: list[dict] = []
 
     def handler(request: OAuthRequest):
         assert request.url == TOKEN_URL
-        exchanged_codes.append(request.json_body["code"])
+        exchanged.append(request.json_body)
         return json_response({"access_token": "access", "refresh_token": "refresh", "expires_in": 3600})
 
+    redirect_uris: list[str] = []
     callback_page: list[tuple[int, str]] = []
     page_fetched = tonio.Event()
 
@@ -194,8 +241,8 @@ async def test_completes_login_through_the_browser_callback_and_shows_the_sign_i
         if prompt.type == "select":
             return "browser"
         # The browser callback settles the login, which cancels this prompt.
-        # Bounded: when the fixed callback port is taken, the login falls back
-        # to this prompt alone and would otherwise wait forever.
+        # Bounded: when no callback server could be started, the login falls
+        # back to this prompt alone and would otherwise wait forever.
         done = tonio.Event()
         prompt.cancel.on_cancel(lambda _reason: done.set())
         await done.wait(_WAIT_S)
@@ -206,17 +253,28 @@ async def test_completes_login_through_the_browser_callback_and_shows_the_sign_i
     def notify(event: AuthEvent) -> None:
         if event.type != "auth_url":
             return
-        state = parse_qs(urlsplit(event.url).query)["state"][0]
-        tonio.spawn.without_tracking(fetch_callback(f"http://127.0.0.1:53692/callback?code=browser-code&state={state}"))
+        params = {name: values[0] for name, values in parse_qs(urlsplit(event.url).query).items()}
+        redirect_uri = params.get("redirect_uri", "")
+        redirect_uris.append(redirect_uri)
+        # The callback server listens on 127.0.0.1; the redirect URI names localhost.
+        callback_url = urlsplit(redirect_uri)._replace(
+            netloc=f"127.0.0.1:{urlsplit(redirect_uri).port}",
+            query=urlencode({"code": "browser-code", "state": params.get("state", "")}),
+        )
+        tonio.spawn.without_tracking(fetch_callback(urlunsplit(callback_url)))
 
     interaction.notify = notify  # type: ignore[method-assign]
 
     with stub_oauth_http(handler):
         credential = await anthropic_oauth.login(interaction)
 
-    assert credential.access == "access"
-    assert exchanged_codes == ["browser-code"]
     await page_fetched.wait(_WAIT_S)
     assert page_fetched.is_set()
-    assert callback_page and callback_page[0][0] == 200
-    assert "Signed in to Anthropic." in callback_page[0][1]
+    return BrowserCallbackLogin(
+        credential=credential,
+        redirect_uri=redirect_uris[0],
+        exchanged_code=exchanged[0]["code"] if exchanged else None,
+        exchanged_redirect_uri=exchanged[0]["redirect_uri"] if exchanged else None,
+        page_status=callback_page[0][0] if callback_page else None,
+        page_text=callback_page[0][1] if callback_page else "",
+    )

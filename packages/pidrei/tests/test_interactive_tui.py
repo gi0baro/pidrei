@@ -462,6 +462,38 @@ async def test_keeps_the_status_line_confirmation_for_the_copy_shortcut_in_regul
     assert context.errors == []
 
 
+@pytest.mark.tonio
+async def test_drops_the_fullscreen_selection_when_session_entries_are_re_rendered():
+    # Regression test for pi #9311: selection coordinates survived session switches.
+    terminal = RecordingTerminal(40, 4)
+    ui = create_interactive_tui(
+        tui_mode="fullscreen",
+        show_hardware_cursor=False,
+        log_directory="/tmp",
+        terminal=terminal,
+        fullscreen_copy_on_select=False,
+    )
+    ui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    # pi calls the prototype method with `{ renderer, renderSessionItems }` as `this`.
+    context = SimpleNamespace(_renderer=ui, _render_session_items=lambda _items, _options: None)
+
+    await ui.start()
+    try:
+        await terminal.wait_for_render()
+        since = terminal.frames
+        await terminal.send_input("\x1b[<0;1;1M")
+        await terminal.send_input("\x1b[<32;4;2M")
+        await terminal.send_input("\x1b[<0;4;2m")
+        await terminal.wait_for_render(since)
+        assert ui.has_active_selection() is True
+
+        InteractiveMode._render_session_entries(context, [])
+
+        assert ui.has_active_selection() is False
+    finally:
+        await ui.stop()
+
+
 class _StatusEditor:
     """pi's StatusEditor fake: the two members `is_working_status_editor` checks."""
 

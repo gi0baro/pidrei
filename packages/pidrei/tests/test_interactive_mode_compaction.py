@@ -88,7 +88,8 @@ def test_renders_each_compaction_cost_after_its_summary():
         _compaction_entry("previous", None, "previous summary", 100, previous_usage),
     ]
     render_calls: list = []
-    fake = SimpleNamespace()
+    # pi's fake has no `renderer`; its `instanceof TuiAltScreen` is then false.
+    fake = SimpleNamespace(_renderer=None)
     fake._render_session_items = lambda items, options=None: render_calls.append((items, options))
 
     InteractiveMode._render_session_entries(fake, entries)
@@ -131,6 +132,7 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
         request_render_calls=[],
         _flush_compaction_queue=flush_compaction_queue,
         settings_manager=SimpleNamespace(get_show_terminal_progress=lambda: False),
+        _program_status=SimpleNamespace(handle_event=lambda _event: None),
     )
     fake._footer = SimpleNamespace(invalidate=lambda: fake.invalidate_calls.append(True))
     fake._clear_status_indicator = lambda kind=None: fake.clear_status_calls.append(kind)
@@ -173,6 +175,7 @@ def test_updates_the_working_state_when_the_same_agent_run_resumes_after_compact
     fake = SimpleNamespace(
         _is_initialized=True,
         _footer=SimpleNamespace(invalidate=lambda: None),
+        _program_status=SimpleNamespace(handle_event=lambda _event: None),
         _active_status_indicator=None,
         _working_visible=True,
         settings_manager=SimpleNamespace(get_show_terminal_progress=lambda: True),

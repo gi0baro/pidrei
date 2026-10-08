@@ -1520,7 +1520,10 @@ def _build_base_codex_headers(
     account_id: str,
     token: str,
 ) -> dict[str, str]:
-    headers = dict(init_headers or {})
+    # Defaults first so model and caller headers can override them, matching the other providers.
+    headers = {"originator": ORIGINATOR, "User-Agent": get_user_agent()}
+    for key, value in (init_headers or {}).items():
+        _set_header(headers, key, value)
     for key, value in (additional_headers or {}).items():
         if value is None:
             _delete_header(headers, key)
@@ -1528,8 +1531,6 @@ def _build_base_codex_headers(
             _set_header(headers, key, value)
     _set_header(headers, "Authorization", f"Bearer {token}")
     _set_header(headers, "chatgpt-account-id", account_id)
-    _set_header(headers, "originator", ORIGINATOR)
-    _set_header(headers, "User-Agent", get_user_agent())
     return headers
 
 

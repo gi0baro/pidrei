@@ -1,6 +1,7 @@
 """Mirror of pi tui test/tui-render.test.ts.
 
-Viewport expectations are right-stripped (see virtual_terminal.py).
+Viewport expectations are right-stripped (see virtual_terminal.py). pi's
+Termux height-change case is not mirrored: Android is not a pidrei platform.
 """
 
 import os
@@ -195,57 +196,28 @@ async def test_deletes_previously_rendered_image_ids_during_full_redraws():
 
 @pytest.mark.tonio
 async def test_triggers_full_re_render_when_terminal_height_changes():
-    with env_var("TERMUX_VERSION", None):
-        terminal = VirtualTerminal(40, 10)
-        tui = TuiMainScreen(terminal)
-        component = TestComponent()
-        tui.add_child(component)
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    tui.add_child(component)
 
-        component.lines = ["Line 0", "Line 1", "Line 2"]
-        await tui.start()
-        await terminal.wait_for_render()
+    component.lines = ["Line 0", "Line 1", "Line 2"]
+    await tui.start()
+    await terminal.wait_for_render()
 
-        initial_redraws = tui.full_redraws
+    initial_redraws = tui.full_redraws
 
-        # Resize height
-        terminal.resize(40, 15)
-        await terminal.wait_for_render()
+    # Resize height
+    terminal.resize(40, 15)
+    await terminal.wait_for_render()
 
-        # Should have triggered a full redraw
-        assert tui.full_redraws > initial_redraws, "Height change should trigger full redraw"
+    # Should have triggered a full redraw
+    assert tui.full_redraws > initial_redraws, "Height change should trigger full redraw"
 
-        viewport = terminal.get_viewport()
-        assert "Line 0" in viewport[0], "Content preserved after height change"
+    viewport = terminal.get_viewport()
+    assert "Line 0" in viewport[0], "Content preserved after height change"
 
-        await tui.stop()
-
-
-@pytest.mark.tonio
-async def test_skips_full_re_render_on_height_changes_in_termux():
-    with env_var("TERMUX_VERSION", "1"):
-        terminal = LoggingVirtualTerminal(40, 10)
-        tui = TuiMainScreen(terminal)
-        component = TestComponent()
-        tui.add_child(component)
-
-        component.lines = [f"Line {i}" for i in range(20)]
-        await tui.start()
-        await terminal.wait_for_render()
-        terminal.clear_writes()
-
-        initial_redraws = tui.full_redraws
-        for height in [15, 8, 14, 11]:
-            terminal.resize(40, height)
-            await terminal.wait_for_render()
-
-        assert tui.full_redraws == initial_redraws, "Height change should not trigger full redraw"
-        assert "\x1b[2J" not in terminal.get_writes(), "Height change should not clear the screen"
-        assert "\x1b[3J" not in terminal.get_writes(), "Height change should not clear scrollback"
-
-        viewport = terminal.get_viewport()
-        assert "Line 19" in "\n".join(viewport), "Latest content remains visible after resize"
-
-        await tui.stop()
+    await tui.stop()
 
 
 @pytest.mark.tonio

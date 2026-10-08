@@ -12,10 +12,11 @@ pi additionally registers faux cores into the deprecated compat api-registry
 
 import copy
 import json
+import math
 import random
 import secrets
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -200,8 +201,27 @@ def _message_to_text(message: Message) -> str:
     return _tool_result_to_text(message)
 
 
-def serialize_faux_context(context: TranscriptContext) -> str:
-    return "\n\n".join(f"{message.role}:{_message_to_text(message)}" for message in context.messages)
+def _joined_length(messages: Sequence[str], count: int | None = None) -> int:
+    """Length of the prompt text that joins `messages` with blank lines."""
+    if count is None:
+        count = len(messages)
+    length = (count - 1) * 2 if count > 0 else 0
+    for index in range(count):
+        length += len(messages[index])
+    return length
+
+
+def _common_prompt_prefix_length(previous: Sequence[str], current: Sequence[str]) -> int:
+    """Length of the common prefix of the two joined prompts. Equal messages are compared whole; characters are
+    compared only from the first message that differs."""
+    index = 0
+    while index < len(previous) and index < len(current) and previous[index] == current[index]:
+        index += 1
+
+    def rest(messages: Sequence[str]) -> str:
+        return "" if index == len(messages) else ("\n\n" if index > 0 else "") + "\n\n".join(messages[index:])
+
+    return _joined_length(previous, index) + _common_prefix_length(rest(previous), rest(current))
 
 
 def _common_prefix_length(a: str, b: str) -> int:
@@ -358,7 +378,7 @@ class FauxCore:
         self.state = FauxState()
         self._guard = threading.Lock()
         self._pending_responses: list[FauxResponseStep] = []
-        self._prompt_cache: dict[str, str] = {}
+        self._prompt_cache: dict[str, tuple[str, ...]] = {}
 
         definitions = models if models else [FauxModelDefinition(id=DEFAULT_MODEL_ID, name=DEFAULT_MODEL_NAME)]
         self.models: list[Model] = [
@@ -405,8 +425,10 @@ class FauxCore:
         context: TranscriptContext,
         options: StreamOptions | None,
     ) -> AssistantMessage:
-        prompt_text = serialize_faux_context(context)
-        prompt_tokens = _estimate_tokens(prompt_text)
+        # One text per message; the whole prompt joins them with blank lines.
+        prompt = tuple(f"{message.role}:{_message_to_text(message)}" for message in context.messages)
+        prompt_length = _joined_length(prompt)
+        prompt_tokens = math.ceil(prompt_length / 4)
         output_tokens = _estimate_tokens(_assistant_content_to_text(message.content))
         input_tokens = prompt_tokens
         cache_read = 0
@@ -417,13 +439,13 @@ class FauxCore:
             with self._guard:
                 previous_prompt = self._prompt_cache.get(session_id)
                 if previous_prompt:
-                    cached_chars = _common_prefix_length(previous_prompt, prompt_text)
-                    cache_read = _estimate_tokens(previous_prompt[:cached_chars])
-                    cache_write = _estimate_tokens(prompt_text[cached_chars:])
+                    cached_chars = _common_prompt_prefix_length(previous_prompt, prompt)
+                    cache_read = math.ceil(cached_chars / 4)
+                    cache_write = math.ceil((prompt_length - cached_chars) / 4)
                     input_tokens = max(0, prompt_tokens - cache_read)
                 else:
                     cache_write = prompt_tokens
-                self._prompt_cache[session_id] = prompt_text
+                self._prompt_cache[session_id] = prompt
 
         return replace(
             message,

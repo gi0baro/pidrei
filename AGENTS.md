@@ -31,7 +31,8 @@ behaviour, then deliver it with TonIO primitives. "Closer to Pi's shape" is
 never, on its own, an argument for a design.
 
 Platform: POSIX only (TonIO is Unix-only). Pi's win32 branches are never
-ported.
+ported, nor are its Android ones (Termux, `TERMUX_VERSION`, platform
+`"android"`): Android is not a PiDrei platform.
 
 ## Repository layout
 

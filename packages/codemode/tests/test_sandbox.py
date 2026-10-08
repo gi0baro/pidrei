@@ -150,7 +150,7 @@ print(ValueError("bad"))"""
     )
     assert result.ok
     assert result.output == (
-        CodemodeTextItem("hello 1 {'a': 1}"),
+        CodemodeTextItem("hello 1 {'a': 1}", console=True),
         CodemodeTextItem('{"json":true}'),
         CodemodeTextItem("None"),
         CodemodeTextItem("7"),
@@ -160,7 +160,7 @@ print(ValueError("bad"))"""
         # The MIME type comes from the data, not from the declared type.
         CodemodeImageItem(WEBP, "image/webp"),
         CodemodeImageItem(PNG, "image/png"),
-        CodemodeTextItem("bad"),
+        CodemodeTextItem("bad", console=True),
     )
 
 
@@ -971,7 +971,11 @@ async def test_drops_none_for_optional_parameters_that_do_not_accept_null(make_s
 async def test_merges_consecutive_print_output_into_one_text_item(make_sandbox):
     result = await make_sandbox().execute("print('a')\nprint('b')\ntext('c')\nprint('d')")
     assert result.ok
-    assert result.output == (CodemodeTextItem("a\nb"), CodemodeTextItem("c"), CodemodeTextItem("d"))
+    assert result.output == (
+        CodemodeTextItem("a\nb", console=True),
+        CodemodeTextItem("c"),
+        CodemodeTextItem("d", console=True),
+    )
 
 
 @pytest.mark.tonio

@@ -54,6 +54,8 @@ class ToolExecutionComponent(Container):
         self._show_images = show_images if show_images is not None else True
         image_width_cells = options.get("imageWidthCells")
         self._image_width_cells = image_width_cells if image_width_cells is not None else 60
+        output_pad = options.get("outputPad")
+        self._output_pad = output_pad if output_pad is not None else 1
         self._ui = ui
         self._cwd = cwd
 
@@ -124,6 +126,8 @@ class ToolExecutionComponent(Container):
             "expanded": self._expanded,
             "showImages": self._show_images,
             "isError": bool(self._result["isError"]) if self._result else False,
+            "durationMs": None if self._is_partial or not self._result else self._result.get("durationMs"),
+            "outputPad": self._output_pad,
         }
 
     def _create_call_fallback(self):
@@ -172,13 +176,18 @@ class ToolExecutionComponent(Container):
         self._ui.request_render()
 
     def update_result(self, result: dict, is_partial: bool = False) -> None:
-        """``result`` is ``{"content": [...], "details"?, "isError"}``."""
+        """``result`` is ``{"content": [...], "details"?, "isError", "durationMs"?}``; ``durationMs`` is
+        the execution time of a final result."""
         self._result = result
         self._is_partial = is_partial
         self._update_display()
 
     def set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
+        self._update_display()
+
+    def set_output_pad(self, output_pad: int) -> None:
+        self._output_pad = output_pad
         self._update_display()
 
     def set_show_images(self, show: bool) -> None:
@@ -235,6 +244,7 @@ class ToolExecutionComponent(Container):
             render_container = self._self_render_container if self._get_render_shell() == "self" else self._content_box
             if isinstance(render_container, Box):
                 render_container.set_bg_fn(bg_fn)
+                render_container.set_padding_x(self._output_pad)
             # Rebuilt per `tool_execution_update` while the render loop reads
             # the container: build locally, publish once with `set_children`.
             children: list = []
@@ -283,6 +293,7 @@ class ToolExecutionComponent(Container):
             render_container.set_children(children)
         else:
             self._content_text.set_custom_bg_fn(bg_fn)
+            self._content_text.set_padding_x(self._output_pad)
             self._content_text.set_text(self._format_tool_execution())
             has_content = True
 

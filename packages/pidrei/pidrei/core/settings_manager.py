@@ -31,7 +31,7 @@ import math
 import os
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -166,27 +166,32 @@ def _deep_merge_objects(base: dict, overrides: dict) -> dict:
 DEFAULT_TOOL_NAMES: tuple[str, ...] = ("read", "bash", "edit", "write")
 
 
-def _is_tool_modifier(entry: Any) -> bool:
+def is_tool_modifier(entry: Any) -> bool:
+    """Whether a tool selection entry is a `+name` or `-name` modifier."""
     return isinstance(entry, str) and entry.startswith(("+", "-"))
 
 
-def _merge_default_tools(base: Any, overrides: Any) -> Any:
-    """Merge `defaultTools` of two settings layers. A list with plain tool names replaces the
-    inherited one; a list of only `+name`/`-name` entries is appended, so it modifies the
-    inherited selection."""
-    # Settings files are not validated; a malformed value replaces instead of raising here.
-    if not isinstance(base, list) or not isinstance(overrides, list) or not all(map(_is_tool_modifier, overrides)):
-        return overrides
-    return [*base, *overrides]
+def get_tool_list_error(entries: Sequence[str]) -> str | None:
+    """Validate a tool list from `--tools` or the SDK `tools` option. It is either an allowlist of
+    plain names and patterns or a list of only `+name`/`-name` entries with exact names. Returns the
+    problem, or None when the list is valid."""
+    modifiers = [entry for entry in entries if is_tool_modifier(entry)]
+    if not modifiers:
+        return None
+    if len(modifiers) < len(entries):
+        return "tool names cannot be mixed with +name or -name entries"
+    pattern = next((entry for entry in modifiers if "*" in entry), None)
+    if pattern:
+        return f"+name and -name entries take exact tool names, not patterns: {pattern}"
+    return None
 
 
-def _resolve_default_tools(entries: list[str]) -> list[str]:
-    """Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name`
-    adds and `-name` removes a tool, in list order."""
-    plain = [entry for entry in entries if not _is_tool_modifier(entry)]
-    tools = plain if plain or not entries else list(DEFAULT_TOOL_NAMES)
+def apply_tool_modifiers(base: Sequence[str], entries: Sequence[str]) -> list[str]:
+    """Apply the `+name` and `-name` entries of `entries` to `base` in order: `+name` adds a tool
+    and `-name` removes one. Other entries are ignored."""
+    tools = list(base)
     for entry in entries:
-        if not _is_tool_modifier(entry):
+        if not is_tool_modifier(entry):
             continue
         name = entry[1:]
         if entry.startswith("+") and name and name not in tools:
@@ -194,6 +199,23 @@ def _resolve_default_tools(entries: list[str]) -> list[str]:
         elif entry.startswith("-") and name in tools:
             tools.remove(name)
     return tools
+
+
+def _merge_default_tools(base: Any, overrides: Any) -> Any:
+    """Merge `defaultTools` of two settings layers. A list with plain tool names replaces the
+    inherited one; a list of only `+name`/`-name` entries is appended, so it modifies the
+    inherited selection."""
+    # Settings files are not validated; a malformed value replaces instead of raising here.
+    if not isinstance(base, list) or not isinstance(overrides, list) or not all(map(is_tool_modifier, overrides)):
+        return overrides
+    return [*base, *overrides]
+
+
+def _resolve_default_tools(entries: list[str]) -> list[str]:
+    """Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name`
+    adds and `-name` removes a tool, in list order."""
+    plain = [entry for entry in entries if not is_tool_modifier(entry)]
+    return apply_tool_modifiers(plain if plain or not entries else DEFAULT_TOOL_NAMES, entries)
 
 
 def deep_merge_settings(base: Settings, overrides: Settings) -> Settings:

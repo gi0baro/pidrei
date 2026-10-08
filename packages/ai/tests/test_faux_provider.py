@@ -319,6 +319,25 @@ async def test_simulates_prompt_caching_per_session_id():
 
 
 @pytest.mark.tonio
+async def test_counts_cached_characters_up_to_the_first_difference_in_the_joined_prompt():
+    faux = faux_provider()
+    faux.set_responses([faux_assistant_message("a"), faux_assistant_message("b"), faux_assistant_message("c")])
+    options = StreamOptions(session_id="session-1", cache_retention="short")
+
+    def user(content: str) -> UserMessage:
+        return UserMessage(content=content, timestamp=1)
+
+    # Prompt texts: "user:hello world" (16 characters), then 16 + 2 + "user:next" (9) = 27.
+    await complete(faux, faux.get_model(), Context(messages=[user("hello world")]), options)
+    extended = await complete(faux, faux.get_model(), Context(messages=[user("hello world"), user("next")]), options)
+    assert (extended.usage.input, extended.usage.cache_read, extended.usage.cache_write) == (3, 4, 3)
+
+    # The first message now differs after "user:hello w" (12 characters): "user:hello wide" + 2 + 9 = 26.
+    edited = await complete(faux, faux.get_model(), Context(messages=[user("hello wide"), user("next")]), options)
+    assert (edited.usage.input, edited.usage.cache_read, edited.usage.cache_write) == (4, 3, 4)
+
+
+@pytest.mark.tonio
 async def test_does_not_simulate_caching_when_cache_retention_is_none():
     faux = faux_provider()
     faux.set_responses([faux_assistant_message("first"), faux_assistant_message("second")])

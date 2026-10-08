@@ -104,6 +104,10 @@ class TestCodemodeDescriptionCatalog:
         assert "## mcp__docs\n\n### `mcp__docs" in description
         # The search guidance is always there, so tools that appear later do not change it.
         assert "find unlisted tools, such as MCP tools" in description
+        # pi #10555: the lookup helpers are async; without `await` scripts get a coroutine.
+        assert "`await search_tools(query, limit=8, namespace=None)`" in description
+        assert "`await describe_tool(name)`" in description
+        assert "`await describe_namespace(name)`" in description
 
     def test_fills_the_budget_round_robin_cheapest_first_and_says_what_is_missing(self):
         # Each small section costs 35 to 39 tokens: one tool per group, then one more.

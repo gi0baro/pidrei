@@ -65,7 +65,7 @@ def test_includes_claude_opus_5_5_with_its_always_on_effort_levels_and_official_
 def test_includes_claude_sonnet_5_5_with_managed_effort_levels_and_official_pricing():
     model = next(model for model in MODELS["anthropic"] if model.id == "claude-sonnet-5-5")
 
-    assert (model.cost.input, model.cost.output, model.cost.cache_read, model.cost.cache_write) == (2, 10, 0.2, 2.5)
+    assert (model.cost.input, model.cost.output, model.cost.cache_read, model.cost.cache_write) == (2, 10, 0.1, 2.5)
     assert model.context_window == 1_000_000
     assert model.max_tokens == 128_000
     assert isinstance(model.compat, AnthropicMessagesCompat)

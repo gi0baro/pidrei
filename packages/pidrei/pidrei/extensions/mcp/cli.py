@@ -559,8 +559,11 @@ async def _login(
             open_url(authorization_url)
 
         def prompt_for_redirect_url(self, cancel: CancelToken):
-            return _wait_for_redirect_url(cancel, timeout_ms, interactive)
+            return _wait_for_redirect_url(cancel, interactive)
 
+    # `--timeout` bounds the whole sign-in (pi: `signal: AbortSignal.timeout(timeoutMs)`).
+    cancel = CancelToken()
+    timer = Timeout(timeout_ms, cancel.cancel)
     try:
         await sign_in_mcp_server(
             server_url=url,
@@ -568,6 +571,7 @@ async def _login(
             settings=await connection.oauth_settings(),
             challenge=connection.challenge,
             prompt=Prompt(),
+            cancel=cancel,
         )
     except McpSignInCancelledError:
         error(
@@ -577,6 +581,8 @@ async def _login(
     except Exception as sign_in_error:
         error(f'Sign-in to MCP server "{name}" failed: {sign_in_error}')
         return 1
+    finally:
+        timer.cancel()
     connection.challenge = None
     try:
         await connection.reconnect()
@@ -603,23 +609,16 @@ async def _read_line() -> str:
     return lines[0] if lines else ""
 
 
-async def _wait_for_redirect_url(cancel: CancelToken, timeout_ms: float, interactive: bool) -> str | None:
+async def _wait_for_redirect_url(cancel: CancelToken, interactive: bool) -> str | None:
     """The pasted redirect URL in a terminal; otherwise only the browser
-    callback can finish the sign-in. None (cancelling the sign-in) after
-    `timeout_ms`, or when the callback arrived."""
-    stop = CancelToken()
-    unsubscribe = cancel.on_cancel(lambda _reason: stop.cancel())
-    timer = Timeout(timeout_ms, stop.cancel)
+    callback can finish the sign-in. None when `cancel` fires: the callback
+    arrived, or the sign-in timed out."""
+    if not interactive:
+        await cancel.event.wait()
+        return None
+    write_stderr("If the browser cannot reach this machine, paste the URL it was redirected to: ")
+    await drain_output()
     try:
-        if not interactive:
-            await stop.event.wait()
-            return None
-        write_stderr("If the browser cannot reach this machine, paste the URL it was redirected to: ")
-        await drain_output()
-        try:
-            return await run_cancellable(_read_line(), stop)
-        except Exception:
-            return None
-    finally:
-        timer.cancel()
-        unsubscribe()
+        return await run_cancellable(_read_line(), cancel)
+    except Exception:
+        return None

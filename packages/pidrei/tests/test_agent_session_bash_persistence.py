@@ -1,8 +1,9 @@
 """Partial mirror of pi's suite/agent-session-bash-persistence.test.ts.
 
-Only the concurrent-bash cases added in 0.83.0 (#7103) are mirrored here; the
-rest of pi's bash/persistence characterization suite is an open parity gap
-(see scripts/upstream_diff.py TEST_HOMES).
+Only the concurrent-bash cases added in 0.83.0 (#7103) and the split escape
+sequence cases added in 1.1.0 (#10504) are mirrored here; the rest of pi's
+bash/persistence characterization suite is an open parity gap (see
+scripts/upstream_diff.py TEST_HOMES).
 """
 
 import threading
@@ -102,3 +103,64 @@ async def test_aborts_all_active_bash_executions(tmp_path):
     assert aborted_signals == [True, True]
     assert [result.cancelled for result in results] == [True, True]
     assert session.is_bash_running is False
+
+
+# Regression tests for pi #10504: escape sequences split across output chunks.
+
+
+async def _run_chunks(tmp_path, chunks: list[str | bytes], before_exit=None) -> SimpleNamespace:
+    """Run a user bash command whose fake shell emits the given chunks; `before_exit` sees what was streamed by then."""
+    session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
+    deltas: list[str] = []
+
+    class _Operations:
+        async def exec(self, _command, _cwd, *, on_data=None, cancel=None):
+            for chunk in chunks:
+                on_data(chunk.encode() if isinstance(chunk, str) else chunk)
+            if before_exit is not None:
+                before_exit("".join(deltas))
+            return SimpleNamespace(exit_code=0)
+
+    result = await session.execute_bash("custom", deltas.append, {"operations": _Operations()})
+    recorded = session.messages[-1]
+    return SimpleNamespace(
+        output=result.output,
+        streamed="".join(deltas),
+        recorded=recorded.output if recorded.role == "bashExecution" else None,
+    )
+
+
+@pytest.mark.tonio
+async def test_strips_a_color_reset_split_inside_its_parameters(tmp_path):
+    run = await _run_chunks(tmp_path, ["\x1b[31mERROR: file.py:1\x1b[0", "m\n"])
+    assert run.output == "ERROR: file.py:1\n"
+    assert run.streamed == "ERROR: file.py:1\n"
+    assert run.recorded == "ERROR: file.py:1\n"
+
+
+@pytest.mark.tonio
+async def test_strips_a_color_code_split_right_after_esc(tmp_path):
+    run = await _run_chunks(tmp_path, ["before\x1b", "[32mafter\n"])
+    assert run.output == "beforeafter\n"
+    assert run.streamed == "beforeafter\n"
+
+
+@pytest.mark.tonio
+async def test_strips_an_osc_sequence_split_before_its_terminator(tmp_path):
+    run = await _run_chunks(tmp_path, ["a\x1b]0;window ", "title\x1b", "\\b\n"])
+    assert run.output == "ab\n"
+
+
+@pytest.mark.tonio
+async def test_flushes_an_incomplete_multi_byte_character_at_the_end_of_output(tmp_path):
+    run = await _run_chunks(tmp_path, ["ok", "\u00e9".encode()[:1]])
+    assert run.output == "ok\ufffd"
+    assert run.streamed == "ok\ufffd"
+
+
+@pytest.mark.tonio
+async def test_does_not_hold_back_output_behind_a_long_unterminated_sequence(tmp_path):
+    long = "x" * 300
+    streamed_before_exit: list[str] = []
+    await _run_chunks(tmp_path, [f"\x1b]{long}"], streamed_before_exit.append)
+    assert streamed_before_exit == [f"]{long}"]

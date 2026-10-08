@@ -53,7 +53,7 @@ from pidrei_mcp.oauth import (
 )
 from pidrei_mcp.url import Url, parse_url
 from pidrei_utils import clock
-from pidrei_utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 from ...config import APP_NAME, get_agent_dir
 from ...core.auth_storage import FileAuthStorageBackend
@@ -72,8 +72,9 @@ CLIENT_METADATA_BASE_URL = "https://pi.dev/oauth"
 _FALLBACK_REDIRECT_URL = f"http://{_CALLBACK_HOST}{_CALLBACK_PATH}"
 # Access tokens this close to expiry are refreshed before they are sent.
 _REFRESH_SKEW_MS = 30_000
-# Bounds each request of a refresh, so it cannot hold the refresh lock or delay shutdown for long.
-_REFRESH_REQUEST_TIMEOUT_MS = 15_000
+# Bounds each request to the authorization server, so an unresponsive one cannot hold the refresh lock,
+# delay shutdown, or keep a sign-in waiting for long.
+_OAUTH_REQUEST_TIMEOUT_MS = 15_000
 # A refresh lock that its holder stopped renewing (the process was killed) is taken over after this.
 _REFRESH_LOCK_STALE_MS = 20_000
 # How long to wait for another process's refresh: longer than a stale lock lives.
@@ -372,7 +373,7 @@ def _with_timeout(fetch: McpFetch) -> McpFetch:
         body: bytes | None = None,
         timeout_ms: float | None = None,
     ) -> Awaitable[McpResponse]:
-        return fetch(url, method=method, headers=headers, body=body, timeout_ms=_REFRESH_REQUEST_TIMEOUT_MS)
+        return fetch(url, method=method, headers=headers, body=body, timeout_ms=_OAUTH_REQUEST_TIMEOUT_MS)
 
     return timed
 
@@ -417,7 +418,8 @@ def create_mcp_auth_provider(
             registered = _registered_redirect_urls((state or {}).get("clientInformation"))
             redirect_url = fixed if fixed is not None else registered[0] if registered else _FALLBACK_REDIRECT_URL
             provider = _create_provider(server_url, store, resolved, redirect_url, _ignore_redirect)
-            # Refreshes the tokens, or reports that a new sign-in is needed.
+            # Refreshes the tokens, or reports that a new sign-in is needed. Not cancellable: a refresh the
+            # server answered may have rotated the refresh token, so its answer must be saved.
             result = await authorize_mcp(
                 provider,
                 OAuthFlowOptions(
@@ -497,8 +499,8 @@ class McpSignInPrompt(Protocol):
     def prompt_for_redirect_url(self, cancel: CancelToken) -> Awaitable[str | None]:
         """Ask for the redirect URL from the browser address bar, for when the
         browser cannot reach the loopback callback (for example over SSH).
-        Cancelled once the callback arrives. Resolves to None or an empty
-        string when the user cancels."""
+        Cancelled once the callback arrives or the sign-in is cancelled.
+        Resolves to None or an empty string when the user cancels."""
         ...
 
 
@@ -551,12 +553,19 @@ class _FirstOutcome:
 
 
 async def _wait_for_authorization_response(
-    from_browser: Awaitable[OAuthCallback], state: str, redirect_url: Url, prompt: McpSignInPrompt
+    from_browser: Awaitable[OAuthCallback],
+    state: str,
+    redirect_url: Url,
+    prompt: McpSignInPrompt,
+    sign_in_cancel: CancelToken | None,
 ) -> _AuthorizationResponse:
     """Wait for the browser callback or a pasted redirect URL, whichever comes
     first. `from_browser` is the callback wait, registered by the caller before
-    the browser was sent to the authorization page."""
-    cancel = CancelToken()
+    the browser was sent to the authorization page. `sign_in_cancel` firing
+    cancels the prompt, which then cancels the sign-in."""
+    local = CancelToken()
+    combined = combine_cancel_tokens(local, sign_in_cancel)
+    cancel = combined.token if combined.token is not None else local
     outcome = _FirstOutcome()
 
     async def browser() -> None:
@@ -580,7 +589,8 @@ async def _wait_for_authorization_response(
         await outcome.done.wait()
     finally:
         # The losing side ends once the prompt is cancelled or the callback server closes.
-        cancel.cancel()
+        local.cancel()
+        combined.cleanup()
     if outcome.error is not None:
         raise outcome.error
     return outcome.value
@@ -622,10 +632,15 @@ async def sign_in_mcp_server(
     settings: McpOAuthSettings,
     prompt: McpSignInPrompt,
     challenge: OAuthChallenge | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Sign in to an MCP server. Uses the stored refresh token when possible;
     otherwise runs the browser authorization code flow. Tokens are saved to
-    `store`."""
+    `store`. `cancel` stops the sign-in at any step with
+    `McpSignInCancelledError`; requests to the authorization server are also
+    time-limited."""
+    if cancel is not None and cancel.cancelled:
+        raise McpSignInCancelledError()
     stored = await store.load()
     step_up = (challenge or {}).get("error") == "insufficient_scope"
     callback_options = _callback_settings(settings)
@@ -675,6 +690,8 @@ async def sign_in_mcp_server(
         granted = ((stored or {}).get("tokens") or {}).get("scope")
         flow = {
             "server_url": server_url,
+            "fetch": _with_timeout(default_fetch),
+            "cancel": cancel,
             "resource_metadata_url": (challenge or {}).get("resourceMetadataUrl"),
             "authorization_server_metadata_url": settings.auth_server_metadata_url,
             "scope": _merge_scopes(settings.scope, step_up_scope(granted, challenged) if step_up else challenged),
@@ -695,7 +712,14 @@ async def sign_in_mcp_server(
         # coroutine runs again (pi registers it in the same turn).
         from_browser = callback.wait_for_callback(state, authorization_redirect_url.pathname)
         prompt.show_authorization_url(authorization_url)
-        code, iss = await _wait_for_authorization_response(from_browser, state, authorization_redirect_url, prompt)
+        code, iss = await _wait_for_authorization_response(
+            from_browser, state, authorization_redirect_url, prompt, cancel
+        )
         await authorize_mcp(provider, OAuthFlowOptions(**flow, authorization_code=code, iss=iss))
+    except Exception:
+        # Cancelled requests fail with the token's reason; report them as the cancellation they are.
+        if cancel is not None and cancel.cancelled:
+            raise McpSignInCancelledError() from None
+        raise
     finally:
         callback.close()

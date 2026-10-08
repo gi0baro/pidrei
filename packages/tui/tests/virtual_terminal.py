@@ -180,6 +180,9 @@ class VirtualTerminal:
     def set_progress(self, active: bool) -> None:
         pass
 
+    def set_program_status(self, _status) -> None:
+        pass
+
     async def close(self) -> None:
         pass
 

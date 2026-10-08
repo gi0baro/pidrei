@@ -5,7 +5,8 @@ pi mocks `runClipboardCommand` and its native clipboard helper; here
 (see `clipboard_image.py`), so the darwin/win32 native-read cases, "returns null
 without a native helper" and the native-error propagation cases have nothing to
 mirror, and the Linux cases where pi's last resort is the native X11 reader
-assert pidrei's end of the chain instead: no image.
+assert pidrei's end of the chain instead: no image. pi's Termux case is not
+mirrored: Android is not a pidrei platform.
 """
 
 import contextlib
@@ -135,14 +136,3 @@ async def test_wsl_tries_powershell_after_the_linux_tools_fail():
         image = await read_clipboard_image({"platform": "linux", "env": {"WSL_DISTRO_NAME": "Ubuntu"}})
 
     assert image == {"bytes": PNG, "mimeType": "image/png"}
-
-
-@pytest.mark.tonio
-async def test_termux_does_not_read_image_clipboards():
-    async def result(_name, _args):
-        raise AssertionError("no command expected")
-
-    with _commands(result) as calls:
-        assert await read_clipboard_image({"platform": "linux", "env": {"TERMUX_VERSION": "0.119"}}) is None
-
-    assert calls == []

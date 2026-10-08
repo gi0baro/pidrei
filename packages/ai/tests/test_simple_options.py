@@ -3,6 +3,7 @@ from pi's context-estimate.test.ts)."""
 
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_reasoning
 from pidrei_ai.types import Context, ModelCost, SimpleStreamOptions, ThinkingBudgets, UserMessage
+from pidrei_ai.utils.estimate import ContextUsageEstimate, estimate_context_tokens
 from pidrei_ai.utils.transcript import normalize_context
 from tests.test_estimate import create_assistant
 from tests.test_registry import make_model
@@ -20,9 +21,24 @@ def estimate_model():
     )
 
 
+def test_reserves_3_5_characters_per_token_for_new_text_when_limiting_output():
+    # Regression for pi #10497: large new inputs need more room than chars/4 allows.
+    context = normalize_context(
+        Context(messages=[create_assistant(100, 2_000), UserMessage(content="x" * 3_500, timestamp=200)])
+    )
+
+    assert estimate_context_tokens(context) == ContextUsageEstimate(
+        tokens=3_000,
+        usage_tokens=2_000,
+        trailing_tokens=1_000,
+        last_usage_index=0,
+    )
+    assert build_base_options(estimate_model(), context).max_tokens == 2_904
+
+
 def test_build_base_options_clamps_max_tokens_to_context():
     # The remaining assertion from pi's context-estimate.test.ts: window 10_000
-    # minus 1_005 estimated tokens minus 4_096 safety -> 4_899.
+    # minus 1_149 estimated tokens minus 4_096 safety -> 4_755.
     context = normalize_context(
         Context(
             system_prompt="system",
@@ -33,7 +49,7 @@ def test_build_base_options_clamps_max_tokens_to_context():
             ],
         )
     )
-    assert build_base_options(estimate_model(), context).max_tokens == 4_899
+    assert build_base_options(estimate_model(), context).max_tokens == 4_755
 
 
 def test_build_base_options_min_floor_and_model_cap():

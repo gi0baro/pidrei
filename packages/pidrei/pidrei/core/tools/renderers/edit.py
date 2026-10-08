@@ -105,8 +105,9 @@ def _get_edit_header_bg(preview, settled_error: bool, theme):
     return lambda text: theme.bg("toolPendingBg", text)
 
 
-def _build_edit_call_component(component: EditCallRenderComponent, args: dict | None, theme, cwd: str):
+def _build_edit_call_component(component: EditCallRenderComponent, args: dict | None, theme, cwd: str, output_pad: int):
     component.set_bg_fn(_get_edit_header_bg(component.preview, component.settled_error, theme))
+    component.set_padding_x(output_pad)
     component.clear()
     component.add_child(Text(_format_edit_call(args, theme, cwd), 0, 0))
 
@@ -190,7 +191,7 @@ def _render_call(args, theme, context):
 
         tonio.spawn.without_tracking(compute_preview())
 
-    return _build_edit_call_component(component, args, theme, context["cwd"])
+    return _build_edit_call_component(component, args, theme, context["cwd"], context["outputPad"])
 
 
 def _render_result(result, _options, theme, context):
@@ -221,7 +222,7 @@ def _render_result(result, _options, theme, context):
             call_component.settled_error = context["isError"]
             changed = True
         if changed:
-            _build_edit_call_component(call_component, context["args"], theme, context["cwd"])
+            _build_edit_call_component(call_component, context["args"], theme, context["cwd"], context["outputPad"])
 
     output = _format_edit_result(
         context["args"],
@@ -235,7 +236,7 @@ def _render_result(result, _options, theme, context):
     if not output:
         return component
     component.add_child(Spacer(1))
-    component.add_child(Text(output, 1, 0))
+    component.add_child(Text(output, context["outputPad"], 0))
     return component
 
 

@@ -28,6 +28,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as dataclass_replace
 from types import SimpleNamespace
+from typing import Protocol, runtime_checkable
 
 import tonio.colored as tonio
 from tonio.colored import fs, signals as tonio_signals
@@ -177,6 +178,7 @@ from .extension_tui import ExtensionTui, guard_overlay_handle
 from .external_editor import edit_in_external_editor
 from .model_catalog_refresh import refresh_model_catalogs
 from .model_search import get_model_search_text
+from .program_status_reporter import BlockedStatus, ProgramStatusReporter
 from .theme import (
     SYSTEM_THEME_NAME,
     InteractiveThemeController,
@@ -191,6 +193,13 @@ from .theme import (
     theme,
 )
 from .tui_renderer import create_interactive_tui, create_interactive_tui_reference
+
+
+@runtime_checkable
+class _OutputPadded(Protocol):
+    """Transcript components that follow the outputPad setting (pi's `"setOutputPad" in child`)."""
+
+    def set_output_pad(self, output_pad: int) -> None: ...
 
 
 class _TimeoutCancel:
@@ -767,6 +776,11 @@ class InteractiveMode:
         # Shutdown state
         self._shutdown_requested = False
 
+        # Reports working, blocked, done, and error states to terminals that support OSC 7501.
+        self._program_status = ProgramStatusReporter(
+            lambda: self.ui.terminal, lambda: self.session_manager.get_session_name()
+        )
+
         # Extension UI state
         self._extension_selector = None
         self._extension_input = None
@@ -1198,6 +1212,7 @@ class InteractiveMode:
         # handlers can use interactive dialogs
         await self.ui.start()
         self._is_initialized = True
+        self._program_status.report()
 
         await self._theme_controller.apply_from_settings()
         # The header and startup notices bake theme colors into their text, so
@@ -2234,6 +2249,7 @@ class InteractiveMode:
             if self._unsubscribe is not None:
                 self._unsubscribe()
             self._unsubscribe = None
+            self._program_status.reset()
             cwd_changed = self._apply_runtime_settings(resolved_cwd)
             if options.get("renderBeforeBind"):
                 self.render_current_session_state(trust_warning)
@@ -2665,12 +2681,16 @@ class InteractiveMode:
         """Create the ExtensionUIContext object for extensions."""
         return ExtensionUIContext(self)
 
-    def _show_extension_selector(self, title: str, options: list, opts: dict | None = None):
+    def _show_extension_selector(
+        self, title: str, options: list, opts: dict | None = None, blocked: BlockedStatus | None = None
+    ):
         """Show a selector for extensions: mounted before this returns (pi's
         synchronous mount, so a key that opens it sends the next key to it);
         returns the spawn handle of the wait for the pick, which the caller
-        may await or drop (spec/ui-island.md, `ctx.ui`)."""
+        may await or drop (spec/ui-island.md, `ctx.ui`). `blocked` is the
+        program status while it is open (default: a question with the title)."""
         opts = opts or {}
+        blocked_status = blocked if blocked is not None else BlockedStatus("question", title)
         done = tonio.Event()
         # Settled by a pick, the countdown or an abort callback on any task:
         # the first settle claims under the guard.
@@ -2716,6 +2736,8 @@ class InteractiveMode:
                 self._editor_container.clear()
                 self._editor_container.add_child(component)
                 self.ui.set_focus(component)
+                # Extension dialogs share the editor slot: opening one replaces the status of a displaced one.
+                self._program_status.set_blocked("extension-dialog", blocked_status)
                 self.ui.request_render()
 
         return tonio.spawn(_wait_for_answer(done, outcome))
@@ -2728,12 +2750,19 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self._extension_selector = None
+            self._program_status.set_blocked("extension-dialog", None)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
     def _show_extension_confirm(self, title: str, message: str, opts: dict | None = None) -> Awaitable[bool]:
         """Show a confirmation dialog for extensions (see `_show_extension_selector`)."""
-        return tonio.spawn(_is_yes(self._show_extension_selector(f"{title}\n{message}", ["Yes", "No"], opts)))
+        return tonio.spawn(
+            _is_yes(
+                self._show_extension_selector(
+                    f"{title}\n{message}", ["Yes", "No"], opts, BlockedStatus("permission", title)
+                )
+            )
+        )
 
     async def _prompt_for_missing_session_cwd(self, error) -> str | None:
         confirmed = await self._show_extension_confirm(
@@ -2785,6 +2814,7 @@ class InteractiveMode:
                 self._editor_container.clear()
                 self._editor_container.add_child(component)
                 self.ui.set_focus(component)
+                self._program_status.set_blocked("extension-dialog", BlockedStatus("question", title))
                 self.ui.request_render()
 
         return tonio.spawn(_wait_for_answer(done, outcome))
@@ -2797,6 +2827,7 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self._extension_input = None
+            self._program_status.set_blocked("extension-dialog", None)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
@@ -2834,6 +2865,7 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(component)
             self.ui.set_focus(component)
+            self._program_status.set_blocked("extension-dialog", BlockedStatus("question", title))
             self.ui.request_render()
 
         return tonio.spawn(_wait_for_answer(done, outcome))
@@ -2846,6 +2878,7 @@ class InteractiveMode:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self._extension_editor = None
+            self._program_status.set_blocked("extension-dialog", None)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
@@ -3440,6 +3473,7 @@ class InteractiveMode:
             return
 
         self._footer.invalidate()
+        self._program_status.handle_event(event)
         event_type = getattr(event, "type", None)
 
         if event_type == "agent_start":
@@ -3535,6 +3569,7 @@ class InteractiveMode:
                                 {
                                     "showImages": self.settings_manager.get_show_images(),
                                     "imageWidthCells": self.settings_manager.get_image_width_cells(),
+                                    "outputPad": self._output_pad,
                                 },
                                 self._get_registered_tool_definition(content.name),
                                 self.ui,
@@ -3606,6 +3641,7 @@ class InteractiveMode:
                     {
                         "showImages": self.settings_manager.get_show_images(),
                         "imageWidthCells": self.settings_manager.get_image_width_cells(),
+                        "outputPad": self._output_pad,
                     },
                     self._get_registered_tool_definition(event.tool_name),
                     self.ui,
@@ -3640,6 +3676,7 @@ class InteractiveMode:
                         "content": result.content if result is not None else [],
                         "details": getattr(result, "details", None) if result is not None else None,
                         "isError": event.is_error,
+                        "durationMs": event.duration_ms,
                     }
                 )
                 self._pending_tools.pop(event.tool_call_id, None)
@@ -3823,7 +3860,7 @@ class InteractiveMode:
         renderer = self.session.extension_runner.get_entry_renderer(entry.get("customType"))
         if renderer is None:
             return
-        component = CustomEntryComponent(entry, renderer)
+        component = CustomEntryComponent(entry, renderer, self._output_pad)
         component.set_expanded(self._tool_output_expanded)
         if not component.has_content():
             return
@@ -3843,7 +3880,7 @@ class InteractiveMode:
         options = options or {}
         role = message.role
         if role == "bashExecution":
-            component = BashExecutionComponent(message.command, self.ui, message.exclude_from_context)
+            component = BashExecutionComponent(message.command, self.ui, message.exclude_from_context, self._output_pad)
             if message.output:
                 component.append_output(message.output)
 
@@ -3864,12 +3901,16 @@ class InteractiveMode:
                 self._chat_container.add_child(component)
         elif role == "compactionSummary":
             self._chat_container.add_child(Spacer(1))
-            component = CompactionSummaryMessageComponent(message, self._get_markdown_theme_with_settings())
+            component = CompactionSummaryMessageComponent(
+                message, self._get_markdown_theme_with_settings(), self._output_pad
+            )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "branchSummary":
             self._chat_container.add_child(Spacer(1))
-            component = BranchSummaryMessageComponent(message, self._get_markdown_theme_with_settings())
+            component = BranchSummaryMessageComponent(
+                message, self._get_markdown_theme_with_settings(), self._output_pad
+            )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "system":
@@ -3882,7 +3923,9 @@ class InteractiveMode:
                 skill_block = parse_skill_block(text_content)
                 if skill_block is not None:
                     # Render skill block (collapsible)
-                    component = SkillInvocationMessageComponent(skill_block, self._get_markdown_theme_with_settings())
+                    component = SkillInvocationMessageComponent(
+                        skill_block, self._get_markdown_theme_with_settings(), self._output_pad
+                    )
                     component.set_expanded(self._tool_output_expanded)
                     self._chat_container.add_child(component)
                     # Render user message separately if present
@@ -3962,6 +4005,7 @@ class InteractiveMode:
                             {
                                 "showImages": self.settings_manager.get_show_images(),
                                 "imageWidthCells": self.settings_manager.get_image_width_cells(),
+                                "outputPad": self._output_pad,
                             },
                             self._get_registered_tool_definition(content.name),
                             self.ui,
@@ -3995,8 +4039,14 @@ class InteractiveMode:
                 # Match tool results to pending tool components
                 component = rendered_pending_tools.get(message.tool_call_id)
                 if component is not None:
+                    # pi passes the message itself, so its durationMs reaches the renderer after a reload.
                     component.update_result(
-                        {"content": message.content, "details": message.details, "isError": message.is_error}
+                        {
+                            "content": message.content,
+                            "details": message.details,
+                            "isError": message.is_error,
+                            "durationMs": message.duration_ms,
+                        }
                     )
                     rendered_pending_tools.pop(message.tool_call_id, None)
             else:
@@ -4037,6 +4087,9 @@ class InteractiveMode:
 
         options: {"updateFooter"?, "populateHistory"?}
         """
+        # Selection coordinates point into the transcript being replaced (pi #9311).
+        if isinstance(self._renderer, TuiAltScreen):
+            self._renderer.reset_text_selection()
         items: list = []
         for entry in entries:
             if entry.get("type") == "custom" or (entry.get("type") == "usage" and entry.get("kind") == "cache_warm"):
@@ -4995,15 +5048,11 @@ class InteractiveMode:
             def on_output_pad_change(padding: int) -> None:
                 self.settings_manager.set_output_pad(padding)
                 self._output_pad = padding
-                if self._streaming_component is not None or self.session.is_streaming:
-                    for child in self._chat_container.children:
-                        if isinstance(child, (AssistantMessageComponent, CustomMessageComponent, UserMessageComponent)):
+                for container in (self._chat_container, self._pending_messages_container):
+                    for child in container.children:
+                        if isinstance(child, _OutputPadded):
                             child.set_output_pad(padding)
-                    if self._streaming_component is not None:
-                        self._streaming_component.set_output_pad(padding)
-                    self.ui.request_render()
-                    return
-                self._rebuild_chat_from_messages()
+                self.ui.request_render()
 
             def on_autocomplete_max_visible_change(max_visible: int) -> None:
                 self.settings_manager.set_autocomplete_max_visible(max_visible)
@@ -6328,7 +6377,7 @@ class InteractiveMode:
         self, dialog, provider_id: str, provider_name: str, previous_model, on_back: Callable[[], None] | None
     ) -> None:
         try:
-            await self._login_provider(dialog, provider_id, "api_key")
+            await self._login_provider(dialog, provider_id, provider_name, "api_key")
             # pi restores the editor in the stretch that starts completing the
             # login: it applies in that flow's first hold.
             await self._complete_provider_authentication(
@@ -6425,7 +6474,7 @@ class InteractiveMode:
             else:
                 dialog.show_progress(event.message)
 
-    async def _login_provider(self, dialog, provider_id: str, method: str) -> None:
+    async def _login_provider(self, dialog, provider_id: str, provider_name: str, method: str) -> None:
         mode = self
 
         class DialogInteraction:
@@ -6437,12 +6486,17 @@ class InteractiveMode:
             def notify(self, event) -> None:
                 mode._notify_auth_dialog(dialog, event)
 
-        await self.session.model_runtime.login(
-            provider_id,
-            method,
-            DialogInteraction(),
-            LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
-        )
+        self._program_status.set_blocked("login", BlockedStatus("auth", f"Log in to {provider_name}"))
+        try:
+            await self.session.model_runtime.login(
+                provider_id,
+                method,
+                DialogInteraction(),
+                LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
+            )
+        finally:
+            # Synchronous: also runs when the login is cancelled.
+            self._program_status.set_blocked("login", None)
 
     def _show_login_dialog(
         self, provider_id: str, provider_name: str, on_back: Callable[[], None] | None = None
@@ -6458,7 +6512,7 @@ class InteractiveMode:
         self, dialog, provider_id: str, provider_name: str, previous_model, on_back: Callable[[], None] | None
     ) -> None:
         try:
-            await self._login_provider(dialog, provider_id, "oauth")
+            await self._login_provider(dialog, provider_id, provider_name, "oauth")
             # pi restores the editor in the stretch that starts completing the
             # login: it applies in that flow's first hold.
             await self._complete_provider_authentication(
@@ -7175,7 +7229,7 @@ class InteractiveMode:
             result = event_result["result"]
 
             # Create UI component for display, show output and complete
-            component = BashExecutionComponent(command, self.ui, exclude_from_context)
+            component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
             with self.ui.state_lock:
                 self._mount_bash_component(component, self.session.is_streaming)
                 if result.get("output"):
@@ -7205,7 +7259,7 @@ class InteractiveMode:
         # Normal execution path (possibly with custom operations)
         # (pi keeps the component in a field; a local, since two `!` commands
         # run concurrently here and each must keep its own output.)
-        component = BashExecutionComponent(command, self.ui, exclude_from_context)
+        component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
         self._mount_bash_component(component, self.session.is_streaming)
         self.ui.request_render()
 

@@ -1,7 +1,7 @@
 """Mirror of pi's cloudflare-workers-ai-system-one.test.ts.
 
 pi injects `options.fetch`; here the one POST is stubbed at
-`system_one_shared._SystemOneClient` (tests/system_one_helpers.py).
+`classifier_shared._ClassifierClient` (tests/system_one_helpers.py).
 """
 
 import pytest

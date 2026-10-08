@@ -152,6 +152,7 @@ class AssistantMessageBuilder:
     raw_stop_reason: str | None = None
     end_turn: bool | None = None
     deferred: DeferredHandle | None = None
+    duration_ms: int | None = None
     role: Literal["assistant"] = "assistant"
 
     @classmethod
@@ -181,4 +182,5 @@ class AssistantMessageBuilder:
             raw_stop_reason=self.raw_stop_reason,
             end_turn=self.end_turn,
             deferred=self.deferred,
+            duration_ms=self.duration_ms,
         )

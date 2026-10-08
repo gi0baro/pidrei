@@ -32,6 +32,8 @@ def render(result, *, is_error=False, expanded=True, width=200) -> str:
         "expanded": expanded,
         "showImages": False,
         "isError": is_error,
+        "durationMs": None,
+        "outputPad": 1,
     }
     component = CODEMODE_RENDERERS.render_result(result, {"expanded": expanded, "isPartial": False}, theme, context)
     lines = [line.rstrip() for line in strip_ansi("\n".join(component.render(width))).split("\n")]

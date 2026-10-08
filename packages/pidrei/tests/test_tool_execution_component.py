@@ -268,6 +268,36 @@ class TestToolExecutionComponentParity:
         assert f"Elapsed {formatted}" in running
         assert f"Took {formatted}" in completed
 
+    # pi #10549
+    @pytest.mark.tonio
+    async def test_bash_renderer_shows_a_results_recorded_duration_also_for_a_result_restored_without_a_live_start(
+        self, monkeypatch
+    ):
+        # pi's fake timers become a settable `clock.monotonic` (see the case above).
+        clock = {"now_s": 0.0}
+        monkeypatch.setattr(clock_module, "monotonic", lambda: clock["now_s"])
+
+        def render(live: bool) -> str:
+            component = ToolExecutionComponent(
+                "bash",
+                "tool-bash-recorded",
+                {"command": "sleep 4"},
+                {},
+                create_bash_tool_definition(CWD, expose_session_environment=False),
+                create_fake_tui(),
+                CWD,
+            )
+            if live:
+                component.mark_execution_started()
+                component.update_result({"content": [], "isError": False}, True)
+                # The clock jumps; the recorded duration does not.
+                clock["now_s"] += 3_600
+            component.update_result({"content": [], "isError": False, "durationMs": 4_200}, False)
+            return strip_ansi("\n".join(component.render(120)))
+
+        assert "Took 4.2s" in render(True)
+        assert "Took 4.2s" in render(False)
+
     def test_does_not_duplicate_built_in_headers_when_passed_the_active_built_in_definition(self):
         import re
 

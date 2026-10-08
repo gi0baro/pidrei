@@ -396,6 +396,28 @@ class TestToolFlags:
         result = parse_args(["-t", "read,bash"])
         assert result.tools == ["read", "bash"]
 
+    def test_parses_plus_name_and_minus_name_tool_modifiers(self):
+        result = parse_args(["-t", "+codemode,-write"])
+        assert result.tools == ["+codemode", "-write"]
+        assert result.diagnostics == []
+
+    def test_rejects_tool_names_mixed_with_modifiers(self):
+        result = parse_args(["--tools", "read,+codemode"])
+        assert result.tools is None
+        assert result.diagnostics == [
+            {"type": "error", "message": "--tools: tool names cannot be mixed with +name or -name entries"}
+        ]
+
+    def test_rejects_patterns_in_tool_modifiers(self):
+        result = parse_args(["-t", "+mcp__radius__*"])
+        assert result.tools is None
+        assert result.diagnostics == [
+            {
+                "type": "error",
+                "message": "-t: +name and -name entries take exact tool names, not patterns: +mcp__radius__*",
+            }
+        ]
+
     def test_parses_exclude_tools_flag(self):
         result = parse_args(["--exclude-tools", "read,bash"])
         assert result.exclude_tools == ["read", "bash"]

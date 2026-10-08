@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from ..utils.ansi import strip_ansi
+from ..utils.ansi import split_incomplete_ansi_suffix, strip_ansi
 from ..utils.output_files import create_output_file_stream
 from ..utils.shell import sanitize_binary_output
 from ..utils.temp_file_writer import TempFileWriter
@@ -58,20 +58,32 @@ async def execute_bash_with_operations(
             temp_file.write(chunk.encode("utf-8", "replace"))
 
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    # Unfinished escape sequence at the end of the previous chunk, completed by the next chunk.
+    pending_ansi = ""
     # Backends may deliver stdout and stderr from parallel readers; the
-    # decoder and rolling buffer below assume pi's single-thread ordering.
+    # decoder, `pending_ansi` and rolling buffer below assume pi's single-thread ordering.
     data_lock = threading.Lock()
 
     def on_data(data: bytes) -> None:
+        nonlocal total_bytes, pending_ansi
         with data_lock:
-            _on_data(data)
+            total_bytes += len(data)
+            complete, pending_ansi = split_incomplete_ansi_suffix(pending_ansi + decoder.decode(data))
+            _append_text(complete)
 
-    def _on_data(data: bytes) -> None:
-        nonlocal total_bytes, output_bytes
-        total_bytes += len(data)
+    def flush_output() -> None:
+        nonlocal pending_ansi
+        with data_lock:
+            rest = pending_ansi + decoder.decode(b"", final=True)
+            pending_ansi = ""
+            _append_text(rest)
 
+    def _append_text(raw_text: str) -> None:
+        nonlocal output_bytes
         # Sanitize: strip ANSI, replace binary garbage, normalize newlines
-        text = sanitize_binary_output(strip_ansi(decoder.decode(data))).replace("\r", "")
+        text = sanitize_binary_output(strip_ansi(raw_text)).replace("\r", "")
+        if not text:
+            return
 
         # Start writing to temp file if exceeds threshold
         if total_bytes > DEFAULT_MAX_BYTES:
@@ -102,32 +114,24 @@ async def execute_bash_with_operations(
             await temp_file.close()
         return full_output, truncation_result
 
+    exit_code: int | None = None
     try:
-        result = await operations.exec(command, cwd, on_data=on_data, cancel=cancel)
-
-        full_output, truncation_result = await settle_output()
-        cancelled = cancel.cancelled if cancel is not None else False
-
-        return BashResult(
-            output=truncation_result.content if truncation_result.truncated else full_output,
-            exit_code=None if cancelled else result.exit_code,
-            cancelled=cancelled,
-            truncated=truncation_result.truncated,
-            full_output_path=temp_file_path,
-        )
+        exit_code = (await operations.exec(command, cwd, on_data=on_data, cancel=cancel)).exit_code
     except Exception:
-        # Check if it was an abort
-        if cancel is not None and cancel.cancelled:
-            full_output, truncation_result = await settle_output()
-            return BashResult(
-                output=truncation_result.content if truncation_result.truncated else full_output,
-                exit_code=None,
-                cancelled=True,
-                truncated=truncation_result.truncated,
-                full_output_path=temp_file_path,
-            )
+        # An aborted command still returns the output it produced so far
+        if cancel is None or not cancel.cancelled:
+            if temp_file is not None:
+                await temp_file.close()
+            raise
 
-        if temp_file is not None:
-            await temp_file.close()
+    flush_output()
+    full_output, truncation_result = await settle_output()
+    cancelled = cancel.cancelled if cancel is not None else False
 
-        raise
+    return BashResult(
+        output=truncation_result.content if truncation_result.truncated else full_output,
+        exit_code=None if cancelled else exit_code,
+        cancelled=cancelled,
+        truncated=truncation_result.truncated,
+        full_output_path=temp_file_path,
+    )

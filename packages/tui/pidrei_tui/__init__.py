@@ -58,6 +58,9 @@ from .keys import (
 )
 from .latex import render_latex
 from .oklab import oklab_to_okhsl_lightness
+
+# Program status reporting (OSC 7501)
+from .program_status import ProgramStatus, format_program_status
 from .stdin_buffer import StdinBuffer
 from .terminal import (
     ProcessTerminal,
@@ -148,6 +151,7 @@ __all__ = [
     "OklchColorValue",
     "OverlayHandle",
     "ProcessTerminal",
+    "ProgramStatus",
     "RgbColorValue",
     "ScrollView",
     "SelectList",
@@ -180,6 +184,7 @@ __all__ = [
     "encode_iterm2",
     "encode_kitty",
     "foreground_ansi",
+    "format_program_status",
     "fuzzy_filter",
     "fuzzy_match",
     "get_capabilities",

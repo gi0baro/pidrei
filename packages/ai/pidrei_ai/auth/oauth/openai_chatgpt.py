@@ -262,7 +262,9 @@ async def _login_openai_chatgpt(
     authorization_url = f"{AUTHORIZE_URL}?" + urlencode(
         {
             "client_id": DYNAMIC_CLIENT_ID,
-            "agent_name_hint": AGENT_NAME_HINT,
+            "agent_name_hint": (
+                options.agent_name if options is not None and options.agent_name is not None else AGENT_NAME_HINT
+            ),
             "ext_agent_host_id": host_id,
             "response_type": "code",
             "redirect_uri": REDIRECT_URI,

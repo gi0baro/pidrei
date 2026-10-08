@@ -86,6 +86,7 @@ def test_message_end_is_applied_before_the_session_moves_on():
         session,
         _is_initialized=True,
         _footer=SimpleNamespace(invalidate=lambda: None),
+        _program_status=SimpleNamespace(handle_event=lambda _event: None),
         _streaming_component=SimpleNamespace(
             update_content=lambda message, _partial: shown.append(message.error_message)
         ),
@@ -195,6 +196,7 @@ def _editor_slot_mode():
         _extension_selector=None,
         _dispose_active_selector=_noop,
         _toggle_tool_output_expansion=_noop,
+        _program_status=SimpleNamespace(set_blocked=_noop),
     )
     fake._hide_extension_selector = lambda component: InteractiveMode._hide_extension_selector(fake, component)
     return fake
@@ -335,6 +337,7 @@ async def test_concurrent_bash_commands_keep_their_own_output():
         _chat_container=chat,
         _pending_messages_container=Container(),
         _pending_bash_components=[],
+        _output_pad=1,
         show_error=_noop,
     )
     fake._mount_bash_component = lambda component, deferred: InteractiveMode._mount_bash_component(
@@ -491,6 +494,7 @@ async def test_a_session_swap_and_the_rebinds_first_block_are_one_hold():
         _footer_data_provider=SimpleNamespace(resolve_cwd=resolve_cwd),
         _needs_project_trust_warning=needs_project_trust_warning,
         _unsubscribe=lambda: steps.append(("unsubscribe", lock.current)),
+        _program_status=SimpleNamespace(reset=_noop),
         _apply_runtime_settings=lambda resolved: steps.append(("settings", resolved["cwd"], lock.current)) or False,
         render_current_session_state=lambda trust_warning: steps.append(("render", trust_warning, lock.current)),
         _subscribe_to_agent=lambda: steps.append(("subscribe", lock.current)),

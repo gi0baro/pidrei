@@ -25,7 +25,8 @@ from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_utils import clock as clock_module
 
 
-KITTY_QUERY = b"\x1b[>7u\x1b[?u\x1b[c"
+# The startup burst: Kitty query, OSC 7501 program status query, then the DA1 sentinel.
+KITTY_QUERY = b"\x1b[>7u\x1b[?u\x1b]7501;?\x1b\\\x1b[c"
 
 
 async def _receive_until(stream: FdStream, *needles: bytes, timeout: float = 5.0) -> bytes:

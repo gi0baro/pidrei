@@ -154,7 +154,8 @@ Judgement calls with precedent:
   it.
 - **npm**: PiDrei installs packages from git and local paths only.
   npm-flavoured changes map onto the git path or are dropped with a note.
-- **Windows** branches in a diff are dropped silently.
+- **Windows** and **Android** (Termux) branches in a diff are dropped
+  silently, with their test cases.
 - A diff outside a dropped path that only makes sense with dropped surface
   (e.g. consumers of a non-ported subsystem): port the product half, drop the
   rest with a one-line note.
@@ -296,6 +297,8 @@ usually a `.N` PiDrei release:
 Each has entries in the classifier's dropped tables, with the reason.
 
 - **Windows**: TonIO is POSIX-only.
+- **Android** (Termux): not a PiDrei platform; the free-threaded native
+  dependencies have no Android builds.
 - **Pi's experimental stack**: the durable harness runtime, Chord, the
   experimental coding agent (`coding-agent/src/experimental`,
   `cli/experimental`, `mini/`, facet plugins), the protocol/server/client
@@ -483,6 +486,15 @@ at publication, so each pushed event carries an independent snapshot.
   `test_openai_responses.py`, `test_registry.py`). Tests that shape a
   scenario by mutating a constructed message switch to `replace(...)` with a
   one-line note (precedent: `test_openai_completions_reasoning_details.py`).
+- **Response timing** lands at the seam too: `AssistantMessageEventStream`
+  records its start (`clock.now_ms()` and `clock.monotonic()`) when created,
+  and `_time()` gives the final message (`done`, `error`, or the result
+  passed to `end()`) its `duration_ms`. A builder gets the field before
+  `freeze()`; a frozen message is replaced. Pi's conditions carry over: no
+  timing once the stream is done, when the message already has a duration,
+  or when its `timestamp` predates the stream (a forwarded deferred result).
+  A Pi diff to when a response is timed lands in `_time()`, never in an
+  adapter.
 - **Never** reintroduce a mutable message type or `getattr` probing for
   builders in consumer code.
 
@@ -598,7 +610,7 @@ producer/consumer channel and no shared mutable record
   the mirror drives the fold with the same message sequence. Runner tests
   port through the wrapper.
 
-### `tui-island` (`tui/src/tui.ts`, `terminal.ts`, `stdin-buffer.ts`, `tui-main-screen.ts`, `tui-alt-screen.ts`, `coding-agent/src/modes/interactive/interactive-mode.ts`, `core/extensions/runner.ts`)
+### `tui-island` (`tui/src/tui.ts`, `terminal.ts`, `stdin-buffer.ts`, `tui-main-screen.ts`, `tui-alt-screen.ts`, `coding-agent/src/modes/interactive/interactive-mode.ts`, `program-status-reporter.ts`, `core/extensions/runner.ts`)
 
 PiDrei's UI is **passive state guarded by one reentrant thread lock**
 (`state_lock`, with the terminal's lifetime), with independent loops (input,
@@ -667,6 +679,24 @@ untouched: component diffs port 1:1. What diverges:
     lands there, guarded.
   - Pi's global `setTimeout`/`setInterval` in an example become
     `tui.timeout`/`tui.interval`; examples never import private modules.
+- **Program status** (OSC 7501):
+  - The terminal's program status state (the held status, support, the
+    pending support query) is under `ProcessTerminal._protocol_lock`, with the
+    Kitty/DA negotiation. The query goes out in the startup burst before the
+    DA query. The reader checks for the query's echo first, under that lock:
+    it marks support and writes the held status. The reply never reaches
+    input. The DA reply ends the wait for an echo. `set_program_status()`
+    stores and writes under the same lock, so a status set before support is
+    confirmed is written once it is.
+  - `ProgramStatusReporter` (`modes/interactive/program_status_reporter.py`)
+    is called both under the UI state lock (session events, dialog mounts and
+    hides) and outside it (logins), so its state has its own thread lock. It
+    writes to the terminal while holding that lock, so writes follow the
+    order of state changes. Lock order: UI state lock, then the reporter's
+    lock, then the terminal's protocol lock. The reader never calls the
+    reporter.
+  - A dialog hide clears its blocked status only when the dialog is still
+    the mounted component, the check that already guards the hide itself.
 
 ### `terminal-colors-loop` (`tui/src/tui.ts`, `terminal.ts`, `theme/theme-controller.ts`, `theme/theme.ts`)
 
@@ -821,6 +851,14 @@ machinery and the text that shows JavaScript do not.
   `print()` output over in buffered chunks (about 8 KiB, mid-feed), not one
   call per `print()`, so print output counts by characters only and the item
   limit counts `text()`/`image()` calls; the error text says so.
+- **Console items**: Pi's `console.*` output is `print()` here. Because Monty
+  hands print output over in chunks, a run of consecutive prints becomes one
+  `CodemodeTextItem(text, console=True)`, flushed before the next
+  `text()`/`image()` item (`_flush_prints_locked`) and at the end.
+  `_format_output` (`extensions/codemode/execute.py`) splits the item back
+  into its lines in the `<console_output>` block, so the block still has one
+  line per call. A Pi change to how console items are recorded lands in the
+  flush; one to how they are laid out lands in `_format_output`.
 - **Tests**: Pi's script cases translate to Python scripts and Python error
   strings. A JS-only case is dropped or re-specified, and the test module's
   docstring says which.
@@ -850,7 +888,7 @@ session's loadout guard and sets what it returns (`None` sets nothing).
   registration, so their update rides on that `register_tools` call as
   `update_active` (see `mcp-extension`).
 
-### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`)
+### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`, `oauth/flow.ts`)
 
 Pi's MCP client leans on its single thread: listeners run inline, a `send()`
 is ordered by the call, and an `AbortController` stops a request at any
@@ -897,6 +935,16 @@ runtime layer from TonIO, httpunk and punkreq.
   it settles the waiters and closes the server and its connections
   (httpunk's `close()` and `close_all_connections()`), as the provider flows'
   callback server does; no graceful shutdown.
+- **OAuth flow cancellation**: Pi hands its flow's `signal` to every request.
+  Here `OAuthFlowOptions.cancel` is a `CancelToken`, and `_cancellable` wraps
+  the flow's fetch so that each request runs under `run_cancellable`. Only
+  the requests are torn: the provider's saves between them always complete.
+  A cancelled refresh re-raises instead of falling back to a new
+  authorization. A new Pi `signal` parameter on a flow step is covered by
+  the wrapped fetch, not threaded separately.
+- **Closing the HTTP transport** sends its session `DELETE` with the token
+  of the last request (`_last_token`) and never calls the auth provider, so
+  a close never refreshes over the network.
 - **Tests**: loopback servers are httpunk's (`tests/mcp_helpers.py`) with a
   shared client that keeps no idle connection, so teardown never waits on a
   pooled connection; fixtures are Python scripts.
@@ -942,6 +990,24 @@ awaits. Here those run on parallel coroutines.
   and the log are async. Every `mcp.json` edit runs under a `FileLock` on the
   file (pi's synchronous edit cannot interleave in-process; an awaited one
   can).
+- **Attempts and background actions**:
+  - Each connection attempt is a fresh `object()` stored in `server.attempt`
+    and compared by identity (Pi's `Symbol()`). A connection or a manager
+    action whose attempt is no longer current does not publish.
+  - Disabling a server stores a `closing` Event (`_close_detached`) that a
+    re-enable waits for before it starts its attempt.
+  - `_run_in_background` judges "replaced" against the attempt its own
+    operation set, which reaches it through the `on_attempt` callback, under
+    the lock that sets it. It does not judge against whatever
+    `server.attempt` holds when the operation first suspends: a config save
+    is awaited before the attempt is set.
+  - Pi's per-session `AbortController` is a `CancelToken` (`self._session`),
+    replaced at session start. Sign-ins combine it with their own token.
+  - Work the session tracks (manager actions, sign-ins) registers an Event
+    through `_track`/`_untrack`.
+  - Shutdown cancels the token outside the extension lock, because
+    cancelling runs the sign-ins' callbacks synchronously. It then joins the
+    tracked Events together with the closing connections.
 - **The manager** (`ui.py`) changes its view only through `tui.apply`; key
   handlers settle an Event the manage coroutine awaits.
 - **The CLI** reads a pasted redirect URL with `FdReader` under

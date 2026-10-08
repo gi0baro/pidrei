@@ -47,7 +47,9 @@ class OAuthMcpServer:
     9207). `iss_parameter` advertises that parameter and sends the server's
     issuer. `cimd` advertises Client ID Metadata Documents. `redirect_path`
     replaces the path of the redirect URI, like a mixed-up authorization
-    server."""
+    server. The MCP endpoint assigns a session, so closing a connection sends
+    a DELETE. Paths added to `stall` accept requests and never answer them,
+    like an unresponsive server."""
 
     def __init__(
         self, iss: str | None, *, iss_parameter: bool = False, cimd: bool = False, redirect_path: str | None = None
@@ -63,6 +65,13 @@ class OAuthMcpServer:
         self.authorizations: list[dict[str, str]] = []
         # Parameters of token requests.
         self.token_requests: list[dict[str, str]] = []
+        # Access tokens of session DELETE requests.
+        self.deletes: list[str | None] = []
+        self.stall: set[str] = set()
+        # Requests to stalled paths, each with an Event set once the client gave up (hung up).
+        self.stalled: list[tuple[str, tonio.Event]] = []
+        # Set when a request reached a stalled path.
+        self.stalled_arrived = tonio.Event()
         self._valid_tokens: set[str] = set()
         self._refresh_tokens: set[str] = set()
         self._challenges: dict[str, str] = {}
@@ -82,11 +91,13 @@ class OAuthMcpServer:
         return {**tokens, "token_type": "Bearer", "expires_in": 3600}
 
     async def _handle_mcp(self, request: Any) -> None:
+        authorization = header(request, "authorization")
+        token = authorization.removeprefix("Bearer ") if authorization else None
+        if request.method == "DELETE":
+            self.deletes.append(token)
         if request.method != "POST":
             await request.respond(405 if request.method == "GET" else 200)
             return
-        authorization = header(request, "authorization")
-        token = authorization.removeprefix("Bearer ") if authorization else None
         if not token or token not in self._valid_tokens:
             self.log.append(f"401 {token or 'none'}")
             await request.respond(
@@ -114,11 +125,22 @@ class OAuthMcpServer:
             result = {"content": [{"type": "text", "text": f"token {token}"}]}
         else:
             result = {}
-        await _json(request, 200, {"jsonrpc": "2.0", "id": message["id"], "result": result})
+        await _json(
+            request, 200, {"jsonrpc": "2.0", "id": message["id"], "result": result}, {"mcp-session-id": "session-1"}
+        )
 
     async def handle(self, request: Any, origin: str) -> None:
         url = urlsplit(request.target)
         query = dict(parse_qsl(url.query, keep_blank_values=True))
+        if url.path in self.stall:
+            hung_up = tonio.Event()
+            self.stalled.append((url.path, hung_up))
+            # Read first: the client's hang-up shows only once nothing is left to read.
+            await request.read()
+            self.stalled_arrived.set()
+            await request.peer_closed()
+            hung_up.set()
+            return
         match url.path:
             case "/mcp":
                 await self._handle_mcp(request)

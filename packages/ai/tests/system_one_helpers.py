@@ -1,7 +1,8 @@
-"""Stub for System One requests (pi's tests pass a `fetch` option instead).
+"""Stub for classifier requests (pi's tests pass a `fetch` option instead).
 
-`stub_system_one(handler)` swaps `system_one_shared._SystemOneClient` — the one
-POST every System One transport makes — for a client that records each request
+`stub_system_one(handler)` swaps `classifier_shared._ClassifierClient` — the one
+POST every System One transport and the OpenAI Decisions API make — for a
+client that records each request
 and answers with `await handler(request)`, a `(status, headers, body)` triple.
 The recorded `payload` is the JSON-serializable request body pi's tests read
 back with `JSON.parse(init.body)`.
@@ -13,7 +14,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from pidrei_ai.api import system_one_shared
+from pidrei_ai.api import classifier_shared
 from pidrei_utils.cancel import CancelToken
 
 
@@ -54,9 +55,9 @@ def stub_system_one(handler: Handler) -> Iterator[list[SystemOneRequest]]:
             requests.append(request)
             return await handler(request)
 
-    original = system_one_shared._SystemOneClient
-    system_one_shared._SystemOneClient = _StubClient
+    original = classifier_shared._ClassifierClient
+    classifier_shared._ClassifierClient = _StubClient
     try:
         yield requests
     finally:
-        system_one_shared._SystemOneClient = original
+        classifier_shared._ClassifierClient = original

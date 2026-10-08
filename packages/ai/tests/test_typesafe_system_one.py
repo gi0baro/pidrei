@@ -1,7 +1,7 @@
 """Mirror of pi's typesafe-system-one.test.ts.
 
 pi injects `options.fetch`; here the one POST is stubbed at
-`system_one_shared._SystemOneClient` (tests/system_one_helpers.py). pi's
+`classifier_shared._ClassifierClient` (tests/system_one_helpers.py). pi's
 "preserves prototype-sensitive question IDs" case is JS-only (`__proto__` on a
 plain object); a Python dict has no prototype, so it is not mirrored.
 """
@@ -20,6 +20,7 @@ from pidrei_ai.types import (
     ClassifierOptions,
     ClassifierScoreAnswer,
     ClassifierScoreQuestion,
+    ImageContent,
     ModelCost,
 )
 from tests.system_one_helpers import json_response, respond_json, stub_system_one
@@ -129,6 +130,21 @@ async def test_rejects_models_for_other_classifier_apis():
     assert requests == []
     assert result.stop_reason == "error"
     assert "Unsupported classifier API: cloudflare-workers-ai-system-one" in result.error_message
+
+
+@pytest.mark.tonio
+async def test_rejects_image_input_before_sending():
+    image = ImageContent(data="aW1hZ2U=", mime_type="image/png")
+    with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
+        result = await classify(
+            replace(MODEL, input=["text", "image"]),
+            replace(CONTEXT, images=[image]),
+            ClassifierOptions(api_key="secret"),
+        )
+
+    assert requests == []
+    assert result.stop_reason == "error"
+    assert result.error_message == "System One API does not support image input"
 
 
 @pytest.mark.tonio

@@ -67,6 +67,8 @@ class ToolHtmlRenderer:
             "expanded": expanded,
             "showImages": False,
             "isError": is_error,
+            "durationMs": None,
+            "outputPad": 1,
         }
 
     def render_call(self, tool_call_id: str, tool_name: str, args) -> str | None:

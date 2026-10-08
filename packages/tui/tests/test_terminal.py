@@ -14,6 +14,7 @@ import os
 import pytest
 
 from pidrei_tui.keys import set_kitty_protocol_active
+from pidrei_tui.program_status import ProgramStatus
 from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input, resolve_escape_timeout_ms
 from pidrei_utils import clock as clock_module
 
@@ -123,7 +124,7 @@ class _NegotiationHarness:
 async def test_queries_kitty_mode_before_enabling_modify_other_keys_fallback():
     harness = _NegotiationHarness()
     try:
-        assert harness.writes[0] == "\x1b[>7u\x1b[?u\x1b[c"
+        assert harness.writes[0] == "\x1b[>7u\x1b[?u\x1b]7501;?\x1b\\\x1b[c"
         assert "\x1b[>4;2m" not in harness.writes
         assert harness.terminal.kitty_protocol_active is False
     finally:
@@ -217,6 +218,108 @@ async def test_tracks_split_kitty_confirmation():
 
         assert harness.terminal.kitty_protocol_active is True
         assert "\x1b[>4;2m" not in harness.writes
+    finally:
+        await harness.cleanup()
+
+
+# Program status (OSC 7501), pi #10607
+
+_WORKING = "\x1b]7501;state=working:app=pi\x1b\\"
+_CLEAR = "\x1b]7501;state=clear\x1b\\"
+
+
+@pytest.mark.tonio
+async def test_reports_the_latest_program_status_once_the_terminal_answers_the_query_before_da(monkeypatch):
+    monkeypatch.delenv("PIDREI_PROGRAM_STATUS", raising=False)
+    harness = _NegotiationHarness()
+    try:
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+        assert _WORKING not in harness.writes
+
+        await harness.send("\x1b]7501;?\x1b\\")
+        assert harness.input is None
+        assert harness.writes.count(_WORKING) == 1
+        await harness.send("\x1b[?62;4;52c")
+
+        harness.terminal.set_program_status(ProgramStatus(state="done"))
+        assert harness.writes[-1] == "\x1b]7501;state=done\x1b\\"
+    finally:
+        await harness.cleanup()
+
+
+@pytest.mark.tonio
+async def test_reports_no_program_status_when_da_arrives_first_and_swallows_late_replies(monkeypatch):
+    monkeypatch.delenv("PIDREI_PROGRAM_STATUS", raising=False)
+    harness = _NegotiationHarness()
+    try:
+        await harness.send("\x1b[?62;4;52c")
+        await harness.send("\x1b]7501;?\x07")
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+
+        assert harness.input is None
+        assert not any(write.startswith("\x1b]7501;state=") for write in harness.writes)
+    finally:
+        await harness.cleanup()
+
+
+@pytest.mark.tonio
+async def test_skips_the_program_status_query_when_pidrei_program_status_is_set(monkeypatch):
+    monkeypatch.setenv("PIDREI_PROGRAM_STATUS", "1")
+    harness = _NegotiationHarness()
+    try:
+        assert harness.writes[0] == "\x1b[>7u\x1b[?u\x1b[c"
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+        assert harness.writes[-1] == _WORKING
+    finally:
+        await harness.cleanup()
+
+    monkeypatch.setenv("PIDREI_PROGRAM_STATUS", "0")
+    harness = _NegotiationHarness()
+    try:
+        assert harness.writes[0] == "\x1b[>7u\x1b[?u\x1b[c"
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+        assert _WORKING not in harness.writes
+    finally:
+        await harness.cleanup()
+
+
+@pytest.mark.tonio
+async def test_does_not_let_a_da_reply_from_before_a_restart_end_the_new_program_status_query(monkeypatch):
+    monkeypatch.delenv("PIDREI_PROGRAM_STATUS", raising=False)
+    harness = _NegotiationHarness()
+    try:
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+        await harness.terminal.stop()
+        harness.terminal._query_and_enable_kitty_protocol()
+
+        # The first start's replies arrive late: its DA, then the second start's reply and DA.
+        await harness.send("\x1b[?62;4;52c")
+        await harness.send("\x1b]7501;?\x1b\\")
+        await harness.send("\x1b[?62;4;52c")
+        assert harness.writes[-1] == _WORKING
+        assert harness.input is None
+    finally:
+        await harness.cleanup()
+
+
+@pytest.mark.tonio
+async def test_clears_the_program_status_on_stop_and_reports_it_again_after_restart(monkeypatch):
+    monkeypatch.delenv("PIDREI_PROGRAM_STATUS", raising=False)
+    harness = _NegotiationHarness()
+    try:
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+        await harness.send("\x1b]7501;?\x1b\\")
+        await harness.terminal.stop()
+        assert _CLEAR in harness.writes
+
+        # Stopped: nothing is written until the restarted terminal confirms support again.
+        writes_before_restart = len(harness.writes)
+        harness.terminal.set_program_status(ProgramStatus(state="working", app="pi"))
+        assert len(harness.writes) == writes_before_restart
+
+        harness.terminal._query_and_enable_kitty_protocol()
+        await harness.send("\x1b]7501;?\x1b\\")
+        assert harness.writes[-1] == _WORKING
     finally:
         await harness.cleanup()
 

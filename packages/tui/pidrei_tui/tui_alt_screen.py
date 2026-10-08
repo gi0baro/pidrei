@@ -282,6 +282,12 @@ class TuiAltScreen(TuiBase):
             return _resolved(False)
         return self._copy_text_to_clipboard(text)
 
+    def reset_text_selection(self) -> None:
+        """Drop the text selection and multi-click history, e.g. before the host replaces the transcript."""
+        with self.state_lock:
+            self._clear_text_selection()
+            self._last_click = None
+
     def get_screen_lines(self) -> list[str]:
         """The lines of the last rendered frame, one per terminal row, as written to the terminal.
 

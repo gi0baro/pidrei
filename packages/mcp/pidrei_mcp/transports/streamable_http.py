@@ -271,6 +271,8 @@ class StreamableHttpTransport(TransportEvents):
         self._session_id: str | None = None
         self._protocol_version: str | None = None
         self._get_stream_started = False
+        # Access token of the latest request, which `close()` reuses instead of asking the auth provider.
+        self._last_token: str | None = None
 
     @property
     def session_id(self) -> str | None:
@@ -322,12 +324,13 @@ class StreamableHttpTransport(TransportEvents):
             self._emit_close()
 
     async def _delete_session(self) -> None:
+        # Best effort: the session expires on the server anyway. The auth provider may refresh tokens
+        # over the network, so it is not asked here and closing never waits for a refresh.
         try:
-            headers, _token = await self._headers()
+            headers = self._build_headers(None, self._last_token)
             response = await self._fetch(self.url, method="DELETE", headers=headers, timeout_ms=_DELETE_TIMEOUT_MS)
             await _close_quietly(response)
         except Exception:
-            # Resolving auth headers or the request failed; the session will expire on the server.
             pass
 
     async def _post(self, message: JsonRpcMessage, result: SendResult) -> None:
@@ -418,6 +421,12 @@ class StreamableHttpTransport(TransportEvents):
             attempt += 1
 
     async def _headers(self, extra: dict[str, str] | None = None) -> tuple[dict[str, str], str | None]:
+        provider = self.options.auth_provider
+        token = await provider.token() if provider is not None else None
+        self._last_token = token
+        return self._build_headers(extra, token), token or None
+
+    def _build_headers(self, extra: dict[str, str] | None, token: str | None) -> dict[str, str]:
         # Header names are case-insensitive: lower-cased keys make each `set` a replace, as `Headers.set` is.
         headers = {name.lower(): value for name, value in (self.options.headers or {}).items()}
         for name, value in (extra or {}).items():
@@ -426,11 +435,9 @@ class StreamableHttpTransport(TransportEvents):
             headers["mcp-session-id"] = self._session_id
         if self._protocol_version:
             headers["mcp-protocol-version"] = self._protocol_version
-        provider = self.options.auth_provider
-        token = await provider.token() if provider is not None else None
         if token:
             headers["authorization"] = f"Bearer {token}"
-        return headers, token or None
+        return headers
 
     def _capture_session(self, response: McpResponse) -> None:
         session_id = response.headers.get("mcp-session-id")

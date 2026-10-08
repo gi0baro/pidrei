@@ -1,7 +1,7 @@
 """Mirror of pi coding-agent test/model-runtime-classifiers.test.ts.
 
 pi passes `options.fetch`; here the System One POST is stubbed at
-`system_one_shared._SystemOneClient`.
+`classifier_shared._ClassifierClient`.
 """
 
 import contextlib
@@ -11,7 +11,7 @@ import pytest
 
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.model_runtime import ModelRuntime
-from pidrei_ai.api import system_one_shared
+from pidrei_ai.api import classifier_shared
 from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.types import ClassifierBoolAnswer, ClassifierBoolQuestion, ClassifierContext
 
@@ -38,12 +38,12 @@ def _stub_system_one(body):
             headers_seen.append(headers)
             return 200, {}, json.dumps(body)
 
-    original = system_one_shared._SystemOneClient
-    system_one_shared._SystemOneClient = _StubClient
+    original = classifier_shared._ClassifierClient
+    classifier_shared._ClassifierClient = _StubClient
     try:
         yield headers_seen
     finally:
-        system_one_shared._SystemOneClient = original
+        classifier_shared._ClassifierClient = original
 
 
 @pytest.mark.tonio

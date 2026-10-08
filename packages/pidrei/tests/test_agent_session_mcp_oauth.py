@@ -21,7 +21,7 @@ from tonio.colored import net
 from pidrei.core.agent_session import ExtensionBindings
 from pidrei.core.auth_storage import InMemoryAuthStorageBackend
 from pidrei.core.extensions.runner import emit_session_shutdown_event
-from pidrei.extensions.mcp import create_mcp_extension
+from pidrei.extensions.mcp import cli, create_mcp_extension
 from pidrei.extensions.mcp.cli import McpCommandOptions, run_mcp_command
 from pidrei.extensions.mcp.config import LoadedMcpConfig, McpServerEntry
 from pidrei.extensions.mcp.oauth import McpOAuthCredentialStore
@@ -171,6 +171,57 @@ async def test_signs_in_through_the_browser_refreshes_expired_tokens_and_signs_o
         assert get_message_text(result) == 'MCP server "issues" requires sign-in. Run /mcp to sign in.'
 
 
+async def shutdown(harness) -> float:
+    """Emit session_shutdown like quitting does; returns how long the handlers took, in seconds."""
+    start = clock.monotonic()
+    await emit_session_shutdown_event(harness.session.extension_runner, {"type": "session_shutdown", "reason": "quit"})
+    return clock.monotonic() - start
+
+
+# pi #10565
+@pytest.mark.tonio
+@pytest.mark.parametrize("path", ["/.well-known/oauth-authorization-server", "/token"])
+async def test_cancels_a_sign_in_waiting_on_a_stalled_request_when_the_session_shuts_down(monkeypatch, path):
+    async with _suite(monkeypatch) as (oauth_servers, harnesses):
+        harness, server, notifications, _backend, _opened = await setup(oauth_servers, harnesses, "follow")
+        server.stall.add(path)
+        login = tonio.spawn(harness.session.prompt("/mcp login issues"))
+        await server.stalled_arrived.wait(_WAIT_S)
+        assert [stalled_path for stalled_path, _hung_up in server.stalled] == [path]
+
+        # Shutdown waits for the sign-in to clean up, which cancelling makes immediate.
+        assert await shutdown(harness) < 2
+        await login
+        # The request is aborted instead of left open, and the ended session reports nothing.
+        hung_up = server.stalled[0][1]
+        await hung_up.wait(_WAIT_S)
+        assert hung_up.is_set()
+        assert [message for message in notifications if message.startswith("Sign-in")] == []
+
+
+# pi #10565
+@pytest.mark.tonio
+async def test_closes_the_session_without_refreshing_an_expiring_token(monkeypatch):
+    async with _suite(monkeypatch) as (oauth_servers, harnesses):
+        harness, server, notifications, backend, _opened = await setup(oauth_servers, harnesses, "follow")
+        await harness.session.prompt("/mcp login issues")
+        assert notifications[-1] == 'Signed in to MCP server "issues" (1 tools).'
+
+        # Still accepted, but close enough to expiry that the next request would refresh it first.
+        def expiring(current):
+            states = json.loads(current or "{}")
+            for state in states.values():
+                state["tokensExpireAt"] = clock.now_ms() + 10_000
+            return None, json.dumps(states)
+
+        backend.with_lock(expiring)
+        server.stall.add("/token")
+
+        assert await shutdown(harness) < 2
+        assert server.stalled == []
+        assert server.deletes == ["access-1"]
+
+
 @pytest.mark.tonio
 async def test_accepts_a_pasted_redirect_url_when_the_browser_cannot_reach_the_callback(monkeypatch):
     async with _suite(monkeypatch) as (oauth_servers, harnesses):
@@ -231,6 +282,78 @@ async def test_adds_the_listening_port_to_a_callback_url_without_one(monkeypatch
         )
         await fixed.session.prompt("/mcp login issues")
         assert _redirect_uri(fixed_opened[0]) == f"http://127.0.0.1:{port}/oauth/done"
+
+
+class _ManualTimeout:
+    """`cli.Timeout` that the test fires by hand (pi waits out a real 0.5 s)."""
+
+    def __init__(self, delay_ms: float, fn) -> None:
+        self.delay_ms = delay_ms
+        self._fn = fn
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def fire(self) -> None:
+        if not self._cancelled:
+            self._fn()
+
+
+@pytest.mark.tonio
+async def test_gives_up_on_pidrei_mcp_login_after_timeout_also_while_the_authorization_server_hangs(
+    monkeypatch, tmp_path
+):
+    timeouts: list[_ManualTimeout] = []
+
+    def create_timeout(delay_ms: float, fn, on_error=None) -> _ManualTimeout:
+        timeout = _ManualTimeout(delay_ms, fn)
+        timeouts.append(timeout)
+        return timeout
+
+    monkeypatch.setattr(cli, "Timeout", create_timeout)
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server = await oauth_servers.start()
+        agent_dir = str(tmp_path)
+        (tmp_path / "mcp.json").write_text(json.dumps({"mcpServers": {"issues": {"url": server.url}}}))
+
+        def login(open_url):
+            output: list[str] = []
+
+            async def run() -> tuple[int, list[str]]:
+                exit_code = await run_mcp_command(
+                    ["login", "issues", "--timeout", "0.5"],
+                    McpCommandOptions(
+                        cwd=agent_dir,
+                        agent_dir=agent_dir,
+                        credentials=McpOAuthCredentialStore(InMemoryAuthStorageBackend()),
+                        open_url=open_url,
+                        log=output.append,
+                        error=output.append,
+                    ),
+                )
+                return exit_code, output
+
+            return run()
+
+        # The user never approves in the browser: the timeout runs out while the sign-in waits for it.
+        def never_approve(_url: str) -> None:
+            timeouts[-1].fire()
+
+        exit_code, output = await login(never_approve)
+        assert timeouts[-1].delay_ms == 500
+        assert exit_code == 1
+        assert "was cancelled or not completed within" in output[-1]
+
+        # pi #10565: the timeout also ends a request to an authorization server that hangs.
+        server.stall.add("/.well-known/oauth-authorization-server")
+        stalled = tonio.spawn(login(lambda _url: None))
+        await server.stalled_arrived.wait(_WAIT_S)
+        assert server.stalled_arrived.is_set()
+        timeouts[-1].fire()
+        exit_code, output = await stalled
+        assert exit_code == 1
+        assert "was cancelled or not completed within" in output[-1]
 
 
 @pytest.mark.tonio

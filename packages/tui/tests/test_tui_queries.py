@@ -95,6 +95,9 @@ class TestTerminal:
     def set_progress(self, active):
         pass
 
+    def set_program_status(self, _status):
+        pass
+
     async def close(self):
         pass
 

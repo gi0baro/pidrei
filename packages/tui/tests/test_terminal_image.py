@@ -401,6 +401,19 @@ def test_forces_hyperlinks_false_when_term_starts_with_screen():
         assert caps["images"] is None
 
 
+# pi #10573
+def test_enables_hyperlinks_without_images_for_herdr():
+    with clean_env(
+        {"TERM_PROGRAM": "herdr", "TERM": "xterm-256color", "COLORTERM": "truecolor", "KITTY_WINDOW_ID": "1"}
+    ):
+        caps = detect_capabilities()
+        assert caps["hyperlinks"] is True
+        assert caps["images"] is None
+        assert caps["trueColor"] is True
+    with clean_env({"TERM_PROGRAM": "herdr", "PIDREI_HYPERLINKS": "0"}):
+        assert detect_capabilities()["hyperlinks"] is False
+
+
 def test_enables_hyperlinks_for_ghostty():
     with clean_env({"TERM_PROGRAM": "ghostty"}):
         assert detect_capabilities()["hyperlinks"] is True

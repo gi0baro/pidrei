@@ -138,18 +138,52 @@ when set.
 
 ### Azure OpenAI
 
+The provider ID is `azure` (formerly `azure-openai-responses`). Use it as the
+key in `auth.json`, `models.json`, and `settings.json`, and in model references
+such as `--model azure/gpt-5.4`.
+
+The `azure` provider serves OpenAI models through the Responses API and
+Microsoft Foundry models through Chat Completions, such as
+`azure/deepseek-v4-pro`.
+
 Azure needs the endpoint as well as the key:
 
 ```bash
 export AZURE_OPENAI_API_KEY=...
 export AZURE_OPENAI_BASE_URL=https://<resource>.openai.azure.com
 # or AZURE_OPENAI_RESOURCE_NAME=<resource>
-export AZURE_OPENAI_DEPLOYMENT_NAME_MAP="gpt-4o=my-deployment,gpt-4o-mini=my-mini"
 ```
 
-`AZURE_OPENAI_API_VERSION` defaults to `v1`. Resource root URLs under
-`openai.azure.com`, `cognitiveservices.azure.com` and `ai.azure.com` are
-normalized to the `/openai/v1` API path.
+Resource root URLs under `openai.azure.com`, `cognitiveservices.azure.com` and
+`ai.azure.com` are normalized to the `/openai/v1` API path.
+
+pidrei sends the model ID as the deployment name. If a deployment has a
+different name, map it with `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`:
+
+```bash
+export AZURE_OPENAI_DEPLOYMENT_NAME_MAP=gpt-5.4=my-gpt-deployment,deepseek-v4-pro=my-deepseek
+```
+
+`AZURE_OPENAI_API_VERSION` overrides the API version for OpenAI models
+(default `v1`).
+
+To use a Foundry model that pidrei does not include, add it under `azure` in
+[`models.json`](models.md) with `"api": "openai-completions"`. Custom models
+require a `baseUrl`; `AZURE_OPENAI_BASE_URL` and `AZURE_OPENAI_RESOURCE_NAME`
+take priority over it when set:
+
+```json
+{
+  "providers": {
+    "azure": {
+      "baseUrl": "https://your-resource.services.ai.azure.com",
+      "models": [
+        { "id": "your-deployment", "api": "openai-completions" }
+      ]
+    }
+  }
+}
+```
 
 ### Amazon Bedrock
 

@@ -64,6 +64,7 @@ def _rebuild_bash_result_render_component(
     show_images: bool,
     started_at: float | None,
     ended_at: float | None,
+    duration_ms: int | None,
 ) -> None:
     component.clear()
 
@@ -114,7 +115,11 @@ def _rebuild_bash_result_render_component(
                 warnings.append(f"Truncated: {truncation.output_lines} lines shown ({format_size(max_bytes)} limit)")
         component.add_child(Text("\n" + theme.fg("warning", f"[{'. '.join(warnings)}]"), 0, 0))
 
-    if started_at is not None:
+    # A final result's recorded duration wins: it is monotonic and survives reloads. The renderer's own clock is the
+    # fallback for live progress and for results stored without one.
+    if not options.get("isPartial") and duration_ms is not None:
+        component.add_child(Text("\n" + theme.fg("muted", f"Took {_format_duration(duration_ms)}"), 0, 0))
+    elif started_at is not None:
         label = "Elapsed" if options.get("isPartial") else "Took"
         end_time = ended_at if ended_at is not None else clock.monotonic() * 1000
         component.add_child(Text("\n" + theme.fg("muted", f"{label} {_format_duration(end_time - started_at)}"), 0, 0))
@@ -147,7 +152,13 @@ def create_shell_renderers(prompt: str) -> ToolRenderers:
                 state["interval"] = None
         component = context["lastComponent"] if isinstance(context.get("lastComponent"), Container) else Container()
         _rebuild_bash_result_render_component(
-            component, result, options, context["showImages"], state.get("startedAt"), state.get("endedAt")
+            component,
+            result,
+            options,
+            context["showImages"],
+            state.get("startedAt"),
+            state.get("endedAt"),
+            context["durationMs"],
         )
         component.invalidate()
         return component

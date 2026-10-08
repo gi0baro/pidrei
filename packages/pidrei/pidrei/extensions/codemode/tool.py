@@ -174,8 +174,9 @@ def _describe_globals(models: bool) -> str:
         "Globals:",
         (
             "- `text(value)`, `image(data_url_or_image_block)`, `print(...)`, and a final expression line add "
-            "output; `exit()` ends the script. `image()` also saves the image to a temp file and the result "
-            "names its path."
+            "output; `exit()` ends the script. With several text items, each starts with a `==> text N/M <==` "
+            "line, and `print` lines follow the other output in one `<console_output>` block. `image()` also "
+            "saves the image to a temp file and the result names its path."
         ),
         (
             "- `store(key, value)` and `load(key)` keep JSON values across codemode calls; `store(key, None)` "
@@ -253,6 +254,7 @@ class BoolQuestion(TypedDict):
 
 class ClassifierContext(TypedDict):
     state: dict[str, Any]
+    images: NotRequired[list[ImageBlock]]
     questions: dict[str, ChoiceQuestion | ScoreQuestion | BoolQuestion]
 
 class ChoiceAnswer(TypedDict):

@@ -751,7 +751,7 @@ class SettingsSelectorComponent(Container):
             {
                 "id": "output-padding",
                 "label": "Output padding",
-                "description": "Horizontal padding for user messages, assistant messages, and thinking",
+                "description": "Horizontal padding for messages, tool output, and command output",
                 "currentValue": str(config["outputPad"]),
                 "values": ["0", "1"],
             },

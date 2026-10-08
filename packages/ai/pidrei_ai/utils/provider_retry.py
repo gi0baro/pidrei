@@ -14,7 +14,7 @@ the sleep directly).
 
 import math
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -132,8 +132,10 @@ async def retry_provider_request[T](
     max_retries: int = 0,
     max_retry_delay_ms: float | None = None,
     cancel: CancelToken | None = None,
+    no_retry_statuses: Sequence[int] | None = None,
 ) -> T:
-    """Run `request` with SDK-compatible, interruptible retry."""
+    """Run `request` with SDK-compatible, interruptible retry. `no_retry_statuses`
+    lists HTTP statuses that fail at once although the default policy would retry them."""
     retries_remaining = max_retries
 
     while True:
@@ -143,6 +145,8 @@ async def retry_provider_request[T](
             if cancel is not None and cancel.cancelled:
                 raise _create_abort_error() from error
             if retries_remaining <= 0 or not _is_provider_error(error) or not _is_retryable_provider_error(error):
+                raise
+            if error.status is not None and no_retry_statuses is not None and error.status in no_retry_statuses:
                 raise
 
             retry_index = max_retries - retries_remaining

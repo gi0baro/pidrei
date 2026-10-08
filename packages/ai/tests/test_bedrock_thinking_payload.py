@@ -267,3 +267,73 @@ async def test_falls_back_to_fixed_budget_thinking_for_non_adaptive_claude_via_m
     assert thinking["type"] == "enabled"
     assert isinstance(thinking["budget_tokens"], int)
     assert payload["additionalModelRequestFields"]["anthropic_beta"] == ["interleaved-thinking-2025-05-14"]
+
+
+# Regression for pi #9331: the configured thinking level never reached OpenAI models on Bedrock.
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("reasoning", "effort"),
+    [
+        ("minimal", "low"),
+        ("low", "low"),
+        ("medium", "medium"),
+        ("high", "high"),
+        ("xhigh", "xhigh"),
+        ("max", "max"),
+    ],
+)
+async def test_sends_reasoning_as_reasoning_effort_for_gpt_6_and_gpt_5_6(reasoning, effort):
+    for model_id in ("global.openai.gpt-6-sol", "us.openai.gpt-6-luna", "global.openai.gpt-5.6-sol"):
+        payload = await capture_payload(
+            get_builtin_model("amazon-bedrock", model_id), BedrockOptions(reasoning=reasoning)
+        )
+
+        assert payload["additionalModelRequestFields"] == {"reasoning": {"effort": effort}}, model_id
+
+
+@pytest.mark.tonio
+async def test_sends_reasoning_effort_when_only_model_name_identifies_a_gpt_model():
+    model = replace(
+        get_builtin_model("amazon-bedrock", "global.openai.gpt-6-sol"),
+        id="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-profile",
+        name="GPT-6 Sol",
+    )
+
+    payload = await capture_payload(model, BedrockOptions(reasoning="medium"))
+
+    assert payload["additionalModelRequestFields"] == {"reasoning": {"effort": "medium"}}
+
+
+@pytest.mark.tonio
+async def test_sends_flat_reasoning_effort_for_gpt_oss_clamped_to_high():
+    model = get_builtin_model("amazon-bedrock", "openai.gpt-oss-120b-1:0")
+
+    minimal = await capture_payload(model, BedrockOptions(reasoning="minimal"))
+    assert minimal["additionalModelRequestFields"] == {"reasoning_effort": "low"}
+    medium = await capture_payload(model, BedrockOptions(reasoning="medium"))
+    assert medium["additionalModelRequestFields"] == {"reasoning_effort": "medium"}
+    xhigh = await capture_payload(model, BedrockOptions(reasoning="xhigh"))
+    assert xhigh["additionalModelRequestFields"] == {"reasoning_effort": "high"}
+
+
+@pytest.mark.tonio
+async def test_sends_no_reasoning_fields_when_reasoning_is_off():
+    # Not through `capture_payload`, which turns reasoning on when none is given.
+    captured: list[dict] = []
+
+    async def on_payload(payload, _model):
+        captured.append(payload)
+        raise PayloadCaptured
+
+    with _stubbed_client():
+        stream = stream_bedrock(
+            get_builtin_model("amazon-bedrock", "global.openai.gpt-6-sol"),
+            make_context(),
+            BedrockOptions(on_payload=on_payload),
+        )
+        async for event in stream:
+            if event.type == "error":
+                break
+
+    assert captured
+    assert captured[0]["additionalModelRequestFields"] is None

@@ -98,20 +98,28 @@ pidrei --tools read,grep,find,ls -p "Review this project"
 
 | Option | Behavior |
 |--------|----------|
-| `-t`, `--tools <list>` | Allowlist of built-in, extension, or custom tools: names, or patterns where `*` matches any characters. MCP tools are kept unless an entry starts with `mcp__` (see [MCP tools](#mcp-tools)) |
+| `-t`, `--tools <list>` | Allowlist of built-in, extension, or custom tools: names, or patterns where `*` matches any characters. MCP tools are kept unless an entry starts with `mcp__` (see [MCP tools](#mcp-tools)). A list of only `+name` and `-name` entries is not an allowlist; it changes the default selection instead |
 | `-xt`, `--exclude-tools <list>` | Disable these names or patterns after every other selection, MCP tools included |
 | `-nbt`, `--no-builtin-tools` | Disable built-in tools, keep extension and custom ones |
 | `-nt`, `--no-tools` | Start with every tool disabled, MCP tools included |
 
 `read`, `bash`, `edit`, and `write` are enabled by default; the `defaultTools`
-setting changes that. `--tools` replaces the whole selection, so name every
-tool you want; `defaultTools` also accepts `+name` and `-name` to change the
-defaults instead (for example `["-bash", "+grep"]`). A project list with only
-`+name` and `-name` entries changes the user's selection; a list with a plain
-name replaces it.
+setting changes that. `--tools` with plain names replaces the whole selection,
+so name every tool you want; `defaultTools` also accepts `+name` and `-name` to
+change the defaults instead (for example `["-bash", "+grep"]`). A project list
+with only `+name` and `-name` entries changes the user's selection; a list with
+a plain name replaces it.
+
+Like `defaultTools`, `--tools` also accepts a list of only `+name` and `-name`
+entries, which adds tools to or removes them from the default selection:
+`pidrei --tools +codemode,-write` keeps the other default tools, enables
+`codemode`, and disables `write`. These entries take exact tool names, not `*`
+patterns; use `--exclude-tools` to disable tools by pattern. Plain names and
+`+name`/`-name` entries cannot be mixed.
 
 `/reload` enables tools newly added to `defaultTools`. It does not disable
-tools removed from it or re-enable unchanged tools you turned off. `--tools`,
+tools removed from it or re-enable unchanged tools you turned off; a tool
+removed with `--tools -name` stays removed. `--tools` with plain names,
 `--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
 
 <a id="mcp-tools"></a>
@@ -164,10 +172,10 @@ To turn on `codemode` for every session, add it to the default tools in
 ```
 
 This keeps `read`, `bash`, `edit`, and `write` and adds `codemode`. For one
-invocation, list every tool, since `--tools` replaces the selection:
+invocation, add it with `--tools`:
 
 ```sh
-pidrei --tools read,bash,edit,write,codemode
+pidrei --tools +codemode
 ```
 
 Scripts can run several tool calls in parallel, filter large output before it

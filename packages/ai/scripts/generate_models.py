@@ -19,6 +19,7 @@ Run: make models-data   (network access required)
 """
 
 import json
+import math
 import re
 import sys
 import tempfile
@@ -471,7 +472,7 @@ VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = {"anthropic", "openrouter"}
 # while accepting them on Fable 5.1, so gate that model there.
 MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = {"openrouter:anthropic/claude-opus-5"}
 _MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$")
-_MID_CONVO_SONNET_5_5_RE = re.compile(r"^claude-sonnet-5[.-]5(?:-\d{8})?$")
+_MID_CONVO_SONNET_HAIKU_5_5_RE = re.compile(r"^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$")
 _MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$")
 _MID_CONVO_SYSTEM_OPUS_RE = re.compile(r"^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$")
 _MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$")
@@ -481,7 +482,7 @@ def supports_anthropic_mid_convo_effort(model_id: str) -> bool:
     model_id = re.sub(r"^~?anthropic/", "", model_id.lower())
     return bool(
         _MID_CONVO_EFFORT_OPUS_RE.match(model_id)
-        or _MID_CONVO_SONNET_5_5_RE.match(model_id)
+        or _MID_CONVO_SONNET_HAIKU_5_5_RE.match(model_id)
         or _MID_CONVO_EFFORT_FABLE_RE.match(model_id)
     )
 
@@ -489,7 +490,7 @@ def supports_anthropic_mid_convo_effort(model_id: str) -> bool:
 def supports_anthropic_mid_convo_system_messages(model_id: str) -> bool:
     return bool(
         _MID_CONVO_SYSTEM_OPUS_RE.match(model_id)
-        or _MID_CONVO_SONNET_5_5_RE.match(model_id)
+        or _MID_CONVO_SONNET_HAIKU_5_5_RE.match(model_id)
         or _MID_CONVO_SYSTEM_FABLE_RE.match(model_id)
     )
 
@@ -510,6 +511,8 @@ def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
             "sonnet-4.6",
             "sonnet-5",
             "sonnet.5",
+            "haiku-5",
+            "haiku.5",
             "fable-5",
             "mythos-5",
         )
@@ -529,6 +532,8 @@ def is_anthropic_temperature_unsupported_model(model_id: str) -> bool:
             "opus.5",
             "sonnet-5-5",
             "sonnet-5.5",
+            "haiku-5-5",
+            "haiku-5.5",
         )
     )
 
@@ -816,12 +821,23 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
         merge_thinking_level_map(model, {"off": None, "minimal": None, "low": None})
     # Anthropic adaptive-thinking effort support:
     # - "max" is available on all adaptive-thinking Claude models.
-    # - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, and Fable 5.
+    # - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, and Fable 5.
     if any(marker in model_id for marker in ("opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6")):
         merge_thinking_level_map(model, {"max": "max"})
     if any(
         marker in model_id
-        for marker in ("opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8", "opus-5", "opus.5", "sonnet-5", "sonnet.5")
+        for marker in (
+            "opus-4-7",
+            "opus-4.7",
+            "opus-4-8",
+            "opus-4.8",
+            "opus-5",
+            "opus.5",
+            "sonnet-5",
+            "sonnet.5",
+            "haiku-5",
+            "haiku.5",
+        )
     ):
         merge_thinking_level_map(model, {"xhigh": "xhigh", "max": "max"})
     if "fable-5" in model_id:
@@ -1112,19 +1128,16 @@ def round_cost(value: float) -> float:
 # --- models.dev field readers -------------------------------------------------
 
 
-def _cost(source: dict[str, Any]) -> dict[str, Any]:
-    cost = source.get("cost") or {}
-    return {
+def get_models_dev_cost(cost: dict[str, Any] | None) -> dict[str, Any]:
+    """pi's tier-aware cost reader (`getModelsDevCost`)."""
+    cost = cost or {}
+    base = {
         "input": cost.get("input") or 0,
         "output": cost.get("output") or 0,
         "cacheRead": cost.get("cache_read") or 0,
         "cacheWrite": cost.get("cache_write") or 0,
     }
-
-
-def get_models_dev_cost(cost: dict[str, Any] | None) -> dict[str, Any]:
-    """pi's tier-aware cost reader (`getModelsDevCost`)."""
-    cost = cost or {}
+    # Rates a tier does not list keep the base price.
     tiers = []
     for tier in cost.get("tiers") or []:
         context = tier.get("tier") or {}
@@ -1133,22 +1146,13 @@ def get_models_dev_cost(cost: dict[str, Any] | None) -> dict[str, Any]:
         tiers.append(
             {
                 "inputTokensAbove": context["size"],
-                "input": tier.get("input") or 0,
-                "output": tier.get("output") or 0,
-                "cacheRead": tier.get("cache_read") or 0,
-                "cacheWrite": tier.get("cache_write") or 0,
+                "input": base["input"] if tier.get("input") is None else tier["input"],
+                "output": base["output"] if tier.get("output") is None else tier["output"],
+                "cacheRead": base["cacheRead"] if tier.get("cache_read") is None else tier["cache_read"],
+                "cacheWrite": base["cacheWrite"] if tier.get("cache_write") is None else tier["cache_write"],
             }
         )
-
-    result = {
-        "input": cost.get("input") or 0,
-        "output": cost.get("output") or 0,
-        "cacheRead": cost.get("cache_read") or 0,
-        "cacheWrite": cost.get("cache_write") or 0,
-    }
-    if tiers:
-        result["tiers"] = tiers
-    return result
+    return {**base, "tiers": tiers} if tiers else base
 
 
 def _input(source: dict[str, Any]) -> list[str]:
@@ -1216,15 +1220,36 @@ def _openrouter_modalities(values: list[str] | None) -> list[str]:
     return seen
 
 
-def _openrouter_cost(model: dict[str, Any]) -> dict[str, Any]:
+def _openrouter_per_million(value: str | None, fallback: float) -> float:
     # Convert pricing from $/token to $/million tokens
+    return round_cost(float(value) * 1_000_000) if value else fallback
+
+
+def _openrouter_cost(model: dict[str, Any]) -> dict[str, Any]:
     pricing = model.get("pricing") or {}
-    return {
-        "input": round_cost(float(pricing.get("prompt") or "0") * 1_000_000),
-        "output": round_cost(float(pricing.get("completion") or "0") * 1_000_000),
-        "cacheRead": round_cost(float(pricing.get("input_cache_read") or "0") * 1_000_000),
-        "cacheWrite": round_cost(float(pricing.get("input_cache_write") or "0") * 1_000_000),
+    base = {
+        "input": _openrouter_per_million(pricing.get("prompt"), 0),
+        "output": _openrouter_per_million(pricing.get("completion"), 0),
+        "cacheRead": _openrouter_per_million(pricing.get("input_cache_read"), 0),
+        "cacheWrite": _openrouter_per_million(pricing.get("input_cache_write"), 0),
     }
+    # Prompt-length overrides become request-wide tiers. Time-of-day overrides are skipped
+    # because a model cost cannot express them. Missing rates keep the base price.
+    tiers = [
+        {
+            "inputTokensAbove": override["min_prompt_tokens"],
+            "input": _openrouter_per_million(override.get("prompt"), base["input"]),
+            "output": _openrouter_per_million(override.get("completion"), base["output"]),
+            "cacheRead": _openrouter_per_million(override.get("input_cache_read"), base["cacheRead"]),
+            "cacheWrite": _openrouter_per_million(override.get("input_cache_write"), base["cacheWrite"]),
+        }
+        for override in pricing.get("overrides") or []
+        if "min_prompt_tokens" in override
+        and "utc_start" not in override
+        and "utc_end" not in override
+        and "utc_days" not in override
+    ]
+    return {**base, "tiers": tiers} if tiers else base
 
 
 def build_openrouter_catalog(
@@ -1353,6 +1378,62 @@ def _to_number(value: Any) -> float:
         return 0.0
 
 
+# --- Vercel AI Gateway pricing (pi: scripts/ai-gateway-pricing.ts) --------------
+
+# Each rate and the field listing its prompt-length brackets. A bracket's `min` is
+# inclusive and its `max` exclusive, both in prompt tokens.
+_AI_GATEWAY_RATE_FIELDS = (
+    ("input", "input_tiers"),
+    ("output", "output_tiers"),
+    ("cacheRead", "input_cache_read_tiers"),
+    ("cacheWrite", "input_cache_write_tiers"),
+)
+
+
+def _ai_gateway_per_million(value: Any) -> float:
+    # AI Gateway pricing is in $/token.
+    parsed = _to_number(value)
+    return round_cost(parsed * 1_000_000) if math.isfinite(parsed) else 0
+
+
+def get_ai_gateway_cost(pricing: dict[str, Any] | None) -> dict[str, Any]:
+    """Convert AI Gateway pricing to $/million tokens. Each rate lists its own prompt-length brackets;
+    every bracket start above zero becomes a request-wide tier with the rates in effect there."""
+    pricing = pricing or {}
+    base = {
+        "input": _ai_gateway_per_million(pricing.get("input")),
+        "output": _ai_gateway_per_million(pricing.get("output")),
+        "cacheRead": _ai_gateway_per_million(pricing.get("input_cache_read")),
+        "cacheWrite": _ai_gateway_per_million(pricing.get("input_cache_write")),
+    }
+
+    starts = {
+        bracket["min"]
+        for _rate, field in _AI_GATEWAY_RATE_FIELDS
+        for bracket in pricing.get(field) or []
+        if bracket.get("min") is not None and bracket["min"] > 0
+    }
+
+    tiers = []
+    for start in sorted(starts):
+        tier = {"inputTokensAbove": start - 1, **base}
+        for rate, field in _AI_GATEWAY_RATE_FIELDS:
+            bracket = next(
+                (
+                    candidate
+                    for candidate in pricing.get(field) or []
+                    if (candidate.get("min") or 0) <= start
+                    and ("max" not in candidate or (candidate["max"] is not None and start < candidate["max"]))
+                ),
+                None,
+            )
+            if bracket is not None and "cost" in bracket:
+                tier[rate] = _ai_gateway_per_million(bracket["cost"])
+        tiers.append(tier)
+
+    return {**base, "tiers": tiers} if tiers else base
+
+
 async def fetch_ai_gateway_models(client: Client) -> dict[str, list[dict[str, Any]]]:
     print("Fetching models from Vercel AI Gateway API...")
     data = await _fetch_json(client, f"{AI_GATEWAY_MODELS_URL}/models", "Vercel AI Gateway API")
@@ -1392,7 +1473,6 @@ async def fetch_ai_gateway_models(client: Client) -> dict[str, list[dict[str, An
         if "vision" in tags:
             model_input.append("image")
 
-        pricing = model.get("pricing") or {}
         models.append(
             {
                 "id": model["id"],
@@ -1403,12 +1483,7 @@ async def fetch_ai_gateway_models(client: Client) -> dict[str, list[dict[str, An
                 "reasoning": "reasoning" in tags,
                 "input": model_input,
                 "compat": {"allowEmptySignature": True},
-                "cost": {
-                    "input": round_cost(_to_number(pricing.get("input")) * 1_000_000),
-                    "output": round_cost(_to_number(pricing.get("output")) * 1_000_000),
-                    "cacheRead": round_cost(_to_number(pricing.get("input_cache_read")) * 1_000_000),
-                    "cacheWrite": round_cost(_to_number(pricing.get("input_cache_write")) * 1_000_000),
-                },
+                "cost": get_ai_gateway_cost(model.get("pricing")),
                 "contextWindow": model.get("context_window") or 4096,
                 "maxTokens": model.get("max_tokens") or 4096,
             }
@@ -1513,6 +1588,27 @@ CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
     },
 ]
 
+# OpenAI Decisions API (public beta): gpt-6-luna is its only model. It bills input tokens only,
+# with the same long-context multiplier as chat requests. Only API keys work: Sign in with ChatGPT
+# tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
+# The endpoint rejects inputs above 922K tokens (the model's documented maximum input), but
+# requests running longer than about five seconds, currently above roughly 600K input tokens,
+# fail with a gateway timeout.
+# https://developers.openai.com/api/docs/guides/decisions
+OPENAI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
+    {
+        "type": "classifier",
+        "id": "gpt-6-luna",
+        "name": "GPT-6 Luna",
+        "api": "openai-decisions",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "input": ["text", "image"],
+        "cost": with_openai_long_context_pricing({"input": 0.1, "output": 0, "cacheRead": 0, "cacheWrite": 0}),
+        "contextWindow": 922000,
+    },
+]
+
 
 # --- models.dev catalog -------------------------------------------------------
 
@@ -1546,7 +1642,7 @@ def _process_google_models(catalog: dict[str, Any]) -> list[dict[str, Any]]:
             model["thinkingLevelMap"] = thinking_level_map
         model |= {
             "input": _input(source),
-            "cost": _cost(source),
+            "cost": get_models_dev_cost(source.get("cost")),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
         }
@@ -1642,7 +1738,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
                 "baseUrl": "https://api.anthropic.com",
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
@@ -1667,7 +1763,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
                 "baseUrl": "https://api.openai.com/v1",
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
@@ -1687,7 +1783,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
                 "baseUrl": "https://api.groq.com/openai/v1",
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
@@ -1707,7 +1803,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
                 "baseUrl": "https://api.cerebras.ai/v1",
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
@@ -1736,7 +1832,7 @@ def _load_gateway_providers(
                 "baseUrl": CLOUDFLARE_WORKERS_AI_BASE_URL,
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
                 "compat": {"sendSessionAffinityHeaders": True},
@@ -1779,7 +1875,7 @@ def _load_gateway_providers(
             "baseUrl": base_url,
             "reasoning": source.get("reasoning") is True,
             "input": _input(source),
-            "cost": _cost(source),
+            "cost": get_models_dev_cost(source.get("cost")),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
         }
@@ -1811,7 +1907,7 @@ def _load_gateway_providers(
                 "baseUrl": CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
                 "compat": {"sendSessionAffinityHeaders": True},
@@ -1854,7 +1950,7 @@ def _load_gateway_providers(
                 "baseUrl": "https://api.meta.ai/v1",
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
@@ -1893,7 +1989,7 @@ def _load_gateway_providers(
                 compat["zaiToolStream"] = True
             model |= {
                 "input": _input(source),
-                "cost": _cost({"cost": reference_cost}),
+                "cost": get_models_dev_cost(reference_cost),
                 "compat": compat,
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
@@ -1947,7 +2043,7 @@ def _load_gateway_providers(
                 "baseUrl": "https://router.huggingface.co/v1",
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "compat": {"supportsDeveloperRole": False},
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
@@ -1986,7 +2082,7 @@ def _load_gateway_providers(
                 "headers": dict(NVIDIA_HEADERS),
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "compat": dict(NVIDIA_OPENAI_COMPAT),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
@@ -2018,7 +2114,7 @@ def _load_gateway_providers(
             model["thinkingLevelMap"] = thinking_level_map
         model |= {
             "input": _input(source),
-            "cost": _cost(source),
+            "cost": get_models_dev_cost(source.get("cost")),
             "compat": dict(get_together_compat(model_id, reasoning)),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
@@ -2063,7 +2159,7 @@ def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorde
             "provider": "fireworks",
             "reasoning": source.get("reasoning") is True,
             "input": _input(source),
-            "cost": _cost(source),
+            "cost": get_models_dev_cost(source.get("cost")),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
         }
@@ -2198,7 +2294,7 @@ def _process_baseten_models(baseten_models: dict[str, Any], record: _Recorder) -
         # Baseten's GLM-5.2 endpoints are text-only despite models.dev reporting image input.
         model |= {
             "input": ["text"] if is_glm52 else _input(source),
-            "cost": _cost(source),
+            "cost": get_models_dev_cost(source.get("cost")),
             "compat": dict(compat),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
@@ -2290,7 +2386,7 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
             }
             if thinking_level_map:
                 model["thinkingLevelMap"] = thinking_level_map
-            model |= {"input": _input(source), "cost": _cost(source)}
+            model |= {"input": _input(source), "cost": get_models_dev_cost(source.get("cost"))}
             if compat:
                 model["compat"] = compat
             model |= {"contextWindow": _context(source), "maxTokens": _max_tokens(source)}
@@ -2365,7 +2461,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
                     "baseUrl": base_url,
                     "reasoning": source.get("reasoning") is True,
                     "input": _input(source),
-                    "cost": _cost(source),
+                    "cost": get_models_dev_cost(source.get("cost")),
                     "contextWindow": _context(source),
                     "maxTokens": _max_tokens(source),
                 }
@@ -2452,11 +2548,14 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
                     "baseUrl": base_url,
                     "reasoning": is_kimi_k3 or source.get("reasoning") is True,
                     "input": _input(source),
-                    "cost": {
-                        "input": cost.get("input") or (KIMI_K3_COST["input"] if is_kimi_k3 else 0),
-                        "output": cost.get("output") or (KIMI_K3_COST["output"] if is_kimi_k3 else 0),
-                        "cacheRead": cost.get("cache_read") or (KIMI_K3_COST["cacheRead"] if is_kimi_k3 else 0),
-                        "cacheWrite": cost.get("cache_write") or (KIMI_K3_COST["cacheWrite"] if is_kimi_k3 else 0),
+                    # Moonshot does not bill cache writes; models.dev lists the input rate as cache_write for Kimi K3.
+                    "cost": dict(KIMI_K3_COST)
+                    if is_kimi_k3
+                    else {
+                        "input": cost.get("input") or 0,
+                        "output": cost.get("output") or 0,
+                        "cacheRead": cost.get("cache_read") or 0,
+                        "cacheWrite": cost.get("cache_write") or 0,
                     },
                     "contextWindow": _context(source),
                     "maxTokens": _max_tokens(source),
@@ -2493,7 +2592,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
                     "compat": dict(xiaomi_compat),
                     "reasoning": source.get("reasoning") is True,
                     "input": _input(source),
-                    "cost": _cost(source),
+                    "cost": get_models_dev_cost(source.get("cost")),
                     "contextWindow": _context(source),
                     "maxTokens": _max_tokens(source),
                 }
@@ -2565,7 +2664,7 @@ def _process_qwen_token_plan_models(catalog: dict[str, Any], record: _Recorder) 
                 else {**qwen_token_plan_compat, "supportsReasoningEffort": False},
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
-                "cost": _cost(source),
+                "cost": get_models_dev_cost(source.get("cost")),
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
@@ -2920,8 +3019,8 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
         ):
             candidate["contextWindow"] = 1000000
 
-        # models.dev may list Opus 5.5 and Sonnet 5.5 before their effort metadata is complete.
-        if (provider == "anthropic" and model_id in ("claude-opus-5-5", "claude-sonnet-5-5")) or (
+        # models.dev may list Opus 5.5, Sonnet 5.5, and Haiku 5.5 before their effort metadata is complete.
+        if (provider == "anthropic" and model_id in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")) or (
             provider == "github-copilot" and model_id == "claude-opus-5.5"
         ):
             merge_thinking_level_map(
@@ -3108,60 +3207,6 @@ async def main() -> None:
         and not (model["provider"] in ("opencode", "opencode-go") and model["id"] == "gpt-5.3-codex-spark")
     ]
 
-    # Add Claude Opus 5.5 until models.dev includes it.
-    # https://platform.claude.com/docs/en/models/opus-5-5/overview
-    if not any(m["provider"] == "anthropic" and m["id"] == "claude-opus-5-5" for m in all_models):
-        all_models.append(
-            {
-                "id": "claude-opus-5-5",
-                "name": "Claude Opus 5.5",
-                "api": "anthropic-messages",
-                "provider": "anthropic",
-                "baseUrl": "https://api.anthropic.com",
-                "reasoning": True,
-                "thinkingLevelMap": {
-                    "off": None,
-                    "minimal": None,
-                    "low": "low",
-                    "medium": "medium",
-                    "high": "high",
-                    "xhigh": "xhigh",
-                    "max": "max",
-                },
-                "input": ["text", "image"],
-                "cost": {"input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite": 5},
-                "contextWindow": 1000000,
-                "maxTokens": 128000,
-            }
-        )
-
-    # Add Claude Sonnet 5.5 until models.dev includes it.
-    # https://platform.claude.com/docs/en/models/sonnet-5-5/overview
-    if not any(m["provider"] == "anthropic" and m["id"] == "claude-sonnet-5-5" for m in all_models):
-        all_models.append(
-            {
-                "id": "claude-sonnet-5-5",
-                "name": "Claude Sonnet 5.5",
-                "api": "anthropic-messages",
-                "provider": "anthropic",
-                "baseUrl": "https://api.anthropic.com",
-                "reasoning": True,
-                "thinkingLevelMap": {
-                    "off": None,
-                    "minimal": None,
-                    "low": "low",
-                    "medium": "medium",
-                    "high": "high",
-                    "xhigh": "xhigh",
-                    "max": "max",
-                },
-                "input": ["text", "image"],
-                "cost": {"input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5},
-                "contextWindow": 1000000,
-                "maxTokens": 128000,
-            }
-        )
-
     # The authenticated Copilot catalog advertised these models on 2026-09-22,
     # but models.dev did not include them yet.
     missing_copilot_models = [
@@ -3308,6 +3353,7 @@ async def main() -> None:
         *ai_gateway_catalog["classifiers"],
         *_clone(OPENCODE_CLASSIFIER_MODELS),
         *_clone(CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS),
+        *_clone(OPENAI_CLASSIFIER_MODELS),
     ]
     for model in classifier_models:
         _provider_catalog(model["provider"])["classifier"].setdefault(model["id"], model)

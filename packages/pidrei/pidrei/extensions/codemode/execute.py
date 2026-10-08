@@ -40,8 +40,10 @@ from pidrei_ai.types import (
 from pidrei_codemode import (
     CodemodeError,
     CodemodeGlobal,
+    CodemodeOutputItem,
     CodemodeResult,
     CodemodeSandbox,
+    CodemodeTextItem,
     CodemodeTool,
     RenderedTool,
     parse_codemode_source,
@@ -159,7 +161,8 @@ def _describe_value(value: Any) -> str:
 
 
 _CLASSIFIER_CONTEXT_SHAPE = (
-    "{'state': {...}, 'questions': {<id>: {'type': 'choice', 'instructions': ..., 'criteria': {<label>: <meaning>}} "
+    "{'state': {...}, optional 'images': [{'type': 'image', 'data': <base64>, 'mimeType': ...}], "
+    "'questions': {<id>: {'type': 'choice', 'instructions': ..., 'criteria': {<label>: <meaning>}} "
     "| {'type': 'score', 'instructions': ..., 'criteria': [<lowest level>, ..., <highest level>]} "
     "| {'type': 'bool', 'instructions': ..., 'criteria': {'true': <meaning>, 'false': <meaning>}}}}"
 )
@@ -188,6 +191,21 @@ def _check_classifier_context(context: Any) -> ClassifierContext:
     state = context.get("state")
     if not isinstance(state, dict):
         raise fail(f"context['state'] must be a dict, got {_describe_value(state)}")
+    images = context.get("images")
+    checked_images: list[ImageContent] | None = None
+    if images is not None:
+        if not isinstance(images, list):
+            raise fail(f"context['images'] must be a list, got {_describe_value(images)}")
+        checked_images = []
+        for index, image in enumerate(images):
+            if (
+                not isinstance(image, dict)
+                or image.get("type") != "image"
+                or not isinstance(image.get("data"), str)
+                or not isinstance(image.get("mimeType"), str)
+            ):
+                raise fail(f"context['images'][{index}] must be an image block, got {_describe_value(image)}")
+            checked_images.append(ImageContent(data=image["data"], mime_type=image["mimeType"]))
     questions = context.get("questions")
     if not isinstance(questions, dict) or not questions:
         raise fail(f"context['questions'] must map question IDs to questions, got {_describe_value(questions)}")
@@ -221,7 +239,7 @@ def _check_classifier_context(context: Any) -> ClassifierContext:
                 )
             case other:
                 raise fail(f'{at}[\'type\'] must be "choice", "score", or "bool", got {other!r}')
-    return ClassifierContext(state=state, questions=checked)
+    return ClassifierContext(state=state, questions=checked, images=checked_images)
 
 
 def _check_images_context(context: Any) -> ImagesContext:
@@ -305,6 +323,42 @@ _CHARS_PER_TOKEN = 4
 def _value_text(value: Any) -> str:
     """Like the script's `text()`: strings as is, other values as compact JSON."""
     return value if isinstance(value, str) else _compact_json(value)
+
+
+def _format_output(output: Sequence[CodemodeOutputItem]) -> list[TextContent | ImageContent]:
+    """Lay out the script's output so the model can tell items apart: providers join adjacent text
+    blocks with a newline or with nothing. With more than one text item (`text()` or the returned
+    value), each starts with a `==> text N/M <==` line. `print()` lines follow all other output in
+    one `<console_output>` block."""
+    total = sum(1 for item in output if item.type == "text" and not item.console)
+    items: list[TextContent | ImageContent] = []
+    console_lines: list[str] = []
+    index = 0
+    for item in output:
+        if item.type == "image":
+            items.append(ImageContent(data=item.data, mime_type=item.mime_type))
+        elif item.console:
+            # One item holds a run of prints (Monty hands them over in chunks), one line each.
+            console_lines.append(item.text)
+        else:
+            index += 1
+            items.append(TextContent(text=f"==> text {index}/{total} <==\n{item.text}" if total > 1 else item.text))
+    if console_lines:
+        items.append(TextContent(text="<console_output>\n" + "\n".join(console_lines) + "\n</console_output>"))
+    return items
+
+
+def _join_adjacent_text(items: list[TextContent | ImageContent]) -> list[TextContent | ImageContent]:
+    """Join adjacent text items into one, each part starting on its own line."""
+    joined: list[TextContent | ImageContent] = []
+    for item in items:
+        last = joined[-1] if joined else None
+        if item.type == "text" and last is not None and last.type == "text":
+            separator = "" if last.text == "" or last.text.endswith("\n") else "\n"
+            joined[-1] = TextContent(text=f"{last.text}{separator}{item.text}")
+        else:
+            joined.append(item)
+    return joined
 
 
 def _format_call_summary(calls: Sequence[CodemodeNestedCall]) -> str:
@@ -589,10 +643,7 @@ async def execute_codemode(
         result = await sandbox.execute(source.code, cancel=cancel, store=store)
     details, model_usage, generated_images = state.finish()
 
-    items: list[TextContent | ImageContent] = [
-        TextContent(text=item.text) if item.type == "text" else ImageContent(data=item.data, mime_type=item.mime_type)
-        for item in result.output
-    ]
+    script_output: list[CodemodeOutputItem] = [*result.output]
     if result.ok:
         writes = result.store_writes
         if writes is not None and (writes.set or writes.delete) and options.append_entry is not None:
@@ -601,8 +652,9 @@ async def execute_codemode(
             )
         # pi's extension: a returned value is appended like text().
         if result.value is not None:
-            items.append(TextContent(text=_value_text(result.value)))
-    else:
+            script_output.append(CodemodeTextItem(_value_text(result.value)))
+    items = _format_output(script_output)
+    if not result.ok:
         items.append(TextContent(text=f"Script error:\n{_format_error(result.error, details.calls)}"))
     if generated_images > 0 and not any(item.type == "image" for item in items):
         items.append(
@@ -615,11 +667,11 @@ async def execute_codemode(
 
     max_tokens = source.options.max_output_tokens
     items, full_output_path = await _truncate_output(
-        items, max_tokens if max_tokens is not None else _DEFAULT_MAX_OUTPUT_TOKENS
+        _join_adjacent_text(items), max_tokens if max_tokens is not None else _DEFAULT_MAX_OUTPUT_TOKENS
     )
     # After truncation, which joins the text items and moves images after them,
     # so each path stays next to its image and is never cut.
-    output = await _save_images(items)
+    output = _join_adjacent_text(await _save_images(items))
     wall_time = f"{clock.monotonic() - started_at:.1f}"
     header = f"{'Script completed' if result.ok else 'Script failed'}\nWall time {wall_time} seconds\nOutput:\n"
     return AgentToolResult(

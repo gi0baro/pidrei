@@ -20,14 +20,15 @@ PREVIEW_LINES = 20
 class _CachedVisualTruncation:
     """Width-aware render cache for the collapsed preview (pi's inline object)."""
 
-    def __init__(self, styled_input: str) -> None:
+    def __init__(self, styled_input: str, output_pad: int) -> None:
         self._styled_input = styled_input
+        self._output_pad = output_pad
         self._cached_width: int | None = None
         self._cached_lines: list | None = None
 
     def render(self, width: int) -> list:
         if self._cached_lines is None or self._cached_width != width:
-            result = truncate_to_visual_lines(self._styled_input, PREVIEW_LINES, width, 1)
+            result = truncate_to_visual_lines(self._styled_input, PREVIEW_LINES, width, self._output_pad)
             self._cached_lines = result["visualLines"]
             self._cached_width = width
         return self._cached_lines if self._cached_lines is not None else []
@@ -38,7 +39,7 @@ class _CachedVisualTruncation:
 
 
 class BashExecutionComponent(Container):
-    def __init__(self, command: str, ui, exclude_from_context: bool = False) -> None:
+    def __init__(self, command: str, ui, exclude_from_context: bool = False, output_pad: int = 1) -> None:
         super().__init__()
         self._command = command
         self._output_lines: list = []
@@ -47,9 +48,10 @@ class BashExecutionComponent(Container):
         self._truncation_result = None
         self._full_output_path: str | None = None
         self._expanded = False
-
-        # Use dim border for excluded-from-context commands (!! prefix)
-        color_key = "dim" if exclude_from_context else "bashMode"
+        # `dim` marks `!!` commands, whose output is excluded from the model context.
+        self._color_key = "dim" if exclude_from_context else "bashMode"
+        self._output_pad = output_pad
+        color_key = self._color_key
 
         def border_color(text: str) -> str:
             return theme.fg(color_key, text)
@@ -64,25 +66,25 @@ class BashExecutionComponent(Container):
         self._content_container = Container()
         self.add_child(self._content_container)
 
-        # Command header
-        header = Text(theme.fg(color_key, theme.bold(f"$ {command}")), 1, 0)
-        self._content_container.add_child(header)
-
-        # Loader
         self._loader = Loader(
             ui,
             lambda spinner: theme.fg(color_key, spinner),
             lambda text: theme.fg("muted", text),
             f"Running... ({key_text('tui.select.cancel')} to cancel)",  # Plain text for loader
         )
-        self._content_container.add_child(self._loader)
 
         # Bottom border
         self.add_child(DynamicBorder(border_color))
 
+        self._update_display()
+
     def set_expanded(self, expanded: bool) -> None:
         """Expanded shows full output; collapsed shows the preview only."""
         self._expanded = expanded
+        self._update_display()
+
+    def set_output_pad(self, output_pad: int) -> None:
+        self._output_pad = output_pad
         self._update_display()
 
     def invalidate(self) -> None:
@@ -143,7 +145,7 @@ class BashExecutionComponent(Container):
         self._content_container.clear()
 
         # Command header
-        header = Text(theme.fg("bashMode", theme.bold(f"$ {self._command}")), 1, 0)
+        header = Text(theme.fg(self._color_key, theme.bold(f"$ {self._command}")), self._output_pad, 0)
         self._content_container.add_child(header)
 
         # Output
@@ -151,11 +153,11 @@ class BashExecutionComponent(Container):
             if self._expanded:
                 # Show all lines
                 display_text = "\n".join(theme.fg("muted", line) for line in available_lines)
-                self._content_container.add_child(Text(f"\n{display_text}", 1, 0))
+                self._content_container.add_child(Text(f"\n{display_text}", self._output_pad, 0))
             else:
                 # Use shared visual truncation utility with width-aware caching
                 styled_output = "\n".join(theme.fg("muted", line) for line in preview_logical_lines)
-                self._content_container.add_child(_CachedVisualTruncation(f"\n{styled_output}"))
+                self._content_container.add_child(_CachedVisualTruncation(f"\n{styled_output}", self._output_pad))
 
         # Loader or status
         if self._status == "running":
@@ -189,7 +191,7 @@ class BashExecutionComponent(Container):
                 status_parts.append(theme.fg("warning", f"Output truncated. Full output: {self._full_output_path}"))
 
             if status_parts:
-                self._content_container.add_child(Text("\n" + "\n".join(status_parts), 1, 0))
+                self._content_container.add_child(Text("\n" + "\n".join(status_parts), self._output_pad, 0))
 
     def get_output(self) -> str:
         """Get the raw output for creating BashExecutionMessage."""

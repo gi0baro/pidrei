@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-utils"
-version = "1.0.4.0"
+version = "1.1.0.0"
 description = "pidrei shared utilities: the clock, cancel tokens and timers every pidrei package uses"
 requires-python = ">=3.14"
 license = "MIT"

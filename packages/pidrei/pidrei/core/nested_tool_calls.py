@@ -317,6 +317,7 @@ class NestedToolCallRunner:
                 tool_name=name,
                 result=outcome.result,
                 is_error=outcome.is_error,
+                duration_ms=outcome.duration_ms,
                 parent_tool_call_id=parent_id,
             )
         )

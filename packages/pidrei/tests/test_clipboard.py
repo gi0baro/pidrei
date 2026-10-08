@@ -6,7 +6,8 @@ that only exercise it (native reads/writes, rejected or read-only native
 writers) have nothing to mirror; `run_clipboard_command` is swapped on the
 module instead. `sys.platform` is process-global and these tests run on a
 threaded runtime, so it is not faked: the Linux candidate chains are asserted
-off macOS only (on macOS pbpaste/pbcopy stand in for the native helper).
+off macOS only (on macOS pbpaste/pbcopy stand in for the native helper). pi's
+Termux cases are not mirrored: Android is not a pidrei platform.
 """
 
 import contextlib
@@ -27,7 +28,6 @@ _ENV_NAMES = (
     "MOSH_CONNECTION",
     "WAYLAND_DISPLAY",
     "DISPLAY",
-    "TERMUX_VERSION",
     "WT_SESSION",
     "WSL_DISTRO_NAME",
     "WSLENV",
@@ -89,7 +89,6 @@ def _osc52_writes(stdout: io.StringIO) -> int:
         ("WAYLAND_DISPLAY", "wl-paste", ["--no-newline", "--type", "text"], ["wl-paste"]),
         ("DISPLAY", "xclip", ["-selection", "clipboard", "-out"], ["xclip"]),
         ("DISPLAY", "xsel", ["--clipboard", "--output"], ["xclip", "xsel"]),
-        ("TERMUX_VERSION", "termux-clipboard-get", [], ["termux-clipboard-get"]),
     ],
 )
 async def test_command_result_stops_fallback(env, command, args, expected_calls, text):
