@@ -66,6 +66,7 @@ class CustomMessageComponent(Container):
         # Default rendering uses our box
         self.add_child(self._box)
         self._box.clear()
+        self._box.set_padding_x(self._output_pad)
 
         # Default rendering: label + content
         label = theme.fg("customMessageLabel", f"\x1b[1m[{self._message.custom_type}]\x1b[22m")

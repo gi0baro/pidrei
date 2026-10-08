@@ -98,10 +98,6 @@ class _MainScreenFrame:
     show_hardware_cursor: bool
 
 
-def _is_termux_session() -> bool:
-    return bool(os.environ.get("TERMUX_VERSION"))
-
-
 def _append_debug_log_blocking(path: str, message: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as log_file:
@@ -350,10 +346,9 @@ class TuiMainScreen(TuiBase):
             full_render(True)
             return
 
-        # Height changes normally need a full re-render to keep the visible viewport aligned,
-        # but Termux changes height when the software keyboard shows or hides.
-        # In that environment, a full redraw causes the entire history to replay on every toggle.
-        if height_changed and not _is_termux_session():
+        # Height changes need a full re-render to keep the visible viewport aligned.
+        # (pi skips it under Termux; Android is not a pidrei platform.)
+        if height_changed:
             log_redraw(f"terminal height changed ({self._previous_height} -> {height})")
             full_render(True)
             return

@@ -159,6 +159,51 @@ async def test_preserves_explicit_tool_option_precedence(dirs):
         tool_less_session.dispose()
 
 
+@pytest.mark.tonio
+async def test_applies_plus_name_and_minus_name_tool_options_to_the_default_selection(dirs):
+    async def factory(pi) -> None:
+        tool = _tool("inactive_tool", "Inactive Tool", "Extension tool registered inactive")
+        tool.default_active = False
+        pi.register_tool(tool)
+        pi.register_tool(_tool("active_tool", "Active Tool", "Extension tool registered active"))
+
+    session = await create_session(
+        dirs, ["+grep"], options={"tools": ["+inactive_tool", "-write"]}, extension_factories=[factory]
+    )
+    try:
+        assert sorted(session.get_active_tool_names()) == [
+            "active_tool",
+            "bash",
+            "edit",
+            "grep",
+            "inactive_tool",
+            "read",
+        ]
+    finally:
+        session.dispose()
+
+    tool_less = await create_session(
+        dirs, ["read"], options={"no_tools": "all", "tools": ["+inactive_tool"]}, extension_factories=[factory]
+    )
+    try:
+        assert tool_less.get_active_tool_names() == ["inactive_tool"]
+    finally:
+        tool_less.dispose()
+
+
+@pytest.mark.tonio
+async def test_rejects_invalid_tool_modifier_options(dirs):
+    with pytest.raises(
+        ValueError, match=r"^Invalid tools option: tool names cannot be mixed with \+name or -name entries$"
+    ):
+        await create_session(dirs, [], options={"tools": ["read", "+grep"]})
+    with pytest.raises(
+        ValueError,
+        match=r"^Invalid tools option: \+name and -name entries take exact tool names, not patterns: -gr\*$",
+    ):
+        await create_session(dirs, [], options={"tools": ["-gr*"]})
+
+
 # --- reload ---------------------------------------------------------------------
 
 
@@ -212,6 +257,20 @@ async def test_reload_activates_only_tools_newly_added_to_default_tools(dirs):
         write_settings(dirs, {"defaultTools": ["-read"]})
         await session.reload()
         assert sorted(session.get_active_tool_names()) == ["edit", "grep", "inactive_tool", "read", "write"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_reload_keeps_tools_removed_by_minus_name_tool_options_removed(dirs):
+    write_settings(dirs, {"defaultTools": ["read"]})
+    session = await create_file_session(dirs, {"tools": ["-bash", "+grep"]})
+    try:
+        assert session.get_active_tool_names() == ["read", "grep"]
+
+        write_settings(dirs, {"defaultTools": ["read", "bash", "inactive_tool"]})
+        await session.reload()
+        assert sorted(session.get_active_tool_names()) == ["grep", "inactive_tool", "read"]
     finally:
         session.dispose()
 

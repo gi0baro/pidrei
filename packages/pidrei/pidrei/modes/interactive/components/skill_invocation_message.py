@@ -14,8 +14,8 @@ class SkillInvocationMessageComponent(Box):
     separately.
     """
 
-    def __init__(self, skill_block, markdown_theme: dict | None = None) -> None:
-        super().__init__(1, 1, lambda t: theme.bg("customMessageBg", t))
+    def __init__(self, skill_block, markdown_theme: dict | None = None, output_pad: int = 1) -> None:
+        super().__init__(output_pad, 1, lambda t: theme.bg("customMessageBg", t))
         self._expanded = False
         self._skill_block = skill_block
         self._markdown_theme = markdown_theme if markdown_theme is not None else get_markdown_theme()
@@ -24,6 +24,9 @@ class SkillInvocationMessageComponent(Box):
     def set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
         self._update_display()
+
+    def set_output_pad(self, output_pad: int) -> None:
+        self.set_padding_x(output_pad)
 
     def invalidate(self) -> None:
         super().invalidate()

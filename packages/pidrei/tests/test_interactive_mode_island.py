@@ -335,6 +335,7 @@ async def test_concurrent_bash_commands_keep_their_own_output():
         _chat_container=chat,
         _pending_messages_container=Container(),
         _pending_bash_components=[],
+        _output_pad=1,
         show_error=_noop,
     )
     fake._mount_bash_component = lambda component, deferred: InteractiveMode._mount_bash_component(

@@ -19,7 +19,7 @@ import os
 import re
 import threading
 import traceback
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
 from typing import Any, Literal
@@ -109,7 +109,7 @@ from .model_runtime import ModelRuntimeAuthOverrides
 from .nested_tool_calls import ExecuteToolOptions, NestedCallScope, NestedToolCallRunner
 from .prompt_templates import expand_prompt_template
 from .session_manager import SessionManager, SessionProjection, get_latest_compaction_entry
-from .settings_manager import DEFAULT_TOOL_NAMES, CacheWarmingMode
+from .settings_manager import DEFAULT_TOOL_NAMES, CacheWarmingMode, apply_tool_modifiers
 from .source_info import BUILTIN_PATH_PREFIX, create_synthetic_source_info, is_synthetic_path
 from .system_prompt import (
     BuildSystemPromptOptions,
@@ -369,6 +369,9 @@ class AgentSessionConfig:
     # Whether the initial tools come from the `defaultTools` setting. When true, reload activates
     # tools newly added to the setting. Tools removed from it stay active.
     uses_default_tools: bool = False
+    # `+name`/`-name` entries applied on top of the `defaultTools` setting, from `--tools`. Reload
+    # applies them to the reloaded setting too, so a removed tool stays removed.
+    default_tool_modifiers: list[str] | None = None
     # Optional allowlist of tool names or patterns (`*` matches any characters). When provided, only
     # matching tools are exposed. A non-empty list without `mcp__` entries also keeps MCP tools
     # registered for codemode and tool_search; only tool_search can declare them. An empty list
@@ -624,6 +627,7 @@ class AgentSession:
         self._extension_runner_ref = config.extension_runner_ref
         self._initial_active_tool_names = config.initial_active_tool_names
         self._uses_default_tools = config.uses_default_tools
+        self._default_tool_modifiers: list[str] = list(config.default_tool_modifiers or [])
         # Matches the `--tools` entries: tool names or patterns.
         self._allowed_tools: Callable[[str], bool] | None = None
         # Whether the allowlist filters MCP tools: it is empty (`--no-tools`) or names an MCP tool
@@ -3948,9 +3952,15 @@ class AgentSession:
             include_all_extension_tools=include_all_extension_tools,
         )
 
-    def _default_tool_names(self) -> Sequence[str]:
+    def _default_tool_names(self) -> list[str]:
+        """pi's `getDefaultTools` in `reload`: the `defaultTools` setting with the `--tools`
+        modifiers applied, or nothing when the session's tools do not come from the setting."""
+        if not self._uses_default_tools:
+            return []
         default_tools = self.settings_manager.get_default_tools()
-        return default_tools if default_tools is not None else DEFAULT_TOOL_NAMES
+        return apply_tool_modifiers(
+            default_tools if default_tools is not None else DEFAULT_TOOL_NAMES, self._default_tool_modifiers
+        )
 
     async def reload(self, before_session_start: Callable[[], Awaitable[None]] | None = None) -> None:
 
@@ -3958,7 +3968,7 @@ class AgentSession:
         previous_flag_values = old_runner.get_flag_values()
         await emit_session_shutdown_event(old_runner, {"type": "session_shutdown", "reason": "reload"})
         old_runner.invalidate()
-        previous_default_tools = set(self._default_tool_names() if self._uses_default_tools else ())
+        previous_default_tools = set(self._default_tool_names())
         await self.settings_manager.reload()  # drains queued writes first, like pi
         self.sync_queue_modes_from_settings()
         # pi calls resetApiProviders() (the pi-ai compat registry); pidrei's
@@ -3967,11 +3977,7 @@ class AgentSession:
         await self._resource_loader.reload()
         # Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
         # during the session stay disabled unless the setting newly adds them.
-        added_default_tools = (
-            [name for name in self._default_tool_names() if name not in previous_default_tools]
-            if self._uses_default_tools
-            else []
-        )
+        added_default_tools = [name for name in self._default_tool_names() if name not in previous_default_tools]
         with self._tool_loadout_guard:
             active_tool_names = self.get_active_tool_names()
             # Tools the new extensions register later, such as MCP tools, are pending until then.

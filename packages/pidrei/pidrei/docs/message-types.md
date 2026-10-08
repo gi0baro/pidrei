@@ -138,6 +138,7 @@ class AssistantMessage:
     response_model: str | None = None
     response_id: str | None = None
     provider_thinking_level: str | None = None
+    thinking_level: ModelThinkingLevel | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -148,7 +149,8 @@ class AssistantMessage:
 
 `response_model` records the concrete model the provider reports when it
 differs from the requested one. `response_id`, `provider_thinking_level`,
-`diagnostics`, and `raw_stop_reason` preserve provider or runtime details.
+`thinking_level`, `diagnostics`, and `raw_stop_reason` preserve provider or
+runtime details.
 
 `"pending"` marks a partial message while it streams. The completed message in
 `message_end` has a terminal stop reason, and only completed messages are
@@ -178,12 +180,30 @@ class ToolResultMessage:
     timestamp: int
     details: Any = None
     usage: Usage | None = None
+    nested_calls: NestedToolCalls | None = None
     role: Literal["toolResult"] = "toolResult"
 ```
 
 `details` is tool-specific. The optional `usage` reports nested model work done
 by the tool; it counts toward session statistics but not toward the main
-model-call usage.
+model-call usage. `nested_calls` records bounded metadata about calls this tool
+made to other tools:
+
+```python
+class NestedToolCalls:
+    calls: list[NestedToolCallRecord]
+    complete: bool
+
+
+class NestedToolCallRecord:
+    id: str
+    name: str
+    status: Literal["ok", "error", "unfinished"]
+    arguments: dict[str, Any] | None = None
+    arguments_bytes: int | None = None
+    duration_ms: int | None = None
+    error: str | None = None
+```
 
 ## Coding-agent messages
 

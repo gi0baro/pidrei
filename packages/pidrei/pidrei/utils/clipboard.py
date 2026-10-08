@@ -4,7 +4,8 @@ Deviation: pi's native platform clipboard helper (pi-tui `getNativeClipboard`)
 has no Python counterpart. On Linux pi only reaches it after every platform
 tool failed, so dropping it changes nothing but that last resort; on macOS it
 is pi's primary path, and `pbpaste`/`pbcopy` stand in for it (pi already
-falls back to `pbcopy` for writes).
+falls back to `pbcopy` for writes). pi's Termux branches (Android) are not
+ported.
 
 Every candidate is a subprocess run through `run_clipboard_command`, which
 does not hold a blocking-pool thread. The OSC 52 sequence goes to the caller's
@@ -58,8 +59,6 @@ async def read_clipboard_text() -> str | None:
     """Read plain text from the system clipboard."""
     commands: list[tuple[str, list[str]]] = []
     if sys.platform == "linux":
-        if os.environ.get("TERMUX_VERSION"):
-            commands.append(("termux-clipboard-get", []))
         if os.environ.get("WAYLAND_DISPLAY"):
             commands.append(("wl-paste", ["--no-newline", "--type", "text"]))
         if os.environ.get("DISPLAY"):
@@ -124,8 +123,6 @@ async def copy_to_clipboard(text: str, write_terminal: Callable[[str], None]) ->
     if p == "darwin":
         commands.append(("pbcopy", []))
     else:
-        if env.get("TERMUX_VERSION"):
-            commands.append(("termux-clipboard-set", []))
         if env.get("WAYLAND_DISPLAY"):
             commands.append(("wl-copy", []))
         if env.get("DISPLAY"):
@@ -143,9 +140,7 @@ async def copy_to_clipboard(text: str, write_terminal: Callable[[str], None]) ->
     # OSC 52 cannot be verified, so a desktop session with a display reports the failure
     # instead (#9618). Without a display the terminal is the only clipboard route (containers,
     # WSL without WSLg), and remote sessions always emit it to reach the client clipboard.
-    headless = (
-        p == "linux" and not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY") and not env.get("TERMUX_VERSION")
-    )
+    headless = p == "linux" and not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY")
     oversized = False
     if not osc52_emitted and (_is_remote_session(env) or (not copied and headless)):
         if _emit_osc52(text, write_terminal):
@@ -157,8 +152,6 @@ async def copy_to_clipboard(text: str, write_terminal: Callable[[str], None]) ->
     if oversized:
         raise Exception("Clipboard unavailable: text exceeds the OSC 52 size limit")
     if p == "linux":
-        if env.get("TERMUX_VERSION"):
-            raise Exception("Clipboard unavailable: install the Termux:API app and `termux-api` package")
         if env.get("WAYLAND_DISPLAY"):
             raise Exception("Clipboard unavailable: install `wl-clipboard` (`wl-copy`) or check Wayland access")
         if env.get("DISPLAY"):

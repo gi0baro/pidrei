@@ -198,9 +198,6 @@ async def read_clipboard_image(options: dict | None = None) -> dict | None:
     env = options.get("env") if options.get("env") is not None else os.environ
     platform = options.get("platform") if options.get("platform") is not None else sys.platform
 
-    if env.get("TERMUX_VERSION"):
-        return None
-
     image: dict | object | None = _FAILED
 
     if platform == "linux":

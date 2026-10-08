@@ -28,6 +28,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as dataclass_replace
 from types import SimpleNamespace
+from typing import Protocol, runtime_checkable
 
 import tonio.colored as tonio
 from tonio.colored import fs, signals as tonio_signals
@@ -191,6 +192,13 @@ from .theme import (
     theme,
 )
 from .tui_renderer import create_interactive_tui, create_interactive_tui_reference
+
+
+@runtime_checkable
+class _OutputPadded(Protocol):
+    """Transcript components that follow the outputPad setting (pi's `"setOutputPad" in child`)."""
+
+    def set_output_pad(self, output_pad: int) -> None: ...
 
 
 class _TimeoutCancel:
@@ -3535,6 +3543,7 @@ class InteractiveMode:
                                 {
                                     "showImages": self.settings_manager.get_show_images(),
                                     "imageWidthCells": self.settings_manager.get_image_width_cells(),
+                                    "outputPad": self._output_pad,
                                 },
                                 self._get_registered_tool_definition(content.name),
                                 self.ui,
@@ -3606,6 +3615,7 @@ class InteractiveMode:
                     {
                         "showImages": self.settings_manager.get_show_images(),
                         "imageWidthCells": self.settings_manager.get_image_width_cells(),
+                        "outputPad": self._output_pad,
                     },
                     self._get_registered_tool_definition(event.tool_name),
                     self.ui,
@@ -3823,7 +3833,7 @@ class InteractiveMode:
         renderer = self.session.extension_runner.get_entry_renderer(entry.get("customType"))
         if renderer is None:
             return
-        component = CustomEntryComponent(entry, renderer)
+        component = CustomEntryComponent(entry, renderer, self._output_pad)
         component.set_expanded(self._tool_output_expanded)
         if not component.has_content():
             return
@@ -3843,7 +3853,7 @@ class InteractiveMode:
         options = options or {}
         role = message.role
         if role == "bashExecution":
-            component = BashExecutionComponent(message.command, self.ui, message.exclude_from_context)
+            component = BashExecutionComponent(message.command, self.ui, message.exclude_from_context, self._output_pad)
             if message.output:
                 component.append_output(message.output)
 
@@ -3864,12 +3874,16 @@ class InteractiveMode:
                 self._chat_container.add_child(component)
         elif role == "compactionSummary":
             self._chat_container.add_child(Spacer(1))
-            component = CompactionSummaryMessageComponent(message, self._get_markdown_theme_with_settings())
+            component = CompactionSummaryMessageComponent(
+                message, self._get_markdown_theme_with_settings(), self._output_pad
+            )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "branchSummary":
             self._chat_container.add_child(Spacer(1))
-            component = BranchSummaryMessageComponent(message, self._get_markdown_theme_with_settings())
+            component = BranchSummaryMessageComponent(
+                message, self._get_markdown_theme_with_settings(), self._output_pad
+            )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "system":
@@ -3882,7 +3896,9 @@ class InteractiveMode:
                 skill_block = parse_skill_block(text_content)
                 if skill_block is not None:
                     # Render skill block (collapsible)
-                    component = SkillInvocationMessageComponent(skill_block, self._get_markdown_theme_with_settings())
+                    component = SkillInvocationMessageComponent(
+                        skill_block, self._get_markdown_theme_with_settings(), self._output_pad
+                    )
                     component.set_expanded(self._tool_output_expanded)
                     self._chat_container.add_child(component)
                     # Render user message separately if present
@@ -3962,6 +3978,7 @@ class InteractiveMode:
                             {
                                 "showImages": self.settings_manager.get_show_images(),
                                 "imageWidthCells": self.settings_manager.get_image_width_cells(),
+                                "outputPad": self._output_pad,
                             },
                             self._get_registered_tool_definition(content.name),
                             self.ui,
@@ -4037,6 +4054,9 @@ class InteractiveMode:
 
         options: {"updateFooter"?, "populateHistory"?}
         """
+        # Selection coordinates point into the transcript being replaced (pi #9311).
+        if isinstance(self._renderer, TuiAltScreen):
+            self._renderer.reset_text_selection()
         items: list = []
         for entry in entries:
             if entry.get("type") == "custom" or (entry.get("type") == "usage" and entry.get("kind") == "cache_warm"):
@@ -4995,15 +5015,11 @@ class InteractiveMode:
             def on_output_pad_change(padding: int) -> None:
                 self.settings_manager.set_output_pad(padding)
                 self._output_pad = padding
-                if self._streaming_component is not None or self.session.is_streaming:
-                    for child in self._chat_container.children:
-                        if isinstance(child, (AssistantMessageComponent, CustomMessageComponent, UserMessageComponent)):
+                for container in (self._chat_container, self._pending_messages_container):
+                    for child in container.children:
+                        if isinstance(child, _OutputPadded):
                             child.set_output_pad(padding)
-                    if self._streaming_component is not None:
-                        self._streaming_component.set_output_pad(padding)
-                    self.ui.request_render()
-                    return
-                self._rebuild_chat_from_messages()
+                self.ui.request_render()
 
             def on_autocomplete_max_visible_change(max_visible: int) -> None:
                 self.settings_manager.set_autocomplete_max_visible(max_visible)
@@ -7175,7 +7191,7 @@ class InteractiveMode:
             result = event_result["result"]
 
             # Create UI component for display, show output and complete
-            component = BashExecutionComponent(command, self.ui, exclude_from_context)
+            component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
             with self.ui.state_lock:
                 self._mount_bash_component(component, self.session.is_streaming)
                 if result.get("output"):
@@ -7205,7 +7221,7 @@ class InteractiveMode:
         # Normal execution path (possibly with custom operations)
         # (pi keeps the component in a field; a local, since two `!` commands
         # run concurrently here and each must keep its own output.)
-        component = BashExecutionComponent(command, self.ui, exclude_from_context)
+        component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
         self._mount_bash_component(component, self.session.is_streaming)
         self.ui.request_render()
 

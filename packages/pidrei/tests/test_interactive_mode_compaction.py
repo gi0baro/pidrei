@@ -88,7 +88,8 @@ def test_renders_each_compaction_cost_after_its_summary():
         _compaction_entry("previous", None, "previous summary", 100, previous_usage),
     ]
     render_calls: list = []
-    fake = SimpleNamespace()
+    # pi's fake has no `renderer`; its `instanceof TuiAltScreen` is then false.
+    fake = SimpleNamespace(_renderer=None)
     fake._render_session_items = lambda items, options=None: render_calls.append((items, options))
 
     InteractiveMode._render_session_entries(fake, entries)

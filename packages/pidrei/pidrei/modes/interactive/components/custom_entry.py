@@ -12,12 +12,13 @@ class CustomEntryComponent(Container):
     content.
     """
 
-    def __init__(self, entry: dict, renderer) -> None:
+    def __init__(self, entry: dict, renderer, output_pad: int = 1) -> None:
         super().__init__()
         self._entry = entry
         self._renderer = renderer
         self._custom_component = None
         self._expanded = False
+        self._output_pad = output_pad
         self._rebuild()
 
     def has_content(self) -> bool:
@@ -27,6 +28,10 @@ class CustomEntryComponent(Container):
         if self._expanded != expanded:
             self._expanded = expanded
             self._rebuild()
+
+    def set_output_pad(self, output_pad: int) -> None:
+        self._output_pad = output_pad
+        self._rebuild()
 
     def invalidate(self) -> None:
         super().invalidate()
@@ -39,7 +44,7 @@ class CustomEntryComponent(Container):
         try:
             component = self._renderer(self._entry, {"expanded": self._expanded}, theme)
         except Exception as error:
-            box = Box(1, 1, lambda text: theme.bg("customMessageBg", text))
+            box = Box(self._output_pad, 1, lambda text: theme.bg("customMessageBg", text))
             box.add_child(Text(theme.fg("error", f"[{self._entry['customType']}] renderer failed: {error}"), 0, 0))
             component = box
 

@@ -31,7 +31,13 @@ from .model_runtime import ModelRuntime
 from .provider_attribution import merge_provider_attribution_headers
 from .resource_loader import DefaultResourceLoader
 from .session_manager import SessionManager, get_default_session_dir_blocking
-from .settings_manager import DEFAULT_TOOL_NAMES, SettingsManager
+from .settings_manager import (
+    DEFAULT_TOOL_NAMES,
+    SettingsManager,
+    apply_tool_modifiers,
+    get_tool_list_error,
+    is_tool_modifier,
+)
 from .timings import time
 from .tools import ALL_TOOL_NAMES  # noqa: F401  (re-export surface parity)
 from .virtual_models import get_branch_selection
@@ -66,6 +72,10 @@ class CreateAgentSessionOptions:
     # enabled. MCP tools stay registered for codemode and tool search unless an
     # entry starts with `mcp__`; then only matching MCP tools are kept. An empty
     # list, like `no_tools="all"`, disables MCP tools too.
+    #
+    # A list of only `+name` and `-name` entries is not an allowlist: it adds tools
+    # to or removes them from the default selection, like the `defaultTools` setting.
+    # These entries take exact names. Mixing them with plain entries raises.
     tools: list[str] | None = None
     # Optional denylist of tool names or patterns to disable. Applies after `tools` when both are
     # provided, MCP tools included.
@@ -236,23 +246,34 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     # Clamp to model capabilities
     thinking_level = "off" if model is None else clamp_thinking_level(model, thinking_level)
 
+    tool_list_error = get_tool_list_error(options.tools) if options.tools is not None else None
+    if tool_list_error:
+        raise ValueError(f"Invalid tools option: {tool_list_error}")
     configured_default_tool_names = settings_manager.get_default_tools()
-    allowed_tool_names = options.tools if options.tools is not None else ([] if options.no_tools == "all" else None)
+    default_tool_names = (
+        []
+        if options.no_tools
+        else list(configured_default_tool_names if configured_default_tool_names is not None else DEFAULT_TOOL_NAMES)
+    )
+    # A `tools` list of only `+name`/`-name` entries changes the default selection instead of
+    # replacing it, like the `defaultTools` setting.
+    tool_modifiers = (
+        list(options.tools) if options.tools is not None and any(map(is_tool_modifier, options.tools)) else None
+    )
+    selected_tool_names = (
+        apply_tool_modifiers(default_tool_names, tool_modifiers)
+        if tool_modifiers is not None
+        else (list(options.tools) if options.tools is not None else None)
+    )
+    if tool_modifiers is not None:
+        allowed_tool_names = selected_tool_names if options.no_tools == "all" else None
+    else:
+        allowed_tool_names = options.tools if options.tools is not None else ([] if options.no_tools == "all" else None)
     excluded_tool_names = options.exclude_tools
     is_excluded_tool = create_tool_name_matcher(excluded_tool_names) if excluded_tool_names is not None else None
     initial_active_tool_names = [
         name
-        for name in (
-            list(options.tools)
-            if options.tools is not None
-            else (
-                []
-                if options.no_tools
-                else (
-                    configured_default_tool_names if configured_default_tool_names is not None else DEFAULT_TOOL_NAMES
-                )
-            )
-        )
+        for name in (selected_tool_names if selected_tool_names is not None else default_tool_names)
         if is_excluded_tool is None or not is_excluded_tool(name)
     ]
 
@@ -428,7 +449,8 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             model_runtime=model_runtime,
             cache_warmer=cache_warmer,
             initial_active_tool_names=initial_active_tool_names,
-            uses_default_tools=options.tools is None and not options.no_tools,
+            uses_default_tools=(options.tools is None or tool_modifiers is not None) and not options.no_tools,
+            default_tool_modifiers=tool_modifiers,
             allowed_tool_names=allowed_tool_names,
             excluded_tool_names=excluded_tool_names,
             extension_runner_ref=extension_runner_ref,

@@ -31,6 +31,10 @@ class Text:
         self._custom_bg_fn = custom_bg_fn
         self.invalidate()
 
+    def set_padding_x(self, padding_x: int) -> None:
+        self._padding_x = padding_x
+        self.invalidate()
+
     def invalidate(self) -> None:
         self._cache = None
 

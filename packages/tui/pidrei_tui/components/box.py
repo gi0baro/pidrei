@@ -49,6 +49,10 @@ class Box:
         self._bg_fn = bg_fn
         # Don't invalidate here - we'll detect bgFn changes by sampling output
 
+    def set_padding_x(self, padding_x: int) -> None:
+        self._padding_x = padding_x
+        self._invalidate_cache()
+
     def _invalidate_cache(self) -> None:
         self._cache = None
 

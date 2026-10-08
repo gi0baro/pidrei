@@ -154,7 +154,8 @@ Judgement calls with precedent:
   it.
 - **npm**: PiDrei installs packages from git and local paths only.
   npm-flavoured changes map onto the git path or are dropped with a note.
-- **Windows** branches in a diff are dropped silently.
+- **Windows** and **Android** (Termux) branches in a diff are dropped
+  silently, with their test cases.
 - A diff outside a dropped path that only makes sense with dropped surface
   (e.g. consumers of a non-ported subsystem): port the product half, drop the
   rest with a one-line note.
@@ -296,6 +297,8 @@ usually a `.N` PiDrei release:
 Each has entries in the classifier's dropped tables, with the reason.
 
 - **Windows**: TonIO is POSIX-only.
+- **Android** (Termux): not a PiDrei platform; the free-threaded native
+  dependencies have no Android builds.
 - **Pi's experimental stack**: the durable harness runtime, Chord, the
   experimental coding agent (`coding-agent/src/experimental`,
   `cli/experimental`, `mini/`, facet plugins), the protocol/server/client

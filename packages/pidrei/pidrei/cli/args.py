@@ -12,6 +12,7 @@ from typing import Any
 
 from ..config import APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR
 from ..core.output_guard import write_stdout
+from ..core.settings_manager import get_tool_list_error
 from ..utils.colors import bold
 
 
@@ -158,7 +159,12 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
             result.no_builtin_tools = True
         elif arg in ("--tools", "-t") and i + 1 < len(args):
             i += 1
-            result.tools = [name for name in (s.strip() for s in args[i].split(",")) if name]
+            tools = [name for name in (s.strip() for s in args[i].split(",")) if name]
+            error = get_tool_list_error(tools)
+            if error:
+                result.diagnostics.append({"type": "error", "message": f"{arg}: {error}"})
+            else:
+                result.tools = tools
         elif arg in ("--exclude-tools", "-xt") and i + 1 < len(args):
             i += 1
             result.exclude_tools = [name for name in (s.strip() for s in args[i].split(",")) if name]
@@ -319,6 +325,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
   --tools, -t <tools>            Comma-separated allowlist of tool names or patterns (*) to enable
                                  Keeps MCP tools unless an entry starts with mcp__
+                                 Only +name/-name entries add to or remove from the defaults
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
                                  Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
@@ -400,6 +407,9 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
 
   # Read-only mode (no file modifications possible)
   {APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Add codemode to the default tools
+  {APP_NAME} --tools +codemode
 
   # Codemode with only the tools of one MCP server
   {APP_NAME} --tools read,bash,codemode,'mcp__radius__*'
