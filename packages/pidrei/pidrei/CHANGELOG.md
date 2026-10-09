@@ -6,6 +6,8 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.1.0.2] - 2026-10-09
+
 ### Fixed
 
 - The startup `[Extensions]` listing named a directory extension after its

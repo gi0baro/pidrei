@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [manifest]
@@ -16,6 +16,7 @@ members = [
     "pidrei-tui",
     "pidrei-utils",
 ]
+default-groups = ["lint", "test"]
 
 [manifest.dependency-groups]
 lint = [{ name = "ruff", specifier = "~=0.16.0" }]
@@ -332,7 +333,7 @@ wheels = [
 
 [[package]]
 name = "pidrei"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/pidrei" }
 dependencies = [
     { name = "jsonschema" },
@@ -369,7 +370,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-agent"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/agent" }
 dependencies = [
     { name = "pidrei-ai" },
@@ -386,7 +387,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-ai"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/ai" }
 dependencies = [
     { name = "botocore" },
@@ -428,7 +429,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-codemode"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/codemode" }
 dependencies = [
     { name = "pidrei-utils" },
@@ -445,7 +446,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-http"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/http" }
 dependencies = [
     { name = "httpunk" },
@@ -462,7 +463,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-mcp"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/mcp" }
 dependencies = [
     { name = "pidrei-http" },
@@ -499,7 +500,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-tui"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/tui" }
 dependencies = [
     { name = "grapheme" },
@@ -524,7 +525,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-utils"
-version = "1.1.0.1"
+version = "1.1.0.2"
 source = { editable = "packages/utils" }
 dependencies = [
     { name = "tonio" },
