@@ -47,7 +47,7 @@ def stub_system_one(handler: Handler) -> Iterator[list[SystemOneRequest]]:
     requests: list[SystemOneRequest] = []
 
     class _StubClient:
-        def __init__(self, env=None):
+        def __init__(self, env=None, fetch=None):
             pass
 
         async def post(self, url, payload, headers, cancel):

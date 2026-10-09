@@ -159,10 +159,18 @@ def _extract_error_message(body: str) -> str:
 class _PunkreqOpenAIClient:
     """Default transport: POST {base_url}/chat/completions through the punkreq seam."""
 
-    def __init__(self, base_url: str, headers: dict[str, str], env: ProviderEnv | None = None):
+    def __init__(
+        self,
+        base_url: str,
+        headers: dict[str, str],
+        env: ProviderEnv | None = None,
+        fetch: http.FetchFunction | None = None,
+    ):
         self._url = f"{base_url.rstrip('/')}/chat/completions"
         self._headers = headers
         self._env = env
+        # pi hands `options.fetch` to the SDK client; every attempt goes through it.
+        self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def create(
         self,
@@ -171,9 +179,9 @@ class _PunkreqOpenAIClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ) -> OpenAIResponseLike:
-        client = http.client_for(self._url, self._env)
         timeout = http.request_timeout(timeout_ms)
-        response = await client.post(self._url, json=params, headers=self._headers, timeout=timeout)
+        request = http.build_request("POST", self._url, json=params, headers=self._headers, timeout=timeout)
+        response = await self._fetch(request, env=self._env)
         if not 200 <= response.status_code < 300:
             body = (await response.read()).decode("utf-8", "replace")
             error_body = _parse_error_body(body)
@@ -634,6 +642,7 @@ def _create_client(
     session_id: str | None,
     compat: _ResolvedCompat,
     env: ProviderEnv | None = None,
+    fetch: http.FetchFunction | None = None,
 ) -> OpenAICompletionsClient:
     headers: dict[str, Any] = dict(model.headers or {})
     if model.provider == "github-copilot":
@@ -655,7 +664,7 @@ def _create_client(
     set_default_user_agent(headers)
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
-    return _PunkreqOpenAIClient(model.base_url, final_headers, env)
+    return _PunkreqOpenAIClient(model.base_url, final_headers, env, fetch=fetch)
 
 
 def _get_compat_cache_control(compat: _ResolvedCompat, cache_retention: CacheRetention) -> dict | None:
@@ -1255,7 +1264,7 @@ def stream(  # noqa: C901
                 cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
                 cache_session_id = None if cache_retention == "none" else opts.session_id
                 client = _create_client(
-                    model, normalized_context, api_key, opts.headers, cache_session_id, compat, opts.env
+                    model, normalized_context, api_key, opts.headers, cache_session_id, compat, opts.env, opts.fetch
                 )
 
             params = build_params(model, normalized_context, opts, compat, None, grammar_tool_input_properties)

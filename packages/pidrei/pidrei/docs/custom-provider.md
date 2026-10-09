@@ -184,6 +184,39 @@ pass `anthropic_messages_api()`, `openai_completions_api()`,
 discovery, while message conversion, tool handling, usage, cancellation and
 compatibility behavior stay the built-in ones.
 
+### Request transport
+
+Every built-in HTTP implementation sends its requests through the `fetch`
+request option, so a provider that reuses one can intercept the exchange
+without reimplementing the protocol. The callable receives the prepared
+`pidrei_http.http.Request` (final URL, method, headers and serialized body,
+after the implementation's own conversions) and the provider-scoped `env`,
+and returns a `pidrei_http.http.Response`. It runs once per attempt, so
+retries go through it too, and whatever it returns is handled as a response:
+a non-2xx status is interpreted, retried or reported exactly as one from the
+network would be.
+
+```python
+from pidrei_http import http
+
+
+async def logging_fetch(request, *, env=None):
+    print(request.method, request.url, request.headers.get("content-length"))
+    return await http.default_fetch(request, env=env)
+```
+
+`http.default_fetch` is the normal transport (the pooled client, honoring
+proxy settings in `env`); forward `env` when delegating so a scoped proxy
+override still applies. To send a different body, build a new request rather
+than editing the prepared one, as its `content-length` and `host` headers are
+already set: `http.Request(request.method, request.url, headers=..., json=...,
+timeout=request.timeout)`. A fetch may also answer without the network by
+returning `http.Response(status, headers=..., json=...)` or a response with a
+streaming body; the implementation closes whatever response it receives. A
+wrapper that reuses a built-in implementation sets the option on the options
+it forwards. The Google adapters take no custom transport and fail the
+request if one is set; WebSocket transports ignore it.
+
 Write your own stream only when none fits, and study `pidrei_ai/api/` first.
 The context it receives is a normalized transcript: read the system prompt and
 tools with `get_current_system_prompt(context.messages)` and
@@ -203,9 +236,9 @@ messages mid-conversation. A stream must:
 4. Call `options.on_payload` before sending (using any replacement payload it
    returns) and `options.on_response` before consuming the response body,
    await `options.on_provider_stream_event(provider_event, model)` (when set)
-   for each parsed provider event before normalizing it, and pass through
-   `options.cancel` and `options.env`. Extensions' request hooks and stream
-   observers depend on these.
+   for each parsed provider event before normalizing it, pass through
+   `options.cancel` and `options.env`, and send through `options.fetch` when
+   it is set. Extensions' request hooks and stream observers depend on these.
 
 ## Context overflow
 

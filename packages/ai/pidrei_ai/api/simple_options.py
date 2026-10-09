@@ -61,6 +61,7 @@ def build_base_options(
         cache_retention=options.cache_retention if options else None,
         session_id=options.session_id if options else None,
         headers=options.headers if options else None,
+        fetch=options.fetch if options else None,
         on_payload=options.on_payload if options else None,
         on_response=options.on_response if options else None,
         on_provider_stream_event=options.on_provider_stream_event if options else None,

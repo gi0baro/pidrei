@@ -55,7 +55,7 @@ def mock_state(monkeypatch) -> _MockState:
     state = _MockState()
 
     class FakeOpenAI:
-        def __init__(self, base_url, headers, env=None):
+        def __init__(self, base_url, headers, env=None, fetch=None):
             state.last_client_base_url = base_url
 
         async def create(self, params, *, timeout_ms, cancel):

@@ -64,6 +64,7 @@ async def request(
     timeout_ms: float | None = None,
     cancel: CancelToken | None = None,
     env: Mapping[str, str] | None = None,
+    fetch: http.FetchFunction | None = None,
 ) -> OAuthHttpResponse:
     """Perform one OAuth request and read the whole body.
 
@@ -71,12 +72,14 @@ async def request(
     its own `Content-Type` header so the mirrors can assert pi's exact casing.
     `env` is the provider-scoped env of the request this exchange serves, so a
     scoped proxy override applies to the exchange as it does to the request.
+    `fetch` is that request's transport (`options.fetch`), for exchanges the
+    SDK runs through the request's own fetch (Anthropic federation).
     """
     content = urlencode(form).encode("utf-8") if form is not None else None
+    send = fetch if fetch is not None else http.default_fetch
 
     async def _send() -> OAuthHttpResponse:
-        client = http.client_for(url, env)
-        response = await client.request(
+        request = http.build_request(
             method,
             url,
             headers=headers,
@@ -84,6 +87,7 @@ async def request(
             content=content,
             timeout=http.oneshot_timeout(timeout_ms),
         )
+        response = await send(request, env=env)
         try:
             body = await response.read()
         except BaseException:

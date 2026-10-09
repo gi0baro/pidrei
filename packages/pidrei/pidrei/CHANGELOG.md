@@ -6,6 +6,15 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+### Added
+
+- Per-request transport injection (Pi's `fetch` option): a `fetch` request
+  option receives each prepared HTTP request and returns its response, so an
+  extension that reuses a built-in implementation can log, rewrite or answer
+  requests. Honored by every HTTP implementation (chat, images, classifiers)
+  on every attempt; the Google adapters reject a custom transport as Pi does.
+  See the custom provider page.
+
 ## [1.1.0.0] - 2026-10-08
 
 Tracks [Pi 1.1.0](https://github.com/earendil-works/pi/releases/tag/v1.1.0).

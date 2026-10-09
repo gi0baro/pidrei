@@ -1392,7 +1392,6 @@ TEST_HOMES = {
     "packages/coding-agent/test/utilities.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
     "packages/coding-agent/test/test-network-env.ts": "pi test infra (PI_OFFLINE stub); pidrei conftest.py is hermetic via the PIDREI_OFFLINE equivalent",
     "packages/coding-agent/test/test-harness.test.ts": "pi test-infra self-tests, not mirrored",
-    "packages/ai/test/fetch-option.test.ts": "DEVIATION: per-request fetch injection (0.83.0) not ported — JS-specific SDK surface with no coding-agent consumer; pidrei adapters expose per-request client injection instead",
     # 0.84.x additions (0.84.1 delta port).
     "packages/tui/test/overlay-non-capturing.test.ts": "covered by packages/tui/tests/test_tui_overlays.py (+ test_tui_focus.py for focus cases)",
     "packages/tui/test/overlay-options.test.ts": "covered by packages/tui/tests/test_tui_overlays.py (+ test_tui_focus.py for focus cases)",

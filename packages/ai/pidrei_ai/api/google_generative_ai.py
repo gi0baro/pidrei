@@ -65,6 +65,7 @@ from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import collapse_system_messages, get_current_tools, get_initial_system_message
 from pidrei_ai.utils.user_agent import set_default_user_agent
+from pidrei_http import http
 from pidrei_utils import clock
 
 
@@ -120,6 +121,9 @@ def stream(
 
     async def _run() -> None:
         try:
+            # pi: `options.fetch !== globalThis.fetch`; the client cannot take a transport.
+            if opts.fetch is not None and opts.fetch is not http.default_fetch:
+                raise RuntimeError("Custom fetch is not supported by the Google Generative AI adapter")
             api_key = opts.api_key
             if not api_key:
                 raise RuntimeError(f"No API key for provider: {model.provider}")

@@ -352,11 +352,15 @@ class _PunkreqAnthropicClient:
         headers: dict[str, str],
         env: ProviderEnv | None = None,
         federation: AnthropicFederationConfig | None = None,
+        fetch: http.FetchFunction | None = None,
     ):
         self._url = f"{base_url.rstrip('/')}/v1/messages"
         self._headers = headers
         self._env = env
-        self._federation = federation_token_cache(base_url, federation) if federation is not None else None
+        # pi hands `options.fetch` to the SDK client: every attempt, and the
+        # federation token exchange, goes through it.
+        self._federation = federation_token_cache(base_url, federation, fetch) if federation is not None else None
+        self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def create(
         self,
@@ -365,7 +369,6 @@ class _PunkreqAnthropicClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ) -> AnthropicResponseLike:
-        client = http.client_for(self._url, self._env)
         timeout = http.request_timeout(timeout_ms)
         # pi's SDK lifts the `betas` request param into the `anthropic-beta`
         # header; the wire body never carries it.
@@ -374,7 +377,8 @@ class _PunkreqAnthropicClient:
         headers = {**self._headers, "anthropic-beta": ",".join(betas)} if betas else self._headers
         if self._federation is not None:
             headers = _with_federated_auth(headers, await self._federation.get_token(self._env))
-        response = await client.post(self._url, json=body, headers=headers, timeout=timeout)
+        request = http.build_request("POST", self._url, json=body, headers=headers, timeout=timeout)
+        response = await self._fetch(request, env=self._env)
         if not 200 <= response.status_code < 300:
             if response.status_code == 401 and self._federation is not None:
                 # The server rejected the token even if its expiry looks fresh. pi's
@@ -501,6 +505,7 @@ def _create_client(
     session_id: str | None,
     env: ProviderEnv | None = None,
     federation: AnthropicFederationConfig | None = None,
+    fetch: http.FetchFunction | None = None,
 ) -> tuple[AnthropicClient, bool]:
     """Build the default transport with pi's exact header assembly.
 
@@ -522,7 +527,7 @@ def _create_client(
             options_headers,
         )
         headers = {key: value for key, value in merged.items() if value is not None}
-        return _PunkreqAnthropicClient(model.base_url, headers, env), False
+        return _PunkreqAnthropicClient(model.base_url, headers, env, fetch=fetch), False
 
     # OAuth: Bearer auth, Claude Code identity headers.
     if api_key and _is_oauth_token(api_key):
@@ -537,7 +542,7 @@ def _create_client(
             options_headers,
         )
         headers = {key: value for key, value in merged.items() if value is not None}
-        return _PunkreqAnthropicClient(model.base_url, headers, env), True
+        return _PunkreqAnthropicClient(model.base_url, headers, env, fetch=fetch), True
 
     # API key, header-owned auth, or workload identity federation.
     compat = _get_compat(model)
@@ -553,7 +558,7 @@ def _create_client(
         options_headers,
     )
     headers = {key: value for key, value in merged.items() if value is not None}
-    return _PunkreqAnthropicClient(model.base_url, headers, env, federation=federation), False
+    return _PunkreqAnthropicClient(model.base_url, headers, env, federation=federation, fetch=fetch), False
 
 
 async def _iterate_anthropic_events(
@@ -706,6 +711,7 @@ def stream(
                     cache_session_id,
                     opts.env,
                     federation,
+                    opts.fetch,
                 )
 
             params = _build_params(model, normalized_context, is_oauth, opts)

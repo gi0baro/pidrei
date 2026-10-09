@@ -31,7 +31,7 @@ def _stub_system_one(body):
     headers_seen: list[dict[str, str]] = []
 
     class _StubClient:
-        def __init__(self, env=None):
+        def __init__(self, env=None, fetch=None):
             pass
 
         async def post(self, _url, _payload, headers, _cancel):

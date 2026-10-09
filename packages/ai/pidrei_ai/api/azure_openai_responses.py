@@ -101,13 +101,16 @@ class _Responses:
         cancel: CancelToken | None = None,
     ) -> _PunkreqResponse:
         url = self._client._url()
-        client = http.client_for(url, self._client.config.get("env"))
-        response = await client.post(
+        # pi passes `options.fetch` into the SDK client config; every attempt goes through it.
+        fetch = self._client.config.get("fetch") or http.default_fetch
+        request = http.build_request(
+            "POST",
             url,
             json=params,
             headers=self._client._headers(),
             timeout=http.request_timeout(timeout_ms),
         )
+        response = await fetch(request, env=self._client.config.get("env"))
         if not 200 <= response.status_code < 300:
             body = (await response.read()).decode("utf-8", "replace")
             error_body = _parse_error_body(body)
@@ -255,6 +258,7 @@ def create_client(model: Model, api_key: str, options: AzureOpenAIResponsesOptio
             "defaultHeaders": headers,
             "baseURL": base_url,
             "env": options.env if options else None,
+            "fetch": options.fetch if options else None,
         }
     )
 

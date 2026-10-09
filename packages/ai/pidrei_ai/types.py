@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypedDict
 
+from pidrei_http.http import FetchFunction
 from pidrei_utils.cancel import CancelToken
 
 
@@ -723,6 +724,12 @@ class ProviderRequestOptions:
     on_response: OnResponse | None = None
     # Merged with provider defaults; caller values override; None suppresses a default header.
     headers: ProviderHeaders | None = None
+    # Transport for this request's HTTP exchanges (pi: `fetch`). Receives the
+    # prepared request and returns the response; the adapter's error handling,
+    # retries and parsing run on what it returns. `http.default_fetch` is the
+    # ambient transport to delegate to. Ignored by WebSocket transports; the
+    # Google adapters reject anything but the default.
+    fetch: FetchFunction | None = None
     timeout_ms: float | None = None
     max_retries: int | None = None
     # Cap on server-requested retry delays; beyond it the request fails immediately so

@@ -11,12 +11,19 @@ whole request — a legitimately long SSE stream must not hit a total deadline.
 
 import sys
 import threading
-from collections.abc import AsyncIterable, Mapping
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from typing import Any
 
 import tonio.colored as tonio
 from httpunk import Backend, H1Connection, H1Server
-from punkreq import Limits, Timeout, TimeoutException, TransportError as _TransportError
+from punkreq import (
+    Limits,
+    Request as _Request,
+    Response as _Response,
+    Timeout,
+    TimeoutException,
+    TransportError as _TransportError,
+)
 from punkreq.tonio import Client
 from tonio.colored.exceptions import CancelledError
 
@@ -32,6 +39,38 @@ RequestTimeout = TimeoutException
 # Every failure of the exchange itself (connect, read, write, protocol, proxy,
 # timeouts): what fetch reports as a network error.
 TransportError = _TransportError
+
+# A prepared request and its response, the two values a request-local
+# transport (`FetchFunction`, pi's `options.fetch`) exchanges. `Request` is
+# what `Client.build_request` produces: final URL, headers (including
+# `content-length` and `host`) and serialised body. A `Response` may be
+# synthetic (`Response(401, json=...)`); it exposes the same `read`,
+# `iter_bytes` and `close` as one off the wire.
+Request = _Request
+Response = _Response
+
+# pi's `FetchFunction` (`options.fetch`): `(request, *, env=None) -> awaitable
+# Response`. `env` is the provider-scoped env of the request being sent; a
+# wrapper that delegates forwards it so a scoped proxy override still applies.
+type FetchFunction = Callable[..., Awaitable[Response]]
+
+
+def build_request(method: str, url: str, **kwargs: Any) -> Request:
+    """A prepared request with the pooled clients' configuration merged in.
+
+    Every pooled client (shared or per scoped proxy) builds the same request:
+    they differ only in transport, which `default_fetch` picks when sending.
+    Takes `Client.build_request`'s keyword arguments (`json`, `content`,
+    `headers`, `timeout`, ...)."""
+    return shared_client().build_request(method, url, **kwargs)
+
+
+def default_fetch(request: Request, *, env: Mapping[str, str] | None = None) -> Awaitable[Response]:
+    """The ambient transport: send a prepared request through the pooled,
+    proxy-aware client. Adapters use it when no `fetch` was supplied, and a
+    custom fetch delegates to it."""
+    return client_for(str(request.url), env).send(request)
+
 
 _shared_client: Client | None = None
 _shared_client_guard = threading.Lock()

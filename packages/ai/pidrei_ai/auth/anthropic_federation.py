@@ -21,9 +21,10 @@ behind a thread lock that is never held across an await.
 
 Deviations from the SDK: the exchange has a 30 s timeout (the TypeScript SDK
 sets none; a shared exchange that hung would park every request waiting on it),
-the 1 MiB response cap is not ported (the seam reads whole bodies), and the
-cache is keyed on `(base_url, config)` only (pi also keys on the per-request
-`fetch`, which has no counterpart here).
+and the 1 MiB response cap is not ported (the seam reads whole bodies). As in
+pi, the cache is keyed on `(base_url, config, fetch)`: the exchange runs
+through the request's own `options.fetch`, and a different fetch (by
+identity) replaces the cache.
 """
 
 import json
@@ -39,6 +40,7 @@ from tonio.colored import fs
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_http import http
 from pidrei_utils import clock
 
 
@@ -202,8 +204,14 @@ def _parse_token_response(response: oauth_http.OAuthHttpResponse, request_id: st
     return data
 
 
-async def _exchange(base_url: str, config: AnthropicFederationConfig, env: Mapping[str, str] | None) -> _AccessToken:
-    """One jwt-bearer exchange (the SDK's `oidcFederationProvider`)."""
+async def _exchange(
+    base_url: str,
+    config: AnthropicFederationConfig,
+    env: Mapping[str, str] | None,
+    fetch: http.FetchFunction | None = None,
+) -> _AccessToken:
+    """One jwt-bearer exchange (the SDK's `oidcFederationProvider`), through the
+    request's own `fetch` as the SDK client runs it."""
     _require_secure_token_endpoint(base_url)
     jwt = await _read_identity_token(config.identity_token_file)
     # The token endpoint enforces a 16 KiB assertion limit; fail before the round-trip.
@@ -234,6 +242,7 @@ async def _exchange(base_url: str, config: AnthropicFederationConfig, env: Mappi
             json_body=body,
             timeout_ms=TOKEN_EXCHANGE_TIMEOUT_MS,
             env=env,
+            fetch=fetch,
         )
     except Exception as error:
         raise AnthropicWorkloadIdentityError(f"Failed to reach token endpoint {url}: {error}") from error
@@ -303,11 +312,12 @@ class _Refresh:
 
 
 class _FederationTokenCache:
-    """The SDK's `TokenCache` around the federation exchange, for one `(base_url, config)`."""
+    """The SDK's `TokenCache` around the federation exchange, for one `(base_url, config, fetch)`."""
 
-    def __init__(self, base_url: str, config: AnthropicFederationConfig):
+    def __init__(self, base_url: str, config: AnthropicFederationConfig, fetch: http.FetchFunction | None = None):
         self.base_url = base_url
         self.config = config
+        self.fetch = fetch
         self._guard = threading.Lock()
         self._cached: _AccessToken | None = None
         self._cached_sequence = 0
@@ -370,7 +380,7 @@ class _FederationTokenCache:
 
     async def _run(self, refresh: _Refresh, env: Mapping[str, str] | None) -> None:
         try:
-            token = await _exchange(self.base_url, self.config, env)
+            token = await _exchange(self.base_url, self.config, env, self.fetch)
         except AnthropicWorkloadIdentityError as error:
             self._finish(refresh, None, error)
         except Exception as error:
@@ -401,20 +411,23 @@ class _FederationTokenCache:
 
 
 # Pi keeps one federation client (and so one token cache) for the current
-# `(baseUrl, config)`; a different pair replaces it.
+# `(baseUrl, config, fetch)`; a different triple replaces it.
 _cache: _FederationTokenCache | None = None
 _cache_guard = threading.Lock()
 
 
-def federation_token_cache(base_url: str, config: AnthropicFederationConfig) -> _FederationTokenCache:
-    """The token cache for this base URL and config, replacing the current one if they differ."""
+def federation_token_cache(
+    base_url: str, config: AnthropicFederationConfig, fetch: http.FetchFunction | None = None
+) -> _FederationTokenCache:
+    """The token cache for this base URL, config and fetch, replacing the current
+    one if any differs. `fetch` is compared by identity (pi: `!==`)."""
     global _cache
     # The SDK strips trailing slashes from the exchange's base URL.
     base_url = base_url.rstrip("/")
     with _cache_guard:
         cache = _cache
-        if cache is None or cache.base_url != base_url or cache.config != config:
-            cache = _cache = _FederationTokenCache(base_url, config)
+        if cache is None or cache.base_url != base_url or cache.config != config or cache.fetch is not fetch:
+            cache = _cache = _FederationTokenCache(base_url, config, fetch)
         return cache
 
 

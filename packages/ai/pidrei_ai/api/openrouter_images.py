@@ -45,10 +45,12 @@ class OpenRouterImagesError(Exception):
 class _OpenRouterImagesClient:
     """The `openai` SDK's `chat.completions.create`, for this one non-streaming call."""
 
-    def __init__(self, base_url: str, headers: dict[str, str], env=None):
+    def __init__(self, base_url: str, headers: dict[str, str], env=None, fetch: http.FetchFunction | None = None):
         self._url = f"{base_url.rstrip('/')}/chat/completions"
         self._headers = headers
         self._env = env
+        # pi hands `options.fetch` to the SDK client; every attempt goes through it.
+        self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def create(
         self, params: dict[str, Any], *, timeout_ms: float | None = None, cancel: CancelToken | None = None
@@ -56,12 +58,11 @@ class _OpenRouterImagesClient:
         # pi's SDK client rejects on an already-aborted signal before sending, and
         # aborts an in-flight request: `run_cancellable` does both (the caller's
         # `retry_provider_request` turns the reason into "Request aborted").
-        client = http.client_for(self._url, self._env)
-
         async def _send() -> tuple[Any, str]:
-            response = await client.post(
-                self._url, json=params, headers=self._headers, timeout=http.request_timeout(timeout_ms)
+            request = http.build_request(
+                "POST", self._url, json=params, headers=self._headers, timeout=http.request_timeout(timeout_ms)
             )
+            response = await self._fetch(request, env=self._env)
             try:
                 body = await response.read()
             except BaseException:
@@ -92,7 +93,13 @@ async def generate_images(
         api_key = options.api_key if options else None
         if not api_key:
             raise RuntimeError(f"No API key for provider: {model.provider}")
-        client = create_client(model, api_key, options.headers if options else None, options.env if options else None)
+        client = create_client(
+            model,
+            api_key,
+            options.headers if options else None,
+            options.env if options else None,
+            options.fetch if options else None,
+        )
         params = build_params(model, context)
         next_params = await maybe_call(options.on_payload if options else None, params, model)
         if next_params is not None:
@@ -143,11 +150,15 @@ async def generate_images(
 
 
 def create_client(
-    model: ImageModel, api_key: str, options_headers: ProviderHeaders | None = None, env=None
+    model: ImageModel,
+    api_key: str,
+    options_headers: ProviderHeaders | None = None,
+    env=None,
+    fetch: http.FetchFunction | None = None,
 ) -> _OpenRouterImagesClient:
     headers = provider_headers_to_record({**(model.headers or {}), **(options_headers or {})}) or {}
     headers["authorization"] = f"Bearer {api_key}"
-    return _OpenRouterImagesClient(model.base_url, headers, env)
+    return _OpenRouterImagesClient(model.base_url, headers, env, fetch=fetch)
 
 
 def build_params(model: ImageModel, context: ImagesContext) -> dict[str, Any]:
