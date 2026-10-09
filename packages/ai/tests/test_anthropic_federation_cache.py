@@ -302,13 +302,13 @@ async def test_a_401_fails_the_request_and_the_next_request_exchanges_again(conf
     authorizations: list[str | None] = []
 
     class FakeClient:
-        async def request(self, method, url, *, headers=None, json=None, content=None, timeout=None):
-            exchanges.append(urlsplit(url).path)
-            body = f'{{"access_token": "token-{len(exchanges)}", "expires_in": 3600}}'.encode()
-            return _Response(200, body, "application/json")
-
-        async def post(self, url, *, json, headers, timeout):
-            authorizations.append(headers.get("authorization"))
+        async def send(self, request):
+            path = urlsplit(str(request.url)).path
+            if path == "/v1/oauth/token":
+                exchanges.append(path)
+                body = f'{{"access_token": "token-{len(exchanges)}", "expires_in": 3600}}'.encode()
+                return _Response(200, body, "application/json")
+            authorizations.append(request.headers.get("authorization"))
             if len(authorizations) == 1:
                 body = b'{"type":"error","error":{"type":"authentication_error","message":"invalid token"}}'
                 return _Response(401, body, "application/json")
@@ -346,3 +346,34 @@ async def test_a_401_fails_the_request_and_the_next_request_exchanges_again(conf
     assert succeeded.stop_reason == "stop"
     assert exchanges == ["/v1/oauth/token", "/v1/oauth/token"]
     assert authorizations == ["Bearer token-1", "Bearer token-2"]
+
+
+# pi keys its federation client on `(config, fetch)` by identity
+# (anthropic-messages.ts: `federationClient.fetch !== fetch`), and the SDK
+# runs the exchange through that fetch.
+
+
+@pytest.mark.tonio
+async def test_runs_the_exchange_through_the_requests_fetch_and_keys_the_cache_on_its_identity(config):
+    async def custom_fetch(request, *, env=None):
+        raise AssertionError("the stubbed seam answers before the fetch is reached")
+
+    async def other_fetch(request, *, env=None):
+        raise AssertionError("the stubbed seam answers before the fetch is reached")
+
+    # The stub records a call before answering it, so `len(calls)` numbers this exchange.
+    with virtual_clock(), stub_oauth_http(lambda request: token_response(len(calls))) as calls:
+        first = federation_token_cache(BASE_URL, config, custom_fetch)
+        assert await first.get_token() == "token-1"
+        assert calls[0].fetch is custom_fetch
+
+        # The same fetch joins the same cache: the token is served, no exchange.
+        assert federation_token_cache(BASE_URL, config, custom_fetch) is first
+        assert await first.get_token() == "token-1"
+        assert len(calls) == 1
+
+        # A different fetch replaces the cache, and its exchange runs through it.
+        second = federation_token_cache(BASE_URL, config, other_fetch)
+        assert second is not first
+        assert await second.get_token() == "token-2"
+        assert calls[1].fetch is other_fetch

@@ -629,7 +629,7 @@ async def test_preserves_gpt55_xhigh_reasoning_effort_from_simple_options(monkey
     # pi stubs the global fetch. stream_simple builds its own options, so the
     # fake replaces the default client instead of being injected; without it
     # the request goes to the real endpoint.
-    monkeypatch.setattr(codex, "_PunkreqCodexClient", lambda _env: client)
+    monkeypatch.setattr(codex, "_PunkreqCodexClient", lambda _env, _fetch=None: client)
     model = make_model("gpt-5.5", thinking_level_map={"xhigh": "xhigh"})
     await stream_simple_codex(
         model,

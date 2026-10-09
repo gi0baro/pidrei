@@ -83,17 +83,18 @@ def _request_headers(model: ClassifierModel, api_key: str, options_headers: Prov
 class _ClassifierClient:
     """One JSON POST over the punkreq seam (pi: `fetch(url, { method: "POST", ... })`)."""
 
-    def __init__(self, env: ProviderEnv | None = None):
+    def __init__(self, env: ProviderEnv | None = None, fetch: http.FetchFunction | None = None):
         self._env = env
+        # pi: `options.fetch ?? globalThis.fetch`, shared by the three classifier APIs.
+        self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def post(
         self, url: str, payload: Any, headers: dict[str, str], cancel: CancelToken | None
     ) -> tuple[int, dict[str, str], str]:
-        client = http.client_for(url, self._env)
-
         async def _send() -> tuple[Any, bytes]:
             # The whole-request bound is the caller's per-attempt timer token.
-            response = await client.post(url, json=payload, headers=headers, timeout=http.oneshot_timeout(None))
+            request = http.build_request("POST", url, json=payload, headers=headers, timeout=http.oneshot_timeout(None))
+            response = await self._fetch(request, env=self._env)
             try:
                 body = await response.read()
             except BaseException:
@@ -129,7 +130,7 @@ async def post_classifier_request(
     transformed = await maybe_call(options.on_payload, payload, model)
     if transformed is not None:
         payload = transformed
-    client = _ClassifierClient(options.env)
+    client = _ClassifierClient(options.env, options.fetch)
     headers = _request_headers(model, options.api_key, options.headers)
 
     async def attempt() -> tuple[ProviderResponse, Any]:

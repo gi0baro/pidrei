@@ -86,8 +86,10 @@ class MistralHttpError(Exception):
 class _PunkreqMistralClient:
     """Default transport: POST the wire payload through the punkreq seam."""
 
-    def __init__(self, env=None):
+    def __init__(self, env=None, fetch: http.FetchFunction | None = None):
         self._env = env
+        # pi: `(options?.fetch ?? globalThis.fetch)(url, ...)`, after wire conversion.
+        self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def post_chat_completions(
         self,
@@ -98,14 +100,18 @@ class _PunkreqMistralClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ):
-        client = http.client_for(url, self._env)
-        return await client.post(url, json=wire_payload, headers=headers, timeout=http.request_timeout(timeout_ms))
+        request = http.build_request(
+            "POST", url, json=wire_payload, headers=headers, timeout=http.request_timeout(timeout_ms)
+        )
+        return await self._fetch(request, env=self._env)
 
 
 async def request_mistral_stream(model: Model, payload: dict[str, Any], api_key: str, options: MistralOptions):
     url = f"{(model.base_url or 'https://api.mistral.ai').rstrip('/')}/v1/chat/completions"
     headers = build_mistral_headers(model, api_key, options)
-    client = options.client if options.client is not None else _PunkreqMistralClient(env=options.env)
+    client = (
+        options.client if options.client is not None else _PunkreqMistralClient(env=options.env, fetch=options.fetch)
+    )
     response = await client.post_chat_completions(
         url,
         to_mistral_wire_payload(payload),

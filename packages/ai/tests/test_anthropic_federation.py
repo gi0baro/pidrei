@@ -84,9 +84,9 @@ def _recording_transport():
     original = anthropic_messages._PunkreqAnthropicClient
 
     class RecordingClient(original):
-        def __init__(self, base_url, headers, env=None, federation=None):
+        def __init__(self, base_url, headers, env=None, federation=None, fetch=None):
             recorded.append((dict(headers), federation))
-            super().__init__(base_url, headers, env, federation=federation)
+            super().__init__(base_url, headers, env, federation=federation, fetch=fetch)
 
     anthropic_messages._PunkreqAnthropicClient = RecordingClient
     try:

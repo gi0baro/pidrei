@@ -90,6 +90,7 @@ class OAuthRequest:
     timeout_ms: float | None = None
     cancel: CancelToken | None = None
     env: Mapping[str, str] | None = None
+    fetch: Any = None
 
 
 def json_response(body: Any, status: int = 200) -> oauth_http.OAuthHttpResponse:
@@ -127,6 +128,7 @@ def stub_oauth_http(handler: _Handler):
         timeout_ms: float | None = None,
         cancel: CancelToken | None = None,
         env: Mapping[str, str] | None = None,
+        fetch: Any = None,
     ) -> oauth_http.OAuthHttpResponse:
         recorded = OAuthRequest(
             url=url,
@@ -137,6 +139,7 @@ def stub_oauth_http(handler: _Handler):
             timeout_ms=timeout_ms,
             cancel=cancel,
             env=env,
+            fetch=fetch,
         )
         calls.append(recorded)
         result = handler(recorded)

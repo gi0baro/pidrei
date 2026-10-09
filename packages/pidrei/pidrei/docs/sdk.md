@@ -187,6 +187,13 @@ final message instead. `pidrei_ai.providers.all.builtin_models()` is the bare
 collection without pidrei's config: credentials come only from the
 environment.
 
+The request options also take `fetch`, a per-request transport that receives
+the prepared `pidrei_http.http.Request` and returns the `Response`, for
+logging, rewriting or answering a request without the network. It is honored
+by every built-in HTTP implementation (chat, images and classifiers), not by
+WebSocket transports or the Google adapters. See
+[custom-provider.md](custom-provider.md#request-transport) for the contract.
+
 ## Registering a provider
 
 `pidrei_ai.registry.create_provider(...)` builds one from parts:

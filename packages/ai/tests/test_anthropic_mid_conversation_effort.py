@@ -204,8 +204,8 @@ async def test_sends_the_effort_and_binding_beta_headers():
     seen_beta_headers: list[str | None] = []
 
     class FakeClient:
-        async def post(self, _url, *, json, headers, timeout):
-            seen_beta_headers.append(headers.get("anthropic-beta"))
+        async def send(self, request):
+            seen_beta_headers.append(request.headers.get("anthropic-beta"))
             return _SseResponse(body)
 
     original_client_for = http.client_for

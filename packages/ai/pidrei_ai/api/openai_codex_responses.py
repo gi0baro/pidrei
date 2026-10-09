@@ -332,8 +332,10 @@ class _PunkreqCodexResponse:
 class _PunkreqCodexClient:
     """Default SSE transport: POST the Codex responses endpoint via punkreq."""
 
-    def __init__(self, env: ProviderEnv | None = None):
+    def __init__(self, env: ProviderEnv | None = None, fetch: http.FetchFunction | None = None):
         self._env = env
+        # pi: `(options?.fetch ?? globalThis.fetch)(url, ...)` on the final, possibly compressed, bytes.
+        self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def post(
         self,
@@ -344,11 +346,13 @@ class _PunkreqCodexClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ) -> CodexSSEResponseLike:
-        client = http.client_for(url, self._env)
         # pi bounds only the response *head* with `AbortSignal.timeout(timeoutMs)`;
         # punkreq has no head-specific deadline, so this maps to the per-read
         # timeout (as in openai_responses.py) — the head read is the first read.
-        response = await client.post(url, content=body, headers=headers, timeout=http.request_timeout(timeout_ms))
+        request = http.build_request(
+            "POST", url, content=body, headers=headers, timeout=http.request_timeout(timeout_ms)
+        )
+        response = await self._fetch(request, env=self._env)
         return _PunkreqCodexResponse(
             status=response.status_code,
             headers={key.lower(): value for key, value in dict(response.headers).items()},
@@ -594,7 +598,7 @@ def stream(
                 sse_headers["content-encoding"] = "zstd"
             sse_body = compressed_body if compressed_body is not None else body_json.encode()
 
-            client = opts.client if opts.client is not None else _PunkreqCodexClient(opts.env)
+            client = opts.client if opts.client is not None else _PunkreqCodexClient(opts.env, opts.fetch)
             url = _resolve_codex_url(model.base_url)
             response: CodexSSEResponseLike | None = None
             last_error: Exception | None = None
