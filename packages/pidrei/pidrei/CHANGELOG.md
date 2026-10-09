@@ -6,6 +6,8 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.1.0.1] - 2026-10-09
+
 ### Added
 
 - Per-request transport injection (Pi's `fetch` option): a `fetch` request
