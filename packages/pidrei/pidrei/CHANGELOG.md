@@ -6,6 +6,12 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- The startup `[Extensions]` listing named a directory extension after its
+  entry file (`__init__.py`) instead of its directory or package, the way Pi
+  names its `index.ts` packages.
+
 ## [1.1.0.1] - 2026-10-09
 
 ### Added

@@ -1557,10 +1557,9 @@ class InteractiveMode:
         return result
 
     def _format_extension_display_path(self, path: str) -> str:
+        # pi strips its directory entry (`index.ts`/`index.js`); ours is `__init__.py`.
         result = self._format_display_path(path)
-        result = re.sub(r"/index\.ts$", "", result)
-        result = re.sub(r"/index\.js$", "", result)
-        return result
+        return re.sub(r"/__init__\.py$", "", result)
 
     def _format_context_path(self, p: str) -> str:
         cwd = os.path.abspath(self.session_manager.get_cwd())
@@ -1647,7 +1646,7 @@ class InteractiveMode:
         parsed_dir, parsed_base = posixpath.split(package_path)
         parsed_name = posixpath.splitext(parsed_base)[0]
 
-        if parsed_name == "index":
+        if parsed_name == "__init__":
             return source_label if not parsed_dir or parsed_dir == "." else f"{source_label}:{parsed_dir}"
 
         return f"{source_label}:{package_path}"
@@ -1682,7 +1681,7 @@ class InteractiveMode:
             if self._is_package_source(extension.get("sourceInfo")):
                 continue
             segments = self._get_compact_display_path_segments(extension["path"])
-            if len(segments) > 1 and segments[-1] in ("index.ts", "index.js"):
+            if len(segments) > 1 and segments[-1] == "__init__.py":
                 segments.pop()
             non_package_extensions.append(
                 {"path": extension["path"], "sourceInfo": extension.get("sourceInfo"), "segments": segments}

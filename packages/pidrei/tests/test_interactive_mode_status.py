@@ -550,9 +550,9 @@ def create_show_loaded_resources_fake(
 def create_extension_fixtures():
     return [
         {
-            "path": "/tmp/project/.pi/extensions/answer.ts",
+            "path": "/tmp/project/.pi/extensions/answer.py",
             "sourceInfo": create_source_info(
-                "/tmp/project/.pi/extensions/answer.ts",
+                "/tmp/project/.pi/extensions/answer.py",
                 source="local",
                 scope="project",
                 origin="top-level",
@@ -560,9 +560,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/project/.pi/extensions/local-index/index.ts",
+            "path": "/tmp/project/.pi/extensions/local-index/__init__.py",
             "sourceInfo": create_source_info(
-                "/tmp/project/.pi/extensions/local-index/index.ts",
+                "/tmp/project/.pi/extensions/local-index/__init__.py",
                 source="local",
                 scope="project",
                 origin="top-level",
@@ -570,9 +570,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/agent/extensions/user-index/index.ts",
+            "path": "/tmp/agent/extensions/user-index/__init__.py",
             "sourceInfo": create_source_info(
-                "/tmp/agent/extensions/user-index/index.ts",
+                "/tmp/agent/extensions/user-index/__init__.py",
                 source="local",
                 scope="user",
                 origin="top-level",
@@ -580,9 +580,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/index.ts",
+            "path": "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/__init__.py",
             "sourceInfo": create_source_info(
-                "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/index.ts",
+                "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/__init__.py",
                 source="npm:pi-markdown-preview",
                 scope="project",
                 origin="package",
@@ -590,9 +590,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/project/.pi/npm/node_modules/@scope/pi-scoped/extensions/index.ts",
+            "path": "/tmp/project/.pi/npm/node_modules/@scope/pi-scoped/extensions/__init__.py",
             "sourceInfo": create_source_info(
-                "/tmp/project/.pi/npm/node_modules/@scope/pi-scoped/extensions/index.ts",
+                "/tmp/project/.pi/npm/node_modules/@scope/pi-scoped/extensions/__init__.py",
                 source="npm:@scope/pi-scoped",
                 scope="project",
                 origin="package",
@@ -600,9 +600,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/index.ts",
+            "path": "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/__init__.py",
             "sourceInfo": create_source_info(
-                "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/index.ts",
+                "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/__init__.py",
                 source="git:github.com/HazAT/pi-interactive-subagents",
                 scope="project",
                 origin="package",
@@ -610,9 +610,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/subagents/index.ts",
+            "path": "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/subagents/__init__.py",
             "sourceInfo": create_source_info(
-                "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/subagents/index.ts",
+                "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/subagents/__init__.py",
                 source="git:github.com/HazAT/pi-interactive-subagents",
                 scope="project",
                 origin="package",
@@ -620,9 +620,9 @@ def create_extension_fixtures():
             ),
         },
         {
-            "path": "/tmp/temp/cli-extension.ts",
+            "path": "/tmp/temp/cli-extension.py",
             "sourceInfo": create_source_info(
-                "/tmp/temp/cli-extension.ts",
+                "/tmp/temp/cli-extension.py",
                 source="cli",
                 scope="temporary",
                 origin="top-level",
@@ -694,15 +694,15 @@ class TestShowLoadedResources:
     def test_abbreviates_extensions_in_compact_listing(self):
         fake = create_show_loaded_resources_fake(
             quiet_startup=False,
-            extensions=[{"path": "/tmp/extensions/answer.ts"}, {"path": "/tmp/extensions/btw.ts"}],
+            extensions=[{"path": "/tmp/extensions/answer.py"}, {"path": "/tmp/extensions/btw.py"}],
         )
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
         output = render_all(fake._loaded_resources_container)
         assert "[Extensions]" in output
-        assert "answer.ts, btw.ts" in output
-        assert "extensions/answer.ts" not in output
+        assert "answer.py, btw.py" in output
+        assert "extensions/answer.py" not in output
 
     def test_captures_mixed_extension_layouts_in_compact_output(self):
         fake = create_show_loaded_resources_fake(
@@ -715,16 +715,16 @@ class TestShowLoadedResources:
 
         assert normalize_rendered_output(fake._loaded_resources_container) == (
             "[Extensions]\n"
-            "  @scope/pi-scoped, answer.ts, cli-extension.ts, HazAT/pi-interactive-subagents, "
+            "  @scope/pi-scoped, answer.py, cli-extension.py, HazAT/pi-interactive-subagents, "
             "HazAT/pi-interactive-subagents:subagents, local-index, pi-markdown-preview, user-index"
         )
 
     def test_adds_more_parent_folders_until_local_extension_labels_are_unique(self):
         extensions = [
             {
-                "path": f"/tmp/{name}/one/index.ts",
+                "path": f"/tmp/{name}/one/__init__.py",
                 "sourceInfo": create_source_info(
-                    f"/tmp/{name}/one/index.ts",
+                    f"/tmp/{name}/one/__init__.py",
                     source="cli",
                     scope="temporary",
                     origin="top-level",
@@ -746,12 +746,12 @@ class TestShowLoadedResources:
             "[Extensions]\n  alpha/one, beta/one, gamma/one"
         )
 
-    def test_strips_index_ts_from_local_extension_label_showing_parent_dir(self):
+    def test_strips_init_py_from_local_extension_label_showing_parent_dir(self):
         extensions = [
             {
-                "path": "/tmp/extensions/plan-mode/index.ts",
+                "path": "/tmp/extensions/plan-mode/__init__.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/extensions/plan-mode/index.ts",
+                    "/tmp/extensions/plan-mode/__init__.py",
                     source="local",
                     scope="project",
                     origin="top-level",
@@ -766,32 +766,12 @@ class TestShowLoadedResources:
 
         assert normalize_rendered_output(fake._loaded_resources_container) == "[Extensions]\n  plan-mode"
 
-    def test_strips_index_js_from_local_extension_label_showing_parent_dir(self):
+    def test_mixed_single_file_and_subdirectory_init_py_extensions_strip_init_py(self):
         extensions = [
             {
-                "path": "/tmp/extensions/plan-mode/index.js",
+                "path": "/tmp/extensions/webfetch.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/extensions/plan-mode/index.js",
-                    source="local",
-                    scope="project",
-                    origin="top-level",
-                    base_dir="/tmp/extensions",
-                ),
-            }
-        ]
-
-        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
-
-        InteractiveMode._show_loaded_resources(fake, {"force": False})
-
-        assert normalize_rendered_output(fake._loaded_resources_container) == "[Extensions]\n  plan-mode"
-
-    def test_mixed_single_file_and_subdirectory_index_ts_extensions_strip_index_ts(self):
-        extensions = [
-            {
-                "path": "/tmp/extensions/webfetch.ts",
-                "sourceInfo": create_source_info(
-                    "/tmp/extensions/webfetch.ts",
+                    "/tmp/extensions/webfetch.py",
                     source="local",
                     scope="project",
                     origin="top-level",
@@ -799,9 +779,9 @@ class TestShowLoadedResources:
                 ),
             },
             {
-                "path": "/tmp/extensions/plan-mode/index.ts",
+                "path": "/tmp/extensions/plan-mode/__init__.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/extensions/plan-mode/index.ts",
+                    "/tmp/extensions/plan-mode/__init__.py",
                     source="local",
                     scope="project",
                     origin="top-level",
@@ -814,14 +794,14 @@ class TestShowLoadedResources:
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
-        assert normalize_rendered_output(fake._loaded_resources_container) == ("[Extensions]\n  plan-mode, webfetch.ts")
+        assert normalize_rendered_output(fake._loaded_resources_container) == ("[Extensions]\n  plan-mode, webfetch.py")
 
-    def test_multiple_index_ts_with_unique_parent_dirs_need_no_disambiguation(self):
+    def test_multiple_init_py_with_unique_parent_dirs_need_no_disambiguation(self):
         extensions = [
             {
-                "path": f"/tmp/extensions/{name}/index.ts",
+                "path": f"/tmp/extensions/{name}/__init__.py",
                 "sourceInfo": create_source_info(
-                    f"/tmp/extensions/{name}/index.ts",
+                    f"/tmp/extensions/{name}/__init__.py",
                     source="local",
                     scope="project",
                     origin="top-level",
@@ -837,12 +817,12 @@ class TestShowLoadedResources:
 
         assert normalize_rendered_output(fake._loaded_resources_container) == "[Extensions]\n  bar, foo"
 
-    def test_multiple_index_ts_with_same_parent_dir_name_disambiguated_with_grandparent(self):
+    def test_multiple_init_py_with_same_parent_dir_name_disambiguated_with_grandparent(self):
         extensions = [
             {
-                "path": f"/tmp/{name}/tools/index.ts",
+                "path": f"/tmp/{name}/tools/__init__.py",
                 "sourceInfo": create_source_info(
-                    f"/tmp/{name}/tools/index.ts",
+                    f"/tmp/{name}/tools/__init__.py",
                     source="cli",
                     scope="temporary",
                     origin="top-level",
@@ -860,12 +840,12 @@ class TestShowLoadedResources:
             "[Extensions]\n  alpha/tools, beta/tools"
         )
 
-    def test_non_index_file_in_subdirectory_stays_as_filename(self):
+    def test_non_init_file_in_subdirectory_stays_as_filename(self):
         extensions = [
             {
-                "path": "/tmp/extensions/my-ext/main.ts",
+                "path": "/tmp/extensions/my-ext/main.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/extensions/my-ext/main.ts",
+                    "/tmp/extensions/my-ext/main.py",
                     source="local",
                     scope="project",
                     origin="top-level",
@@ -878,14 +858,14 @@ class TestShowLoadedResources:
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
-        assert normalize_rendered_output(fake._loaded_resources_container) == "[Extensions]\n  main.ts"
+        assert normalize_rendered_output(fake._loaded_resources_container) == "[Extensions]\n  main.py"
 
-    def test_package_extensions_still_strip_index_ts_correctly_regression_guard(self):
+    def test_package_extensions_still_strip_init_py_correctly_regression_guard(self):
         extensions = [
             {
-                "path": "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/index.ts",
+                "path": "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/__init__.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/index.ts",
+                    "/tmp/project/.pi/npm/node_modules/pi-markdown-preview/extensions/__init__.py",
                     source="npm:pi-markdown-preview",
                     scope="project",
                     origin="package",
@@ -903,9 +883,9 @@ class TestShowLoadedResources:
     def test_labels_npm_sibling_extensions_relative_to_the_declaring_package(self):
         extensions = [
             {
-                "path": "/tmp/project/.pi/npm/node_modules/primary-package/index.ts",
+                "path": "/tmp/project/.pi/npm/node_modules/primary-package/__init__.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/project/.pi/npm/node_modules/primary-package/index.ts",
+                    "/tmp/project/.pi/npm/node_modules/primary-package/__init__.py",
                     source="npm:primary-package",
                     scope="project",
                     origin="package",
@@ -913,9 +893,9 @@ class TestShowLoadedResources:
                 ),
             },
             {
-                "path": "/tmp/project/.pi/npm/node_modules/sibling-package/index.ts",
+                "path": "/tmp/project/.pi/npm/node_modules/sibling-package/__init__.py",
                 "sourceInfo": create_source_info(
-                    "/tmp/project/.pi/npm/node_modules/sibling-package/index.ts",
+                    "/tmp/project/.pi/npm/node_modules/sibling-package/__init__.py",
                     source="npm:primary-package",
                     scope="project",
                     origin="package",
@@ -945,7 +925,7 @@ class TestShowLoadedResources:
         assert normalize_rendered_output(fake._loaded_resources_container) == (
             "[Extensions]\n"
             "  project\n"
-            "    /tmp/project/.pi/extensions/answer.ts\n"
+            "    /tmp/project/.pi/extensions/answer.py\n"
             "    /tmp/project/.pi/extensions/local-index\n"
             "    git:github.com/HazAT/pi-interactive-subagents\n"
             "      extensions\n"
@@ -957,7 +937,7 @@ class TestShowLoadedResources:
             "  user\n"
             "    /tmp/agent/extensions/user-index\n"
             "  path\n"
-            "    /tmp/temp/cli-extension.ts"
+            "    /tmp/temp/cli-extension.py"
         )
 
     def test_shows_context_paths_relative_to_cwd_while_preserving_full_external_paths(self):
@@ -1008,7 +988,7 @@ class TestShowLoadedResources:
 
         InteractiveMode._show_loaded_resources(
             fake,
-            {"extensions": [{"path": "/tmp/ext/index.ts"}], "force": False, "showDiagnosticsWhenQuiet": True},
+            {"extensions": [{"path": "/tmp/ext/__init__.py"}], "force": False, "showDiagnosticsWhenQuiet": True},
         )
 
         assert len(fake._loaded_resources_container.children) == 0
