@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 
 from pidrei_tui import get_capabilities, get_image_dimensions, hyperlink, image_fallback
+from pidrei_utils import clock
+from pidrei_utils.timers import Interval
 
 from ...utils.ansi import strip_ansi
 from ...utils.paths import resolve_path
@@ -116,6 +118,64 @@ def format_tool_call_with_args(title: str, args, theme, expanded: bool) -> str:
     pairs = " ".join(f"{key}={_json_stringify(value)}" for key, value in entries)
     preview = f"{pairs[: COLLAPSED_ARGS_CHARS - 3]}..." if len(pairs) > COLLAPSED_ARGS_CHARS else pairs
     return f"{header} {theme.fg('muted', preview)}"
+
+
+def format_tool_duration(ms: float) -> str:
+    """Duration as `4.2s` below a minute, then `1m 30s` and `2h 3m 4s`."""
+    seconds = ms / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+
+    total_seconds = int(seconds)
+    minutes = total_seconds // 60
+    remainder = total_seconds % 60
+    if minutes < 60:
+        return f"{minutes}m {remainder}s"
+
+    return f"{minutes // 60}h {minutes % 60}m {remainder}s"
+
+
+# Renderer state of `start_tool_timer` and `tool_timer_text`, kept in the render
+# context's `state`: `startedAt`/`endedAt` (monotonic ms) and the redraw `interval`.
+
+
+def start_tool_timer(context: dict) -> None:
+    """Start the row's clock once execution starts. Call from `render_call`."""
+    state = context["state"]
+    if context["executionStarted"] and state.get("startedAt") is None:
+        state["startedAt"] = clock.monotonic() * 1000
+        state["endedAt"] = None
+
+
+def tool_timer_text(context: dict, is_partial: bool) -> str | None:
+    """The row's timing line, from `render_result`: `Elapsed 4.2s` while the
+    result is partial, redrawn every second, and `Took 4.2s` once it is final.
+    None when the row has no start time and no recorded duration."""
+    state = context["state"]
+    if state.get("startedAt") is not None and is_partial and not state.get("interval"):
+        invalidate = context["invalidate"]
+
+        def tick() -> None:
+            invalidate()
+
+        state["interval"] = Interval(1000, tick)
+    if not is_partial or context["isError"]:
+        if state.get("endedAt") is None:
+            state["endedAt"] = clock.monotonic() * 1000
+        if state.get("interval"):
+            state["interval"].cancel()
+            state["interval"] = None
+    # A final result's recorded duration wins: it is monotonic and survives reloads. The renderer's own clock is the
+    # fallback for live progress and for results stored without one.
+    duration_ms = context["durationMs"]
+    if not is_partial and duration_ms is not None:
+        return f"Took {format_tool_duration(duration_ms)}"
+    started_at = state.get("startedAt")
+    if started_at is None:
+        return None
+    ended_at = state.get("endedAt")
+    end_time = ended_at if ended_at is not None else clock.monotonic() * 1000
+    return f"{'Elapsed' if is_partial else 'Took'} {format_tool_duration(end_time - started_at)}"
 
 
 def invalid_arg_text(theme) -> str:

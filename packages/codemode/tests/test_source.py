@@ -32,9 +32,26 @@ def test_parses_the_options_line_and_keeps_line_numbers():
 
 
 def test_only_treats_the_first_line_as_an_options_line():
-    source = 'text(1)\n# @options: {"timeout_ms": 1}'
-    assert parse_codemode_source(source) == ParsedCodemodeSource(source, CodemodeSourceOptions())
     assert parse_codemode_source("# @optionsx {}\ntext(1)").options == CodemodeSourceOptions()
+    assert parse_codemode_source('text("# @options: {}")').options == CodemodeSourceOptions()
+
+
+# pi #10631: an options line after the first line used to be ignored, so its timeout never applied.
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        ('# count things\n# @options: {"timeout_ms": 1000}\nwhile True: pass', 2),
+        ('\n  # @options: {"timeout_ms": 1000}\nwhile True: pass', 2),
+        ('text(1)\r\n# @options: {"timeout_ms": 1}', 2),
+        ('# @options: {"timeout_ms": 1}\ntext(1)\n# @options: {"timeout_ms": 2}', 3),
+    ],
+)
+def test_rejects_an_options_line_that_is_not_the_first_line(source, line):
+    with pytest.raises(
+        CodemodeSourceError,
+        match=f"^The # @options: line must be the first line of the input; found one on line {line}$",
+    ):
+        parse_codemode_source(source)
 
 
 @pytest.mark.parametrize(

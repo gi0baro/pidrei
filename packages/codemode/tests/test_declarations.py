@@ -6,7 +6,6 @@ declarations are Python (see the module docstring of `declarations.py`).
 
 from pidrei_codemode import BUILTIN_STUBS, CodemodeGlobal, CodemodeTool, RenderedType
 from pidrei_codemode.declarations import (
-    mcp_structured_content_schema,
     render_stubs,
     render_tools,
     schema_to_type,
@@ -23,14 +22,6 @@ def _tool(name: str, **fields) -> CodemodeTool:
 
 def _global(name: str, **fields) -> CodemodeGlobal:
     return CodemodeGlobal(name=name, execute=_execute, **fields)
-
-
-def _mcp_result_schema(structured_content=None):
-    properties = {"content": {"type": "array", "items": {"type": "object"}}}
-    if structured_content is not None:
-        properties["structuredContent"] = structured_content
-    properties |= {"isError": {"type": "boolean"}, "_meta": {"type": "object"}}
-    return {"type": "object", "properties": properties, "required": ["content"]}
 
 
 def _annotation(schema, **options) -> str:
@@ -75,11 +66,6 @@ def test_renders_objects_as_typed_dicts_in_schema_order():
     assert _annotation({"type": "object", "additionalProperties": {"type": "number"}}) == "dict[str, float]"
     assert _annotation({"type": "object"}) == "dict[str, Any]"
     assert _annotation({"type": "object", "properties": {}, "additionalProperties": False}) == "dict[str, Any]"
-    # Declared properties plus extra keys cannot be one TypedDict.
-    assert (
-        _annotation({"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": True})
-        == "dict[str, Any]"
-    )
 
 
 def test_puts_property_descriptions_on_comment_lines():
@@ -121,6 +107,172 @@ def test_puts_property_descriptions_on_comment_lines():
         "class TypeOuter(TypedDict):\n    # Inner\n    inner: NotRequired[str]",
         "class Type(TypedDict):\n    # Outer\n    # second line\n    outer: NotRequired[TypeOuter]",
     )
+
+
+# https://github.com/earendil-works/pi/issues/10707
+# pi tags integers with `@integer` because TypeScript's `number` covers them;
+# the stubs already say `int`, so the mirrors have no `@integer` tag.
+def test_puts_constraints_the_type_cannot_express_on_property_comment_lines():
+    assert schema_to_type(
+        {
+            "type": "object",
+            "properties": {
+                "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 30000,
+                    "default": 0,
+                    "description": "Wait in milliseconds.",
+                },
+                "id": {"type": "string", "pattern": "^[a-z]+$", "maxLength": 8},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 5,
+                    "uniqueItems": True,
+                    "deprecated": True,
+                },
+                "name": {"type": "string"},
+            },
+            "required": ["id"],
+        }
+    ).definitions == (
+        (
+            "class Type(TypedDict):\n"
+            "    # Wait in milliseconds.\n"
+            "    # @minimum 0 @maximum 30000 @default 0\n"
+            "    timeoutMs: NotRequired[int]\n"
+            "    # @maxLength 8 @pattern ^[a-z]+$\n"
+            "    id: str\n"
+            "    # @maxItems 5 @uniqueItems @deprecated\n"
+            "    tags: NotRequired[list[str]]\n"
+            "    name: NotRequired[str]"
+        ),
+    )
+
+
+def test_reads_constraints_of_optional_fields_from_the_non_null_branch():
+    # Pydantic's `limit: int | None = Field(None, ge=1, le=100)`.
+    assert schema_to_type(
+        {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "anyOf": [{"type": "integer", "minimum": 1, "maximum": 100}, {"type": "null"}],
+                    "default": None,
+                    "title": "Limit",
+                },
+            },
+        }
+    ).definitions == ("class Type(TypedDict):\n    # @minimum 1 @maximum 100\n    limit: NotRequired[int | None]",)
+    # Constraints of the property and the branch both apply.
+    assert schema_to_type(
+        {
+            "type": "object",
+            "properties": {
+                "n": {
+                    "anyOf": [{"type": "integer", "minimum": 10, "maximum": 50, "format": "int32"}, {"type": "null"}],
+                    "minimum": 0,
+                    "maximum": 20,
+                    "format": "port",
+                },
+            },
+        }
+    ).definitions == (
+        "class Type(TypedDict):\n    # @minimum 10 @maximum 20 @format port @format int32\n    n: NotRequired[int | None]",
+    )
+
+
+def test_reads_draft_04_boolean_exclusive_bounds():
+    assert schema_to_type(
+        {
+            "type": "object",
+            "properties": {
+                "n": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": True,
+                    "maximum": 10,
+                    "exclusiveMaximum": False,
+                },
+                "m": {
+                    "anyOf": [{"type": "number", "maximum": 5, "exclusiveMaximum": True}, {"type": "null"}],
+                    "maximum": 8,
+                },
+            },
+        }
+    ).definitions == (
+        (
+            "class Type(TypedDict):\n"
+            "    # @exclusiveMinimum 0 @maximum 10\n"
+            "    n: NotRequired[int]\n"
+            "    # @maximum 8 @exclusiveMaximum 5\n"
+            "    m: NotRequired[float | None]"
+        ),
+    )
+
+
+def test_leaves_out_long_tags_and_escapes_line_terminators():
+    assert schema_to_type(
+        {"type": "object", "properties": {"config": {"type": "object", "default": {"text": "x" * 100}}}}
+    ).definitions == ("class Type(TypedDict):\n    config: NotRequired[dict[str, Any]]",)
+    assert schema_to_type(
+        {
+            "type": "object",
+            "properties": {
+                "sep": {
+                    "type": "string",
+                    "pattern": "^[\r\n\u2028\u2029]$",
+                    "default": "\u2028",
+                    "description": "a\u2028b",
+                },
+            },
+        }
+    ).definitions == (
+        (
+            "class Type(TypedDict):\n"
+            "    # a\n"
+            "    # b\n"
+            "    # @pattern ^[\\u000d\\u000a\\u2028\\u2029]$ @default '\\u2028'\n"
+            "    sep: NotRequired[str]"
+        ),
+    )
+
+
+def test_drops_constraint_tags_before_rendering_a_type_over_the_budget_as_any():
+    schema = {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}}}
+    assert schema_to_type(schema).definitions == ("class Type(TypedDict):\n    # @minimum 1\n    n: NotRequired[int]",)
+    assert schema_to_type(schema, max_chars=60).definitions == ("class Type(TypedDict):\n    n: NotRequired[int]",)
+    assert schema_to_type(schema, max_chars=40) == RenderedType("Any", ())
+
+
+def test_tags_tool_parameters_and_drops_the_tags_before_taking_args_over_the_input_budget():
+    # pi's tool declarations render their input through `schemaToType`; here the
+    # parameters are keyword arguments, so their comments carry the tags.
+    tool = _tool(
+        "wait",
+        input_schema={
+            "type": "object",
+            "properties": {"ms": {"type": "integer", "minimum": 0, "description": "Milliseconds."}},
+            "required": ["ms"],
+        },
+    )
+    [tagged] = render_tools([tool])
+    assert tagged.method == (
+        "    async def wait(\n"
+        "        self,\n"
+        "        *,\n"
+        "        # Milliseconds.\n"
+        "        # @minimum 0\n"
+        "        ms: int,\n"
+        "    ) -> Any: ..."
+    )
+    [untagged] = render_tools([tool], input_max_chars=30)
+    assert untagged.method == (
+        "    async def wait(\n        self,\n        *,\n        # Milliseconds.\n        ms: int,\n    ) -> Any: ..."
+    )
+    [args] = render_tools([tool], input_max_chars=10)
+    assert args.method == "    async def wait(self, **args: Any) -> Any: ..."
 
 
 def test_resolves_local_references_and_stops_at_recursive_ones():
@@ -235,43 +387,42 @@ def test_puts_required_parameters_first_and_lays_out_described_ones_per_line():
     ]
 
 
-def test_renders_mcp_call_tool_result_output_schemas_as_call_tool_result_of_t():
-    input_schema = {"type": "object", "properties": {}, "additionalProperties": False}
-    [search, plain] = render_tools(
-        [
-            _tool(
-                "mcp__sample__search",
-                input_schema=input_schema,
-                output_schema=_mcp_result_schema(
-                    {
-                        "type": "object",
-                        "properties": {
-                            "results": {"type": "array", "items": {"$ref": "#/definitions/Result~1item~0v1"}}
-                        },
-                        "required": ["results"],
-                        "additionalProperties": False,
-                        "definitions": {
-                            "Result/item~v1": {
-                                "type": "object",
-                                "properties": {"id": {"type": "string"}, "score": {"type": "number"}},
-                                "required": ["id", "score"],
-                                "additionalProperties": False,
-                            },
-                        },
-                    }
-                ),
-            ),
-            _tool("plain", input_schema=input_schema, output_schema=_mcp_result_schema()),
-        ]
+def test_renders_output_schemas_shaped_like_an_mcp_call_tool_result_as_plain_types():
+    output_schema = {
+        "type": "object",
+        "properties": {
+            "content": {"type": "array", "items": {"type": "object"}},
+            "isError": {"type": "boolean"},
+            "_meta": {"type": "object"},
+        },
+        "required": ["content"],
+    }
+    [plain] = render_tools(
+        [_tool("plain", input_schema={"type": "object", "properties": {}}, output_schema=output_schema)]
     )
-    assert search.method == "    async def mcp__sample__search(self) -> CallToolResult[McpSampleSearchResult]: ..."
-    assert search.definitions == (
-        "class McpSampleSearchResultResultsItem(TypedDict):\n    id: str\n    score: float",
-        "class McpSampleSearchResult(TypedDict):\n    results: list[McpSampleSearchResultResultsItem]",
+    assert plain.method == "    async def plain(self, **args: Any) -> PlainResult: ..."
+    assert plain.definitions == (
+        (
+            "class PlainResult(TypedDict):\n"
+            "    content: list[dict[str, Any]]\n"
+            "    isError: NotRequired[bool]\n"
+            "    _meta: NotRequired[dict[str, Any]]"
+        ),
     )
-    assert search.uses_mcp_types
-    assert plain.method == "    async def plain(self) -> CallToolResult: ..."
-    assert mcp_structured_content_schema({"type": "object", "properties": {"content": {"type": "array"}}}) is None
+
+
+def test_renders_objects_open_to_other_keys_as_typed_dicts_with_extra_items():
+    # pi's `{ a: string; [key: string]: T; }`.
+    assert schema_to_type(
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"], "additionalProperties": True}
+    ).definitions == ("class Type(TypedDict, extra_items=Any):\n    a: str",)
+    assert schema_to_type(
+        {"type": "object", "properties": {"a-b": {"type": "string"}}, "additionalProperties": {"type": "integer"}}
+    ).definitions == ("Type = TypedDict('Type', {'a-b': NotRequired[str]}, extra_items=int)",)
+    # Without `additionalProperties`, the known keys are all there is.
+    assert schema_to_type({"type": "object", "properties": {"a": {"type": "string"}}}).definitions == (
+        "class Type(TypedDict):\n    a: NotRequired[str]",
+    )
 
 
 def test_renders_the_per_tool_sample():
@@ -283,17 +434,17 @@ def test_renders_the_per_tool_sample():
 
 def test_keeps_generated_names_unique_across_tools_and_reserved_names():
     output = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
-    [first, second, call_tool] = render_tools(
+    [first, second, tool] = render_tools(
         [
             _tool("a_b", output_schema=output),
             _tool("aB", output_schema=output),
-            _tool("call_tool", output_schema=output),
+            _tool("tool", input_schema={"type": "object", "properties": {"info": output}}),
         ]
     )
     assert first.output_type == "ABResult"
     assert second.output_type == "ABResult2"
-    # `CallToolResult` is an MCP type.
-    assert call_tool.output_type == "CallToolResult2"
+    # `ToolInfo` is a built-in type.
+    assert tool.method == "    async def tool(self, *, info: ToolInfo2 | None = None) -> Any: ..."
     [shadowing] = render_tools([_tool("my-tool"), _tool("my_tool")])
     assert shadowing.tool.name == "my-tool"
 
@@ -315,7 +466,7 @@ def test_renders_tools_and_globals():
     )
     stubs = render_stubs(tools, [_global("attach", signature="(value: str) -> None")])
     assert stubs == (
-        "from typing import Any, Literal, Never, NotRequired, TypedDict\n\n"
+        "from typing import Any, Literal, Mapping, Never, NotRequired, TypedDict\n\n"
         "class Tools:\n"
         "    async def read(self, *, path: str) -> str: ...\n"
         "    async def remote_api(self, **args: Any) -> Any: ...\n\n"
@@ -345,8 +496,3 @@ def test_renders_namespaced_globals_and_explicit_signatures():
         "models: Models\n"
     )
     assert "class Tools:\n    pass" in stubs
-
-
-def test_adds_the_mcp_types_only_when_a_tool_needs_them():
-    assert "class CallToolResult" not in render_stubs(render_tools([_tool("x")]))
-    assert "class CallToolResult" in render_stubs(render_tools([_tool("x", output_schema=_mcp_result_schema())]))

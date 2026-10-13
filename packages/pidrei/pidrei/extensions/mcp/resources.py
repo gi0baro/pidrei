@@ -36,7 +36,6 @@ __all__ = [
     "READ_MCP_RESOURCE_TOOL",
     "McpResourceServer",
     "create_mcp_resource_tool_definitions",
-    "is_mcp_app_resource",
 ]
 
 
@@ -73,7 +72,7 @@ class McpResourceServer(Protocol):
 _MCP_APP_MIME_TYPE = re.compile(r';\s*profile\s*=\s*"?mcp-app"?', re.IGNORECASE)
 
 
-def is_mcp_app_resource(item: dict[str, Any]) -> bool:
+def _is_mcp_app_resource(item: dict[str, Any]) -> bool:
     """MCP App user interfaces, which only hosts that render them can use."""
     uri = item.get("uri")
     if uri is None:
@@ -270,7 +269,7 @@ def create_mcp_resource_tool_definitions(
             items, next_cursor = await page(server, cursor, cancel)
             listed: dict[str, Any] = {
                 "server": server.name,
-                key: [_listed(server.name, item) for item in items if not is_mcp_app_resource(item)],
+                key: [_listed(server.name, item) for item in items if not _is_mcp_app_resource(item)],
             }
             if next_cursor is not None:
                 listed["nextCursor"] = next_cursor
@@ -283,7 +282,7 @@ def create_mcp_resource_tool_definitions(
         errors: list[dict[str, str]] = []
         for server, (ok, value) in zip(reached, results, strict=True):
             if ok:
-                collected.extend(_listed(server.name, item) for item in value if not is_mcp_app_resource(item))
+                collected.extend(_listed(server.name, item) for item in value if not _is_mcp_app_resource(item))
             else:
                 errors.append({"server": server.name, "error": str(value)})
         return {key: collected, **({"errors": errors} if errors else {})}

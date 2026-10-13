@@ -47,6 +47,8 @@ class ExtensionContext:
 # others are not. The active tool set (`get_active_tools`/`set_active_tools`)
 # is the set declared to the model.
 type ToolExposure = Literal["direct", "model-only", "codemode", "deferred", "hidden"]
+# What a call may reach (`ToolDefinition.reaches_tools`): every tool, or the words that may name them.
+type ToolReach = Literal["all"] | Sequence[str]
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -71,6 +73,10 @@ class ToolNamespace:
 
     # For example `mcp__docs`.
     name: str
+    # Other names that refer to the namespace where tools look it up by name
+    # (codemode's `describe_namespace()` and the `namespace` option of
+    # `search_tools()`), for example `docs`.
+    aliases: tuple[str, ...] | None = None
     # Short summary shown once with the group in model-facing tool listings.
     description: str | None = None
     # Longer usage guidance, such as MCP server instructions. Not part of tool
@@ -143,6 +149,14 @@ class ToolDefinition:
     exposure: ToolExposure | None = None
     # Group the tool belongs to, for example its MCP server.
     namespace: ToolNamespace | None = None
+    # For tools that reach other tools (such as `codemode`, which calls them,
+    # and `tool_search`, which loads them): which tools a call with `input` may
+    # reach. `"all"`, or the words of the input that may name them, where a word
+    # refers to a tool or namespace whose name it contains, so words may
+    # over-match. Extensions that register tools late, such as MCP servers that
+    # are still connecting, use it from their `tool_call` handler to finish
+    # registering those tools before the call runs.
+    reaches_tools: Callable[[dict[str, Any]], Awaitable[ToolReach]] | None = None
     # Hints about what the tool does, for example from an MCP server.
     annotations: ToolAnnotations | None = None
     # Whether registering the tool activates it. None means True for "direct"

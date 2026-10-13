@@ -100,14 +100,25 @@ def _parse_options(directive: str) -> CodemodeSourceOptions:
 
 def parse_codemode_source(source: str) -> ParsedCodemodeSource:
     """Split an optional first-line `# @options: {...}` from the script. Raises
-    `CodemodeSourceError` for empty input and invalid options."""
+    `CodemodeSourceError` for empty input, invalid options, and an options
+    line that is not the first line, which would otherwise be ignored without
+    notice."""
     if source.strip() == "":
         raise CodemodeSourceError(
             "Expected Python source text (non-empty). Provide Python only, optionally with a first line "
             '`# @options: {"max_output_tokens": 1000}`.'
         )
+    lines = source.split("\n")
+    misplaced = next(
+        (index for index, line in enumerate(lines) if index > 0 and line.lstrip().startswith(CODEMODE_OPTIONS_PREFIX)),
+        None,
+    )
+    if misplaced is not None:
+        raise CodemodeSourceError(
+            f"The {CODEMODE_OPTIONS_PREFIX} line must be the first line of the input; found one on line {misplaced + 1}"
+        )
     newline = source.find("\n")
-    first_line = (source if newline == -1 else source[:newline]).removesuffix("\r")
+    first_line = lines[0].removesuffix("\r")
     trimmed = first_line.lstrip()
     if not trimmed.startswith(CODEMODE_OPTIONS_PREFIX):
         return ParsedCodemodeSource(code=source, options=CodemodeSourceOptions())

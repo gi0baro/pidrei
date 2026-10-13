@@ -101,6 +101,7 @@ from .extensions.types import (
     ToolExposure,
     ToolLoadout,
     ToolNamespace,
+    ToolReach,
 )
 from .mcp_servers import create_tool_name_matcher, is_mcp_tool_name
 from .messages import BashExecutionMessage, CustomMessage, convert_to_llm
@@ -471,6 +472,7 @@ class ToolInfo:
     exposure: ToolExposure = "direct"
     namespace: ToolNamespace | None = None
     annotations: ToolAnnotations | None = None
+    reaches_tools: Callable[[dict[str, Any]], Awaitable[ToolReach]] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1747,6 +1749,7 @@ class AgentSession:
                 exposure=self._get_tool_exposure(entry.definition.name),
                 namespace=entry.definition.namespace,
                 annotations=entry.definition.annotations,
+                reaches_tools=entry.definition.reaches_tools,
             )
             for entry in self._tool_definitions.values()
         ]

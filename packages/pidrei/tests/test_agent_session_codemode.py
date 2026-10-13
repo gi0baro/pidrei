@@ -21,6 +21,7 @@ import base64
 import json
 import re
 import threading
+import time
 
 import pytest
 import tonio.colored as tonio
@@ -35,7 +36,7 @@ from pidrei.extensions.codemode import (
     create_codemode_extension,
     create_codemode_tool,
 )
-from pidrei.extensions.codemode.execute import read_codemode_store
+from pidrei.extensions.codemode.execute import _join_adjacent_text, read_codemode_store
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
 from pidrei_ai.types import (
@@ -582,6 +583,13 @@ async def test_applies_the_timeout_ms_option_and_rejects_invalid_options(harness
         TextContent(text="@options only supports `max_output_tokens` and `timeout_ms`; got `yield`")
     ]
 
+    # pi #10631: a misplaced options line fails before the script runs instead of running without a deadline.
+    misplaced = await run(harness, '# count\n# @options: {"timeout_ms": 200}\nwhile True:\n    pass')
+    assert misplaced.is_error is True
+    assert misplaced.content == [
+        TextContent(text="The # @options: line must be the first line of the input; found one on line 2")
+    ]
+
 
 @pytest.mark.tonio
 async def test_limits_script_memory_so_runaway_allocations_end_the_script(harnesses):
@@ -637,6 +645,19 @@ image('data:image/png;base64,{TINY_PNG_BASE64}')""",
 
     small = await run(harness, "{'ok': True}")
     assert small.details.full_output_path is None
+
+
+# pi #10678: joining the text items was quadratic. pi runs 100,000 `text("")`
+# calls end to end; here each `text()` is a round trip to the Monty sandbox, and
+# CPython joins empty strings without copying, so the join itself is timed on
+# items the old join took about 20 s for (40,000 items of 1,000 characters).
+def test_joins_output_text_in_linear_time():
+    items = [TextContent(text="x" * 1000) for _ in range(40_000)]
+    started_at = time.perf_counter()
+    [joined] = _join_adjacent_text(items)
+    elapsed = time.perf_counter() - started_at
+    assert joined.text == "\n".join(item.text for item in items)
+    assert elapsed < 2
 
 
 @pytest.mark.tonio
@@ -1025,6 +1046,27 @@ async def attempt(call):
     ),
     'badImage': await attempt(models.generate_images({{'provider': 'scorer', 'id': 'painter'}}, {{'prompt': 'a fox'}})),
     'badSplit': await attempt(models.get_model_of_type('classifier', 'scorer/judge')),
+    'arrayModel': await attempt(models.classify(['scorer', 'judge'], {{}})),
+    'arrayContext': await attempt(models.classify(model, [])),
+    'arrayState': await attempt(models.classify(model, {{'state': [], 'questions': {QUESTIONS}}})),
+    'arrayQuestions': await attempt(models.classify(model, {{'state': {{}}, 'questions': []}})),
+    'arrayQuestion': await attempt(models.classify(model, {{'state': {{}}, 'questions': {{'kind': []}}}})),
+    'noInstructions': await attempt(
+        models.classify(model, {{'state': {{}}, 'questions': {{'kind': {{'type': 'bool', 'criteria': {{'true': 'y', 'false': 'n'}}}}}}}})
+    ),
+    'badBool': await attempt(
+        models.classify(model, {{'state': {{}}, 'questions': {{'kind': {{'type': 'bool', 'instructions': 'Ok?', 'criteria': ['y', 'n']}}}}}})
+    ),
+    'badKind': await attempt(
+        models.classify(model, {{'state': {{}}, 'questions': {{'kind': {{'type': 'rank', 'instructions': 'Rank?'}}}}}})
+    ),
+    'arrayImagesContext': await attempt(models.generate_images({{'provider': 'scorer', 'id': 'painter'}}, [])),
+    'badImageBlock': await attempt(
+        models.generate_images(
+            {{'provider': 'scorer', 'id': 'painter'}},
+            {{'input': [{{'type': 'text', 'text': 'a fox'}}, {{'type': 'image', 'data': 'aW1hZ2U='}}]}},
+        )
+    ),
 }}""",
     )
 
@@ -1053,6 +1095,36 @@ async def attempt(call):
         "models.generate_images() context['input'] must be a non-empty list of blocks, got None." in value["badImage"]
     )
     assert "The provider and the id are separate arguments" in value["badSplit"]
+    assert "models.classify() expects a classifier model as its first argument, got a list." in value["arrayModel"]
+    assert (
+        "models.classify() expects a context dict as its second argument, got an empty list." in value["arrayContext"]
+    )
+    assert "models.classify() context['state'] must be a dict, got an empty list." in value["arrayState"]
+    assert (
+        "models.classify() context['questions'] must map question IDs to questions, got an empty list."
+        in value["arrayQuestions"]
+    )
+    assert (
+        "models.classify() context['questions']['kind'] must be a question dict, got an empty list."
+        in value["arrayQuestion"]
+    )
+    assert "models.classify() context['questions']['kind']['instructions'] must be a string." in value["noInstructions"]
+    assert (
+        "context['questions']['kind'] is a \"bool\" question, so criteria must be {'true': str, 'false': str}."
+        in value["badBool"]
+    )
+    assert (
+        "context['questions']['kind']['type'] must be \"choice\", \"score\", or \"bool\", got 'rank'."
+        in value["badKind"]
+    )
+    assert (
+        "models.generate_images() expects a context dict as its second argument, got an empty list."
+        in value["arrayImagesContext"]
+    )
+    assert (
+        "models.generate_images() context['input'][1] must be a text or image block, got a dict with keys 'type', "
+        "'data'." in value["badImageBlock"]
+    )
     assert [(row.name, row.status, row.error) for row in call_rows(result)] == [
         ("models.classify", "error", "classifier exploded"),
         ("models.classify", "error", "Model scorer/judge does not accept image input"),

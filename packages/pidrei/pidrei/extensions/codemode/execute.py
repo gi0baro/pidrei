@@ -349,15 +349,32 @@ def _format_output(output: Sequence[CodemodeOutputItem]) -> list[TextContent | I
 
 
 def _join_adjacent_text(items: list[TextContent | ImageContent]) -> list[TextContent | ImageContent]:
-    """Join adjacent text items into one, each part starting on its own line."""
+    """Join adjacent text items into one, each part starting on its own line.
+    The separator check looks at the last non-empty part, not the joined text:
+    rebuilding a growing concatenation on every item is quadratic (pi #10678)."""
     joined: list[TextContent | ImageContent] = []
+    parts: list[str] = []
+    last_part = ""
+
+    def flush() -> None:
+        nonlocal parts, last_part
+        if parts:
+            joined.append(TextContent(text="".join(parts)))
+        parts = []
+        last_part = ""
+
     for item in items:
-        last = joined[-1] if joined else None
-        if item.type == "text" and last is not None and last.type == "text":
-            separator = "" if last.text == "" or last.text.endswith("\n") else "\n"
-            joined[-1] = TextContent(text=f"{last.text}{separator}{item.text}")
-        else:
+        if item.type != "text":
+            flush()
             joined.append(item)
+            continue
+        if last_part != "" and not last_part.endswith("\n"):
+            parts.append("\n")
+            last_part = "\n"
+        parts.append(item.text)
+        if item.text != "":
+            last_part = item.text
+    flush()
     return joined
 
 
@@ -523,7 +540,7 @@ class _ScriptState:
         # one. Taken before `_guard`, never the other way round.
         self._publish_guard = threading.Lock()
 
-    def _publish(self) -> None:
+    def publish(self) -> None:
         if self._on_update is None:
             return
         with self._publish_guard:
@@ -534,13 +551,13 @@ class _ScriptState:
     def add_call(self, row: _CallRow) -> None:
         with self._guard:
             self._calls.append(row)
-        self._publish()
+        self.publish()
 
     def update_call(self, row: _CallRow, **changes: Any) -> None:
         with self._guard:
             for key, value in changes.items():
                 setattr(row, key, value)
-        self._publish()
+        self.publish()
 
     def add_model_usage(self, usage: Usage) -> None:
         with self._guard:
@@ -607,6 +624,8 @@ async def execute_codemode(
     started_at = clock.monotonic()
     source = parse_codemode_source(params["code"])
     state = _ScriptState(on_update)
+    # Show the script as running before its first nested call, so the row's timer starts.
+    state.publish()
     models = options.models and ctx is not None
 
     callable_tools = get_codemode_callable_tools(ctx.tools) if ctx is not None else []
@@ -682,21 +701,14 @@ async def execute_codemode(
     )
 
 
-def _is_namespace_name(namespace: str, query: str) -> bool:
-    """Whether `query` names the namespace: its name, its script identifier
-    (`mcp__dev-radius` is `mcp__dev_radius`), or the part after its last `__`
-    in either form (`dev-radius`, `dev_radius`)."""
-    identifier = to_codemode_identifier(namespace)
+def _is_namespace_name(namespace: ToolNamespace, query: str) -> bool:
+    """Whether `query` names the namespace: its name or one of its aliases, as
+    written or as the same script identifier (`dev-radius` and `dev_radius` are
+    both `dev_radius`)."""
     query_identifier = to_codemode_identifier(query)
-
-    def suffix(name: str) -> str | None:
-        return name[name.rindex("__") + 2 :] if "__" in name else None
-
-    return (
-        namespace == query
-        or identifier == query_identifier
-        or suffix(namespace) == query
-        or suffix(identifier) == query_identifier
+    return any(
+        name == query or to_codemode_identifier(name) == query_identifier
+        for name in (namespace.name, *(namespace.aliases or ()))
     )
 
 
@@ -730,7 +742,7 @@ def _create_discovery_globals(
         documents = []
         for tool in tools:
             tool_namespace = namespace_of(tool.name)
-            if namespace and (tool_namespace is None or not _is_namespace_name(tool_namespace.name, namespace)):
+            if namespace and (tool_namespace is None or not _is_namespace_name(tool_namespace, namespace)):
                 continue
             documents.append(create_tool_search_document(tool, tool_namespace))
         return [entry(match.name) for match in ranker.rank(query, documents, int(limit))]
@@ -750,7 +762,7 @@ def _create_discovery_globals(
         names: list[str] = []
         for tool in tools:
             tool_namespace = namespace_of(tool.name)
-            if tool_namespace is None or not _is_namespace_name(tool_namespace.name, name):
+            if tool_namespace is None or not _is_namespace_name(tool_namespace, name):
                 continue
             if found is None:
                 found = tool_namespace

@@ -19,14 +19,17 @@ from mcp_helpers import header, headers_of, loopback_servers, read_json
 from pidrei_mcp import (
     LATEST_PROTOCOL_VERSION,
     AuthProvider,
+    McpAbortError,
     McpAuthRequiredError,
     McpClient,
     McpConnectionClosedError,
     McpSessionExpiredError,
+    McpTimeoutError,
     StreamableHttpReconnectOptions,
     StreamableHttpTransport,
 )
 from pidrei_mcp.transports.streamable_http import SseEvent, consume_sse_stream
+from pidrei_utils.cancel import CancelToken
 
 
 _WAIT_S = 5.0
@@ -482,6 +485,80 @@ async def test_hands_401_and_insufficient_scope_403_responses_to_the_auth_provid
         )
         assert await client.call_tool("echo") == {"content": [{"type": "text", "text": "hello"}]}
         assert seen == [{"status": 401, "token": "old"}, {"status": 403, "token": "new"}]
+        await client.close()
+
+
+# pi #10598: a request cancelled or timed out while waiting for a shared refresh must not be retried.
+@pytest.mark.tonio
+async def test_does_not_retry_requests_that_were_cancelled_while_authorization_was_recovering(monkeypatch):
+    async with loopback_servers(monkeypatch) as http_servers:
+        token = "old"
+        executed: list[str] = []
+
+        async def handler(request, log):
+            if request.method != "POST":
+                await protocol_handler(request, log)
+                return
+            message = await read_json(request)
+            if message.get("method") == "tools/call" and header(request, "authorization") == "Bearer old":
+                await request.respond(401, headers={"www-authenticate": "Bearer"})
+                return
+            if message.get("method") == "tools/call":
+                executed.append(_tool_name(message))
+            await protocol_handler(request, log, message)
+
+        release_refresh = tonio.Event()
+        refreshed = tonio.Event()
+        all_waiting = tonio.Event()
+        state_lock = threading.Lock()
+        state = {"refreshing": False, "refreshes": 0, "waiting": 0}
+
+        async def current_token():
+            return token
+
+        async def on_unauthorized(_context):
+            nonlocal token
+            with state_lock:
+                first = not state["refreshing"]
+                if first:
+                    state["refreshing"] = True
+                    state["refreshes"] += 1
+                state["waiting"] += 1
+                if state["waiting"] == 3:
+                    all_waiting.set()
+            if first:
+                await release_refresh.wait(_WAIT_S)
+                token = "new"
+                refreshed.set()
+            else:
+                await refreshed.wait(_WAIT_S)
+
+        url, _log = await start_server(http_servers, handler)
+        client = McpClient(name="http-test", version="1.0.0")
+        await client.connect(
+            StreamableHttpTransport(
+                url,
+                open_get_stream=False,
+                auth_provider=AuthProvider(token=current_token, on_unauthorized=on_unauthorized),
+            )
+        )
+        cancel = CancelToken()
+        aborted = tonio.spawn(client.call_tool("aborted", {}, cancel=cancel))
+        timed_out = tonio.spawn(client.call_tool("timed-out", {}, timeout_ms=200))
+        kept = tonio.spawn(client.call_tool("kept"))
+        await all_waiting.wait(_WAIT_S)
+        assert all_waiting.is_set()
+        cancel.cancel()
+        with pytest.raises(BaseExceptionGroup) as aborted_error:
+            await aborted
+        assert aborted_error.group_contains(McpAbortError)
+        with pytest.raises(BaseExceptionGroup) as timed_out_error:
+            await timed_out
+        assert timed_out_error.group_contains(McpTimeoutError)
+        release_refresh.set()
+        assert await kept == {"content": [{"type": "text", "text": "hello"}]}
+        assert executed == ["kept"]
+        assert state["refreshes"] == 1
         await client.close()
 
 

@@ -25,6 +25,9 @@ def test_passes_text_and_images_through_and_replaces_other_blocks_with_text():
 
 
 def test_falls_back_to_the_structured_content_as_json_when_there_are_no_blocks():
+    # pi #10416: structured content may be any JSON value.
+    assert to_llm_content({"content": [], "structuredContent": [1, 2]}) == [{"type": "text", "text": "[\n  1,\n  2\n]"}]
+    assert to_llm_content({"content": [], "structuredContent": None}) == [{"type": "text", "text": "null"}]
     assert to_llm_content({"content": [], "structuredContent": {"n": 1}}) == [
         {"type": "text", "text": '{\n  "n": 1\n}'}
     ]

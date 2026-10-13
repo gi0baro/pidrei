@@ -39,7 +39,6 @@ from .tool import (
     create_codemode_description,
     create_codemode_tool,
     create_codemode_tool_definition,
-    is_codemode_tool,
 )
 
 
@@ -57,7 +56,6 @@ __all__ = [
     "create_codemode_tool",
     "create_codemode_tool_definition",
     "extension",
-    "is_codemode_tool",
 ]
 
 

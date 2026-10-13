@@ -53,6 +53,7 @@ from ..protocol.jsonrpc import (
     JSON_RPC_ERROR_CODES,
     JsonRpcId,
     JsonRpcMessage,
+    McpAbortError,
     McpConnectionClosedError,
     is_json_rpc_request,
     is_json_rpc_response,
@@ -289,12 +290,12 @@ class StreamableHttpTransport(TransportEvents):
     def set_protocol_version(self, version: str) -> None:
         self._protocol_version = version
 
-    def send(self, message: JsonRpcMessage) -> SendResult:
+    def send(self, message: JsonRpcMessage, *, cancel: CancelToken | None = None) -> SendResult:
         with self._lock:
             if not self._started or self._closed:
                 return SendResult.failed(McpConnectionClosedError())
         result = SendResult()
-        tonio.spawn.without_tracking(self._post(message, result))
+        tonio.spawn.without_tracking(self._post(message, result, cancel))
         return result
 
     async def close(self) -> None:
@@ -333,19 +334,20 @@ class StreamableHttpTransport(TransportEvents):
         except Exception:
             pass
 
-    async def _post(self, message: JsonRpcMessage, result: SendResult) -> None:
+    async def _post(self, message: JsonRpcMessage, result: SendResult, cancel: CancelToken | None) -> None:
         try:
-            await self._send_message(message)
+            await self._send_message(message, cancel)
         except Exception as error:
             result.settle(error)
         else:
             result.settle()
 
-    async def _send_message(self, message: JsonRpcMessage) -> None:
+    async def _send_message(self, message: JsonRpcMessage, cancel: CancelToken | None) -> None:
         response = await self._authorized_fetch(
             "POST",
             {"accept": "application/json, text/event-stream", "content-type": "application/json"},
             stringify(message).encode("utf-8"),
+            cancel,
         )
         await self._check_response(response)
         self._capture_session(response)
@@ -400,15 +402,24 @@ class StreamableHttpTransport(TransportEvents):
         if owned:
             await _close_quietly(response)
 
-    async def _authorized_fetch(self, method: str, extra: dict[str, str], body: bytes | None) -> McpResponse:
+    async def _authorized_fetch(
+        self, method: str, extra: dict[str, str], body: bytes | None, cancel: CancelToken | None = None
+    ) -> McpResponse:
         """Fetch with auth headers. A 401 (or a 403 asking for more scope) is
         handed to the auth provider once, and the request is retried with
-        whatever credentials it left behind."""
+        whatever credentials it left behind.
+
+        `cancel` only stops dispatch: getting a token or the authorization
+        recovery can take a while, and a request its sender gave up on in the
+        meantime must not reach the server. It does not abort the shared
+        recovery, which other requests may wait for."""
         provider = self.options.auth_provider
         on_unauthorized = provider.on_unauthorized if provider is not None else None
         attempt = 0
         while True:
             headers, token = await self._headers(extra)
+            if cancel is not None and cancel.cancelled:
+                raise McpAbortError()
             response = await self._open(method, headers, body)
             if attempt > 0 or on_unauthorized is None or not _needs_authorization(response):
                 return response

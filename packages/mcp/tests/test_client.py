@@ -390,6 +390,20 @@ async def test_defaults_missing_tool_result_content_to_an_empty_list():
     await client.close()
 
 
+# pi #10416: MCP 2026-07-28 allows any JSON value as structured content.
+@pytest.mark.tonio
+async def test_accepts_structured_content_that_is_not_an_object():
+    client, server = await connect()
+    for structured_content in ([{"id": 1}, {"id": 2}], None, "text", 3, False):
+
+        async def structured(_request, structured_content=structured_content):
+            return {"content": [], "structuredContent": structured_content}
+
+        server.set_handler("tools/call", structured)
+        assert await client.call_tool("structured") == {"content": [], "structuredContent": structured_content}
+    await client.close()
+
+
 @pytest.mark.tonio
 async def test_does_not_send_notifications_cancelled_for_a_timed_out_initialize():
     client_transport, server = await create_server()

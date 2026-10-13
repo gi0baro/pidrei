@@ -22,6 +22,8 @@ from typing import Any, Protocol
 import tonio.colored as tonio
 from tonio.colored.sync import channel
 
+from pidrei_utils.cancel import CancelToken
+
 from ..protocol.jsonrpc import JsonRpcMessage
 
 
@@ -82,7 +84,12 @@ class SendResult:
 
 class McpTransport(Protocol):
     async def start(self) -> None: ...
-    def send(self, message: JsonRpcMessage) -> SendResult: ...
+    # `cancel` fires once the sender no longer waits for a reply (the request
+    # was cancelled, timed out, answered, or the client closed). A transport
+    # must not dispatch the message after that, for example when retrying it
+    # after an authorization refresh. It does not undo a message already
+    # dispatched.
+    def send(self, message: JsonRpcMessage, *, cancel: CancelToken | None = None) -> SendResult: ...
     async def close(self) -> None: ...
     def on_message(self, listener: McpTransportMessageListener) -> Callable[[], None]: ...
     def on_error(self, listener: McpTransportErrorListener) -> Callable[[], None]: ...

@@ -55,7 +55,10 @@ STORE_HINT = (
     "variables, or write it to a file with a tool."
 )
 
-IMAGE_HELPER_EXPECTS = "image expects a non-empty image URL string, an object with image_url, or a raw MCP image block"
+IMAGE_HELPER_EXPECTS = (
+    "image expects a non-empty image URL string, an object with image_url, or an image block "
+    "{'type': 'image', 'data': ..., 'mimeType': ...}"
+)
 
 
 def to_json(value: Any) -> str:
@@ -96,10 +99,10 @@ def _image_url(value: Any) -> str:
     if not isinstance(kind, str):
         raise TypeError(IMAGE_HELPER_EXPECTS)
     if kind != "image":
-        raise TypeError(f'image only accepts MCP image blocks, got "{kind}"')
+        raise TypeError(f'image only accepts image blocks, got "{kind}"')
     data = value.get("data")
     if not isinstance(data, str) or data == "":
-        raise TypeError("image expected MCP image data")
+        raise TypeError("image expected image block data")
     if data.lower().startswith("data:"):
         return data
     return f"data:;base64,{data}"
@@ -120,7 +123,8 @@ _WHITESPACE = re.compile(r"\s+")
 
 def image_output(value: Any) -> CodemodeImageItem:
     """`image(value)`: a base64 `data:` URL, an `{'image_url': ...}` dict, or an
-    MCP image block. Validates the base64 and takes the type from the data."""
+    image block `{'type': 'image', 'data': ..., 'mimeType': ...}`. Validates the
+    base64 and takes the type from the data."""
     url = _image_url(value)
     if url == "":
         raise TypeError(IMAGE_HELPER_EXPECTS)

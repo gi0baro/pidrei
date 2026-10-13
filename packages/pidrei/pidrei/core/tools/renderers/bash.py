@@ -9,33 +9,17 @@ shape is unchanged.
 """
 
 from pidrei_tui import Container, Spacer, Text
-from pidrei_utils import clock
-from pidrei_utils.timers import Interval
 
 from ....modes.interactive.components.keybinding_hints import key_hint
 from ....modes.interactive.components.visual_truncate import VisualLinePreview
 from ....modes.interactive.theme import theme
-from ..render_utils import get_text_output, invalid_arg_text, str_or_none
+from ..render_utils import get_text_output, invalid_arg_text, start_tool_timer, str_or_none, tool_timer_text
 from ..truncate import DEFAULT_MAX_BYTES, format_size
 from .types import ToolRenderers
 
 
 BASH_PREVIEW_LINES = 5
 BASH_UPDATE_THROTTLE_S = 0.1
-
-
-def _format_duration(ms: float) -> str:
-    seconds = ms / 1000
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-
-    total_seconds = int(seconds)
-    minutes = total_seconds // 60
-    remainder = total_seconds % 60
-    if minutes < 60:
-        return f"{minutes}m {remainder}s"
-
-    return f"{minutes // 60}h {minutes % 60}m {remainder}s"
 
 
 def _format_shell_call(args: dict | None, prompt: str) -> str:
@@ -62,9 +46,7 @@ def _rebuild_bash_result_render_component(
     result,
     options: dict,
     show_images: bool,
-    started_at: float | None,
-    ended_at: float | None,
-    duration_ms: int | None,
+    timer_text: str | None,
 ) -> None:
     component.clear()
 
@@ -115,51 +97,21 @@ def _rebuild_bash_result_render_component(
                 warnings.append(f"Truncated: {truncation.output_lines} lines shown ({format_size(max_bytes)} limit)")
         component.add_child(Text("\n" + theme.fg("warning", f"[{'. '.join(warnings)}]"), 0, 0))
 
-    # A final result's recorded duration wins: it is monotonic and survives reloads. The renderer's own clock is the
-    # fallback for live progress and for results stored without one.
-    if not options.get("isPartial") and duration_ms is not None:
-        component.add_child(Text("\n" + theme.fg("muted", f"Took {_format_duration(duration_ms)}"), 0, 0))
-    elif started_at is not None:
-        label = "Elapsed" if options.get("isPartial") else "Took"
-        end_time = ended_at if ended_at is not None else clock.monotonic() * 1000
-        component.add_child(Text("\n" + theme.fg("muted", f"{label} {_format_duration(end_time - started_at)}"), 0, 0))
+    if timer_text:
+        component.add_child(Text("\n" + theme.fg("muted", timer_text), 0, 0))
 
 
 def create_shell_renderers(prompt: str) -> ToolRenderers:
     def render_call(args, _theme, context):
-        state = context["state"]
-        if context["executionStarted"] and state.get("startedAt") is None:
-            state["startedAt"] = clock.monotonic() * 1000
-            state["endedAt"] = None
+        start_tool_timer(context)
         text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
         text.set_text(_format_shell_call(args, prompt))
         return text
 
     def render_result(result, options, _theme, context):
-        state = context["state"]
-        if state.get("startedAt") is not None and options.get("isPartial") and not state.get("interval"):
-            invalidate = context["invalidate"]
-
-            def tick() -> None:
-                invalidate()
-
-            state["interval"] = Interval(1000, tick)
-        if not options.get("isPartial") or context["isError"]:
-            if state.get("endedAt") is None:
-                state["endedAt"] = clock.monotonic() * 1000
-            if state.get("interval"):
-                state["interval"].cancel()
-                state["interval"] = None
+        timer_text = tool_timer_text(context, bool(options.get("isPartial")))
         component = context["lastComponent"] if isinstance(context.get("lastComponent"), Container) else Container()
-        _rebuild_bash_result_render_component(
-            component,
-            result,
-            options,
-            context["showImages"],
-            state.get("startedAt"),
-            state.get("endedAt"),
-            context["durationMs"],
-        )
+        _rebuild_bash_result_render_component(component, result, options, context["showImages"], timer_text)
         component.invalidate()
         return component
 

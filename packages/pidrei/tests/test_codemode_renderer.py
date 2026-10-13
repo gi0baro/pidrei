@@ -1,13 +1,19 @@
 """Mirror of pi's codemode-renderer.test.ts."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from pidrei.extensions.codemode import CodemodeNestedCall, CodemodeToolDetails
 from pidrei.extensions.codemode.renderer import CODEMODE_RENDERERS
+from pidrei.modes.interactive.components import ToolExecutionComponent
 from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
+from pidrei_utils import clock as clock_module
+
+from .ui_timer_helpers import manual_ui_timers
 
 
 HEADER = TextContent(text="Script completed\nWall time 0.1 seconds\nOutput:\n")
@@ -114,3 +120,36 @@ def test_renders_details_read_back_from_a_session_file():
         }
     )
     assert text == '✗ read {"path":"a"} 1.5s\n\nhello'
+
+
+# pi #10708
+@pytest.mark.tonio
+async def test_shows_the_elapsed_time_while_the_script_runs_and_the_total_once_it_finished(monkeypatch):
+    # pi drives `Date.now()` with fake timers; the timer reads `clock.monotonic`, swapped for a settable one.
+    now = {"s": 0.0}
+    monkeypatch.setattr(clock_module, "monotonic", lambda: now["s"])
+    with manual_ui_timers():
+        component = ToolExecutionComponent(
+            "codemode",
+            "call",
+            {"code": ""},
+            {},
+            CODEMODE_RENDERERS,
+            SimpleNamespace(request_render=lambda: None),
+            "/",
+        )
+
+        def text() -> str:
+            return strip_ansi("\n".join(component.render(120)))
+
+        component.mark_execution_started()
+        component.update_result({"content": [], "details": CodemodeToolDetails(calls=[]), "isError": False}, True)
+        now["s"] += 3
+        component.invalidate()
+        assert "Elapsed 3.0s" in text()
+
+        component.update_result(
+            {"content": [], "details": CodemodeToolDetails(calls=[]), "isError": False, "durationMs": 5_100}, False
+        )
+        assert "Took 5.1s" in text()
+        assert "Elapsed" not in text()

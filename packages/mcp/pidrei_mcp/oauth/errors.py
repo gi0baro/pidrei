@@ -11,12 +11,15 @@ class OAuthError(Exception):
 
 
 class OAuthIssuerMismatchError(Exception):
-    def __init__(self, expected: str, received: str | None) -> None:
+    def __init__(self, expected: str | None, received: str | None) -> None:
+        # `expected` is None when no authorization server metadata was discovered;
         # `received` is None when an authorization response lacks the `iss`
         # parameter its server promised (RFC 9207).
-        shown = "none" if received is None else json.dumps(received, ensure_ascii=False)
+        def format_issuer(issuer: str | None) -> str:
+            return "none" if issuer is None else json.dumps(issuer, ensure_ascii=False)
+
         super().__init__(
-            f"OAuth issuer mismatch: expected {json.dumps(expected, ensure_ascii=False)}, received {shown}"
+            f"OAuth issuer mismatch: expected {format_issuer(expected)}, received {format_issuer(received)}"
         )
         self.expected = expected
         self.received = received
