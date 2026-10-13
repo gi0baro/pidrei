@@ -73,11 +73,11 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 from ...config import get_agent_dir
-from ...core.extensions.types import ToolDefinition, ToolNamespace
+from ...core.extensions.types import ToolDefinition, ToolNamespace, ToolReach
 from ...core.mcp_servers import mcp_namespace
 from ...utils.open_browser import open_browser
-from ..codemode.tool import CODEMODE_TOOL_NAME, is_codemode_tool
-from ..tool_search.tool import TOOL_SEARCH_TOOL_NAME, is_tool_search_tool
+from ..codemode.tool import CODEMODE_TOOL_NAME
+from ..tool_search.tool import TOOL_SEARCH_TOOL_NAME
 from .config import (
     LoadedMcpConfig,
     McpExposure,
@@ -256,18 +256,14 @@ def render_servers_section(servers: Sequence[Any]) -> str | None:
     return "\n".join([intro, *lines, *omitted(len(listed) - kept)])
 
 
-# Script API names that search, enumerate or describe tools or namespaces, which
-# may name a server in other forms (`has_tool` reads `ALL_TOOLS` in the prelude).
-_SCRIPT_DISCOVERY = re.compile(r"\b(search_tools|describe_namespace|describe_tool|ALL_TOOLS|call_tool|has_tool)\b")
-
-
-def _script_needs_server(code: str, server: str) -> bool:
-    """Whether a codemode script needs the server: it names the server's
-    namespace, or searches, enumerates, or describes tools or namespaces,
-    which may name the server in other forms."""
-    if _SCRIPT_DISCOVERY.search(code):
+def _reaches_server(reach: ToolReach, server: str) -> bool:
+    """Whether a call that reaches `reach` (see `ToolDefinition.reaches_tools`)
+    needs the server: it reaches every tool, or one of its words contains the
+    server's namespace."""
+    if reach == "all":
         return True
-    return mcp_namespace(server) in code
+    namespace = mcp_namespace(server)
+    return any(namespace in word for word in reach)
 
 
 def _view_of(server: _McpServer) -> ConnectionView | None:
@@ -300,9 +296,9 @@ def _describe_view(server: _McpServer, view: ConnectionView | None, with_error: 
         case "failed":
             return f"failed: {_first_line(view.error or 'unknown error')}" if with_error else "failed"
         case "connected":
-            tools, count = view.tools, len(view.resources)
-            resource_count = f" · {count} resource{'' if count == 1 else 's'}" if count > 0 else ""
-            return f"connected · {len(tools)} tool{'' if len(tools) == 1 else 's'}{resource_count}"
+            tools = view.tools
+            resources = " · resources" if view.has_resources else ""
+            return f"connected · {len(tools)} tool{'' if len(tools) == 1 else 's'}{resources}"
         case "connecting":
             return "connecting…"
         case state:
@@ -623,7 +619,11 @@ class _McpExtension:
         view = connection.view
         description = (entry.config.get("description") or "").strip()
         namespace = ToolNamespace(
-            name=mcp_namespace(server), description=description or None, instructions=view.instructions
+            name=mcp_namespace(server),
+            # `describe_namespace("docs")` finds `mcp__docs`.
+            aliases=(server,),
+            description=description or None,
+            instructions=view.instructions,
         )
         previous = self._server_tools.get(server, {})
         current: dict[str, None] = {}
@@ -781,10 +781,15 @@ class _McpExtension:
         needs_tool_search = "deferred" in exposures
         if not needs_codemode and not needs_tool_search:
             return
-        # Other extensions' tools of the same names cannot reach MCP tools, so never activate them.
+        # Only a tool of these names that declares `reaches_tools` can reach MCP tools; another
+        # extension's tool of the same name without it is never activated.
         tools = self._pi.get_all_tools()
-        has_codemode = any(is_codemode_tool(tool) for tool in tools)
-        has_tool_search = any(is_tool_search_tool(tool) for tool in tools)
+
+        def has_reaching_tool(name: str) -> bool:
+            return any(tool.name == name and tool.reaches_tools is not None for tool in tools)
+
+        has_codemode = has_reaching_tool(CODEMODE_TOOL_NAME)
+        has_tool_search = has_reaching_tool(TOOL_SEARCH_TOOL_NAME)
         auto_enable_codemode = self._auto_enable_codemode
         reachable: list[str] = []
 
@@ -1734,12 +1739,13 @@ class _McpExtension:
             sections.pop(MCP_SERVERS_SECTION, None)
 
     async def _on_tool_call(self, event: Any, ctx: Any) -> None:
-        """A codemode script waits for the servers it names, or for every
-        server when it searches or enumerates tools, so their tools are
-        registered before the script runs. tool_search and the resource tools
-        reach every server, so they wait for all of them. Direct MCP calls wait
-        only for their own server, including a reconnect still closing its old
-        transport."""
+        """A tool that reaches other tools (`reaches_tools`) waits for the
+        servers it may reach, so their tools are registered before it runs: a
+        codemode script for the servers it names, or for every server when it
+        searches or enumerates tools, and tool_search for every server. The
+        resource tools reach every server, so they wait for all of them. Direct
+        MCP calls wait only for their own server, including a reconnect still
+        closing its old transport."""
         tool = next((candidate for candidate in self._pi.get_all_tools() if candidate.name == event["toolName"]), None)
         if tool is None:
             return
@@ -1749,11 +1755,10 @@ class _McpExtension:
         if not ready_servers:
             return
         waiting: list[_McpServer] = []
-        if is_codemode_tool(tool):
-            code = (event.get("input") or {}).get("code")
-            source = code if isinstance(code, str) else ""
-            waiting = [server for server in ready_servers if _script_needs_server(source, server.entry.name)]
-        elif is_tool_search_tool(tool) or tool.name in _RESOURCE_TOOL_NAMES:
+        if tool.reaches_tools is not None:
+            reach = await tool.reaches_tools(event.get("input") or {})
+            waiting = [server for server in ready_servers if _reaches_server(reach, server.entry.name)]
+        elif tool.name in _RESOURCE_TOOL_NAMES:
             waiting = ready_servers
         else:
             with self._lock:

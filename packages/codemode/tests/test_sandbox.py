@@ -199,12 +199,18 @@ errors"""
     errors = result.value
     assert errors[0].startswith("TypeError: ") and "not JSON serializable" in errors[0]
     assert errors[1:] == [
-        "TypeError: image expects a non-empty image URL string, an object with image_url, or a raw MCP image block",
+        (
+            "TypeError: image expects a non-empty image URL string, an object with image_url, or an image block "
+            "{'type': 'image', 'data': ..., 'mimeType': ...}"
+        ),
         "TypeError: remote image URLs are not supported in tool outputs. Pass a base64 data URI instead",
         "TypeError: invalid image output. Pass a base64 data URI instead",
-        'TypeError: image only accepts MCP image blocks, got "text"',
-        "TypeError: image expected MCP image data",
-        "TypeError: image expects a non-empty image URL string, an object with image_url, or a raw MCP image block",
+        'TypeError: image only accepts image blocks, got "text"',
+        "TypeError: image expected image block data",
+        (
+            "TypeError: image expects a non-empty image URL string, an object with image_url, or an image block "
+            "{'type': 'image', 'data': ..., 'mimeType': ...}"
+        ),
         *["TypeError: invalid image output. The image data is not valid base64 (truncated or corrupted?)"] * 6,
         *["TypeError: invalid image output. The image data is not a PNG, JPEG, GIF, or WebP image"] * 3,
     ]

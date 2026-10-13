@@ -35,80 +35,27 @@ DEFAULT_INPUT_SCHEMA_MAX_CHARS = 16_000
 # Local `$ref` expansions per rendered schema, so shared definitions cannot
 # blow up the output.
 _MAX_REF_EXPANSIONS = 32
-
-# Python types for MCP results, from the MCP `CallToolResult` schema, so
-# `CallToolResult[T]` declarations can refer to them.
-MCP_PYTHON_PREAMBLE = """type Role = Literal['user', 'assistant']
-type MetaObject = dict[str, Any]
-
-class Annotations(TypedDict, total=False):
-    audience: list[Role]
-    priority: float
-    lastModified: str
-
-class Icon(TypedDict):
-    src: str
-    mimeType: NotRequired[str]
-    sizes: NotRequired[list[str]]
-    theme: NotRequired[Literal['light', 'dark']]
-
-class TextResourceContents(TypedDict):
-    uri: str
-    mimeType: NotRequired[str]
-    _meta: NotRequired[MetaObject]
-    text: str
-
-class BlobResourceContents(TypedDict):
-    uri: str
-    mimeType: NotRequired[str]
-    _meta: NotRequired[MetaObject]
-    blob: str
-
-class TextContent(TypedDict):
-    type: Literal['text']
-    text: str
-    annotations: NotRequired[Annotations]
-    _meta: NotRequired[MetaObject]
-
-class ImageContent(TypedDict):
-    type: Literal['image']
-    data: str
-    mimeType: str
-    annotations: NotRequired[Annotations]
-    _meta: NotRequired[MetaObject]
-
-class AudioContent(TypedDict):
-    type: Literal['audio']
-    data: str
-    mimeType: str
-    annotations: NotRequired[Annotations]
-    _meta: NotRequired[MetaObject]
-
-class ResourceLink(TypedDict):
-    icons: NotRequired[list[Icon]]
-    name: str
-    title: NotRequired[str]
-    uri: str
-    description: NotRequired[str]
-    mimeType: NotRequired[str]
-    annotations: NotRequired[Annotations]
-    size: NotRequired[float]
-    _meta: NotRequired[MetaObject]
-    type: Literal['resource_link']
-
-class EmbeddedResource(TypedDict):
-    type: Literal['resource']
-    resource: TextResourceContents | BlobResourceContents
-    annotations: NotRequired[Annotations]
-    _meta: NotRequired[MetaObject]
-
-type ContentBlock = TextContent | ImageContent | AudioContent | ResourceLink | EmbeddedResource
-
-class CallToolResult[T = dict[str, Any]](TypedDict):
-    _meta: NotRequired[MetaObject]
-    content: list[ContentBlock]
-    isError: NotRequired[bool]
-    structuredContent: NotRequired[T]"""
+# JSON Schema keywords with a number or string value shown as `@keyword value` property tags.
+_TAG_KEYWORDS = (
+    "minimum",
+    "exclusiveMinimum",
+    "maximum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minItems",
+    "maxItems",
+)
+# Tag keywords whose values all hold at once, so only the largest (lower) or smallest (upper) matters.
+_LOWER_BOUNDS = frozenset(("minimum", "exclusiveMinimum", "minLength", "minItems"))
+_UPPER_BOUNDS = frozenset(("maximum", "exclusiveMaximum", "maxLength", "maxItems"))
+# Longest property tag; longer ones (large defaults, long patterns) are left out.
+_MAX_TAG_CHARS = 80
+# Characters escaped inside a tag, so a tag stays on its comment line.
+_LINE_TERMINATORS = re.compile("[\r\n\u2028\u2029]")
 
 # The globals every script has, declared for the type checker. `has_tool` and
 # `all_settled` are defined by the prelude; the others are host functions.
@@ -135,7 +82,7 @@ class SettledRejected(TypedDict):
 ALL_TOOLS: list[ToolInfo]
 
 def text(value: Any) -> None: ...
-def image(value: str | ImageUrl | ImageBlock) -> None: ...
+def image(value: str | ImageUrl | ImageBlock | Mapping[str, Any]) -> None: ...
 def exit() -> Never: ...
 def store(key: str, value: Any) -> None: ...
 def load(key: str) -> Any: ...
@@ -143,7 +90,7 @@ def has_tool(name: str) -> bool: ...
 async def all_settled(*calls: Any) -> list[SettledFulfilled | SettledRejected]: ...
 async def call_tool(name: str, **args: Any) -> Any: ..."""
 
-_STUB_IMPORTS = "from typing import Any, Literal, Never, NotRequired, TypedDict"
+_STUB_IMPORTS = "from typing import Any, Literal, Mapping, Never, NotRequired, TypedDict"
 
 _DEFINED_NAME = re.compile(r"^(?:class|type)\s+(\w+)|^(\w+)\s*(?::|=)", re.MULTILINE)
 
@@ -154,43 +101,12 @@ def _defined_names(source: str) -> set[str]:
 
 
 _RESERVED_NAMES = frozenset(
-    {"Any", "Literal", "Never", "NotRequired", "TypedDict", "Tools", "tools"}
-    | _defined_names(MCP_PYTHON_PREAMBLE)
-    | _defined_names(BUILTIN_STUBS)
+    {"Any", "Literal", "Mapping", "Never", "NotRequired", "TypedDict", "Tools", "tools"} | _defined_names(BUILTIN_STUBS)
 )
 
 
 def _is_object(value: Any) -> bool:
     return isinstance(value, Mapping)
-
-
-def mcp_structured_content_schema(schema: CodemodeJsonSchema | None) -> CodemodeJsonSchema | None:
-    """The `structuredContent` schema of an MCP `CallToolResult` output schema
-    (detected by a `content` array of objects, boolean `isError`, and object
-    `_meta`), `True` when it declares none, or `None` when the schema is not a
-    `CallToolResult`."""
-    if not _is_object(schema) or not _is_object(schema.get("properties")):
-        return None
-    properties = schema["properties"]
-    content = properties.get("content")
-    is_error = properties.get("isError")
-    meta = properties.get("_meta")
-    if (
-        not _is_object(content)
-        or content.get("type") != "array"
-        or not _is_object(content.get("items"))
-        or content["items"].get("type") != "object"
-    ):
-        return None
-    if (
-        not _is_object(is_error)
-        or is_error.get("type") != "boolean"
-        or not _is_object(meta)
-        or meta.get("type") != "object"
-    ):
-        return None
-    structured = properties.get("structuredContent")
-    return structured if _is_object(structured) or isinstance(structured, bool) else True
 
 
 def _pascal(identifier: str) -> str:
@@ -215,6 +131,66 @@ def _union(types: Iterable[str]) -> str:
 
 def _description(schema: Any) -> str:
     return schema["description"].strip() if _is_object(schema) and isinstance(schema.get("description"), str) else ""
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _constraint_tags(prop: Any) -> str:
+    """Constraints of a property that its Python type cannot express, as JSDoc-style tags:
+    `@minimum 1 @maximum 100 @default 20`. Empty when there are none. Unlike pi's TypeScript,
+    whose `number` covers integers, the stub already says `int`, so there is no `@integer`."""
+    if not _is_object(prop):
+        return ""
+    # Optional fields such as Pydantic's `int | None` keep their constraints in the non-null branch.
+    # The branch's constraints apply together with the property's, so both are read.
+    variants = prop.get("anyOf") if isinstance(prop.get("anyOf"), list) else prop.get("oneOf")
+    non_null = (
+        [variant for variant in variants if not _is_object(variant) or variant.get("type") != "null"]
+        if isinstance(variants, list)
+        else []
+    )
+    candidates = [prop, non_null[0]] if len(non_null) == 1 and _is_object(non_null[0]) else [prop]
+    # Draft-04 and OpenAPI 3.0 make `minimum`/`maximum` exclusive with a boolean `exclusiveMinimum`/`exclusiveMaximum`.
+    schemas: list[dict[str, Any]] = []
+    for candidate in candidates:
+        schema = dict(candidate)
+        if candidate.get("exclusiveMinimum") is True:
+            schema["exclusiveMinimum"] = schema.pop("minimum", None)
+        if candidate.get("exclusiveMaximum") is True:
+            schema["exclusiveMaximum"] = schema.pop("maximum", None)
+        schemas.append(schema)
+
+    tags: list[str] = []
+    for keyword in _TAG_KEYWORDS:
+        values = [schema.get(keyword) for schema in schemas]
+        if keyword in _LOWER_BOUNDS or keyword in _UPPER_BOUNDS:
+            numbers = [value for value in values if _is_number(value)]
+            if numbers:
+                tags.append(f"@{keyword} {max(numbers) if keyword in _LOWER_BOUNDS else min(numbers)}")
+            continue
+        for value in dict.fromkeys(value for value in values if _is_number(value) or isinstance(value, str)):
+            tags.append(f"@{keyword} {value}")
+    if any(schema.get("uniqueItems") is True for schema in schemas):
+        tags.append("@uniqueItems")
+    # Annotations, unlike constraints, come from the property itself.
+    if prop.get("default") is not None:
+        tags.append(f"@default {prop['default']!r}")
+    if prop.get("deprecated") is True:
+        tags.append("@deprecated")
+    return " ".join(
+        _LINE_TERMINATORS.sub(lambda match: f"\\u{ord(match.group(0)):04x}", tag)
+        for tag in tags
+        if len(tag) <= _MAX_TAG_CHARS
+    )
+
+
+def _comment_lines(prop: Any, tags: bool) -> list[str]:
+    """A property's comment: its description lines, then its constraint tags."""
+    lines = [line.strip() for line in _description(prop).splitlines() if line.strip()]
+    tag_line = _constraint_tags(prop) if tags else ""
+    return [*lines, tag_line] if tag_line else lines
 
 
 def accepts_null(schema: Any) -> bool:
@@ -249,13 +225,22 @@ class _Names:
         self._taken.add(name)
         return name
 
+    def checkpoint(self) -> frozenset[str]:
+        return frozenset(self._taken)
+
+    def restore(self, checkpoint: frozenset[str]) -> None:
+        """Release the names taken since `checkpoint`, for a rendering that is discarded."""
+        self._taken = set(checkpoint)
+
 
 class _SchemaRenderer:
     """Renders one schema, collecting the `TypedDict`s it generates (nested ones first)."""
 
-    def __init__(self, names: _Names, root: CodemodeJsonSchema) -> None:
+    def __init__(self, names: _Names, root: CodemodeJsonSchema, *, tags: bool = True) -> None:
         self._names = names
         self._root = root
+        # Whether property comments include constraint tags.
+        self.tags = tags
         self._resolving: set[str] = set()
         self._expansions = 0
         self.definitions: list[str] = []
@@ -351,30 +336,35 @@ class _SchemaRenderer:
             if _is_object(additional):
                 return f"dict[str, {self.render(additional, f'{hint}Value')}]"
             return "dict[str, Any]"
-        if additional is not None and additional is not False:
-            return "dict[str, Any]"
         required = set(schema.get("required") or ()) if isinstance(schema.get("required"), list) else set()
         members = [
-            (key, self.render(value, f"{hint}{_pascal(key)}"), key in required, _description(value))
+            (key, self.render(value, f"{hint}{_pascal(key)}"), key in required, _comment_lines(value, self.tags))
             for key, value in properties.items()
         ]
+        # Known keys plus others (pi's `[key: string]: T` index signature): an open `TypedDict`.
+        extra_items = None
+        if additional is not None and additional is not False:
+            extra_items = "Any" if additional is True else self.render(additional, f"{hint}Value")
         name = self._names.take(hint)
-        self.definitions.append(_typed_dict(name, members))
+        self.definitions.append(_typed_dict(name, members, extra_items))
         return name
 
 
-def _typed_dict(name: str, members: Sequence[tuple[str, str, bool, str]]) -> str:
+def _typed_dict(name: str, members: Sequence[tuple[str, str, bool, list[str]]], extra_items: str | None = None) -> str:
+    """A `TypedDict` of `members`; with `extra_items`, open to other keys of that type."""
+
     def annotation(kind: str, required: bool) -> str:
         return kind if required else f"NotRequired[{kind}]"
 
-    if all(is_identifier(key) for key, _kind, _required, _description in members):
-        lines = [f"class {name}(TypedDict):"]
-        for key, kind, required, description in members:
-            lines.extend(f"{INDENT}# {line.strip()}" for line in description.splitlines() if line.strip())
+    extra = f", extra_items={extra_items}" if extra_items is not None else ""
+    if all(is_identifier(key) for key, _kind, _required, _comment in members):
+        lines = [f"class {name}(TypedDict{extra}):"]
+        for key, kind, required, comment in members:
+            lines.extend(f"{INDENT}# {line}" for line in comment)
             lines.append(f"{INDENT}{key}: {annotation(kind, required)}")
         return "\n".join(lines)
     fields = ", ".join(f"{key!r}: {annotation(kind, required)}" for key, kind, required, _ in members)
-    return f"{name} = TypedDict({name!r}, {{{fields}}})"
+    return f"{name} = TypedDict({name!r}, {{{fields}}}{extra})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,14 +379,24 @@ def schema_to_type(schema: CodemodeJsonSchema, *, name: str = "Type", max_chars:
     """Convert a JSON Schema to a Python annotation, generating `TypedDict`s
     named from `name`. Local references (`#/$defs/...`, `#/definitions/...`)
     resolve against `schema`; recursive and remote references render as `Any`.
-    A rendering longer than `max_chars` (annotation and definitions together)
-    renders as `Any`."""
-    renderer = _SchemaRenderer(_Names(()), schema)
-    annotation = renderer.render(schema, name)
-    definitions = tuple(renderer.definitions)
-    if max_chars is not None and len(annotation) + sum(len(definition) for definition in definitions) > max_chars:
-        return RenderedType("Any", ())
-    return RenderedType(annotation, definitions)
+    Property comments carry the constraints the type cannot express
+    (`# @minimum 1 @default 20`). A rendering longer than `max_chars`
+    (annotation and definitions together) is rendered again without the
+    constraint tags, and renders as `Any` if it is still too long."""
+
+    def render(tags: bool) -> RenderedType:
+        renderer = _SchemaRenderer(_Names(()), schema, tags=tags)
+        annotation = renderer.render(schema, name)
+        return RenderedType(annotation, tuple(renderer.definitions))
+
+    def fits(rendered: RenderedType) -> bool:
+        return max_chars is None or len(rendered.annotation) + sum(map(len, rendered.definitions)) <= max_chars
+
+    rendered = render(True)
+    if fits(rendered):
+        return rendered
+    untagged = render(False)
+    return untagged if fits(untagged) else RenderedType("Any", ())
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,8 +438,6 @@ class RenderedTool:
     output_type: str
     # Keyword parameters, None for `**args: Any`.
     parameters: tuple[CodemodeParameter, ...] | None
-    # Whether the declaration needs `MCP_PYTHON_PREAMBLE`.
-    uses_mcp_types: bool
 
     @property
     def sample(self) -> str:
@@ -456,35 +454,38 @@ def _render_tool(tool: CodemodeTool, identifier: str, names: _Names, input_max_c
     parameters = input_parameters(tool.input_schema)
     lines: list[str] | None = None
     if parameters is not None:
-        renderer = _SchemaRenderer(names, tool.input_schema)  # type: ignore[arg-type]
         properties = tool.input_schema["properties"]  # type: ignore[index]
-        lines = []
-        for parameter in parameters:
-            schema = properties[parameter.name]
-            kind = renderer.render(schema, f"{base}{_pascal(parameter.name)}")
-            if parameter.required:
-                declaration = f"{parameter.name}: {kind}"
-            elif kind == "Any" or "None" in kind.split(" | "):
-                declaration = f"{parameter.name}: {kind} = None"
-            else:
-                declaration = f"{parameter.name}: {kind} | None = None"
-            lines.extend(f"# {line.strip()}" for line in _description(schema).splitlines() if line.strip())
-            lines.append(declaration)
-        if sum(len(line) for line in [*lines, *renderer.definitions]) > input_max_chars:
+
+        def render_parameters(tags: bool) -> tuple[list[str], list[str]]:
+            renderer = _SchemaRenderer(names, tool.input_schema, tags=tags)  # type: ignore[arg-type]
+            rendered_lines: list[str] = []
+            for parameter in parameters:
+                schema = properties[parameter.name]
+                kind = renderer.render(schema, f"{base}{_pascal(parameter.name)}")
+                if parameter.required:
+                    declaration = f"{parameter.name}: {kind}"
+                elif kind == "Any" or "None" in kind.split(" | "):
+                    declaration = f"{parameter.name}: {kind} = None"
+                else:
+                    declaration = f"{parameter.name}: {kind} | None = None"
+                rendered_lines.extend(f"# {line}" for line in _comment_lines(schema, tags))
+                rendered_lines.append(declaration)
+            return rendered_lines, renderer.definitions
+
+        # An input over the budget is rendered again without the constraint tags,
+        # and takes `**args: Any` if it is still too long.
+        checkpoint = names.checkpoint()
+        for tags in (True, False):
+            lines, input_definitions = render_parameters(tags)
+            if sum(len(line) for line in [*lines, *input_definitions]) <= input_max_chars:
+                definitions.extend(input_definitions)
+                break
+            names.restore(checkpoint)
+        else:
             parameters = None
             lines = None
-        else:
-            definitions.extend(renderer.definitions)
 
-    uses_mcp_types = False
-    structured = mcp_structured_content_schema(tool.output_schema)
-    if structured is not None:
-        uses_mcp_types = True
-        renderer = _SchemaRenderer(names, structured)
-        kind = renderer.render(structured, f"{base}Result")
-        definitions.extend(renderer.definitions)
-        output_type = "CallToolResult" if kind == "Any" else f"CallToolResult[{kind}]"
-    elif tool.output_schema is None:
+    if tool.output_schema is None:
         output_type = "Any"
     else:
         renderer = _SchemaRenderer(names, tool.output_schema)
@@ -508,7 +509,6 @@ def _render_tool(tool: CodemodeTool, identifier: str, names: _Names, input_max_c
         method=method,
         output_type=output_type,
         parameters=parameters,
-        uses_mcp_types=uses_mcp_types,
     )
 
 
@@ -557,13 +557,11 @@ def render_stubs(
     *,
     preamble: str = "",
 ) -> str:
-    """The stub file scripts are type-checked against: the MCP types when a
-    tool needs them, every tool's `TypedDict`s and its member of `class Tools`,
-    the built-in globals, `preamble` (types the globals' signatures name), and
-    the globals, `ns.member` globals grouped into a `class` per namespace."""
+    """The stub file scripts are type-checked against: every tool's
+    `TypedDict`s and its member of `class Tools`, the built-in globals,
+    `preamble` (types the globals' signatures name), and the globals,
+    `ns.member` globals grouped into a `class` per namespace."""
     sections = [_STUB_IMPORTS]
-    if any(tool.uses_mcp_types for tool in tools):
-        sections.append(MCP_PYTHON_PREAMBLE)
     sections.extend(definition for tool in tools for definition in tool.definitions)
     methods = "\n".join(tool.method for tool in tools) or f"{INDENT}pass"
     sections.extend([f"class Tools:\n{methods}", "tools: Tools", BUILTIN_STUBS])

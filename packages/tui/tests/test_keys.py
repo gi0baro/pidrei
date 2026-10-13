@@ -120,6 +120,15 @@ def test_normalizes_kitty_keypad_functional_keys():
         assert parse_key("\x1b[57426u") == "delete"
 
 
+def test_matches_shifted_symbols_by_their_produced_character():
+    with kitty_active():
+        assert matches_key("\x1b[61:43;2u", "+") is True
+        assert matches_key("\x1b[61:43;2u", "shift+=") is True
+        assert parse_key("\x1b[61:43;2u") == "+"
+        assert matches_key("\x1b[61:43;6u", "ctrl++") is True
+        assert parse_key("\x1b[61:43;6u") == "ctrl++"
+
+
 def test_handles_shifted_key_in_format():
     with kitty_active():
         # Format with shifted key: CSI codepoint:shifted:base;modifier u
@@ -245,6 +254,8 @@ def test_matches_xterm_modify_other_keys_symbol_combos():
     set_kitty_protocol_active(False)
     assert matches_key("\x1b[27;5;47~", "ctrl+/") is True
     assert parse_key("\x1b[27;5;47~") == "ctrl+/"
+    assert matches_key("\x1b[27;6;43~", "ctrl++") is True
+    assert parse_key("\x1b[27;6;43~") == "ctrl++"
 
 
 def test_matches_xterm_modify_other_keys_digit_combos():
@@ -566,6 +577,8 @@ def test_parses_special_keys():
     assert parse_key(" ") == "space"
     assert parse_key("1") == "1"
     assert matches_key("1", "1") is True
+    assert parse_key("+") == "+"
+    assert matches_key("+", "+") is True
 
 
 def test_parses_arrow_keys():

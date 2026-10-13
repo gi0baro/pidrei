@@ -138,6 +138,7 @@ set), keyed by action id:
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/keybindings.schema.json",
   "app.model.select": "ctrl+m",
   "app.session.tree": ["ctrl+b", "f2"],
   "app.suspend": []

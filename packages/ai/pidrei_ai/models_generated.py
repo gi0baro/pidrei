@@ -73,7 +73,7 @@ def _compat_fields(compat_class: type) -> frozenset[str]:
 def _parse_fallback_targets(raw: list[dict[str, Any]]) -> list[AnthropicAllowedFallbackModel]:
     return [
         AnthropicAllowedFallbackModel(
-            provider=target["provider"], model=target["model"], cost=_parse_cost(target["cost"])
+            provider=target["provider"], model=target["model"], cost=parse_cost(target["cost"])
         )
         for target in raw
     ]
@@ -104,7 +104,7 @@ def _parse_compat(api: str, raw: dict[str, Any]) -> ModelCompat:
     return compat_class(**kwargs)
 
 
-def _parse_cost(raw: dict[str, Any]) -> ModelCost:
+def parse_cost(raw: dict[str, Any]) -> ModelCost:
     tiers = [
         ModelCostTier(
             input=tier["input"],
@@ -160,7 +160,7 @@ def _parse_model(raw: dict[str, Any]) -> Model:
         base_url=raw["baseUrl"],
         reasoning=raw["reasoning"],
         input=list(raw["input"]),
-        cost=_parse_cost(raw["cost"]),
+        cost=parse_cost(raw["cost"]),
         context_window=raw["contextWindow"],
         max_tokens=raw["maxTokens"],
         input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
@@ -181,7 +181,7 @@ def _parse_image_model(raw: dict[str, Any]) -> ImageModel:
         base_url=raw["baseUrl"],
         input=list(raw["input"]),
         output=list(raw["output"]),
-        cost=_parse_cost(raw["cost"]),
+        cost=parse_cost(raw["cost"]),
         input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
         headers=dict(raw["headers"]) if "headers" in raw else None,
     )
@@ -195,7 +195,7 @@ def _parse_classifier_model(raw: dict[str, Any]) -> ClassifierModel:
         provider=raw["provider"],
         base_url=raw["baseUrl"],
         input=list(raw["input"]),
-        cost=_parse_cost(raw["cost"]),
+        cost=parse_cost(raw["cost"]),
         context_window=raw["contextWindow"],
         input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
         headers=dict(raw["headers"]) if "headers" in raw else None,

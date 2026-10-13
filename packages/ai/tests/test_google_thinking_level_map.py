@@ -66,7 +66,7 @@ def _capturing(adapter):
         def __init__(self, _config):
             pass
 
-        async def generate_content_stream(self, params, *, env=None, cancel=None):
+        async def generate_content_stream(self, params, *, env=None, cancel=None, timeout_ms=None):
             captured.append(params)
 
             async def _chunks():

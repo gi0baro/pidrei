@@ -8,6 +8,8 @@ A message sent goes onto the peer's delivery channel as a deep copy (pi's
 import copy
 import threading
 
+from pidrei_utils.cancel import CancelToken
+
 from ..protocol.jsonrpc import JsonRpcMessage, McpConnectionClosedError
 from .transport import SendResult, TransportEvents
 
@@ -32,7 +34,7 @@ class InMemoryTransport(TransportEvents):
                 raise McpConnectionClosedError()
             self._started = True
 
-    def send(self, message: JsonRpcMessage) -> SendResult:
+    def send(self, message: JsonRpcMessage, *, cancel: CancelToken | None = None) -> SendResult:
         with self._state_lock:
             if not self._started or self._closed:
                 return SendResult.failed(McpConnectionClosedError())

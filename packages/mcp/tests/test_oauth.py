@@ -526,12 +526,15 @@ async def test_exchanges_a_code_only_when_its_iss_parameter_names_the_authorizat
         codes: list[str] = []
 
         async def handler(request, _origin):
+            if request.method != "POST":
+                await request.respond(404)
+                return
             codes.append(dict(parse_qsl(await read_body(request), keep_blank_values=True)).get("code", ""))
             await _respond_json(request, {"access_token": "token", "token_type": "Bearer"})
 
         origin = await http_servers.listen(handler)
 
-        def exchange(code: str, iss: str | None, iss_parameter_supported: bool):
+        def exchange(code: str, iss: str | None, iss_parameter_supported: bool, metadata: bool = True):
             provider = TestOAuthProvider("http://127.0.0.1/callback")
             provider.client = {"client_id": "client"}
             provider.verifier = "verifier"
@@ -543,7 +546,9 @@ async def test_exchanges_a_code_only_when_its_iss_parameter_names_the_authorizat
                     "token_endpoint": f"{origin}/token",
                     "response_types_supported": ["code"],
                     "authorization_response_iss_parameter_supported": iss_parameter_supported,
-                },
+                }
+                if metadata
+                else None,
             }
             return authorize_mcp(
                 provider, OAuthFlowOptions(server_url=f"{origin}/mcp", authorization_code=code, iss=iss)
@@ -556,7 +561,11 @@ async def test_exchanges_a_code_only_when_its_iss_parameter_names_the_authorizat
         assert await exchange("matching", origin, True) == "AUTHORIZED"
         # Servers that do not promise the parameter may omit it.
         assert await exchange("omitted", None, False) == "AUTHORIZED"
-        assert codes == ["matching", "omitted"]
+        # Without metadata there is no issuer to compare with, so a server cannot skip the check by hiding it.
+        with pytest.raises(OAuthIssuerMismatchError):
+            await exchange("unverifiable", "https://attacker.example", False, False)
+        assert await exchange("no-metadata", None, False, False) == "AUTHORIZED"
+        assert codes == ["matching", "omitted", "no-metadata"]
 
 
 # pi #10565

@@ -8,6 +8,7 @@ from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_tui import Container, SettingsList, Spacer, Text, get_capabilities
 
 from ....core.http_config import HTTP_IDLE_TIMEOUT_CHOICES, format_http_idle_timeout_ms
+from ....core.settings_defaults import SETTINGS_DEFAULTS
 from ....core.settings_manager import CACHE_WARMING_MODES
 from ..theme import SYSTEM_THEME_NAME, get_settings_list_theme, parse_auto_theme_setting, theme
 from .dynamic_border import DynamicBorder
@@ -51,7 +52,11 @@ class WarningSettingsSubmenu(Container):
                 "label": "Anthropic extra usage",
                 "description": "Warn when Anthropic subscription auth may use paid extra usage",
                 "currentValue": "true"
-                if (anthropic_extra_usage if anthropic_extra_usage is not None else True)
+                if (
+                    anthropic_extra_usage
+                    if anthropic_extra_usage is not None
+                    else SETTINGS_DEFAULTS["warnings"]["anthropicExtraUsage"]
+                )
                 else "false",
                 "values": ["true", "false"],
             },
@@ -727,7 +732,7 @@ class SettingsSelectorComponent(Container):
             {
                 "id": "show-hardware-cursor",
                 "label": "Show hardware cursor",
-                "description": "Show the terminal cursor while still positioning it for IME support",
+                "description": "Use the terminal cursor instead of PiDrei's drawn cursor",
                 "currentValue": "true" if config["showHardwareCursor"] else "false",
                 "values": ["true", "false"],
             },

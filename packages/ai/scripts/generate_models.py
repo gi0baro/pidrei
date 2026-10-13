@@ -31,6 +31,8 @@ from typing import Any
 import tonio.colored as tonio
 from punkreq.tonio import Client
 
+from pidrei_ai.providers.openrouter_api import openrouter_cost
+
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -1220,38 +1222,6 @@ def _openrouter_modalities(values: list[str] | None) -> list[str]:
     return seen
 
 
-def _openrouter_per_million(value: str | None, fallback: float) -> float:
-    # Convert pricing from $/token to $/million tokens
-    return round_cost(float(value) * 1_000_000) if value else fallback
-
-
-def _openrouter_cost(model: dict[str, Any]) -> dict[str, Any]:
-    pricing = model.get("pricing") or {}
-    base = {
-        "input": _openrouter_per_million(pricing.get("prompt"), 0),
-        "output": _openrouter_per_million(pricing.get("completion"), 0),
-        "cacheRead": _openrouter_per_million(pricing.get("input_cache_read"), 0),
-        "cacheWrite": _openrouter_per_million(pricing.get("input_cache_write"), 0),
-    }
-    # Prompt-length overrides become request-wide tiers. Time-of-day overrides are skipped
-    # because a model cost cannot express them. Missing rates keep the base price.
-    tiers = [
-        {
-            "inputTokensAbove": override["min_prompt_tokens"],
-            "input": _openrouter_per_million(override.get("prompt"), base["input"]),
-            "output": _openrouter_per_million(override.get("completion"), base["output"]),
-            "cacheRead": _openrouter_per_million(override.get("input_cache_read"), base["cacheRead"]),
-            "cacheWrite": _openrouter_per_million(override.get("input_cache_write"), base["cacheWrite"]),
-        }
-        for override in pricing.get("overrides") or []
-        if "min_prompt_tokens" in override
-        and "utc_start" not in override
-        and "utc_end" not in override
-        and "utc_days" not in override
-    ]
-    return {**base, "tiers": tiers} if tiers else base
-
-
 def build_openrouter_catalog(
     listed: list[dict[str, Any]],
     image_listed: list[dict[str, Any]],
@@ -1288,7 +1258,7 @@ def build_openrouter_catalog(
                 "reasoning": "reasoning" in supported,
                 **({"thinkingLevelMap": thinking_level_map} if thinking_level_map else {}),
                 "input": model_input,
-                "cost": _openrouter_cost(model),
+                "cost": openrouter_cost(model.get("pricing")),
                 "contextWindow": top_provider.get("context_length") or model.get("context_length") or 4096,
                 "maxTokens": top_provider.get("max_completion_tokens") or 4096,
             }
@@ -1313,7 +1283,7 @@ def build_openrouter_catalog(
                 "baseUrl": "https://openrouter.ai/api/v1",
                 "input": model_input or ["text"],
                 "output": output,
-                "cost": _openrouter_cost(model),
+                "cost": openrouter_cost(model.get("pricing")),
             }
         )
 
@@ -1337,7 +1307,7 @@ def build_openrouter_catalog(
                 "provider": "openrouter",
                 "baseUrl": "https://openrouter.ai/api/v1",
                 "input": model_input or ["text"],
-                "cost": _openrouter_cost(model),
+                "cost": openrouter_cost(model.get("pricing")),
                 "contextWindow": top_provider.get("context_length") or model.get("context_length") or 4096,
             }
         )

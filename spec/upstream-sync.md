@@ -213,7 +213,6 @@ In order:
    covers chat, image and classifier models.
 2. **Versions**: the published packages (`packages/{utils,http,ai,agent,tui,codemode,mcp,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
-   `protocol`/`client`/`server` are not bumped.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
    `packages/pidrei/pidrei/upstream.py` to the Pi version, then
    `make upstream-bump REF=<one-past-tag sha>`. The bump is ancestry-checked
@@ -269,7 +268,7 @@ TonIO, httpunk and punkreq releases are ported as their own small change,
 usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
-   (TonIO: all ten packages; httpunk and punkreq: `pidrei-http` only),
+   (TonIO: all eight packages; httpunk and punkreq: `pidrei-http` only),
    then `uv sync --all-packages`.
 2. For httpunk/punkreq, diff the two tags for the names PiDrei uses. PiDrei
    imports httpunk in exactly one place, `pidrei_http/http.py`
@@ -301,22 +300,22 @@ Each has entries in the classifier's dropped tables, with the reason.
   dependencies have no Android builds.
 - **Pi's experimental stack**: the durable harness runtime, Chord, the
   experimental coding agent (`coding-agent/src/experimental`,
-  `cli/experimental`, `mini/`, facet plugins), the protocol/server/client
-  rewrite, session backends, benchmarks. It is an unfinished rewrite the
-  product does not run on; porting it would track churn on a moving target.
-  Not porting it is a deferral, not a saving.
-  - Still ported: the transport layer (CBOR codec, framing, unix socket
-    listener and transports, unix client connect) in the unpublished
-    `protocol`/`client`/`server` packages. Pi 1.0.0 removed the harness
-    helper layer from `pi-agent-core`; the parts the product used live in
-    `pidrei` (`core/messages.py`, `core/message_wire.py`,
-    `core/tools/edit_diff.py`, `core/tools/truncate.py`, `utils/mime.py`).
+  `cli/experimental`, `mini/`, facet plugins), session backends,
+  benchmarks. It is an unfinished rewrite the product does not run on;
+  porting it would track churn on a moving target. Not porting it is a
+  deferral, not a saving.
+  - Pi 1.2.0 deleted its experimental server stack and the
+    `client`/`protocol`/`server` packages; PiDrei's unpublished transport
+    ports of them (CBOR codec, framing, unix socket transports) went with
+    them. Pi 1.0.0 removed the harness helper layer from `pi-agent-core`;
+    the parts the product used live in `pidrei` (`core/messages.py`,
+    `core/message_wire.py`, `core/tools/edit_diff.py`,
+    `core/tools/truncate.py`, `utils/mime.py`).
   - **Reopen** when Pi's product (`AgentSession` or the default interactive
-    mode) starts running on the harness, when upstream declares session
-    format 4 stable, or when `pi server`/`pi client` leave the
-    `PI_EXPERIMENTAL` gate. The port is then one end-state unit (never
+    mode) starts running on the harness, or when upstream declares session
+    format 4 stable. The port is then one end-state unit (never
     commit-by-commit), preceded by a design pass for its single-thread
-    assumptions, with the transport survivors as the first layer.
+    assumptions.
 - **RPC mode as a mode**: it is not run or audited, but its code is kept and
   kept correct; contract changes propagate to it.
 - **Self-update** machinery, installer-managed updates, and Node/Bun
@@ -610,6 +609,52 @@ producer/consumer channel and no shared mutable record
   the mirror drives the fold with the same message sequence. Runner tests
   port through the wrapper.
 
+### `session-run-lifecycle` (`coding-agent/src/core/agent-session.ts`: `prompt`, `sendCustomMessage`, `_startRun`, the idle-path writers, the end of a run)
+
+Pi decides whether a run is active and acts on the answer in one synchronous
+step: starting a run, queueing input into it, persisting a message while
+idle, and the run's last queue check together with its end. Here the callers
+run in parallel, so every such decision shares a guard with its action.
+
+- **Claim**: a starter (`prompt()`, an idle `triggerTurn` custom message)
+  claims the run with `_claim_run_locked()` (busy flag on, abort flag
+  cleared) in the `_state_guard` section that found no run active and
+  `_run_input_closed` unset, then runs `_start_run`. A prompt decides twice
+  (`_admit_prompt`): before model/auth validation (queue or raise), and after
+  it, claiming, because a run can start while auth is checked.
+- **Run input**: input queued into a run (steering, follow-ups,
+  `triggerTurn` messages while streaming) is posted under `_state_guard`
+  while `_run_input_closed` is unset. The run closes its input
+  (`_close_run_input`) before its final queue check and reopens it when the
+  check found input; input that finds it closed waits on the event, then
+  queues or takes the idle path. Settlement clears it.
+- **Admission** (`_run_admission`, a TonIO lock): the idle-path writers
+  (`record_bash_result`, `_append_custom_message_when_idle`) decide and
+  persist under it. `_start_run` passes through it once after the claim, so
+  a writer that decided before the claim finishes before the run reads the
+  transcript; it is never held across the preparation, whose handlers reach
+  those writers. The end of a run clears the busy flag and flushes both
+  pending queues under it.
+- **Busy while starting**: messages sent during the preparation queue into
+  the starting run and are flushed before its first request; an abort
+  during the preparation sets the abort flag, which `_handle_agent_event`
+  turns into `agent.abort()` on `agent_start`.
+- **Settlement**: runs started from `agent_settled` handlers are deferred
+  (`_defer_until_settled`) and dispatched again afterwards.
+- **Handing the claim back**: every exit after the claim releases it, where
+  pi leaves the session busy when a flush or `onStarted` throws after the
+  preparation, or a flush throws while it cleans up a failed preparation.
+  `_release_run` clears the flag and flushes under `_run_admission`, then
+  settles (a run started) or releases idle waiters (it did not), even when a
+  flush failed. `_end_run` awaits it as its own coroutine (`gather`), so a
+  cancel reaching the caller meanwhile does not cut it short. A caller
+  unwinding a cancel cannot await: `_abandon_run` clears the run state
+  synchronously and detaches the release, after `agent.wait_for_idle()`;
+  a run cancelled after it started also sets the abort flag (it settles as
+  aborted) and closes the run input until the settlement.
+- An upstream hunk that adds a starter or changes one of these decisions
+  keeps the decision and its action in one guarded section.
+
 ### `tui-island` (`tui/src/tui.ts`, `terminal.ts`, `stdin-buffer.ts`, `tui-main-screen.ts`, `tui-alt-screen.ts`, `coding-agent/src/modes/interactive/interactive-mode.ts`, `program-status-reporter.ts`, `core/extensions/runner.ts`)
 
 PiDrei's UI is **passive state guarded by one reentrant thread lock**
@@ -773,7 +818,7 @@ params and rendering port side by side.
   regression is dropped, since it depends on a child process failing at
   spawn.
 
-### `no-telemetry` (`first-time-setup.ts`, settings-manager analytics accessors)
+### `no-telemetry` (`first-time-setup.ts`, settings-manager analytics accessors, `settings-schema.ts`, `settings-defaults.ts`)
 
 PiDrei sends no telemetry, so it doesn't ask about it either: the first-time
 setup is theme-only, and `SettingsManager` has no
@@ -783,6 +828,44 @@ shares analytics, and their test cases are skipped; theme-step and
 `shouldRunFirstTimeSetup` hunks port 1:1. A new upstream consumer of those
 settings (a privacy command, an analytics sink) is a telemetry feature:
 drop it the same way.
+
+The settings schema and defaults (`core/settings_schema.py`,
+`settings_defaults.py`) have no `enableAnalytics` or `trackingId`. Pi's
+`enableInstallTelemetry` (an install ping) is PiDrei's
+`enableProviderAttribution`, which only gates the attribution headers sent
+to providers that credit the calling app; the settings manager migrates the
+old key. Upstream hunks to the analytics keys are skipped; one to
+`enableInstallTelemetry` lands on `enableProviderAttribution` only if it
+concerns attribution.
+
+### `config-schemas` (`coding-agent/src/core/settings-schema.ts`, `settings-defaults.ts`, `key-id-schema.ts`, `scripts/generate-schemas.ts`, `schemas/*.schema.json`)
+
+Pi generates JSON Schemas for `models.json`, `settings.json`,
+`keybindings.json` and themes from its TypeBox schemas. PiDrei keeps the
+same schemas as Python dicts (`pidrei_ai/providers/model_schema.py`,
+`compat_schema.py`, `core/model_config.py`, `settings_schema.py`,
+`keybindings_schema.py`, `key_id_schema.py`,
+`modes/interactive/theme/theme_schema.py`) and renders the four artifacts
+into `packages/pidrei/pidrei/schemas/` with `make config-schemas`
+(`packages/pidrei/scripts/generate_schemas.py`).
+
+- **Generated, never hand-edited**: an upstream hunk to a schema module or
+  to `schemas/*.json` lands in the Python module, then the artifacts are
+  regenerated; a test checks they match the committed files.
+- **URLs are PiDrei's** (ruled for 1.2.0): `$id` and the `$schema` values in
+  docs and built-in themes point at
+  `https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/<name>.schema.json`
+  (`SCHEMA_BASE_URL`), never `pi.dev`.
+- **The settings schema describes PiDrei's settings**: no `npmCommand`
+  (packages install from git and local paths), no `markdown.mermaid`
+  (Mermaid rendering is not ported), PiDrei's `codemode.typeCheck`, and the
+  `no-telemetry` keys. New upstream settings port into
+  `settings_schema.py` and `settings_defaults.py` together.
+- **Key ids at runtime**: the published key-id pattern keeps Pi's `$`, which
+  is right for the ECMAScript validators editors run; Python's `$` also
+  matches before a final newline, so `keybindings.json` is validated against
+  the `\Z` variant (`RUNTIME_KEYBINDING_VALUE_SCHEMA`). A new pattern that
+  can reject a newline gets the same pair.
 
 ### `anthropic-federation` (`ai/src/api/anthropic-messages.ts`)
 
@@ -834,9 +917,23 @@ machinery and the text that shows JavaScript do not.
 - **Declarations**: a change to Pi's TypeScript renderer is re-expressed in
   the Python stub renderer (`pidrei_codemode/declarations.py`), and the
   stubs must still pass Monty's type checker: check a script against them.
+  - Constraint tags go on the property's `# ` comment line, as Pi's on its
+    `//` line. `@integer` is not rendered (the stub's `int` says it), and
+    `@default` values are Python literals (`True`, `None`, dict/list reprs).
+  - An object with known properties that also allows extra keys
+    (`additionalProperties` true or a schema), Pi's index signature,
+    renders as `TypedDict(..., extra_items=Any)` (or the extra schema's
+    type); without known properties it stays `dict[str, T]`.
+  - A content block typed as one compact open `TypedDict` (MCP results)
+    cannot be narrowed to `ImageBlock` by a `type` check, so `image()`'s
+    stub also takes `Mapping[str, Any]`; the runtime validation decides.
 - **JS-only machinery is dropped**: the QuickJS worker, wasm loading, the
-  host/worker protocol, the `tools` proxy, promise and microtask handling.
-  The files that hold only that are `DROPPED` in the classifier.
+  host/worker protocol, the `tools` proxy, promise and microtask handling,
+  and the sandbox placements and deterministic runs built on them (Pi
+  1.2.0: `RemoteCodemodeSandbox`, `InlineCodemodeSandbox`,
+  `CodemodeSandboxBase`, the `portable`/`cloudflare` entries,
+  `sandbox.start()`). The files that hold only that are `DROPPED` in the
+  classifier.
 - **PiDrei-only, kept on every port**: the type check before the script runs
   (`codemode.typeCheck`, the factory's `type_check`); `all_settled`,
   `has_tool` and `call_tool`; `store(key, None)` deleting; a final expression
@@ -884,7 +981,9 @@ session's loadout guard and sets what it returns (`None` sets nothing).
 - The MCP extension's three (`ensureDiscoveryActive`, `syncResourceTools`,
   `setExposure`) compute what they need from the extension's state before the
   call; the update itself only filters or extends `active`, and records what
-  `ensureDiscoveryActive`'s warning reads afterwards. The last two follow a
+  `ensureDiscoveryActive`'s warning reads afterwards. Whether `codemode` or
+  `tool_search` can reach MCP tools (a tool of that name that declares
+  `reaches_tools`) is read from `get_all_tools()` before the call too. The last two follow a
   registration, so their update rides on that `register_tools` call as
   `update_active` (see `mcp-extension`).
 
@@ -927,9 +1026,17 @@ runtime layer from TonIO, httpunk and punkreq.
   `timeout_ms` where pi uses `AbortSignal.timeout`. Only the close cancels
   an exchange: a request the client gives up on (request tokens, timeouts)
   keeps its own, as in pi, and the auth provider's work is not under the
-  token (a token refresh must not be torn). A per-request `signal` an
-  upstream change threads into the transport is not ported; one at the
-  client level maps to the request's cancel token.
+  token (a token refresh must not be torn).
+- **The dispatch gate**: Pi hands each request's send a signal aborted once
+  the request settles, and the HTTP transport checks it before every
+  dispatch, the retry after an authorization refresh included. Here it is
+  `send(message, *, cancel=None)`: the client fires the pending request's
+  `send_cancel` when it removes the entry (`_remove_pending_locked`), and the
+  HTTP transport checks it after `_headers()` and before opening the
+  exchange, raising `McpAbortError`. It never aborts an exchange already
+  sent or the shared refresh; stdio and in-memory ignore it. An upstream
+  signal that gates a dispatch ports this way (`cancel-token`); one that
+  would tear an exchange the client gave up on does not.
 - **OAuth**: `McpOAuthProvider.state()` reads and, when none is stored,
   writes in one locked step. `OAuthCallbackServer.close()` is synchronous:
   it settles the waiters and closes the server and its connections
@@ -1014,9 +1121,12 @@ awaits. Here those run on parallel coroutines.
   `run_cancellable`, cancelled by the sign-in or `--timeout`.
 - **Imports are eager**: `runtime.lazy.ts`/`cli.lazy.ts` are dropped, and the
   "MCP failed to load" reports they fed are not ported.
-- **Script API names in text** (`searchTools()`, `describeNamespace()`, the
-  `scriptNeedsServer` regex) follow recipe `codemode-python`; the regex also
-  matches `call_tool` and `has_tool`.
+- **Script API names in text** (`searchTools()`, `describeNamespace()`)
+  follow recipe `codemode-python`. Since Pi 1.2.0 the discovery regex lives
+  in codemode's `reaches_tools` (`extensions/codemode/tool.py`), where it
+  also matches `call_tool` and `has_tool`; the extension only asks a tool's
+  `reaches_tools` and matches its words against server names
+  (`_reaches_server`).
 - **Client ID Metadata Documents stay pi's**: `CLIENT_METADATA_BASE_URL` in
   `oauth.py` is `https://pi.dev/oauth`, the one place where PiDrei presents
   itself as pi (ruled for 1.0.2: PiDrei has no document of its own). A

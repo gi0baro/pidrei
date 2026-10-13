@@ -31,11 +31,15 @@ def _model(adapter):
 
 @contextlib.contextmanager
 def _streaming(adapter, chunks, *, raises: Exception | None = None):
+    timeouts: list = []
+
     class _Fake:
         def __init__(self, _config):
             pass
 
-        async def generate_content_stream(self, _params, *, env=None, cancel=None):
+        async def generate_content_stream(self, _params, *, env=None, cancel=None, timeout_ms=None):
+            timeouts.append(timeout_ms)
+
             async def _chunks():
                 for chunk in chunks:
                     yield chunk
@@ -47,7 +51,7 @@ def _streaming(adapter, chunks, *, raises: Exception | None = None):
     original = adapter.GoogleGenAI
     adapter.GoogleGenAI = _Fake
     try:
-        yield
+        yield timeouts
     finally:
         adapter.GoogleGenAI = original
 
@@ -80,6 +84,17 @@ def _chunk(parts=None, *, finish_reason=None, usage=None, response_id=None):
 
 def _types(events):
     return [event.type for event in events]
+
+
+# The HTTP idle timeout pidrei's callers pass as `timeout_ms` reaches the client (see test_google_client).
+@pytest.mark.tonio
+@pytest.mark.parametrize("adapter", ADAPTERS, ids=ADAPTER_IDS)
+async def test_the_callers_timeout_reaches_the_client(adapter):
+    with _streaming(adapter, [_chunk([_part("ok")], finish_reason="STOP")]) as timeouts:
+        stream = adapter.stream(_model(adapter), CONTEXT, StreamOptions(api_key="test-key", timeout_ms=30_000))
+        await stream.result()
+
+    assert timeouts == [30_000]
 
 
 @pytest.mark.tonio

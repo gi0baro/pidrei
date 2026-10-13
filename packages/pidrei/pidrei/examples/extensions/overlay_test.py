@@ -9,7 +9,7 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/overlay_test.py
 """
 
-from pidrei_tui import CURSOR_MARKER, matches_key, visible_width
+from pidrei_tui import CURSOR_MARKER, matches_key, render_fake_cursor, visible_width
 
 
 class OverlayTestComponent:
@@ -113,7 +113,7 @@ class OverlayTestComponent:
                     after = input_display[cursor + 1 :]
                     # Emit hardware cursor marker for IME support when focused
                     marker = CURSOR_MARKER if self.focused else ""
-                    input_display = f"{before}{marker}\x1b[7m{cursor_char}\x1b[27m{after}"
+                    input_display = f"{before}{marker}{render_fake_cursor(cursor_char)}{after}"
                 content = f"{prefix}{label} {input_display}"
             else:
                 content = prefix + th.fg("accent" if is_selected else "text", item["label"])

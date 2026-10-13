@@ -10,8 +10,9 @@ import tonio.colored as tonio
 
 from pidrei_tui.autocomplete import CombinedAutocompleteProvider
 from pidrei_tui.components.editor import Editor, word_wrap_line
+from pidrei_tui.tui import FAKE_CURSOR_START, render_fake_cursor
 from pidrei_tui.tui_main_screen import TuiMainScreen
-from pidrei_tui.utils import visible_width
+from pidrei_tui.utils import strip_terminal_sequences, visible_width
 
 from .themes import default_editor_theme
 from .tui_helpers import ManualTimers
@@ -898,7 +899,7 @@ def test_wraps_cjk_characters_correctly_each_is_2_columns_wide():
         assert line_width == width, f"Line {i} has width {line_width}, expected {width}"
 
     # Verify content split correctly
-    content_lines = [strip_ansi(line).strip() for line in lines[1:-1]]
+    content_lines = [strip_terminal_sequences(line).strip() for line in lines[1:-1]]
     assert len(content_lines) == 2
     assert content_lines[0] == "日本語テス"  # 5 chars = 10 columns
     assert content_lines[1] == "ト"  # 1 char = 2 columns (+ padding)
@@ -929,7 +930,7 @@ def test_renders_cursor_correctly_on_wide_characters():
 
     # The cursor (reverse video space) should be visible
     content_line = lines[1]
-    assert "\x1b[7m" in content_line, "Should have reverse video cursor"
+    assert FAKE_CURSOR_START in content_line, "Should have fake cursor"
 
     # Line should still be correct width
     assert visible_width(content_line) == width
@@ -961,7 +962,7 @@ async def test_shows_cursor_at_end_of_line_before_wrap_wraps_on_next_char():
         lines = editor.render(width + padding_x)
         content_lines = lines[1:-1]
         assert len(content_lines) == 1, "Should be 1 content line before wrap"
-        assert content_lines[0].endswith("\x1b[7m \x1b[0m"), "Cursor should be at end of line"
+        assert content_lines[0].endswith(render_fake_cursor(" ")), "Cursor should be at end of line"
 
         # Type 1 more → text wraps to second line
         editor.handle_input("a")
@@ -981,7 +982,7 @@ def test_wraps_at_word_boundaries_instead_of_mid_word():
     lines = editor.render(width)
 
     # Get content lines (between borders)
-    content_lines = [strip_ansi(line).strip() for line in lines[1:-1]]
+    content_lines = [strip_terminal_sequences(line).strip() for line in lines[1:-1]]
 
     # Should NOT break mid-word
     # Line 1 should end with a complete word

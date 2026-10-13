@@ -30,6 +30,7 @@ import tonio.colored as tonio
 from tonio.colored.sync import channel
 
 from pidrei_utils import timers
+from pidrei_utils.cancel import CancelToken
 
 from ..protocol.jsonrpc import JsonRpcMessage, McpConnectionClosedError, parse_json, parse_json_rpc_message, stringify
 from .transport import DEFAULT_MAX_MESSAGE_BYTES, SendResult, TransportEvents
@@ -196,7 +197,7 @@ class StdioTransport(TransportEvents):
             raise McpConnectionClosedError()
         tonio.spawn.without_tracking(self._write_loop(process.stdin))
 
-    def send(self, message: JsonRpcMessage) -> SendResult:
+    def send(self, message: JsonRpcMessage, *, cancel: CancelToken | None = None) -> SendResult:
         payload = f"{stringify(message)}\n".encode()
         with self._lock:
             if not self._started or self._closed or self._process is None or self._process_closed.is_set():

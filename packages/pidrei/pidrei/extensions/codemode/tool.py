@@ -14,8 +14,7 @@ output reaches the model; nested results do not.
 
 Nested results are handed to the script as follows:
 - A tool that declares `output_schema` resolves to its `structured_content`,
-  also for error results that carry one (MCP tools resolve to their
-  `CallToolResult`, including `isError`).
+  also for error results that carry one.
 - Any other tool resolves to its text content as one string.
 - A failed, blocked, or invalid call raises with the tool's error text.
 
@@ -34,6 +33,7 @@ takes the caller's.
 
 import math
 import os
+import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -42,17 +42,16 @@ from pidrei_agent.types import AgentTool
 from pidrei_ai.types import GrammarConstrainedSampling
 from pidrei_codemode import (
     CODEMODE_SOURCE_GRAMMAR,
-    MCP_PYTHON_PREAMBLE,
     CodemodePool,
     CodemodeTool,
     RenderedTool,
-    mcp_structured_content_schema,
     render_tools,
     reserved_type_names,
 )
 
 from ...config import get_docs_path
-from ...core.extensions.types import ToolDefinition, ToolLoadout, ToolLoadoutChanges, ToolNamespace
+from ...core.extensions.types import ToolDefinition, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolReach
+from ...core.settings_defaults import SETTINGS_DEFAULTS
 from ...core.settings_manager import CodemodeMode
 from ...core.tools.tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .renderer import CODEMODE_RENDERERS
@@ -70,13 +69,6 @@ CODEMODE_SCHEMA: dict[str, Any] = {
     "properties": {"code": {"type": "string", "description": "Raw Python source."}},
     "required": ["code"],
 }
-
-
-def is_codemode_tool(tool: Any) -> bool:
-    """Whether a registered tool is this package's `codemode` tool rather than
-    another extension's tool with the same name. Compares the parameter schema,
-    which the definition passes through by reference."""
-    return tool.name == CODEMODE_TOOL_NAME and tool.parameters is CODEMODE_SCHEMA
 
 
 type CodemodeNestedCallStatus = Literal["running", "ok", "error", "cancelled"]
@@ -129,7 +121,9 @@ class CodemodeToolOptions:
 
 
 def type_check_enabled(options: CodemodeToolOptions) -> bool:
-    return options.get_type_check() if options.get_type_check is not None else True
+    return (
+        options.get_type_check() if options.get_type_check is not None else SETTINGS_DEFAULTS["codemode"]["typeCheck"]
+    )
 
 
 CODEMODE_PROMPT_SNIPPET = "Run Python that calls other tools"
@@ -155,8 +149,9 @@ def _description_intro(type_check: bool) -> str:
         ),
         (
             "- `await tools.<name>(arg=value, ...)` takes keyword arguments only, returns a `str`, or a `dict` if "
-            "the tool's declaration says so, and raises on failure (catch with `except Exception`). Calls still "
-            "running when the script ends are cancelled."
+            "the tool's declaration says so, and raises on failure (catch with `except Exception`). A tool whose "
+            "declaration returns a `dict` returns it on failure too when the tool produced one; check its fields. "
+            "Calls still running when the script ends are cancelled."
         ),
     ]
     if type_check:
@@ -316,7 +311,7 @@ def global_signatures(models: bool) -> dict[str, str]:
 # --- declarations ----------------------------------------------------------------
 
 # Default for the inline budget, in estimated tokens.
-DEFAULT_CODEMODE_INLINE_BUDGET = 3000
+DEFAULT_CODEMODE_INLINE_BUDGET = SETTINGS_DEFAULTS["codemode"]["inlineBudget"]
 # Characters per token when estimating the cost of a tool section.
 _CHARS_PER_TOKEN = 4
 
@@ -413,13 +408,14 @@ def create_codemode_description(
     inline_budget: float | None = None,
 ) -> str:
     """Model-facing description: the helper list, guidance for finding tools
-    that are not listed, the shared MCP types when listed tools need them, the
-    `models` API, and one section per listed tool, grouped by namespace.
+    that are not listed, the `models` API, and one section per listed tool,
+    grouped by namespace.
 
     Every callable tool in `tools` is rendered, so its declaration names match
     the stubs; `unlisted` ones (`deferred` exposure, and `direct` ones in mode
     "on") are not listed and do not affect the description at all, so it stays
-    the same while MCP servers connect or change their tools. `guidelines` are
+    the same while tools are registered late (for example by MCP servers that
+    connect). `guidelines` are
     each tool's prompt guidelines, listed after its description. Tool sections
     are limited to `inline_budget`."""
     unlisted = set(unlisted)
@@ -450,8 +446,6 @@ def create_codemode_description(
     shown = _select_catalog(ordered, inline_budget)
 
     sections = [_description_intro(type_check), _describe_globals(models)]
-    if any(item.tool.name in shown and item.uses_mcp_types for item in rendered):
-        sections.append(f"Shared MCP Types:\n```python\n{MCP_PYTHON_PREAMBLE}\n```")
     if not rendered:
         return "\n\n".join(sections)
 
@@ -473,23 +467,34 @@ def create_codemode_description(
     return "\n\n".join(sections)
 
 
+def _describe_fields(schema: Any, depth: int) -> str | None:
+    """The keys of an object schema, `a dict with keys output, exit_code,
+    full_output_path (optional)`, with the keys of dict-typed keys `depth`
+    levels deep: `a dict with keys content, structuredContent (optional, a dict
+    with keys results)`. None for other schemas."""
+    if not isinstance(schema, Mapping) or schema.get("type") != "object":
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    required = set(schema["required"]) if isinstance(schema.get("required"), list) else set()
+    keys = []
+    for name, field_schema in properties.items():
+        notes = [] if name in required else ["optional"]
+        nested = _describe_fields(field_schema, depth - 1) if depth > 0 else None
+        if nested:
+            notes.append(nested)
+        keys.append(f"{name} ({', '.join(notes)})" if notes else name)
+    return f"a dict with keys {', '.join(keys)}"
+
+
 def _describe_output(rendered: RenderedTool) -> str:
     """What a script call returns, in a few words: `a string`, the keys of a
-    dict, or the rendered type for anything else."""
+    dict (see `_describe_fields`), or the rendered type for anything else."""
     if rendered.output_type == "str":
         return "a string"
-    schema = rendered.tool.output_schema
-    properties = schema.get("properties") if isinstance(schema, Mapping) else None
-    if (
-        isinstance(schema, Mapping)
-        and schema.get("type") == "object"
-        and isinstance(properties, Mapping)
-        and mcp_structured_content_schema(schema) is None
-    ):
-        required = set(schema["required"]) if isinstance(schema.get("required"), list) else set()
-        keys = [name if name in required else f"{name} (optional)" for name in properties]
-        return f"a dict with keys {', '.join(keys)}"
-    return f"`{' '.join(rendered.output_type.split())}`"
+    fields = _describe_fields(rendered.tool.output_schema, 1)
+    return fields if fields is not None else f"`{' '.join(rendered.output_type.split())}`"
 
 
 def _describe_script_call(tool: AgentTool, rendered: RenderedTool) -> str:
@@ -516,7 +521,7 @@ def _prepare_codemode_loadout(loadout: ToolLoadout, options: CodemodeToolOptions
     Listing by exposure, not by the active set, keeps the codemode description
     unchanged when `tool_search` loads a tool, so loads do not redeclare
     codemode."""
-    mode = options.get_mode() if options.get_mode is not None else "on"
+    mode = options.get_mode() if options.get_mode is not None else SETTINGS_DEFAULTS["codemode"]["mode"]
 
     def is_direct(tool: AgentTool) -> bool:
         return loadout.get_exposure(tool.name) == "direct"
@@ -564,6 +569,24 @@ def _prepare_codemode_loadout(loadout: ToolLoadout, options: CodemodeToolOptions
     )
 
 
+# Script globals that list, look up, or call tools and namespaces by name, so the script may
+# then reach any tool (`has_tool` reads `ALL_TOOLS`; `call_tool` calls a tool by any name).
+_DISCOVERY_GLOBALS = re.compile(r"\b(search_tools|describe_namespace|describe_tool|ALL_TOOLS|call_tool|has_tool)\b")
+# A word of the script, as JavaScript's ASCII `\w+`.
+_SCRIPT_WORD = re.compile(r"\w+", re.ASCII)
+
+
+async def _get_script_reach(tool_input: dict[str, Any]) -> ToolReach:
+    """The tools a script may call (`ToolDefinition.reaches_tools`): every tool
+    when it uses a discovery global, else the words of its source, so
+    `tools.mcp__docs__search` and `getattr(tools, "mcp__docs__" + name)` both
+    name the `mcp__docs` namespace."""
+    code = tool_input.get("code")
+    if not isinstance(code, str):
+        return []
+    return "all" if _DISCOVERY_GLOBALS.search(code) else _SCRIPT_WORD.findall(code)
+
+
 def create_codemode_tool_definition(options: CodemodeToolOptions) -> ToolDefinition:
     async def execute(tool_call_id, params, cancel, on_update, ctx):
         # Imported here: execute.py imports this module.
@@ -583,6 +606,7 @@ def create_codemode_tool_definition(options: CodemodeToolOptions) -> ToolDefinit
         # Scripts must not start other scripts.
         exposure="model-only",
         prepare_loadout=lambda loadout: _prepare_codemode_loadout(loadout, options),
+        reaches_tools=_get_script_reach,
         # Capable models write the script as raw text instead of a JSON-escaped string.
         constrained_sampling=GrammarConstrainedSampling(variants={"openai_lark": CODEMODE_SOURCE_GRAMMAR}),
         execute=execute,

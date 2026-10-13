@@ -19,7 +19,7 @@ from typing import Any, Protocol
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 
-from ...core.extensions.types import ToolDefinition, ToolExposure, ToolNamespace
+from ...core.extensions.types import ToolDefinition, ToolExposure, ToolNamespace, ToolReach
 
 
 TOOL_SEARCH_TOOL_NAME = "tool_search"
@@ -188,13 +188,6 @@ TOOL_SEARCH_SCHEMA: dict[str, Any] = {
 }
 
 
-def is_tool_search_tool(tool: Any) -> bool:
-    """Whether the tool is this `tool_search`, not another extension's tool of
-    the same name. Compares the parameter schema, which the definition passes
-    through by reference."""
-    return tool.name == TOOL_SEARCH_TOOL_NAME and tool.parameters is TOOL_SEARCH_SCHEMA
-
-
 @dataclass(frozen=True, slots=True)
 class ToolSearchResultTool:
     name: str
@@ -278,6 +271,11 @@ def _format_loaded(tools: list[ToolSearchResultTool]) -> str:
     return f"Loaded {len(tools)} tool{'' if len(tools) == 1 else 's'}. They are available from your next call:\n{lines}"
 
 
+async def _reaches_all_tools(_tool_input: dict[str, Any]) -> ToolReach:
+    # A query can match any tool that is not declared yet.
+    return "all"
+
+
 def create_tool_search_tool_definition(options: ToolSearchToolOptions | None = None) -> ToolDefinition:
     options = options if options is not None else ToolSearchToolOptions()
 
@@ -303,5 +301,6 @@ def create_tool_search_tool_definition(options: ToolSearchToolOptions | None = N
         parameters=TOOL_SEARCH_SCHEMA,
         # Searching is not something scripts need; it changes what the model sees.
         exposure="model-only",
+        reaches_tools=_reaches_all_tools,
         execute=execute,
     )

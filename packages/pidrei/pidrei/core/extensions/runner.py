@@ -1420,12 +1420,13 @@ class ExtensionRunner:
 
     async def emit_before_agent_start(
         self,
-        prompt: str,
-        images: list[Any] | None,
+        trigger: dict[str, Any],
         system_prompt_options: BuildSystemPromptOptions,
     ) -> dict[str, Any]:
         """Combined result from all before_agent_start handlers: `messages` and the
-        (mutated) normalized `systemPromptOptions`."""
+        (mutated) normalized `systemPromptOptions`. `trigger` is the message that
+        starts the run, the event without its prompt fields: `messageType` "user"
+        with `prompt` and `images`, or "custom" with `message`."""
         current_options = normalize_build_system_prompt_options(system_prompt_options)
         ctx = self.create_context()
         ctx.get_system_prompt = lambda: self._assert_active() or build_system_prompt(current_options)
@@ -1438,9 +1439,8 @@ class ExtensionRunner:
                     # event renders it when the handler is called, so it reflects every
                     # earlier handler's changes.
                     event = {
+                        **trigger,
                         "type": "before_agent_start",
-                        "prompt": prompt,
-                        "images": images,
                         "systemPrompt": build_system_prompt(current_options),
                         "systemPromptOptions": current_options,
                     }

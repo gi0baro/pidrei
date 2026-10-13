@@ -129,6 +129,7 @@ class _Pending:
         "on_progress",
         "outcome",
         "progress_token",
+        "send_cancel",
         "settled",
         "timeout_ms",
         "timer",
@@ -152,6 +153,9 @@ class _Pending:
         # the renewal's cancel still runs).
         self.generation: object | None = None
         self.unsubscribe: Callable[[], None] | None = None
+        # Fired when the request settles, so the transport does not dispatch (or retry) it afterwards.
+        # Nothing registers callbacks on it, so firing it under the client lock runs nothing.
+        self.send_cancel = CancelToken()
         self.settled = tonio.Event()
         self.outcome: tuple[bool, Any] = (False, None)
 
@@ -232,11 +236,10 @@ def _validate_read_resource_result(value: Any) -> ReadResourceResult:
 
 def _validate_call_tool_result(value: Any) -> CallToolResult:
     """`content` is required by the spec, but servers that only return
-    `structuredContent` omit it (the SDK defaults it too)."""
+    `structuredContent` omit it (the SDK defaults it too). `structuredContent`
+    may be any JSON value, as MCP 2026-07-28 allows."""
     if not is_object(value) or ("content" in value and not isinstance(value["content"], list)):
         raise McpError(JSON_RPC_ERROR_CODES.invalid_request, "Invalid MCP tools/call result")
-    if "structuredContent" in value and not is_object(value["structuredContent"]):
-        raise McpError(JSON_RPC_ERROR_CODES.invalid_request, "Invalid MCP tools/call structured content")
     return {**value, "content": []} if "content" not in value else value
 
 
@@ -588,7 +591,7 @@ class McpClient:
             if progress_token is not None:
                 self._progress_requests[progress_token] = request_id
             self._arm_timeout_locked(request_id, entry)
-            sent = transport.send(message)  # type: ignore[arg-type]
+            sent = transport.send(message, cancel=entry.send_cancel)  # type: ignore[arg-type]
 
         if cancel is not None:
             # Outside the lock: a token that already fired runs this at once.
@@ -840,6 +843,7 @@ class McpClient:
         if entry.unsubscribe is not None:
             entry.unsubscribe()
             entry.unsubscribe = None
+        entry.send_cancel.cancel()
 
     def _handle_transport_close(self) -> Awaitable[None]:
         return self._mark_closed(McpConnectionClosedError())

@@ -136,6 +136,9 @@ class RefreshModelsContext:
     stored: ModelsStoreEntry | None = None
     # Bypass provider freshness checks and fetch immediately when network access is allowed.
     force: bool | None = None
+    # Base URL of the registered provider, including configuration overrides that wrappers apply
+    # outside the provider receiving this context.
+    base_url: str | None = None
 
 
 @dataclass(slots=True)
@@ -614,6 +617,7 @@ class Models:
                 allow_network=allow_network,
                 force=force if allow_network else None,
                 cancel=cancel,
+                base_url=provider.base_url,
             )
         )
 

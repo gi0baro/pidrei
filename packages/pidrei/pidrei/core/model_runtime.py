@@ -37,6 +37,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.models_store import ModelsStore
 from pidrei_ai.providers.all import builtin_providers, get_builtin_model_data_generated_at
+from pidrei_ai.providers.openrouter import personalize_openrouter_catalog
 from pidrei_ai.registry import (
     ModelsRefreshOptions,
     ModelsRefreshResult,
@@ -93,7 +94,7 @@ from .provider_composer import (
     resolve_configured_model_headers,
     validate_extension_provider,
 )
-from .remote_catalog import with_remote_catalog
+from .remote_catalog import with_personalized_catalog, with_remote_catalog
 from .runtime_credentials import RuntimeCredentials
 from .virtual_models import (
     FailedRoute,
@@ -374,7 +375,12 @@ class ModelRuntime:
                 models_store = InMemoryCodingAgentModelsStore()
         builtin_model_data_generated_at = await get_builtin_model_data_generated_at()
         providers = [
-            with_remote_catalog(provider, options.catalog_base_url, builtin_model_data_generated_at)
+            # OpenRouter narrows the catalog to the models, limits and prices of the user's key.
+            with_personalized_catalog(
+                provider, personalize_openrouter_catalog, options.catalog_base_url, builtin_model_data_generated_at
+            )
+            if provider.id == "openrouter"
+            else with_remote_catalog(provider, options.catalog_base_url, builtin_model_data_generated_at)
             for provider in builtin_providers()
         ]
         self._init_state(

@@ -81,7 +81,7 @@ Options for add:
 
 Other options:
   --json                  Print the list as JSON
-  --timeout <seconds>     How long login waits for the browser (default: 300)"""
+  --timeout <seconds>     Time limit for the whole sign-in (default: 300)"""
 
 HELP_HINT = dim(f'Use "{APP_NAME} mcp --help" for usage.')
 
@@ -470,8 +470,8 @@ async def _report(
     if overrides:
         report["toolExposure"] = overrides
     if view.has_resources:
-        report["resources"] = len(view.resources)
-        report["resourceTemplates"] = len(view.resource_templates)
+        # Whether the server offers resources. They are not listed: listing every one can take long.
+        report["resources"] = True
     if view.state != "connected" and view.error:
         report["error"] = view.error
     await connection.close()
@@ -517,8 +517,8 @@ async def _list(
             overrides = report.get("toolExposure") or {}
             listed = [f"{tool} [{overrides[tool]}]" if tool in overrides else tool for tool in tools]
             log(f"  tools: {', '.join(listed)}")
-        if "resources" in report:
-            log(f"  resources: {report['resources']}, URI templates: {report.get('resourceTemplates', 0)}")
+        if report.get("resources"):
+            log("  offers resources")
         if report.get("error"):
             log("  " + "\n  ".join(report["error"].split("\n")))
     for config_error in loaded.errors:

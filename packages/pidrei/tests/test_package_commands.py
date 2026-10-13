@@ -51,6 +51,8 @@ def workspace(request, tmp_path):
     agent_dir = os.path.join(root, "agent")
     project_dir = os.path.join(root, "project")
     package_dir = os.path.join(root, "package")
+    home_dir = os.path.join(root, "home")
+    os.makedirs(home_dir, exist_ok=True)
     os.makedirs(os.path.join(package_dir, "extensions"), exist_ok=True)
     os.makedirs(project_dir, exist_ok=True)
     os.makedirs(agent_dir, exist_ok=True)
@@ -59,8 +61,12 @@ def workspace(request, tmp_path):
 
     previous_cwd = os.getcwd()
     previous_agent = os.environ.get("PIDREI_CODING_AGENT_DIR")
+    previous_home = os.environ.get("HOME")
     os.chdir(project_dir)
     os.environ["PIDREI_CODING_AGENT_DIR"] = agent_dir
+    # The package manager also scans ~/.agents/skills: an empty home keeps a
+    # populated machine's skills out of the resolved resource list.
+    os.environ["HOME"] = home_dir
 
     def restore() -> None:
         os.chdir(previous_cwd)
@@ -68,6 +74,10 @@ def workspace(request, tmp_path):
             os.environ.pop("PIDREI_CODING_AGENT_DIR", None)
         else:
             os.environ["PIDREI_CODING_AGENT_DIR"] = previous_agent
+        if previous_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = previous_home
 
     request.addfinalizer(restore)
     return {"root": root, "agent_dir": agent_dir, "project_dir": project_dir, "package_dir": package_dir}

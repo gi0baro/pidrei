@@ -68,10 +68,7 @@ PACKAGES = [
     "http/pidrei_http",
     "mcp/pidrei_mcp",
     "pidrei/pidrei",
-    "protocol/pidrei_protocol",
-    "client/pidrei_client",
     "tui/pidrei_tui",
-    "server/pidrei_server",
     "utils/pidrei_utils",
 ]
 
@@ -82,10 +79,7 @@ PACKAGE_UPSTREAM = {
     "codemode/pidrei_codemode": "codemode",
     "mcp/pidrei_mcp": "mcp",
     "pidrei/pidrei": "coding-agent",
-    "protocol/pidrei_protocol": "protocol",
-    "client/pidrei_client": "client",
     "tui/pidrei_tui": "tui",
-    "server/pidrei_server": "server",
 }
 
 # Sync methods that deliberately return a coroutine: pi's async methods run
@@ -94,10 +88,6 @@ PACKAGE_UPSTREAM = {
 ALLOWED_SYNC_AWAITS = {
     "_show_extension_selector",
     "_show_extension_editor",
-    # server: queues the frame synchronously (wire ordering decided at call
-    # time) and returns the coroutine that waits for it to go out. Documented
-    # at the definition.
-    "_send_message",
 }
 
 # Sync-prologue methods whose returned awaitable is a runtime-driven Deferred:
@@ -105,10 +95,7 @@ ALLOWED_SYNC_AWAITS = {
 # dropping the return value is pi's `void this.foo()` and loses no work. A
 # dropped *coroutine* would silently lose its work — never list a method here
 # unless its remainder is spawned (`driven(...)`/settled Deferreds only).
-DROPPABLE_AWAITABLES = {
-    "_disconnect",
-    "_fail_protocol",
-}
+DROPPABLE_AWAITABLES: set[str] = set()
 
 # `Class.method` pairs where pi is `async` and we are deliberately not.
 # Each needs a reason; "it was ported that way" is not one. Entries that stop
@@ -140,11 +127,6 @@ JUSTIFIED_SYNC_PORTS = {
     # because a Python coroutine cannot be awaited twice. Same shape as
     # `SettingsManager._enqueue_write`. Documented at the definition.
     "Editor._start_autocomplete_request",
-    # pi's async body queues the frame before its first await, deciding wire
-    # order at call time; the sync prologue keeps that ordering on tonio
-    # (a lazily-started coroutine would decide it at schedule time).
-    # Documented at the definition.
-    "PiServer._send_message",
     # MCP transports: `send()` takes the message's place in the outgoing order
     # when called and returns a `SendResult` the caller may await (recipe
     # `mcp-client`).

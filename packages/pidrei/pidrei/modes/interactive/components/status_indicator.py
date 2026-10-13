@@ -1,6 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/status-indicator.ts."""
 
 import math
+from collections.abc import Callable
 
 from pidrei_tui import Loader, truncate_to_width
 
@@ -73,7 +74,7 @@ class RetryStatusIndicator(StatusIndicator):
 class CompactionStatusIndicator(StatusIndicator):
     """Reasons: "manual" | "threshold" | "overflow"."""
 
-    def __init__(self, ui, reason: str) -> None:
+    def __init__(self, ui, reason: str, color_fn: Callable[[str], str] | None = None) -> None:
         cancel_hint = f"({key_text('app.interrupt')} to cancel)"
         if reason == "manual":
             label = f"Compacting context... {cancel_hint}"
@@ -83,8 +84,8 @@ class CompactionStatusIndicator(StatusIndicator):
         super().__init__(
             "compaction",
             ui,
-            lambda spinner: theme.fg("accent", spinner),
-            lambda text: theme.fg("muted", text),
+            color_fn or (lambda spinner: theme.fg("accent", spinner)),
+            color_fn or (lambda text: theme.fg("muted", text)),
             label,
         )
 

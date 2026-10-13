@@ -40,9 +40,15 @@ from pidrei.extensions.mcp.runtime import (
     McpServerLog,
     create_default_transport,
 )
-from pidrei.extensions.mcp.tools import ConvertMcpResultOptions, convert_mcp_result, create_mcp_tool_name
+from pidrei.extensions.mcp.tools import (
+    ConvertMcpResultOptions,
+    convert_mcp_result,
+    create_mcp_result_schema,
+    create_mcp_tool_name,
+)
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
+from pidrei_codemode.declarations import schema_to_type
 from pidrei_mcp import LATEST_PROTOCOL_VERSION, McpAuthRequiredError, McpHttpError, McpSessionExpiredError, SendResult
 from pidrei_mcp.oauth import McpOAuthAuthorizationRequiredError
 from pidrei_mcp.testing import create_in_memory_transport_pair
@@ -334,6 +340,66 @@ def test_creates_provider_safe_tool_names():
     assert re.fullmatch(r"mcp__s__a_b_[0-9a-f]{8}", second)
 
 
+_CONTENT_ITEM = (
+    "class ResultContentItem(TypedDict, extra_items=Any):\n"
+    "    type: Literal['text', 'image', 'audio', 'resource_link', 'resource']\n"
+    "    text: NotRequired[str]\n"
+    "    data: NotRequired[str]\n"
+    "    mimeType: NotRequired[str]"
+)
+
+
+def test_declares_the_call_tool_result_scripts_receive_keeping_references_in_the_servers_output_schema():
+    # pi renders the TypeScript type; here the same schema renders as stubs.
+    # pi #10416: without an output schema, structured content may be any JSON value.
+    assert schema_to_type(create_mcp_result_schema(None), name="Result").definitions == (
+        _CONTENT_ITEM,
+        (
+            "class Result(TypedDict, extra_items=Any):\n"
+            "    content: list[ResultContentItem]\n"
+            "    structuredContent: NotRequired[Any]\n"
+            "    isError: NotRequired[bool]"
+        ),
+    )
+
+    hit = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
+    schema = create_mcp_result_schema(
+        {
+            "type": "object",
+            "properties": {
+                "hits": {"type": "array", "items": {"$ref": "#/$defs/Hit~1v1"}},
+                "again": {"$ref": "#/properties/hits"},
+                "children": {"type": "array", "items": {"$ref": "#"}},
+                # A property named like a keyword whose value is data.
+                "default": {"$ref": "#/definitions/Hit"},
+                "remote": {"$ref": "https://example.com/schema.json"},
+            },
+            "required": ["hits"],
+            "$defs": {"Hit/v1": {**hit, "default": {"$ref": "#/stays"}}},
+            "definitions": {"Hit": hit},
+        }
+    )
+    # Data that looks like a reference is kept as is.
+    assert schema["properties"]["structuredContent"]["$defs"]["Hit/v1"]["default"] == {"$ref": "#/stays"}
+    definitions = schema_to_type(schema, name="Result").definitions
+    assert definitions[0] == _CONTENT_ITEM
+    by_name = {definition.split("(", 1)[0].removeprefix("class "): definition for definition in definitions}
+    assert by_name["ResultStructuredContent"] == (
+        "class ResultStructuredContent(TypedDict):\n"
+        "    hits: list[ResultStructuredContentHitsItem]\n"
+        "    again: NotRequired[list[ResultStructuredContentAgainItem]]\n"
+        "    children: NotRequired[list[ResultStructuredContentChildrenItem]]\n"
+        "    default: NotRequired[ResultStructuredContentDefault]\n"
+        "    remote: NotRequired[Any]"
+    )
+    # The references resolve below `structuredContent`, and the recursive one stops at `Any`.
+    assert (
+        by_name["ResultStructuredContentHitsItem"] == "class ResultStructuredContentHitsItem(TypedDict):\n    id: str"
+    )
+    assert by_name["ResultStructuredContentDefault"] == "class ResultStructuredContentDefault(TypedDict):\n    id: str"
+    assert "    children: NotRequired[list[Any]]" in by_name["ResultStructuredContentChildrenItem"]
+
+
 @pytest.mark.tonio
 async def test_converts_results_passing_the_call_tool_result_to_scripts_and_flagging_errors():
     blocks = [
@@ -356,6 +422,12 @@ async def test_converts_results_passing_the_call_tool_result_to_scripts_and_flag
     assert (await convert_mcp_result("docs", "t", {"content": [], "structuredContent": {"n": 1}})).content == [
         TextContent(text='{\n  "n": 1\n}')
     ]
+    # pi #10416: list structured content reaches the model as JSON and scripts as sent.
+    assert await convert_mcp_result("docs", "t", {"content": [], "structuredContent": [{"id": 1}]}) == AgentToolResult(
+        content=[TextContent(text='[\n  {\n    "id": 1\n  }\n]')],
+        details={"server": "docs", "tool": "t"},
+        structured_content={"content": [], "structuredContent": [{"id": 1}]},
+    )
     assert await convert_mcp_result(
         "docs", "t", {"content": [{"type": "text", "text": "nope"}], "isError": True}
     ) == AgentToolResult(
@@ -467,7 +539,7 @@ class _FakeServers:
     def __init__(self) -> None:
         self.servers: list = []
 
-    async def create(self, *, methods: list[str] | None = None, no_tools: bool = False):
+    async def create(self, *, methods: list[str] | None = None, no_tools: bool = False, resources: bool = False):
         client, server = create_in_memory_transport_pair()
         self.servers.append(server)
 
@@ -483,7 +555,10 @@ class _FakeServers:
                     "id": message["id"],
                     "result": {
                         "protocolVersion": LATEST_PROTOCOL_VERSION,
-                        "capabilities": {"prompts": {}} if no_tools else {"tools": {}},
+                        "capabilities": {
+                            **({"prompts": {}} if no_tools else {"tools": {}}),
+                            **({"resources": {}} if resources else {}),
+                        },
                         "serverInfo": {"name": "fake", "version": "1.0.0"},
                     },
                 }
@@ -516,10 +591,10 @@ def _expire_tool_calls(transport) -> None:
     """Simulates the HTTP transport's 404 for a session the server no longer knows."""
     send = transport.send
 
-    def expiring(message):
+    def expiring(message, *, cancel=None):
         if message.get("method") == "tools/call":
             return SendResult.failed(McpSessionExpiredError("gone"))
-        return send(message)
+        return send(message, cancel=cancel)
 
     transport.send = expiring
 
@@ -622,14 +697,14 @@ async def test_a_tool_refresh_failing_after_the_close_changes_nothing(fake_serve
         send = transport.send
         lists: list[None] = []
 
-        def held(message):
+        def held(message, *, cancel=None):
             if message.get("method") == "tools/list":
                 lists.append(None)
                 if len(lists) > 1:
                     # The refresh's list is never answered.
                     listing.set()
                     return SendResult.succeeded()
-            return send(message)
+            return send(message, cancel=cancel)
 
         transport.send = held
         return transport
@@ -666,10 +741,10 @@ async def test_a_cancelled_call_that_needed_a_sign_in_still_marks_the_server(fak
         transport = await fake_servers.create()
         send, close = transport.send, transport.close
 
-        def rejecting(message):
+        def rejecting(message, *, cancel=None):
             if message.get("method") == "tools/call":
                 return SendResult.failed(McpOAuthAuthorizationRequiredError())
-            return send(message)
+            return send(message, cancel=cancel)
 
         async def parked_close() -> None:
             closing.set()
@@ -728,10 +803,10 @@ async def test_a_connect_made_while_a_call_drops_its_client_for_a_sign_in_is_not
         transport = await fake_servers.create()
         send = transport.send
 
-        def rejecting(message):
+        def rejecting(message, *, cancel=None):
             if message.get("method") == "tools/call":
                 return SendResult.failed(McpOAuthAuthorizationRequiredError())
-            return send(message)
+            return send(message, cancel=cancel)
 
         transport.send = rejecting
         _parked_close(transport, closing, gate)
@@ -797,10 +872,10 @@ async def test_a_failing_change_listener_fails_the_call_that_needed_a_sign_in_wi
         transport = await fake_servers.create()
         send = transport.send
 
-        def rejecting(message):
+        def rejecting(message, *, cancel=None):
             if message.get("method") == "tools/call":
                 return SendResult.failed(McpOAuthAuthorizationRequiredError())
-            return send(message)
+            return send(message, cancel=cancel)
 
         transport.send = rejecting
         return transport
@@ -907,6 +982,22 @@ async def test_connects_to_servers_without_the_tools_capability_without_listing_
     await connection.close()
 
 
+# pi #10526: listing every resource can take long (a large drive), so connecting must not wait for it.
+@pytest.mark.tonio
+async def test_connects_to_servers_with_resources_without_listing_them(fake_servers):
+    methods: list[str] = []
+
+    async def with_resources():
+        return await fake_servers.create(resources=True, methods=methods)
+
+    connection = _Connected(_stdio_entry(), [with_resources]).connection
+    await connection.get_client()
+    assert connection.state == "connected"
+    assert connection.has_resources is True
+    assert methods == ["initialize", "tools/list"]
+    await connection.close()
+
+
 @pytest.mark.tonio
 async def test_marks_a_dropped_connection_and_reconnects_on_the_next_call(fake_servers):
     disconnected = tonio.Event()
@@ -935,7 +1026,7 @@ def _http_entry(**config) -> McpServerEntry:
 def _failing(fake_servers, error):
     async def create():
         transport = await fake_servers.create()
-        transport.send = lambda _message: SendResult.failed(error)
+        transport.send = lambda _message, *, cancel=None: SendResult.failed(error)
         return transport
 
     return create
@@ -971,12 +1062,12 @@ async def test_retries_resource_reads_but_not_tool_calls_after_a_transient_http_
         send = transport.send
 
         # The first read and the first call fail with 502.
-        def failing_once(message):
+        def failing_once(message, *, cancel=None):
             method = message.get("method", "")
             if method in ("resources/read", "tools/call") and method not in failed:
                 failed.add(method)
                 return SendResult.failed(McpHttpError(502, "MCP HTTP request failed with status 502"))
-            return send(message)
+            return send(message, cancel=cancel)
 
         transport.send = failing_once
         return transport

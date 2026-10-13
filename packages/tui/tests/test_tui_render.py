@@ -15,6 +15,7 @@ from tonio.colored import fs
 
 from pidrei_tui import tui as tui_module, tui_main_screen
 from pidrei_tui.components.image import Image
+from pidrei_tui.components.input import Input
 from pidrei_tui.terminal_image import (
     delete_kitty_image,
     encode_kitty,
@@ -22,7 +23,9 @@ from pidrei_tui.terminal_image import (
     set_capabilities,
     set_cell_dimensions,
 )
+from pidrei_tui.tui import CURSOR_MARKER, render_fake_cursor
 from pidrei_tui.tui_main_screen import TuiMainScreen
+from pidrei_tui.utils import slice_by_column
 
 from .tui_helpers import env_var
 from .virtual_terminal import LoggingVirtualTerminal, VirtualTerminal
@@ -1327,3 +1330,85 @@ async def test_splits_large_differential_updates_without_a_full_redraw():
     assert output.startswith("\x1b[?2026h")
     assert "\x1b[?2026l" in output
     assert "\x1b[2J" not in output, "the update should stay on the differential render path"
+
+
+# TUI fake cursor
+
+_CURSOR_VISIBILITY_TAIL = re.compile(r"\x1b\[\?25[hl]$")
+
+
+def _without_cursor_visibility(writes: str) -> str:
+    """pi shows or hides the cursor in a separate terminal call its test terminal does not log;
+    here that sequence ends the positioning write (`_position_hardware_cursor`)."""
+    return _CURSOR_VISIBILITY_TAIL.sub("", writes)
+
+
+@pytest.mark.tonio
+async def test_draws_the_focused_fake_cursor_in_reverse_video_and_omits_it_when_the_hardware_cursor_is_shown():
+    terminal = LoggingVirtualTerminal(20, 5)
+    tui = TuiMainScreen(terminal)
+    input_component = Input()
+    input_component.set_value("abc")
+    tui.add_child(input_component)
+    tui.set_focus(input_component)
+    await tui.start()
+    await terminal.wait_for_render()
+    assert "> \x1b[7ma\x1b[27mbc" in terminal.get_writes()
+
+    terminal.clear_writes()
+    since = terminal.frames
+    tui.set_show_hardware_cursor(True)
+    await terminal.wait_for_render(since)
+    assert "\x1b[7m" not in terminal.get_writes()
+    assert "\x1b_pidrei:" not in terminal.get_writes()
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_keeps_the_fake_cursor_of_an_unfocused_input_when_the_hardware_cursor_is_shown():
+    terminal = LoggingVirtualTerminal(20, 5)
+    tui = TuiMainScreen(terminal, True)
+    input_component = Input()
+    input_component.set_value("abc")
+    tui.add_child(input_component)
+    await tui.start()
+    await terminal.wait_for_render()
+    assert "> \x1b[7ma\x1b[27mbc" in terminal.get_writes()
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_omits_the_focused_fake_cursor_when_truncation_dropped_its_end_marker():
+    terminal = LoggingVirtualTerminal(20, 5)
+    tui = TuiMainScreen(terminal, True)
+    base = TestComponent()
+    base.lines = [slice_by_column(f"ab{CURSOR_MARKER}{render_fake_cursor('c')}def", 0, 3, True)]
+    tui.add_child(base)
+    await tui.start()
+    await terminal.wait_for_render()
+    assert "\x1b[7m" not in terminal.get_writes()
+    assert _without_cursor_visibility(terminal.get_writes()).endswith("\x1b[3G")
+    await tui.stop()
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("show_hardware_cursor", [False, True])
+async def test_keeps_the_cursor_when_an_overlay_ends_directly_left_of_it(show_hardware_cursor):
+    terminal = LoggingVirtualTerminal(20, 5)
+    tui = TuiMainScreen(terminal, show_hardware_cursor)
+    base = TestComponent()
+    base.lines = [f"abc{CURSOR_MARKER}{render_fake_cursor('d')}ef"]
+    tui.add_child(base)
+    overlay = TestComponent()
+    overlay.lines = ["XXX"]
+    tui.show_overlay(overlay, {"row": 0, "col": 0, "width": 3})
+    await tui.start()
+    await terminal.wait_for_render()
+
+    writes = terminal.get_writes()
+    assert "XXX" in writes
+    assert ("\x1b[7md" in writes) is (not show_hardware_cursor)
+    # The hardware cursor is positioned at column 4 in both modes
+    assert _without_cursor_visibility(writes).endswith("\x1b[4G")
+    await tui.stop()

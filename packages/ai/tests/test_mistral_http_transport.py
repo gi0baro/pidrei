@@ -2,17 +2,19 @@
 
 pi injects a `fetch`; pidrei's transport seam is `MistralOptions.client`
 (`FakeMistralClient` records the URL, wire payload, and headers the adapter
-would have sent). pi's "applies the request timeout while waiting for an SSE
-chunk" case is not mirrored: pi implements the timeout itself
-(`AbortSignal.timeout(timeoutMs ?? 60_000)`), while pidrei maps `timeout_ms`
-to the punkreq read timeout — dependency behavior the test policy says not to
-re-test, and a fake client never reaches it.
+would have sent). The request-timeout cases use the `fetch` option, as pi
+does. pi's active-stream case delivers its body in timed chunks; here the body
+arrives at once. pi leaves body stalls to its HTTP client's idle timeout,
+which pidrei's callers pass as `timeout_ms` and the request applies to each
+read (never the whole stream); pidrei-only cases check that bound, with and
+without a caller timeout, and the head timeout the request itself reports.
 """
 
 import json
 from dataclasses import replace
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei_ai.api.mistral_conversations import MistralOptions, stream as stream_mistral
 from pidrei_ai.providers.all import get_builtin_model
@@ -31,6 +33,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 from tests.mistral_helpers import FakeMistralClient, FakeMistralResponse, sse_body
 
@@ -434,6 +437,84 @@ async def test_aborts_while_waiting_for_an_sse_chunk():
     message = await result
 
     assert message.stop_reason == "aborted"
+
+
+@pytest.mark.tonio
+async def test_applies_the_request_timeout_while_waiting_for_response_headers():
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+
+    async def fetch(_request, *, env=None):
+        # Never answers: only the header deadline ends the wait.
+        await tonio.Event().wait()
+
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", fetch=fetch, timeout_ms=5)
+    ).result()
+
+    assert message.stop_reason == "error"
+    assert message.error_message == "Mistral response headers timed out after 5ms"
+
+
+# Regression test for #10609: an active stream must not be cut off after timeout_ms.
+@pytest.mark.tonio
+async def test_does_not_abort_an_active_stream_that_lasts_longer_than_the_request_timeout():
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+    thinking_event = {
+        "choices": [
+            {"index": 0, "delta": {"content": [{"type": "thinking", "thinking": [{"type": "text", "text": "x"}]}]}}
+        ]
+    }
+    requests = []
+
+    async def fetch(request, *, env=None):
+        requests.append(request)
+        body = sse_body([json.dumps(thinking_event)] * 5 + [json.dumps(terminal_event())])
+        return http.Response(200, headers={"content-type": "text/event-stream"}, content=body, request=request)
+
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", fetch=fetch, timeout_ms=20)
+    ).result()
+
+    assert message.stop_reason == "stop"
+    assert message.content == [ThinkingContent(thinking="xxxxx")]
+
+
+# pidrei-only: each read is bounded by the caller's timeout (the HTTP idle timeout pi applies to
+# body stalls), else by the streaming default; pi's 60 s header default never bounds body reads.
+@pytest.mark.tonio
+@pytest.mark.parametrize(("timeout_ms", "read_s"), [(20, 0.02), (None, http.request_timeout(None).read)])
+async def test_bounds_each_read_by_the_callers_timeout_or_the_streaming_default(timeout_ms, read_s):
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+    requests = []
+
+    async def fetch(request, *, env=None):
+        requests.append(request)
+        body = sse_body([json.dumps(terminal_event())])
+        return http.Response(200, headers={"content-type": "text/event-stream"}, content=body, request=request)
+
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", fetch=fetch, timeout_ms=timeout_ms)
+    ).result()
+
+    assert message.stop_reason == "stop"
+    assert requests[0].timeout.read == read_s
+    assert requests[0].timeout.total is None
+
+
+# pidrei-only: with a caller timeout, the request's read timeout bounds the head at the same deadline.
+@pytest.mark.tonio
+async def test_reports_a_head_read_timeout_as_a_response_headers_timeout():
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+
+    async def fetch(request, *, env=None):
+        raise http.RequestTimeout("Timed out waiting for the response", request=request)
+
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", fetch=fetch, timeout_ms=5_000)
+    ).result()
+
+    assert message.stop_reason == "error"
+    assert message.error_message == "Mistral response headers timed out after 5000ms"
 
 
 @pytest.mark.tonio

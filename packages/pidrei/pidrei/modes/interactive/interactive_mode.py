@@ -258,7 +258,7 @@ def is_expandable(obj) -> bool:
     return callable(getattr(obj, "set_expanded", None))
 
 
-def is_working_status_editor(editor) -> bool:
+def is_embedded_status(editor) -> bool:
     """Whether the editor opted into rendering the working status in its border
     (pi's WorkingStatusEditor structural check)."""
     return getattr(editor, "embed_working_status", None) is True and callable(
@@ -2381,7 +2381,7 @@ class InteractiveMode:
         """Hand the status indicator to the editor's border; False when the
         active editor has not opted in (the standalone status row stays)."""
         self._default_editor.set_working_status_indicator(None)
-        if not is_working_status_editor(self.editor):
+        if not is_embedded_status(self.editor):
             return False
         self.editor.set_working_status_indicator(indicator)
         return True
@@ -2423,7 +2423,7 @@ class InteractiveMode:
     def _show_working_status_indicator(self) -> None:
         """Under the UI state lock (the event handler, `_set_working_visible`)."""
         color_fn = None
-        if is_working_status_editor(self.editor):
+        if is_embedded_status(self.editor):
 
             def color_fn(text: str) -> str:
                 border_color = self.editor.border_color or theme.get_thinking_border_color(
@@ -3702,7 +3702,16 @@ class InteractiveMode:
             # Keep editor active; submissions are queued during compaction.
             self._auto_compaction_escape_handler = self._default_editor.on_escape
             self._default_editor.on_escape = self.session.abort_compaction
-            self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
+            color_fn = None
+            if is_embedded_status(self.editor):
+
+                def color_fn(text: str) -> str:
+                    border_color = self.editor.border_color or theme.get_thinking_border_color(
+                        self.session.thinking_level or "off"
+                    )
+                    return border_color(text)
+
+            self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason, color_fn))
             self.ui.request_render()
 
         elif event_type == "compaction_end":
@@ -3779,7 +3788,16 @@ class InteractiveMode:
             if event.source == "branchSummary":
                 self._show_status_indicator(BranchSummaryStatusIndicator(self.ui))
             else:
-                self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
+                color_fn = None
+                if is_embedded_status(self.editor):
+
+                    def color_fn(text: str) -> str:
+                        border_color = self.editor.border_color or theme.get_thinking_border_color(
+                            self.session.thinking_level or "off"
+                        )
+                        return border_color(text)
+
+                self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason, color_fn))
             self.ui.request_render()
 
         elif event_type == "summarization_retry_finished":

@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent test/resource-loader-theme.test.ts."""
 
+import importlib
 import json
 import os
 
@@ -8,6 +9,7 @@ import pytest
 from pidrei.config import get_themes_dir
 from pidrei.core.resource_loader import DefaultResourceLoader
 from pidrei.core.settings_manager import SettingsManager
+from pidrei.modes.interactive.theme import set_theme_json_validator, validate_theme_json
 from pidrei_tui import reset_capabilities_cache, set_capability_overrides
 
 
@@ -83,3 +85,52 @@ async def test_returns_to_automatic_detection_after_an_explicit_setting_is_remov
 
     loaded_theme = next(theme for theme in loader.get_themes()["themes"] if theme.name == "capability-test")
     assert loaded_theme.bg("userMessageBg", "x") == "\x1b[48;2;60;53;68mx\x1b[49m"
+
+
+@pytest.fixture
+def strict_theme_validation():
+    """pi installs the validator for the whole file; here it is scoped to the
+    test and restored, so the conftest guard sees no leak."""
+    theme_module = importlib.import_module("pidrei.modes.interactive.theme.theme")
+    previous = theme_module._theme_json_validator
+    set_theme_json_validator(validate_theme_json)
+    try:
+        yield
+    finally:
+        set_theme_json_validator(previous)
+
+
+@pytest.mark.tonio
+async def test_applies_strict_validation_on_initial_load_and_reload(theme_dirs, strict_theme_validation):
+    agent_dir, cwd, theme_path = theme_dirs
+    theme_json = json.loads(theme_path.read_text(encoding="utf-8"))
+    loader = await DefaultResourceLoader(
+        cwd=str(cwd),
+        agent_dir=str(agent_dir),
+        settings_manager=SettingsManager.in_memory(),
+        additional_theme_paths=[str(theme_path)],
+        no_extensions=True,
+        no_skills=True,
+        no_prompt_templates=True,
+        no_context_files=True,
+    )
+
+    theme_json["unsupported"] = True
+    theme_path.write_text(json.dumps(theme_json), encoding="utf-8")
+    await loader.reload()
+    initial_diagnostics = loader.get_themes()["diagnostics"]
+    assert len(initial_diagnostics) == 1
+    assert initial_diagnostics[0].type == "warning"
+    assert initial_diagnostics[0].path == str(theme_path)
+    assert "/unsupported" in initial_diagnostics[0].message
+
+    del theme_json["unsupported"]
+    theme_path.write_text(json.dumps(theme_json), encoding="utf-8")
+    await loader.reload()
+    assert loader.get_themes()["diagnostics"] == []
+    assert any(theme.name == theme_json["name"] for theme in loader.get_themes()["themes"])
+
+    theme_json["unsupported"] = True
+    theme_path.write_text(json.dumps(theme_json), encoding="utf-8")
+    await loader.reload()
+    assert loader.get_themes()["diagnostics"] == initial_diagnostics

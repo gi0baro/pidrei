@@ -74,7 +74,6 @@ from .oauth import (
     create_mcp_auth_provider,
     sign_in_mcp_server,
 )
-from .resources import is_mcp_app_resource
 
 
 __all__ = [
@@ -168,26 +167,6 @@ def _list_templates(
     return _without_templates(lambda: client.list_resource_templates(cancel=cancel, timeout_ms=timeout_ms), [])
 
 
-async def _quietly[T](operation: Awaitable[list[T]]) -> list[T]:
-    try:
-        return await operation
-    except Exception:
-        return []
-
-
-async def _fetch_resources(client: McpClient) -> tuple[list[Resource], list[ResourceTemplate]]:
-    """Resources and templates at connect time, for the counts in `/mcp` and
-    `pidrei mcp list`. A server whose lists fail still connects: the resource
-    tools list and read its resources on demand."""
-    templates = tonio.spawn(_quietly(_list_templates(client)))
-    resources = await _quietly(client.list_resources())
-    resource_templates = await templates
-    return (
-        [resource for resource in resources if not is_mcp_app_resource(resource)],
-        [template for template in resource_templates if not is_mcp_app_resource(template)],
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class ConnectionView:
     """Published whole; the lists are never changed after publication."""
@@ -195,11 +174,10 @@ class ConnectionView:
     state: ServerState = "connecting"
     error: str | None = None
     tools: list[Tool] = field(default_factory=list)
-    # Whether the server offers resources. The lists below are what it listed
-    # at the last connect or change, without MCP App resources.
+    # Whether the server offers resources, which the resource tools list and
+    # read on demand. They are not listed at connect: listing every resource
+    # can take long (a large drive, say).
     has_resources: bool = False
-    resources: list[Resource] = field(default_factory=list)
-    resource_templates: list[ResourceTemplate] = field(default_factory=list)
     # Server instructions from `initialize`, describing its tools as a group.
     instructions: str | None = None
 
@@ -317,14 +295,6 @@ class McpServerConnection:
     @property
     def has_resources(self) -> bool:
         return self._view.has_resources
-
-    @property
-    def resources(self) -> list[Resource]:
-        return self._view.resources
-
-    @property
-    def resource_templates(self) -> list[ResourceTemplate]:
-        return self._view.resource_templates
 
     @property
     def instructions(self) -> str | None:
@@ -582,11 +552,7 @@ class McpServerConnection:
             async def on_tools_changed(_params: Any) -> None:
                 tonio.spawn.without_tracking(self._refresh_tools(client))
 
-            async def on_resources_changed(_params: Any) -> None:
-                tonio.spawn.without_tracking(self._refresh_resources(client))
-
             client.on_notification("notifications/tools/list_changed", on_tools_changed)
-            client.on_notification("notifications/resources/list_changed", on_resources_changed)
             stdio = transport if isinstance(transport, StdioTransport) else None
 
             def on_close() -> Awaitable[None]:
@@ -594,12 +560,9 @@ class McpServerConnection:
 
             client.on_close(on_close)
             capabilities = client.server_capabilities or {}
-            has_resources = capabilities.get("resources") is not None
             # Servers without the tools capability (prompts or resources only) do not answer tools/list.
-            fetching = tonio.spawn(_fetch_resources(client)) if has_resources else None
             # pi tests the capability object, which is truthy even when empty (`"tools": {}`).
             tools = await client.list_tools() if capabilities.get("tools") is not None else []
-            resources, resource_templates = await fetching if fetching is not None else ([], [])
             with self._lock:
                 if self._closed:
                     raise Exception("shut down while connecting")
@@ -611,9 +574,7 @@ class McpServerConnection:
                     state="connected",
                     error=None,
                     tools=tools,
-                    has_resources=has_resources,
-                    resources=resources,
-                    resource_templates=resource_templates,
+                    has_resources=capabilities.get("resources") is not None,
                     instructions=(client.instructions or "").strip() or None,
                 )
             self._on_tools(self)
@@ -666,15 +627,6 @@ class McpServerConnection:
                 if self._client is not client or self._closed:
                     return
                 self._publish_locked(error=f"Failed to refresh tools: {error}")
-        await self._changed()
-
-    async def _refresh_resources(self, client: McpClient) -> None:
-        resources, resource_templates = await _fetch_resources(client)
-        with self._lock:
-            if self._client is not client or self._closed:
-                return
-            self._publish_locked(resources=resources, resource_templates=resource_templates)
-        self._on_tools(self)
         await self._changed()
 
     async def close(self) -> None:

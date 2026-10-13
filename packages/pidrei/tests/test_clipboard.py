@@ -10,6 +10,7 @@ off macOS only (on macOS pbpaste/pbcopy stand in for the native helper). pi's
 Termux cases are not mirrored: Android is not a pidrei platform.
 """
 
+import base64
 import contextlib
 import io
 import os
@@ -31,6 +32,7 @@ _ENV_NAMES = (
     "WT_SESSION",
     "WSL_DISTRO_NAME",
     "WSLENV",
+    "PIDREI_CLIPBOARD_OSC52",
 )
 
 LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux", reason="asserts the Linux clipboard candidate chain")
@@ -157,6 +159,20 @@ async def test_waits_for_the_command_write_before_emitting_remote_osc52():
 
     assert _osc52_writes(stdout) == 1
     assert _names(calls) == ["xclip"]
+
+
+# Regression test for #10826, #10835, #10114: remote clients without SSH markers. pi also runs
+# the darwin and win32 copies. The OSC 52 decision under test does not depend on the platform,
+# so the Linux copy covers it; on darwin pbcopy stands in for pi's native helper, and win32 is
+# not a pidrei platform.
+@LINUX_ONLY
+@pytest.mark.tonio
+async def test_pidrei_clipboard_osc52_emits_osc52_after_a_successful_linux_copy():
+    with _clipboard(DISPLAY=":99", PIDREI_CLIPBOARD_OSC52="1") as (calls, stdout):
+        await clipboard.copy_to_clipboard("hello", stdout.write)
+
+    assert calls == [("xclip", ["-selection", "clipboard"], {"input": "hello", "timeout_ms": 5000})]
+    assert stdout.getvalue() == f"\x1b]52;c;{base64.b64encode(b'hello').decode()}\x07"
 
 
 @LINUX_ONLY

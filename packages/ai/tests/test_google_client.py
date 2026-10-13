@@ -14,6 +14,7 @@ import pytest
 
 from pidrei_ai.api import google_client
 from pidrei_ai.api.google_client import GoogleApiError, GoogleGenAI, build_request_body
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 
 
@@ -259,6 +260,42 @@ async def test_a_none_valued_header_is_suppressed():
     headers = await _headers({"apiKey": "k", "httpOptions": {"headers": {"x-drop": None, "x-keep": "v"}}})
     assert "x-drop" not in headers
     assert headers["x-keep"] == "v"
+
+
+# --- timeouts -----------------------------------------------------------------
+
+
+# pi passes no timeout to the SDK, whose requests are bounded by pi's HTTP client idle timeouts;
+# pidrei's callers pass that as `timeout_ms`, and each read is bounded by it (never the whole stream).
+@pytest.mark.tonio
+@pytest.mark.parametrize(("timeout_ms", "read_s"), [(30_000, 30.0), (None, http.STREAMING_TIMEOUT.read)])
+async def test_each_read_is_bounded_by_the_callers_timeout_or_the_streaming_default(monkeypatch, timeout_ms, read_s):
+    timeouts = []
+
+    class _Response:
+        status_code = 200
+
+        async def iter_bytes(self):
+            return
+            yield
+
+        async def close(self):
+            pass
+
+    class _Client:
+        async def post(self, url, *, json, headers, timeout):
+            timeouts.append(timeout)
+            return _Response()
+
+    monkeypatch.setattr(http, "client_for", lambda _url, _env=None: _Client())
+
+    chunks = await GoogleGenAI({"apiKey": "k"}).generate_content_stream(
+        {"model": "gemini-3-pro-preview", "contents": []}, timeout_ms=timeout_ms
+    )
+    assert [chunk async for chunk in chunks] == []
+
+    assert timeouts[0].read == read_s
+    assert timeouts[0].total is None
 
 
 # --- errors -------------------------------------------------------------------

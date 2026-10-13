@@ -16,272 +16,75 @@ from typing import Any
 import jsonschema
 from tonio.colored import fs
 
+from pidrei_ai.providers.compat_schema import PROVIDER_COMPAT_SCHEMA
+from pidrei_ai.providers.model_schema import (
+    MODEL_COST_SCHEMA,
+    MODEL_INPUT_LIMITS_SCHEMA,
+    MODEL_INPUT_MODALITY_SCHEMA,
+    MODEL_PROMPT_CACHE_SCHEMA,
+    THINKING_LEVEL_MAP_SCHEMA,
+)
+
 from ..utils.json_util import strip_json_comments
 from ..utils.paths import normalize_path
 from ..utils.text import strip_bom
 
 
-_STRING = {"type": "string"}
 _NON_EMPTY_STRING = {"type": "string", "minLength": 1}
-_NUMBER = {"type": "number"}
-_BOOLEAN = {"type": "boolean"}
+_STRING_RECORD = {"type": "object", "additionalProperties": {"type": "string"}}
 
-_PERCENTILE_CUTOFFS = {
-    "type": "object",
-    "properties": {"p50": _NUMBER, "p75": _NUMBER, "p90": _NUMBER, "p99": _NUMBER},
-}
-
-_STRING_ARRAY = {"type": "array", "items": _STRING}
-
-_MAX_PRICE_VALUE = {"anyOf": [_NUMBER, _STRING]}
-
-_OPENROUTER_ROUTING = {
-    "type": "object",
-    "properties": {
-        "allow_fallbacks": _BOOLEAN,
-        "require_parameters": _BOOLEAN,
-        "data_collection": {"enum": ["deny", "allow"]},
-        "zdr": _BOOLEAN,
-        "enforce_distillable_text": _BOOLEAN,
-        "order": _STRING_ARRAY,
-        "only": _STRING_ARRAY,
-        "ignore": _STRING_ARRAY,
-        "quantizations": _STRING_ARRAY,
-        "sort": {
-            "anyOf": [
-                _STRING,
-                {
-                    "type": "object",
-                    "properties": {"by": _STRING, "partition": {"anyOf": [_STRING, {"type": "null"}]}},
-                },
-            ]
-        },
-        "max_price": {
-            "type": "object",
-            "properties": {
-                "prompt": _MAX_PRICE_VALUE,
-                "completion": _MAX_PRICE_VALUE,
-                "image": _MAX_PRICE_VALUE,
-                "audio": _MAX_PRICE_VALUE,
-                "request": _MAX_PRICE_VALUE,
-            },
-        },
-        "preferred_min_throughput": {"anyOf": [_NUMBER, _PERCENTILE_CUTOFFS]},
-        "preferred_max_latency": {"anyOf": [_NUMBER, _PERCENTILE_CUTOFFS]},
-    },
-}
-
-_VERCEL_GATEWAY_ROUTING = {
-    "type": "object",
-    "properties": {"only": _STRING_ARRAY, "order": _STRING_ARRAY},
-}
-
-_THINKING_LEVEL_MAP_VALUE = {"anyOf": [_STRING, {"type": "null"}]}
-_THINKING_LEVEL_MAP = {
-    "type": "object",
-    "properties": dict.fromkeys(("off", "minimal", "low", "medium", "high", "xhigh", "max"), _THINKING_LEVEL_MAP_VALUE),
-}
-
-_SAMPLING_PARAMS = {"type": "object"}
+_SAMPLING_PARAMS = {"type": "object", "additionalProperties": {}}
 _SAMPLING_PARAMS_BY_THINKING_LEVEL = {
     "type": "object",
     "properties": dict.fromkeys(("off", "minimal", "low", "medium", "high", "xhigh", "max"), _SAMPLING_PARAMS),
 }
 
-_CHAT_TEMPLATE_KWARG = {
-    "anyOf": [
-        _STRING,
-        _NUMBER,
-        _BOOLEAN,
-        {"type": "null"},
-        {
-            "type": "object",
-            "properties": {
-                "$var": {"enum": ["thinking.enabled", "thinking.effort"]},
-                "omitWhenOff": _BOOLEAN,
-            },
-            "required": ["$var"],
-        },
-    ]
-}
+_POSITIVE_TOKEN_COUNT = {"type": "number", "exclusiveMinimum": 0}
 
-_SESSION_AFFINITY_FORMAT = {"enum": ["openai", "openai-nosession", "openrouter"]}
-
-_OPENAI_COMPLETIONS_COMPAT = {
-    "type": "object",
-    "properties": {
-        "supportsStore": _BOOLEAN,
-        "supportsDeveloperRole": _BOOLEAN,
-        "supportsReasoningEffort": _BOOLEAN,
-        "supportsUsageInStreaming": _BOOLEAN,
-        "supportsFinishReason": _BOOLEAN,
-        "maxTokensField": {"enum": ["max_completion_tokens", "max_tokens"]},
-        "requiresToolResultName": _BOOLEAN,
-        "requiresAssistantAfterToolResult": _BOOLEAN,
-        "requiresThinkingAsText": _BOOLEAN,
-        "requiresReasoningContentOnAssistantMessages": _BOOLEAN,
-        "thinkingFormat": {
-            "enum": [
-                "openai",
-                "openrouter",
-                "together",
-                "baseten",
-                "deepseek",
-                "zai",
-                "qwen",
-                "chat-template",
-                "qwen-chat-template",
-                "string-thinking",
-                "ant-ling",
-            ]
-        },
-        "chatTemplateKwargs": {"type": "object", "additionalProperties": _CHAT_TEMPLATE_KWARG},
-        "chatTemplateArgs": {"type": "object", "additionalProperties": _CHAT_TEMPLATE_KWARG},
-        "cacheControlFormat": {"const": "anthropic"},
-        "openRouterRouting": _OPENROUTER_ROUTING,
-        "vercelGatewayRouting": _VERCEL_GATEWAY_ROUTING,
-        "supportsOpenAIGrammarTools": _BOOLEAN,
-        "supportsStrictMode": _BOOLEAN,
-        "sendSessionAffinityHeaders": _BOOLEAN,
-        "sessionAffinityFormat": _SESSION_AFFINITY_FORMAT,
-        "supportsLongCacheRetention": _BOOLEAN,
-        "vllmPriority": _NUMBER,
-    },
-}
-
-_OPENAI_RESPONSES_COMPAT = {
-    "type": "object",
-    "properties": {
-        "supportsDeveloperRole": _BOOLEAN,
-        "sessionAffinityFormat": _SESSION_AFFINITY_FORMAT,
-        "supportsLongCacheRetention": _BOOLEAN,
-        "supportsStrictMode": _BOOLEAN,
-        "supportsOpenAIGrammarTools": _BOOLEAN,
-        "supportsMaxOutputTokens": _BOOLEAN,
-    },
-}
-
-_MODEL_COST_RATES = {
-    "input": _NUMBER,
-    "output": _NUMBER,
-    "cacheRead": _NUMBER,
-    "cacheWrite": _NUMBER,
-}
-_MODEL_COST_TIER = {
-    "type": "object",
-    "properties": {"inputTokensAbove": _NUMBER, **_MODEL_COST_RATES},
-    "required": ["inputTokensAbove", "input", "output", "cacheRead", "cacheWrite"],
-}
-_MODEL_PROMPT_CACHE = {
-    "type": "object",
-    "properties": {
-        "short": {"type": "number", "exclusiveMinimum": 0},
-        "long": {"type": "number", "exclusiveMinimum": 0},
-    },
-}
-_POSITIVE_INTEGER = {"type": "integer", "minimum": 1}
-_IMAGE_RESIZE = {
-    "type": "object",
-    "properties": {
-        "maxWidth": _POSITIVE_INTEGER,
-        "maxHeight": _POSITIVE_INTEGER,
-        "maxBytes": _POSITIVE_INTEGER,
-        "jpegQuality": {"type": "integer", "minimum": 1, "maximum": 100},
-    },
-}
-_MODEL_INPUT_LIMITS = {
-    "type": "object",
-    "properties": {
-        "maxRequestBytes": _POSITIVE_INTEGER,
-        "images": {
-            "type": "object",
-            "properties": {
-                "resize": _IMAGE_RESIZE,
-                "maxPerMessage": _POSITIVE_INTEGER,
-                "maxPerRequest": _POSITIVE_INTEGER,
-            },
-        },
-    },
-}
-
-_MODEL_COST = {
-    "type": "object",
-    "properties": {**_MODEL_COST_RATES, "tiers": {"type": "array", "items": _MODEL_COST_TIER}},
-    "required": ["input", "output", "cacheRead", "cacheWrite"],
-}
-
-_ANTHROPIC_MESSAGES_COMPAT = {
-    "type": "object",
-    "properties": {
-        "supportsEagerToolInputStreaming": _BOOLEAN,
-        "supportsLongCacheRetention": _BOOLEAN,
-        "sendSessionAffinityHeaders": _BOOLEAN,
-        "supportsCacheControlOnTools": _BOOLEAN,
-        "supportsTemperature": _BOOLEAN,
-        "forceAdaptiveThinking": _BOOLEAN,
-        "allowEmptySignature": _BOOLEAN,
-        "supportsStrictTools": _BOOLEAN,
-        "supportsMidConvoEffort": _BOOLEAN,
-        "allowedFallbackModels": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"provider": _NON_EMPTY_STRING, "model": _NON_EMPTY_STRING, "cost": _MODEL_COST},
-                "required": ["provider", "model", "cost"],
-            },
-            "maxItems": 3,
-        },
-    },
-}
-
-_PROVIDER_COMPAT = {"anyOf": [_OPENAI_COMPLETIONS_COMPAT, _OPENAI_RESPONSES_COMPAT, _ANTHROPIC_MESSAGES_COMPAT]}
-
-_STRING_RECORD = {"type": "object", "additionalProperties": _STRING}
-
-_INPUT_MODALITIES = {"type": "array", "items": {"enum": ["text", "image"]}}
+_INPUT_MODALITIES = {"type": "array", "items": MODEL_INPUT_MODALITY_SCHEMA}
 
 _MODEL_DEFINITION = {
     "type": "object",
+    "required": ["id"],
     "properties": {
         "id": _NON_EMPTY_STRING,
         "name": _NON_EMPTY_STRING,
         "api": _NON_EMPTY_STRING,
         "baseUrl": _NON_EMPTY_STRING,
-        "reasoning": _BOOLEAN,
-        "thinkingLevelMap": _THINKING_LEVEL_MAP,
+        "reasoning": {"type": "boolean"},
+        "thinkingLevelMap": THINKING_LEVEL_MAP_SCHEMA,
         "input": _INPUT_MODALITIES,
-        "inputLimits": _MODEL_INPUT_LIMITS,
-        "cost": _MODEL_COST,
-        "promptCache": _MODEL_PROMPT_CACHE,
-        "contextWindow": _NUMBER,
-        "maxTokens": _NUMBER,
+        "inputLimits": MODEL_INPUT_LIMITS_SCHEMA,
+        "cost": MODEL_COST_SCHEMA,
+        "promptCache": MODEL_PROMPT_CACHE_SCHEMA,
+        "contextWindow": _POSITIVE_TOKEN_COUNT,
+        "maxTokens": _POSITIVE_TOKEN_COUNT,
         "samplingParams": _SAMPLING_PARAMS,
         "samplingParamsByThinkingLevel": _SAMPLING_PARAMS_BY_THINKING_LEVEL,
         "headers": _STRING_RECORD,
-        "compat": _PROVIDER_COMPAT,
+        "compat": PROVIDER_COMPAT_SCHEMA,
     },
-    "required": ["id"],
 }
+
+# pi's `Type.Partial(ModelCostSchema)`: every rate optional.
+_PARTIAL_MODEL_COST = {key: value for key, value in MODEL_COST_SCHEMA.items() if key != "required"}
 
 _MODEL_OVERRIDE = {
     "type": "object",
     "properties": {
         "name": _NON_EMPTY_STRING,
-        "reasoning": _BOOLEAN,
-        "thinkingLevelMap": _THINKING_LEVEL_MAP,
+        "reasoning": {"type": "boolean"},
+        "thinkingLevelMap": THINKING_LEVEL_MAP_SCHEMA,
         "input": _INPUT_MODALITIES,
-        "inputLimits": _MODEL_INPUT_LIMITS,
-        "cost": {
-            "type": "object",
-            "properties": {**_MODEL_COST_RATES, "tiers": {"type": "array", "items": _MODEL_COST_TIER}},
-        },
-        "promptCache": _MODEL_PROMPT_CACHE,
-        "contextWindow": _NUMBER,
-        "maxTokens": _NUMBER,
+        "inputLimits": MODEL_INPUT_LIMITS_SCHEMA,
+        "cost": _PARTIAL_MODEL_COST,
+        "promptCache": MODEL_PROMPT_CACHE_SCHEMA,
+        "contextWindow": _POSITIVE_TOKEN_COUNT,
+        "maxTokens": _POSITIVE_TOKEN_COUNT,
         "samplingParams": _SAMPLING_PARAMS,
         "samplingParamsByThinkingLevel": _SAMPLING_PARAMS_BY_THINKING_LEVEL,
         "headers": _STRING_RECORD,
-        "compat": _PROVIDER_COMPAT,
+        "compat": PROVIDER_COMPAT_SCHEMA,
     },
 }
 
@@ -293,20 +96,23 @@ _PROVIDER_CONFIG = {
         "apiKey": _NON_EMPTY_STRING,
         "api": _NON_EMPTY_STRING,
         "headers": _STRING_RECORD,
-        "compat": _PROVIDER_COMPAT,
-        "authHeader": _BOOLEAN,
+        "compat": PROVIDER_COMPAT_SCHEMA,
+        "authHeader": {"type": "boolean"},
         "models": {"type": "array", "items": _MODEL_DEFINITION},
         "modelOverrides": {"type": "object", "additionalProperties": _MODEL_OVERRIDE},
     },
 }
 
-_MODELS_CONFIG_SCHEMA = {
+MODELS_CONFIG_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"providers": {"type": "object", "additionalProperties": _PROVIDER_CONFIG}},
     "required": ["providers"],
+    "properties": {
+        "$schema": {"type": "string"},
+        "providers": {"type": "object", "additionalProperties": _PROVIDER_CONFIG},
+    },
 }
 
-_VALIDATOR = jsonschema.Draft202012Validator(_MODELS_CONFIG_SCHEMA)
+_VALIDATOR = jsonschema.Draft202012Validator(MODELS_CONFIG_SCHEMA)
 
 
 def _format_validation_path(error: jsonschema.ValidationError) -> str:

@@ -73,12 +73,10 @@ PREFIX_MAP = (
     ("packages/coding-agent/examples/", "packages/pidrei/pidrei/examples/", "example"),
     ("packages/tui/src/", "packages/tui/pidrei_tui/", "src"),
     ("packages/tui/test/", "packages/tui/tests/", "test"),
-    ("packages/server/src/", "packages/server/pidrei_server/", "src"),
-    ("packages/server/test/", "packages/server/tests/", "test"),
-    ("packages/protocol/src/", "packages/protocol/pidrei_protocol/", "src"),
-    ("packages/protocol/test/", "packages/protocol/tests/", "test"),
-    ("packages/client/src/", "packages/client/pidrei_client/", "src"),
-    ("packages/client/test/", "packages/client/tests/", "test"),
+    # 1.2.0: the generated configuration schemas ship in the wheel, as pi's
+    # ship in its npm package; their generator sits beside the ai catalog's.
+    ("packages/coding-agent/schemas/", "packages/pidrei/pidrei/schemas/", "src"),
+    ("packages/coding-agent/scripts/", "packages/pidrei/scripts/", "src"),
 )
 
 #: pi paths pidrei deliberately does not port, with the recorded reason.
@@ -285,11 +283,11 @@ DROPPED_PREFIXES += (
     ),
     (
         "packages/coding-agent/docs/rpc-commands.md",
-        "RPC docs stay out of the curated set (0.87.1 delta port; transport remnants are unpublished)",
+        "RPC docs stay out of the curated set (0.87.1 delta port; RPC mode is not run or audited)",
     ),
     (
         "packages/coding-agent/docs/rpc-extension-ui.md",
-        "RPC docs stay out of the curated set (0.87.1 delta port; transport remnants are unpublished)",
+        "RPC docs stay out of the curated set (0.87.1 delta port; RPC mode is not run or audited)",
     ),
     (
         "packages/coding-agent/examples/sdk/",
@@ -298,12 +296,12 @@ DROPPED_PREFIXES += (
 )
 
 #: pi's experimental stack — the durable harness runtime, Chord, the
-#: server/worker/client split and the Chord-era protocol/server/client — is
-#: not ported (2026-09-04 ruling; DROPPED prefixes per its §9). The transport
-#: survivors (protocol cbor + framing, server unix listener + byte contracts,
-#: client unix transport) keep their mechanical mapping. The stable harness
-#: helper layer went with pi 1.0.0 (`7fd478a2`); the modules the product used
-#: now live in pidrei (spec/upstream-sync.md).
+#: server/worker/client split — is not ported (2026-09-04 ruling; DROPPED
+#: prefixes per its §9). pi 1.2.0 (`7472cda0`) deleted the server stack and
+#: the protocol/server/client packages; pidrei's transport ports of them went
+#: with them. The stable harness helper layer went with pi 1.0.0
+#: (`7fd478a2`); the modules the product used now live in pidrei
+#: (spec/upstream-sync.md).
 _EXPERIMENTAL_REASON = "experimental stack not ported (spec/upstream-sync.md, what is not ported)"
 DROPPED_PREFIXES += tuple(
     (path, _EXPERIMENTAL_REASON)
@@ -404,51 +402,11 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/fixtures/session-worker-fixture.ts",
         "packages/coding-agent/examples/plugins/",
         "packages/coding-agent/examples/facets/",
-        # Chord-era protocol/server/client (transport survivors excluded)
-        "packages/protocol/src/protocol.ts",
-        "packages/protocol/src/codec.ts",
-        "packages/protocol/src/harness.ts",
-        "packages/protocol/src/json-value.ts",
-        "packages/protocol/src/rpc.ts",
-        "packages/protocol/src/service-state.ts",
-        "packages/protocol/src/schemas.ts",
-        "packages/protocol/src/index.ts",
-        "packages/protocol/test/protocol.test.ts",
-        "packages/server/src/server.ts",
-        "packages/server/src/session-router.ts",
-        "packages/server/src/sessions.ts",
-        "packages/server/src/snapshots.ts",
-        "packages/server/src/protocol.ts",
-        "packages/server/src/hosted-harness-manager.ts",
-        "packages/server/src/remote-session-manager.ts",
-        "packages/server/src/service-id.ts",
-        "packages/server/test/remote-session.test.ts",
-        "packages/server/src/types.ts",
-        "packages/server/src/errors.ts",
-        "packages/server/src/index.ts",
-        "packages/server/src/testing/",
-        "packages/server/src/transports/unix/preset.ts",
-        "packages/server/test/conformance.test.ts",
-        "packages/server/test/listener.test.ts",
-        "packages/server/test/protocol.test.ts",
-        "packages/server/test/server.test.ts",
-        "packages/server/test/sessions.test.ts",
-        "packages/client/src/client.ts",
-        "packages/client/src/control.ts",
-        "packages/client/test/control.test.ts",
-        "packages/client/src/connection.ts",
-        "packages/client/src/errors.ts",
-        "packages/client/src/index.ts",
-        "packages/client/src/session-handle.ts",
-        "packages/client/src/state.ts",
-        "packages/client/src/types.ts",
-        "packages/client/test/client.test.ts",
-        "packages/client/test/connection.test.ts",
-        "packages/client/test/disposal.test.ts",
-        "packages/client/test/requests.test.ts",
-        "packages/client/test/sessions.test.ts",
-        "packages/client/test/state.test.ts",
-        "packages/client/test/support.ts",
+        # pi's protocol/server/client packages, deleted upstream in 1.2.0
+        # (`7472cda0`) together with pidrei's transport ports of them
+        "packages/protocol/",
+        "packages/server/",
+        "packages/client/",
     )
 )
 DROPPED_PREFIXES += (
@@ -589,6 +547,36 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/src/extensions/codemode/execute.lazy.ts",
     )
 )
+#: 1.2.0 (`748b351f`): where pi's QuickJS VM runs — a Node worker
+#: (runtime/host.ts is now only its launcher), the calling thread, or another
+#: isolate over Workers RPC (Cloudflare). pidrei's scripts run in Monty
+#: worker processes; the shared execution half maps to runtime/host.py.
+_CODEMODE_VM_PLACEMENT_REASON = (
+    "JS VM placements (Node worker, calling thread, Workers RPC, Cloudflare); "
+    "pidrei runs scripts on Monty (recipe codemode-python)"
+)
+DROPPED_PREFIXES += tuple(
+    (path, _CODEMODE_VM_PLACEMENT_REASON)
+    for path in (
+        "packages/codemode/src/runtime/host.ts",
+        "packages/codemode/src/runtime/vm.ts",
+        "packages/codemode/src/runtime/inline.ts",
+        "packages/codemode/src/runtime/remote.ts",
+        "packages/codemode/src/portable.ts",
+        "packages/codemode/src/cloudflare",
+        "packages/codemode/test/portable.test.ts",
+        "packages/codemode/examples/cloudflare/",
+    )
+)
+DROPPED_PREFIXES += (
+    (
+        "packages/codemode/test/deterministic.test.ts",
+        (
+            "deterministic runs (sandbox.start, 1.2.0 `0fb1aee7`) serve only pi-durable's code mode "
+            "(experimental stack not ported); the start() hunks in types.ts/index.ts are per-hunk skips"
+        ),
+    ),
+)
 #: 0.99.1 drops (0.99.1 delta port).
 _LLAMA_CLASSIFY_REASON = (
     "llama.cpp classifier API not ported: its only consumer is the unported llama extension "
@@ -714,17 +702,7 @@ RENAMES = {
     # pi's manifest is package.json's `pi` key; pidrei's is pyproject.toml's
     # `[tool.pidrei]`, so the module follows the pi→pidrei rename (U10).
     "packages/coding-agent/src/core/pi-manifest.ts": "packages/pidrei/pidrei/core/pidrei_manifest.py",
-    "packages/coding-agent/src/modes/interactive/theme/theme-schema.json": "packages/pidrei/pidrei/modes/interactive/theme/theme-schema.json",
     "packages/tui/src/TuiAltScreen.ts": "packages/tui/pidrei_tui/tui_alt_screen.py",
-    # Server transport (U4): unix-lifecycle.test.ts was consolidated into
-    # unix.test.ts (546e00235); the stale-socket child fixture is inlined as a
-    # python -c script in test_unix.py (both packages' copies).
-    "packages/server/test/unix-lifecycle.test.ts": "packages/server/tests/test_unix.py",
-    "packages/server/test/fixtures/stale-socket-server.mjs": "packages/server/tests/test_unix.py",
-    "packages/client/test/fixtures/stale-socket-server.mjs": "packages/client/tests/test_unix.py",
-    # 0.85.0: upstream renamed unix.test.ts to unix-transport.test.ts when the
-    # client grew server discovery; pidrei's transport-only test keeps its name.
-    "packages/client/test/unix-transport.test.ts": "packages/client/tests/test_unix.py",
     # 0.84.2 additions. test-theme-colors.ts is a manual CLI tool, not a
     # collected test; its mirror keeps the non-test_ name for the same reason.
     "packages/coding-agent/test/test-theme-colors.ts": "packages/pidrei/tests/theme_colors_tool.py",
@@ -759,6 +737,10 @@ RENAMES = {
     "packages/coding-agent/src/utils/image-resize.ts": "packages/pidrei/pidrei/utils/image_process.py",
     # 1.1.0: consolidated into generate_models.py like the OpenRouter catalog helpers.
     "packages/ai/scripts/ai-gateway-pricing.ts": "packages/ai/scripts/generate_models.py",
+    # 1.2.0: pi split its host into the Node worker launcher (runtime/host.ts,
+    # dropped) and the calls/output/store/limits half every VM placement
+    # shares (runtime/execution.ts), which is what pidrei's Monty driver mirrors.
+    "packages/codemode/src/runtime/execution.ts": "packages/codemode/pidrei_codemode/runtime/host.py",
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
@@ -883,6 +865,14 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "_executeNestedToolCall/_handleAgentEvent: no takeRecord in the "
                 "message_start listener; nested events go through agent.observe; "
                 "the NestedToolCallRunner is created with the session"
+            ),
+        ),
+        (
+            "session-run-lifecycle",
+            (
+                "prompt/sendCustomMessage/_startRun: a run is claimed in the _state_guard "
+                "section that finds the session idle; _run_input_closed gates queued input "
+                "and _run_admission the idle-path writers"
             ),
         ),
     ),
@@ -1161,6 +1151,22 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/test/first-time-setup.test.ts": (
         ("no-telemetry", "analytics-settings cases are not mirrored"),
     ),
+    # Configuration schemas (1.2.0.0): PiDrei's settings set, schema URLs and the
+    # runtime key-id anchor (recipe `config-schemas`).
+    "packages/coding-agent/src/core/settings-schema.ts": (
+        ("no-telemetry", "no enableAnalytics/trackingId; enableInstallTelemetry is enableProviderAttribution"),
+        ("config-schemas", "PiDrei's settings: no npmCommand, no markdown.mermaid; codemode.typeCheck"),
+    ),
+    "packages/coding-agent/src/core/settings-defaults.ts": (
+        ("no-telemetry", "no enableAnalytics; enableInstallTelemetry is enableProviderAttribution"),
+        ("config-schemas", "PiDrei's settings: no markdown.mermaid; codemode.typeCheck"),
+    ),
+    "packages/coding-agent/src/core/key-id-schema.ts": (
+        ("config-schemas", "the published pattern ends in `$`; runtime validation uses the `\\Z` variant"),
+    ),
+    "packages/coding-agent/scripts/generate-schemas.ts": (
+        ("config-schemas", "SCHEMA_BASE_URL is PiDrei's GitHub raw URL; regenerate with make config-schemas"),
+    ),
     # Codemode scripts are Python on Monty (1.0.0.0): behaviour ports, the
     # JavaScript-shaped text and machinery are translated or dropped.
     "packages/codemode/src/runtime/prelude-source.ts": (
@@ -1168,11 +1174,12 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "codemode-python",
             (
                 "the JS prelude is host-side Python (text/image/store/load, close-match errors) plus "
-                "all_settled/has_tool fed into the session; error strings keep pi's wording minus JS syntax"
+                "all_settled/has_tool fed into the session; error strings keep pi's wording minus JS syntax; "
+                "deterministic-run hunks (settle properties for run.deliver) are skipped"
             ),
         ),
     ),
-    "packages/codemode/src/runtime/host.ts": (
+    "packages/codemode/src/runtime/execution.ts": (
         (
             "codemode-python",
             (
@@ -1341,6 +1348,11 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
 #: ported production module but no mirrored tests — backfill when a commit
 #: touches them.
 TEST_HOMES = {
+    # 1.2.0 (`15e7bdc1`): serializeConversation cases live with the rest of
+    # the compaction utils tests.
+    "packages/coding-agent/test/compaction-serialization.test.ts": (
+        "covered by packages/pidrei/tests/test_compaction.py (serializeConversation section)"
+    ),
     # Pre-existing gaps surfaced by the 0.85.0 triage (0.85.0 delta port).
     "packages/ai/test/openai-completions-cache-control-format.test.ts": (
         "PARITY GAP: anthropic-style cache-marker placement for openai-completions has no standalone "
@@ -1581,6 +1593,8 @@ NOISE_BASENAMES = {
 }
 NOISE_PREFIXES = (
     ".github/",
+    # pi's git hooks
+    ".husky/",
     # pi repo-local dogfood extensions/config, not product code
     ".pi/",
     "scripts/",
@@ -1596,7 +1610,7 @@ NOISE_PREFIXES = (
 #: their own summary section.
 DEPS_REVIEW_PATHS = {
     f"packages/{name}/package.json"
-    for name in ("ai", "agent", "codemode", "coding-agent", "tui", "server", "protocol", "client")
+    for name in ("ai", "agent", "codemode", "mcp", "coding-agent", "tui")
 }
 
 

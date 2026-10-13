@@ -67,6 +67,33 @@ selector → the model → "Enable".
 `/login xai` and `/login openrouter` each offer both a subscription flow and an
 API-key path; `XAI_API_KEY` and `OPENROUTER_API_KEY` keep working either way.
 
+### OpenRouter model lists
+
+With a key, pidrei lists only the OpenRouter chat models that key may use, with
+the key's context size, max output, and prices. These come from OpenRouter's
+`/models/user` endpoint and reflect guardrails and provider restrictions set in
+OpenRouter. Image and classifier models are not filtered.
+
+pidrei refreshes the list in the background at startup in interactive mode,
+when `/model` opens, after `/login`, and on `pidrei update --models`. The last
+list is saved and used offline and in `pidrei -p` and RPC mode. After switching
+keys outside `/login`, the previous key's list stays until the next refresh.
+
+Regional endpoints filter models to their region. To use one, set the base URL
+in [`models.json`](models.md#provider-fields):
+
+```json
+{
+  "providers": {
+    "openrouter": { "baseUrl": "https://us.openrouter.ai/api/v1" }
+  }
+}
+```
+
+If the base URL rejects the key at `/models/user` or does not have that
+endpoint, for example a proxy configured as the OpenRouter base URL, pidrei
+lists every OpenRouter model.
+
 ### Meta (Muse subscription)
 
 `/login meta` → **Sign in with Meta** opens a device authorization flow. The

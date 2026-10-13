@@ -38,6 +38,12 @@ The agent directory is shown as `<agent-dir>` below. Move it with the
 `PIDREI_CODING_AGENT_SESSION_DIR`, and the `sessionDir` setting override it, in
 that order.
 
+`settings.json`, `models.json`, `keybindings.json` and theme files accept a
+`$schema` key for editor validation and completion. Point it at
+`https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/<name>.schema.json`,
+where `<name>` is `settings`, `models`, `keybindings` or `theme`. The same
+files ship in the installed package under `pidrei/schemas/`.
+
 ## Project `.pidrei` directory
 
 | Path | Responsibility |

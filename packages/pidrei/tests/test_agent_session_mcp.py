@@ -887,6 +887,49 @@ async def test_warns_when_deferred_mcp_tools_have_neither_tool_search_nor_codemo
 
 
 @pytest.mark.tonio
+async def test_tells_scripts_what_directly_exposed_mcp_tools_resolve_to(harnesses, changes):
+    harness, *_ = await setup(harnesses, changes, "direct")
+    harness.session.set_active_tools_by_name([*harness.session.get_active_tool_names(), "codemode"])
+    descriptions = {tool.name: tool.description for tool in harness.session.agent.state.tools}
+    assert (
+        "Codemode: `await tools.mcp__docs__search(...)` takes the parameters as keyword arguments and returns a "
+        "dict with keys content, structuredContent (optional, a dict with keys hits), isError (optional)."
+    ) in descriptions["mcp__docs__search"]
+    assert (
+        "Codemode: `await tools.mcp__docs__fail(...)` takes the parameters as keyword arguments and returns a "
+        "dict with keys content, structuredContent (optional), isError (optional)."
+    ) in descriptions["mcp__docs__fail"]
+
+
+@pytest.mark.tonio
+async def test_activates_another_extension_s_codemode_tool_when_it_reaches_other_tools(harnesses, changes):
+    async def other_codemode(pi) -> None:
+        async def execute(*_args):
+            return AgentToolResult(content=[])
+
+        async def reaches_tools(_tool_input):
+            return "all"
+
+        pi.register_tool(
+            ToolDefinition(
+                name="codemode",
+                label="codemode",
+                description="Another extension's codemode tool.",
+                parameters={"type": "object", "properties": {}},
+                default_active=False,
+                reaches_tools=reaches_tools,
+                execute=execute,
+            )
+        )
+
+    harness, *_ = await setup(harnesses, changes, "codemode", extension_factories=(other_codemode,))
+    harness.set_responses([faux_assistant_message("ready")])
+    await harness.session.prompt("start")
+
+    assert harness.session.get_active_tool_names() == ["codemode"]
+
+
+@pytest.mark.tonio
 async def test_does_not_activate_another_extension_s_tool_named_codemode(harnesses, changes):
     # Registered first, so it wins over the codemode extension's codemode.
     async def other_codemode(pi) -> None:
@@ -1069,8 +1112,9 @@ async def test_waits_for_servers_whose_script_identifiers_differ_from_their_name
         [
             codemode_call(
                 "await tools.mcp__slow_docs__search(query='q')\n"
-                "namespace = await describe_namespace('slow_docs')\n"
-                "namespace['name'] if namespace else None"
+                "names = ['slow-docs', 'slow_docs', 'mcp__slow-docs', 'mcp__slow_docs']\n"
+                "found = [await describe_namespace(name) for name in names]\n"
+                "sorted({namespace['name'] if namespace else None for namespace in found}, key=str)"
             ),
             faux_assistant_message("done"),
         ]
@@ -1081,7 +1125,7 @@ async def test_waits_for_servers_whose_script_identifiers_differ_from_their_name
     assert get_tool_result(harness, "codemode").is_error is False, get_message_text(
         get_tool_result(harness, "codemode")
     )
-    assert script_value(harness) == "mcp__slow_docs"
+    assert script_value(harness) == '["mcp__slow_docs"]'
     assert calls == ['search:{"query":"q"}']
 
 

@@ -68,8 +68,8 @@ from pidrei_ai.utils.text import get_system_message_text, render_system_message_
 from pidrei_ai.utils.transcript import get_current_tools, resolve_transcript
 from pidrei_ai.utils.user_agent import get_user_agent
 from pidrei_http import http
-from pidrei_utils import clock
-from pidrei_utils.cancel import CancelToken
+from pidrei_utils import clock, timers
+from pidrei_utils.cancel import CancelToken, combine_cancel_tokens, run_cancellable
 
 
 MISTRAL_TOOL_CALL_ID_LENGTH = 9
@@ -100,6 +100,9 @@ class _PunkreqMistralClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ):
+        # Each read (the head, then every body chunk) is bounded by the caller's timeout, else the
+        # streaming default; never the whole stream. pi's body stalls fall to the HTTP client idle
+        # timeout, which pidrei's callers pass as `timeout_ms` (the httpIdleTimeoutMs setting).
         request = http.build_request(
             "POST", url, json=wire_payload, headers=headers, timeout=http.request_timeout(timeout_ms)
         )
@@ -112,13 +115,38 @@ async def request_mistral_stream(model: Model, payload: dict[str, Any], api_key:
     client = (
         options.client if options.client is not None else _PunkreqMistralClient(env=options.env, fetch=options.fetch)
     )
-    response = await client.post_chat_completions(
-        url,
-        to_mistral_wire_payload(payload),
-        headers=headers,
-        timeout_ms=options.timeout_ms,
-        cancel=options.cancel,
-    )
+    # The timeout covers only the wait for response headers. Long streams (e.g. extended thinking)
+    # must not be cut off by a fixed deadline; body stalls are left to the HTTP client idle timeout
+    # (the per-read timeout of the request, `_PunkreqMistralClient`).
+    # Without a caller timeout the reads are bounded by the streaming default, which is longer than
+    # pi's 60 s header default: that deadline fires a token that unwinds the wait for the head, as
+    # the caller's abort does. A response that arrives anyway is kept; one abandoned by the unwind
+    # is closed by punkreq.
+    timeout_ms = options.timeout_ms if options.timeout_ms is not None else 60_000
+    header_timeout = CancelToken()
+    timer = timers.Timeout(timeout_ms, header_timeout.cancel)
+    combined = combine_cancel_tokens(options.cancel, header_timeout)
+    try:
+        response = await run_cancellable(
+            client.post_chat_completions(
+                url,
+                to_mistral_wire_payload(payload),
+                headers=headers,
+                timeout_ms=options.timeout_ms,
+                cancel=options.cancel,
+            ),
+            combined.token,
+        )
+    except Exception as error:
+        # With a caller timeout, the request's own read timeout bounds the head at the same deadline.
+        timed_out = header_timeout.cancelled or isinstance(error, http.RequestTimeout)
+        if timed_out and (options.cancel is None or not options.cancel.cancelled):
+            formatted = str(int(timeout_ms)) if float(timeout_ms).is_integer() else str(timeout_ms)
+            raise RuntimeError(f"Mistral response headers timed out after {formatted}ms") from error
+        raise
+    finally:
+        timer.cancel()
+        combined.cleanup()
 
     await maybe_call(
         options.on_response, ProviderResponse(status=response.status_code, headers=dict(response.headers)), model

@@ -152,3 +152,20 @@ class TestRunPrintMode:
         assert exit_code == 1
         assert "provider failure" in "".join(stderr)
         assert session.extension_runner.emitted == [{"type": "session_shutdown", "reason": "quit"}]
+
+    # #10799
+    @pytest.mark.tonio
+    async def test_warns_on_stderr_and_returns_non_zero_when_the_response_was_truncated(self):
+        runtime_host = _create_runtime_host(create_assistant_message("partial", stop_reason="length"))
+        stdout = []
+        stderr = []
+
+        async def drain():
+            pass
+
+        with _patched(print_mode, write_raw_stdout=stdout.append, write_stderr=stderr.append, drain_output=drain):
+            exit_code = await run_print_mode(runtime_host, PrintModeOptions(mode="text"))
+
+        assert exit_code == 1
+        assert stdout == ["partial\n"]
+        assert stderr == ["Response was truncated: the model reached its output token limit.\n"]

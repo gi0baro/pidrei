@@ -881,6 +881,31 @@ class TestNestedWorktreeContextDedup:
 
         assert [f.content for f in files] == ["worktree instructions"]
 
+    # https://github.com/earendil-works/pi/issues/10681
+    @pytest.mark.tonio
+    async def test_loads_the_worktrees_context_once_when_it_symlinks_to_the_main_repos_file(self, dirs):
+        tmp, agent_dir, _cwd, _home = dirs
+        _outer, main, worktree, worktree_src = self.setup_nested_worktree(tmp)
+        write(main / "AGENTS.md", "main repo instructions")
+        (worktree / "AGENTS.md").symlink_to(main / "AGENTS.md")
+
+        files = await load_project_context_files(cwd=str(worktree_src), agent_dir=str(agent_dir))
+
+        assert [f.path for f in files] == [str(worktree / "AGENTS.md")]
+
+    @pytest.mark.tonio
+    async def test_skips_the_main_repos_duplicate_when_the_main_repos_file_is_a_symlink(self, dirs):
+        tmp, agent_dir, _cwd, _home = dirs
+        outer, main, worktree, worktree_src = self.setup_nested_worktree(tmp)
+        shared = outer / "shared-agents.md"
+        write(shared, "shared instructions")
+        (main / "AGENTS.md").symlink_to(shared)
+        (worktree / "AGENTS.md").symlink_to(shared)
+
+        files = await load_project_context_files(cwd=str(worktree_src), agent_dir=str(agent_dir))
+
+        assert [f.path for f in files] == [str(worktree / "AGENTS.md")]
+
     @pytest.mark.tonio
     async def test_still_inherits_the_main_repos_context_when_the_worktree_root_has_none(self, dirs):
         tmp, agent_dir, _cwd, _home = dirs

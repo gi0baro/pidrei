@@ -22,8 +22,7 @@ import tomllib
 
 
 REPO = "gi0baro/pidrei"
-# The published distributions; protocol/client/server are workspace-only
-# transport remnants (spec/upstream-sync.md) and are not built.
+# The published distributions.
 PACKAGES = (
     "pidrei",
     "pidrei_ai",

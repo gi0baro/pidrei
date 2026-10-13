@@ -17,6 +17,7 @@ import base64
 import copy
 import os
 import re
+import sys
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -26,6 +27,7 @@ from typing import Any, Literal
 
 import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
+from tonio.colored.exceptions import CancelledError
 
 from pidrei_agent.agent import Agent
 from pidrei_agent.agent_loop import RunToolCallOptions, run_tool_call
@@ -101,6 +103,7 @@ from .extensions.types import (
     ToolExposure,
     ToolLoadout,
     ToolNamespace,
+    ToolReach,
 )
 from .mcp_servers import create_tool_name_matcher, is_mcp_tool_name
 from .messages import BashExecutionMessage, CustomMessage, convert_to_llm
@@ -471,6 +474,7 @@ class ToolInfo:
     exposure: ToolExposure = "direct"
     namespace: ToolNamespace | None = None
     annotations: ToolAnnotations | None = None
+    reaches_tools: Callable[[dict[str, Any]], Awaitable[ToolReach]] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1313,7 +1317,7 @@ class AgentSession:
 
     async def _emit_agent_settled(self) -> None:
         # `_is_agent_run_active` is cleared by the caller, before the pending
-        # bash flush (see `_run_agent_prompt`).
+        # bash flush (see `_release_run`).
         if self._cache_warmer is not None:
             self._cache_warmer.on_agent_settled()
         with self._state_guard:
@@ -1392,6 +1396,10 @@ class AgentSession:
 
     async def _handle_agent_event(self, event: AgentEvent, _cancel=None) -> None:
         """Internal handler for agent events - shared by subscribe and reconnect."""
+        # An abort requested while the run was starting, e.g. during before_agent_start, stops it
+        # here. agent_start is awaited before the first request.
+        if event.type == "agent_start" and self._agent_run_abort_requested:
+            self.agent.abort()
         # When a user message starts, check if it's from either queue and remove it
         # BEFORE emitting so the UI sees the updated queue state.
         if event.type == "message_start" and getattr(event.message, "role", None) == "user":
@@ -1747,6 +1755,7 @@ class AgentSession:
                 exposure=self._get_tool_exposure(entry.definition.name),
                 namespace=entry.definition.namespace,
                 annotations=entry.definition.annotations,
+                reaches_tools=entry.definition.reaches_tools,
             )
             for entry in self._tool_definitions.values()
         ]
@@ -2093,10 +2102,50 @@ class AgentSession:
     # Prompting
     # =========================================================================
 
-    async def _run_agent_prompt(self, messages: Any) -> None:
-        async with self._run_admission:
+    def _claim_run_locked(self) -> None:
+        """Mark the session busy for a run that `_start_run` is about to start. Called
+        under `_state_guard`, in the critical section that found no run active and
+        the run input open, so two callers cannot both claim."""
+        self._is_agent_run_active = True
+        self._agent_run_abort_requested = False
+
+    async def _start_run(self, trigger: dict[str, Any], on_started: Callable[[], None] | None = None) -> None:
+        """Start a run from a user or custom message (`trigger`, see
+        `emit_before_agent_start`). The caller claimed the run (`_claim_run_locked`),
+        so the session counts as busy from there on: messages sent while
+        before_agent_start handlers run are queued into this run instead of starting
+        another, and an abort requested meanwhile aborts the run as soon as it exists
+        (`_handle_agent_event`). `on_started` is called once the run's messages are
+        prepared, before the first request.
+
+        Every exit hands the claim back (`_end_run`, `_abandon_run`). pi leaves the
+        session busy when a flush or `onStarted` throws after its preparation; and
+        a pidrei caller can be cancelled, where every await on the unwinding chain
+        raises again."""
+        try:
+            # An idle-path writer (`record_bash_result`, `_append_custom_message_when_idle`)
+            # that decided before the claim may still be persisting: it finishes before
+            # the run reads the transcript, and later ones see the claim and queue. Not
+            # held across the preparation, whose handlers can reach those writers.
+            async with self._run_admission:
+                pass
+            messages = await self._prepare_run(trigger)
+            # Messages held while the run was starting go before its starting messages, as they would
+            # have while idle. No run exists yet, so they cannot split a tool call from its result.
+            await self._flush_pending_bash_messages()
+            await self._flush_pending_custom_messages()
+            if on_started is not None:
+                on_started()
+        except CancelledError:
+            self._abandon_run(settle=False)
+            raise
+        except Exception:
+            # No run started: no agent_settled.
+            await self._end_run(settle=False)
+            raise
+
+        try:
             with self._state_guard:
-                self._agent_run_abort_requested = False
                 # Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
                 self._failed_response = None
             await self._record_selection()
@@ -2104,9 +2153,6 @@ class AgentSession:
             # are dropped, so a tool that never registers does not stay pending.
             with self._tool_loadout_guard:
                 self._pending_tool_names.clear()
-            with self._state_guard:
-                self._is_agent_run_active = True
-        try:
             await self.agent.prompt(messages)
             while not self._agent_run_abort_requested:
                 if await self._handle_post_agent_run():
@@ -2120,15 +2166,59 @@ class AgentSession:
                     break
                 await self.agent.continue_()
         finally:
-            if self._agent_run_abort_requested:
-                self._finish_cancelled_retry()
-            with self._state_guard:
-                self._failed_response = None
-            self._run_system_prompt_options = None
-            # Post-run recovery was the last reader of the run-scoped identity tables.
-            self._entry_ids_by_message = {}
-            self._boundary_dispatched_messages = {}
-            self._message_replacements = {}
+            if isinstance(sys.exception(), CancelledError):
+                # The caller was cancelled: the agent's run was aborted with it (the
+                # agent fires its run's token when its awaiter unwinds). Input arriving
+                # before the claim is handed back waits for the settlement, then takes
+                # the idle path, instead of being posted into a run that is gone.
+                with self._state_guard:
+                    self._agent_run_abort_requested = True
+                self._close_run_input()
+                self._abandon_run(settle=True)
+            else:
+                await self._end_run(settle=True)
+
+    def _clear_run_state(self) -> None:
+        """Drop what the run set up for itself; synchronous, so the cancel path can run it."""
+        if self._agent_run_abort_requested:
+            self._finish_cancelled_retry()
+        with self._state_guard:
+            self._failed_response = None
+        self._run_system_prompt_options = None
+        # Post-run recovery was the last reader of the run-scoped identity tables.
+        self._entry_ids_by_message = {}
+        self._boundary_dispatched_messages = {}
+        self._message_replacements = {}
+
+    async def _end_run(self, *, settle: bool) -> None:
+        """Hand the claim back at the end of a run, or after a start that failed.
+        The release runs as its own coroutine (`_release_run`): a cancel reaching
+        this caller while it waits does not cut it short."""
+        self._clear_run_state()
+        await gather(self._release_run(settle=settle))
+
+    def _abandon_run(self, *, settle: bool) -> None:
+        """`_end_run` for a caller unwinding a cancel, which cannot await: the
+        release is detached once the agent has wound its aborted run down, so the
+        next run cannot be admitted while the agent still holds this one."""
+        self._clear_run_state()
+
+        async def release() -> None:
+            try:
+                await self.agent.wait_for_idle()
+                await self._release_run(settle=settle)
+            except Exception as error:
+                self._extension_runner.emit_error(
+                    ExtensionError(extension_path="<runtime>", event="agent_settled", error=str(error))
+                )
+
+        tonio.spawn.without_tracking(release())
+
+    async def _release_run(self, *, settle: bool) -> None:
+        """Clear the busy flag and flush what was queued during the run, then settle
+        (`agent_settled`, which also releases idle waiters) or, when no run started,
+        release idle waiters. The waiters are released even if a flush fails."""
+        try:
             # The flag flips before the flush, under the guard that
             # `record_bash_result` takes for its pending-vs-direct decision:
             # a bash result recorded in the settle window then persists
@@ -2145,7 +2235,66 @@ class AgentSession:
                     self._is_agent_run_active = False
                 await self._flush_pending_bash_messages()
                 await self._flush_pending_custom_messages()
-            await self._emit_agent_settled()
+        finally:
+            if settle:
+                await self._emit_agent_settled()
+            else:
+                self._resolve_idle_wait_if_idle()
+
+    async def _prepare_run(self, trigger: dict[str, Any]) -> list[Any]:
+        """Prepare a run and return its starting messages: compact first when needed,
+        emit before_agent_start, apply the run's prompt options and tool loadout, and
+        build the starting message followed by pending nextTurn messages (consumed
+        here) and handler messages, with a system patch first when the prompt changed."""
+        # Check if we need to compact before sending (catches aborted responses).
+        # The starting message is sent below, so do not call agent.continue_() here.
+        last_assistant = self._find_last_assistant_message()
+        if last_assistant is not None:
+            await self._check_compaction(last_assistant, False)
+
+        base_options = self._base_system_prompt_options  # one read: rebound from other tasks
+        selected_tools_before = list(base_options.selected_tools or [])
+        result = await self._extension_runner.emit_before_agent_start(trigger, base_options)
+        system_prompt_options = result["systemPromptOptions"]
+        # Handlers may edit event["systemPromptOptions"].selected_tools or call set_active_tools(),
+        # which updates the live loadout instead. An explicit edit wins; otherwise the live
+        # loadout is authoritative, so a set_active_tools() call is not undone here.
+        if system_prompt_options.selected_tools == selected_tools_before:
+            system_prompt_options.selected_tools = self.get_active_tool_names()
+
+        messages: list[Any] = []
+        if trigger["messageType"] == "custom":
+            messages.append(trigger["message"])
+        else:
+            # Normalize images after before_agent_start so extension-driven model
+            # selection determines the resize profile used for the request and history.
+            normalized_images, image_hints = await self._normalize_prompt_images(trigger["images"])
+            prompt = trigger["prompt"]
+            text = f"{prompt}\n\n{chr(10).join(image_hints)}" if image_hints else prompt
+            messages.append(UserMessage(content=[TextContent(text=text), *normalized_images], timestamp=clock.now_ms()))
+
+        # Inject any pending "nextTurn" messages as context alongside the starting message
+        with self._state_guard:
+            next_turn, self._pending_next_turn_messages = self._pending_next_turn_messages, []
+        messages.extend(next_turn)
+
+        for msg in result["messages"]:
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+            messages.append(
+                CustomMessage(
+                    custom_type=msg.get("customType") if isinstance(msg, dict) else msg.custom_type,
+                    # Untyped extensions can pass null content; normalize at ingestion.
+                    content=content if content is not None else [],
+                    display=msg.get("display") if isinstance(msg, dict) else msg.display,
+                    details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
+                    timestamp=clock.now_ms(),
+                )
+            )
+        update_message = self._prepare_prompt_and_tool_loadout(system_prompt_options)
+        self._run_system_prompt_options = system_prompt_options
+        if update_message is not None:
+            messages.insert(0, update_message)
+        return messages
 
     async def _handle_post_agent_run(self) -> bool:
         message = self._last_assistant_message
@@ -2321,18 +2470,29 @@ class AgentSession:
             expanded_text = await self._expand_skill_command(expanded_text)
             expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
 
-        # If streaming, queue via steer() or follow_up() based on option. The decision
-        # and the post are one critical section (see `_close_run_input`); a run that
-        # is closing is waited out, then this input queues or takes the idle path.
-        while True:
-            with self._state_guard:
-                closed = self._run_input_closed
-                streaming = self._is_agent_run_active and closed is None
-                if streaming and options.streaming_behavior:
-                    self._post_queued_input(options.streaming_behavior, expanded_text, current_images)
-            if closed is None:
-                break
-            await closed.wait()
+        # If streaming, queue via steer() or follow_up() based on option.
+        streaming = await self._admit_prompt(options.streaming_behavior, expanded_text, current_images, claim=False)
+        if not streaming:
+            # Validate model
+            if self.model is None:
+                raise Exception(format_no_model_selected_message())
+
+            has_configured_auth = (
+                self._model_runtime.has_configured_auth(self.model.provider)
+                or (await self._model_runtime.check_auth(self.model.provider)) is not None
+            )
+            if not has_configured_auth:
+                if self._model_runtime.is_using_oauth(self.model.provider):
+                    raise Exception(
+                        f'Authentication failed for "{self.model.provider}". '
+                        "Credentials may have expired or network is unavailable. "
+                        f"Run '/login {self.model.provider}' to re-authenticate."
+                    )
+                raise Exception(format_no_api_key_found_message(self.model.provider))
+
+            # A run may have started during the validation: decide again, claiming the
+            # run when the session is still idle.
+            streaming = await self._admit_prompt(options.streaming_behavior, expanded_text, current_images, claim=True)
         if streaming:
             if not options.streaming_behavior:
                 raise Exception(
@@ -2345,82 +2505,31 @@ class AgentSession:
                 preflight_result("queued")
             return
 
-        # Flush any pending bash and custom messages before the new prompt
-        await self._flush_pending_bash_messages()
-        await self._flush_pending_custom_messages()
-
-        # Validate model
-        if self.model is None:
-            raise Exception(format_no_model_selected_message())
-
-        has_configured_auth = (
-            self._model_runtime.has_configured_auth(self.model.provider)
-            or (await self._model_runtime.check_auth(self.model.provider)) is not None
+        await self._start_run(
+            {"messageType": "user", "prompt": expanded_text, "images": current_images},
+            (lambda: preflight_result("started")) if preflight_result else None,
         )
-        if not has_configured_auth:
-            if self._model_runtime.is_using_oauth(self.model.provider):
-                raise Exception(
-                    f'Authentication failed for "{self.model.provider}". '
-                    "Credentials may have expired or network is unavailable. "
-                    f"Run '/login {self.model.provider}' to re-authenticate."
-                )
-            raise Exception(format_no_api_key_found_message(self.model.provider))
 
-        # Check if we need to compact before sending (catches aborted responses).
-        # The user's new prompt is sent below, so do not call agent.continue_() here.
-        last_assistant = self._find_last_assistant_message()
-        if last_assistant is not None:
-            await self._check_compaction(last_assistant, False)
-
-        # Emit before_agent_start before normalizing images so extension-driven model
-        # selection determines the resize profile used for the request and history.
-        base_options = self._base_system_prompt_options  # one read: rebound from other tasks
-        selected_tools_before = list(base_options.selected_tools or [])
-        result = await self._extension_runner.emit_before_agent_start(
-            expanded_text,
-            current_images,
-            base_options,
-        )
-        system_prompt_options = result["systemPromptOptions"]
-        # Handlers may edit event["systemPromptOptions"].selected_tools or call set_active_tools(),
-        # which updates the live loadout instead. An explicit edit wins; otherwise the live
-        # loadout is authoritative, so a set_active_tools() call is not undone here.
-        if system_prompt_options.selected_tools == selected_tools_before:
-            system_prompt_options.selected_tools = self.get_active_tool_names()
-
-        normalized_images, image_hints = await self._normalize_prompt_images(current_images)
-        user_text = f"{expanded_text}\n\n{chr(10).join(image_hints)}" if image_hints else expanded_text
-
-        # Build messages only after hooks and image normalization have completed.
-        messages: list[Any] = []
-        user_content: list[TextContent | ImageContent] = [TextContent(text=user_text)]
-        user_content.extend(normalized_images)
-        messages.append(UserMessage(content=user_content, timestamp=clock.now_ms()))
-
-        # Inject any pending "nextTurn" messages as context alongside the user message
-        messages.extend(self._pending_next_turn_messages)
-        self._pending_next_turn_messages = []
-
-        for msg in result["messages"]:
-            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
-            messages.append(
-                CustomMessage(
-                    custom_type=msg.get("customType") if isinstance(msg, dict) else msg.custom_type,
-                    # Untyped extensions can pass null content; normalize at ingestion.
-                    content=content if content is not None else [],
-                    display=msg.get("display") if isinstance(msg, dict) else msg.display,
-                    details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
-                    timestamp=clock.now_ms(),
-                )
-            )
-        update_message = self._prepare_prompt_and_tool_loadout(system_prompt_options)
-        self._run_system_prompt_options = system_prompt_options
-        if update_message is not None:
-            messages.insert(0, update_message)
-
-        if preflight_result:
-            preflight_result("started")
-        await self._run_agent_prompt(messages)
+    async def _admit_prompt(
+        self, behavior: str | None, text: str, images: list[ImageContent] | None, *, claim: bool
+    ) -> bool:
+        """Whether a run is streaming, in which case the prompt is posted to it when
+        `behavior` is set; otherwise, with `claim`, the run is claimed for the prompt.
+        The decision and the post or claim are one critical section (see
+        `_close_run_input`); a run that is closing is waited out, then the prompt
+        queues or takes the idle path."""
+        while True:
+            with self._state_guard:
+                closed = self._run_input_closed
+                if closed is None:
+                    if self._is_agent_run_active:
+                        if behavior:
+                            self._post_queued_input(behavior, text, images)
+                        return True
+                    if claim:
+                        self._claim_run_locked()
+                    return False
+            await closed.wait()
 
     async def _try_execute_extension_command(self, text: str) -> bool:
         """Try to execute an extension command. Returns True if found and executed."""
@@ -2582,11 +2691,13 @@ class AgentSession:
         deliver_as = options.get("deliver_as", options.get("deliverAs"))
         trigger_turn = options.get("trigger_turn", options.get("triggerTurn"))
         if deliver_as == "nextTurn":
-            self._pending_next_turn_messages.append(app_message)
+            # Under the guard `_prepare_run` takes the list under.
+            with self._state_guard:
+                self._pending_next_turn_messages.append(app_message)
             return None
         if trigger_turn is not False:
-            # Decided and posted under the guard the run closes its input under (see
-            # `_close_run_input`).
+            # Decided and posted (or the run claimed) under the guard the run closes its
+            # input under (see `_close_run_input`).
             with self._state_guard:
                 closed = self._run_input_closed
                 if self._is_agent_run_active and closed is None:
@@ -2599,6 +2710,11 @@ class AgentSession:
                 # below (deferred or appended), and one awaiting this remainder would
                 # wait on its own settlement.
                 wait_for_close = closed is not None and not self._is_emitting_agent_settled
+                if trigger_turn and not wait_for_close:
+                    if self._defer_until_settled(lambda: self.send_custom_message(message, options)):
+                        return None
+                    self._claim_run_locked()
+                    return lambda: self._start_run({"messageType": "custom", "message": app_message})
             if wait_for_close:
 
                 async def dispatch_after_close() -> None:
@@ -2609,14 +2725,6 @@ class AgentSession:
                         await remainder()
 
                 return dispatch_after_close
-        if trigger_turn:
-
-            def run() -> Awaitable[None]:
-                return self._run_agent_prompt(app_message)
-
-            if self._defer_until_settled(run):
-                return None
-            return run
         # While a run is active, appending now would put the message between an
         # assistant tool call and its result, which providers that validate message
         # order reject on replay. Defer to the end of the turn. Nothing is emitted
@@ -3370,8 +3478,8 @@ class AgentSession:
             # Publishing the token and checking for an earlier abort is one critical
             # section, paired with `_request_abort` (flag + generation under the same
             # guard, then `abort_compaction()`): an abort either finds the token or
-            # is seen here. The run flag covers an abort since the run began; the
-            # generation covers the pre-prompt path, where no run is active.
+            # is seen here. The run flag covers an abort since the run was claimed; the
+            # generation covers one since the caller captured it.
             compaction_cancel = CancelToken()
             with self._state_guard:
                 self._auto_compaction_cancel = compaction_cancel

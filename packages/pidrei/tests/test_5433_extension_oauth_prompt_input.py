@@ -10,6 +10,7 @@ real browser tab at the fake URL on every run.
 """
 
 import contextlib
+import re
 import threading
 
 import pytest
@@ -41,14 +42,15 @@ def mock_open_browser():
         login_dialog_module.open_browser = original
 
 
-@pytest.mark.tonio
 async def create_dialog() -> LoginDialogComponent:
     await init_theme("dark")
     return LoginDialogComponent(_FakeTui(), "prompt-repro", lambda *_args: None, "Prompt Repro")
 
 
 def render_dialog(dialog: LoginDialogComponent) -> list[str]:
-    return [line.rstrip() for line in strip_ansi("\n".join(dialog.render(120))).split("\n")]
+    # strip_ansi keeps APC sequences, so drop the TUI's zero-width cursor markers (e.g. \x1b_pidrei:fc\x07) first
+    rendered = re.sub(r"\x1b_[^\x07]*\x07", "", "\n".join(dialog.render(120)))
+    return [line.rstrip() for line in strip_ansi(rendered).split("\n")]
 
 
 def count_rendered_value(lines: list[str], value: str) -> int:

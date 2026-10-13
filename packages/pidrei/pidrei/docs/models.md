@@ -21,6 +21,7 @@ unchanged.
 
 ```jsonc
 {
+  "$schema": "https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/models.schema.json",
   "providers": {
     "my-provider": {
       "name": "My Provider",

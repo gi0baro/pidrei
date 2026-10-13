@@ -4,8 +4,9 @@ Presentation for the codemode tool.
 
 The call shows the script; the result lists the nested tool calls with their
 status as they run and the cost of its model calls, followed by the script
-output without the "Script completed" header. Nested calls are not separate
-tool rows because they never reach the model as tool calls.
+output without the "Script completed" header, and the time the script has
+been running (`Elapsed`) or took (`Took`), like bash rows. Nested calls are not
+separate tool rows because they never reach the model as tool calls.
 
 Live results carry `CodemodeToolDetails`; results read back from a session file
 carry its wire form, a dict with camelCase keys. Both render the same.
@@ -16,7 +17,7 @@ from typing import Any
 
 from pidrei_tui import Container, Spacer, Text
 
-from ...core.tools.render_utils import get_text_output, replace_tabs, str_or_none
+from ...core.tools.render_utils import get_text_output, replace_tabs, start_tool_timer, str_or_none, tool_timer_text
 from ...core.tools.renderers.types import ToolRenderers
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.components.visual_truncate import VisualLinePreview
@@ -97,6 +98,7 @@ def _format_call(call: Any, expanded: bool) -> str:
 
 
 def _render_call(args, _theme, context):
+    start_tool_timer(context)
     # The code includes the `# @options:` line, so options show as part of the script.
     code = str_or_none(args.get("code") if isinstance(args, dict) else None)
     title = theme.fg("toolTitle", theme.bold("codemode"))
@@ -122,6 +124,7 @@ def _render_call(args, _theme, context):
 
 
 def _render_result(result, options, _theme, context):
+    timer_text = tool_timer_text(context, bool(options.get("isPartial")))
     component = context["lastComponent"] if isinstance(context.get("lastComponent"), Container) else Container()
     component.clear()
     expanded = bool(options.get("expanded"))
@@ -175,6 +178,9 @@ def _render_result(result, options, _theme, context):
             full_output_path = _field(details, "fullOutputPath", "full_output_path")
             if full_output_path:
                 component.add_child(Text(theme.fg("muted", f"Full output: {full_output_path}"), 0, 0))
+    if timer_text:
+        component.add_child(Spacer(1))
+        component.add_child(Text(theme.fg("muted", timer_text), 0, 0))
     return component
 
 

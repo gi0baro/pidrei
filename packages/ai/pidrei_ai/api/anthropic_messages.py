@@ -44,6 +44,7 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     CacheRetention,
+    DiagnosticErrorInfo,
     DoneEvent,
     ErrorEvent,
     Message,
@@ -714,20 +715,49 @@ def stream(
                     opts.fetch,
                 )
 
-            params = _build_params(model, normalized_context, is_oauth, opts)
-            next_params = await maybe_call(opts.on_payload, params, model)
-            if next_params is not None:
-                params = next_params
+            disable_preferred_strict_tools = False
+            while True:
+                if opts.cancel is not None:
+                    opts.cancel.raise_if_cancelled()
+                params, has_preferred_strict_tools = _build_params(
+                    model, normalized_context, is_oauth, opts, disable_preferred_strict_tools
+                )
+                next_params = await maybe_call(opts.on_payload, params, model)
+                if next_params is not None:
+                    params = next_params
 
-            async def _request():
-                return await client.create({**params, "stream": True}, timeout_ms=opts.timeout_ms, cancel=opts.cancel)
+                async def _request(params=params):
+                    return await client.create(
+                        {**params, "stream": True}, timeout_ms=opts.timeout_ms, cancel=opts.cancel
+                    )
 
-            response = await retry_provider_request(
-                _request,
-                max_retries=opts.max_retries if opts.max_retries is not None else 0,
-                max_retry_delay_ms=opts.max_retry_delay_ms,
-                cancel=opts.cancel,
-            )
+                try:
+                    response = await retry_provider_request(
+                        _request,
+                        max_retries=opts.max_retries if opts.max_retries is not None else 0,
+                        max_retry_delay_ms=opts.max_retry_delay_ms,
+                        cancel=opts.cancel,
+                    )
+                    break
+                except AnthropicApiError as error:
+                    # Only downgrade a rejected request, never an already-started stream.
+                    if (
+                        (opts.cancel is not None and opts.cancel.cancelled)
+                        or disable_preferred_strict_tools
+                        or not has_preferred_strict_tools
+                        or not _is_strict_tool_limit_error(error)
+                    ):
+                        raise
+                    disable_preferred_strict_tools = True
+                    append_assistant_message_diagnostic(
+                        output,
+                        AssistantMessageDiagnostic(
+                            type="anthropic_strict_tools_fallback",
+                            timestamp=clock.now_ms(),
+                            error=DiagnosticErrorInfo(message=str(error)),
+                            details={"reason": "strict_tool_limits_exceeded"},
+                        ),
+                    )
 
             await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
@@ -1264,11 +1294,16 @@ def _convert_tools(
     supports_eager_tool_input_streaming: bool,
     supports_strict_tools: bool,
     cache_control: dict | None = None,
+    disable_preferred_strict_tools: bool = False,
 ) -> list[dict[str, Any]]:
     converted: list[dict[str, Any]] = []
     for index, tool in enumerate(tools):
-        strict = resolve_json_schema_strict_sampling(
-            tool, supports_strict_tools, _is_anthropic_strict_unsupported_keyword
+        strict = (
+            None
+            if disable_preferred_strict_tools and _is_preferred_strict(tool)
+            else resolve_json_schema_strict_sampling(
+                tool, supports_strict_tools, _is_anthropic_strict_unsupported_keyword
+            )
         )
         schema = get_json_schema_tool_parameters(tool, strict) or {}
         legacy_input_schema = {
@@ -1293,6 +1328,30 @@ def _convert_tools(
     return converted
 
 
+_STRICT_TOOL_LIMIT_MESSAGES = (
+    "The compiled grammar is too large",
+    "Too many strict tools (",
+    "Schemas contains too many parameters with union types (",
+)
+
+
+def _is_strict_tool_limit_error(error: AnthropicApiError) -> bool:
+    """A 400 `invalid_request_error` rejecting the strict tool set for its size or unions."""
+    body_error = (error.error or {}).get("error")
+    error_type = body_error.get("type") if isinstance(body_error, dict) else None
+    return (
+        error.status == 400
+        and error_type == "invalid_request_error"
+        and any(message in str(error) for message in _STRICT_TOOL_LIMIT_MESSAGES)
+    )
+
+
+def _is_preferred_strict(tool: Tool) -> bool:
+    config = tool.constrained_sampling
+    # `False` opts the tool out of constrained sampling: not a preferred-strict tool.
+    return config is not None and config is not False and config.type == "json_schema" and config.strict == "prefer"
+
+
 def _find_fallback_cost(model: Model, served_model: str) -> ModelCost | None:
     """Local pricing for the model Anthropic actually served, from the model's permitted targets."""
     compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
@@ -1303,8 +1362,13 @@ def _find_fallback_cost(model: Model, served_model: str) -> ModelCost | None:
 
 
 def _build_params(
-    model: Model, context: TranscriptContext, is_oauth_token: bool, options: AnthropicOptions
-) -> dict[str, Any]:
+    model: Model,
+    context: TranscriptContext,
+    is_oauth_token: bool,
+    options: AnthropicOptions,
+    disable_preferred_strict_tools: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """`(params, has_preferred_strict_tools)`: whether a `strict: "prefer"` tool went out strict."""
     cache_control = _get_cache_control(model, options.cache_retention, options.env)
     compat = _get_compat(model)
     initial_system_message = get_initial_system_message(context.messages)
@@ -1315,6 +1379,25 @@ def _build_params(
     # by value in a `tool_addition` block, which also expresses same-name redefinitions.
     # Anthropic rejects a tool list where every tool is deferred, so there must be an initial
     # active tool to anchor the placeholder. Otherwise the current tool list is sent.
+    has_preferred_strict_tools = False
+
+    def convert_tool_definitions(tools: list[Tool], tool_cache_control: dict | None = None) -> list[dict[str, Any]]:
+        nonlocal has_preferred_strict_tools
+        definitions = _convert_tools(
+            tools,
+            is_oauth_token,
+            compat.supports_eager_tool_input_streaming,
+            compat.supports_strict_tools,
+            tool_cache_control,
+            disable_preferred_strict_tools,
+        )
+        if any(
+            definition.get("strict") is True and _is_preferred_strict(tool)
+            for definition, tool in zip(definitions, tools, strict=True)
+        ):
+            has_preferred_strict_tools = True
+        return definitions
+
     initial_tools = (initial_system_message.tools_added if initial_system_message is not None else None) or []
     native_tool_changes = (
         compat.supports_mid_convo_system_messages and compat.supports_mid_convo_tool_changes and len(initial_tools) > 0
@@ -1327,13 +1410,7 @@ def _build_params(
         cache_control,
         compat.allow_empty_signature,
         model.provider if supports_mid_convo_effort else None,
-        (
-            lambda tools: _convert_tools(
-                tools, is_oauth_token, compat.supports_eager_tool_input_streaming, compat.supports_strict_tools
-            )
-        )
-        if native_tool_changes
-        else None,
+        convert_tool_definitions if native_tool_changes else None,
     )
     active_effort: AnthropicEffort = options.effort or "high"
     beta_features = _get_beta_features(model, context, is_oauth_token, native_tool_changes, options)
@@ -1389,26 +1466,11 @@ def _build_params(
         # placeholder. The list never changes afterwards: later tools are defined by value in
         # `tool_addition` blocks and withdrawn by `tool_removal`, so the cached prefix survives
         # every tool change.
-        params["tools"] = [
-            *_convert_tools(
-                initial_tools,
-                is_oauth_token,
-                compat.supports_eager_tool_input_streaming,
-                compat.supports_strict_tools,
-                tool_cache_control,
-            ),
-            _deferred_tool_placeholder(),
-        ]
+        params["tools"] = [*convert_tool_definitions(initial_tools, tool_cache_control), _deferred_tool_placeholder()]
     else:
         tools = get_current_tools(context.messages)
         if tools:
-            params["tools"] = _convert_tools(
-                tools,
-                is_oauth_token,
-                compat.supports_eager_tool_input_streaming,
-                compat.supports_strict_tools,
-                tool_cache_control,
-            )
+            params["tools"] = convert_tool_definitions(tools, tool_cache_control)
 
     # Managed effort models always use adaptive thinking so prefix mismatches can
     # be dropped instead of surfacing as persistent 400 responses.
@@ -1452,4 +1514,4 @@ def _build_params(
     if model_compat and model_compat.allowed_fallback_models:
         params["fallbacks"] = [{"model": fallback.model} for fallback in model_compat.allowed_fallback_models]
 
-    return params
+    return params, has_preferred_strict_tools

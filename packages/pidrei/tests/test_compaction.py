@@ -310,3 +310,67 @@ def test_serializes_conversation_with_truncated_tool_results():
     result = serialize_conversation(messages)
     assert "[Tool result]:" in result
     assert "[... 3000 more characters truncated]" in result
+    assert "x" * 3000 not in result
+    # First 2000 chars should be present
+    assert "x" * 2000 in result
+
+
+def test_does_not_truncate_short_tool_results():
+    short_content = "x" * 1500
+    messages = [
+        ToolResultMessage(
+            tool_call_id="tc1",
+            tool_name="read",
+            content=[TextContent(text=short_content)],
+            is_error=False,
+            timestamp=_now_ms(),
+        )
+    ]
+
+    result = serialize_conversation(messages)
+
+    assert result == f"[Tool result]: {short_content}"
+    assert "truncated" not in result
+
+
+def test_does_not_truncate_assistant_or_user_messages():
+    long_text = "y" * 5000
+    messages = [
+        UserMessage(content=[TextContent(text=long_text)], timestamp=_now_ms()),
+        AssistantMessage(
+            content=[TextContent(text=long_text)],
+            api="anthropic",
+            provider="anthropic",
+            model="test",
+            usage=create_mock_usage(0, 0),
+            stop_reason="stop",
+            timestamp=_now_ms(),
+        ),
+    ]
+
+    result = serialize_conversation(messages)
+
+    assert "truncated" not in result
+    assert long_text in result
+
+
+def test_omits_thinking():
+    messages = [
+        AssistantMessage(
+            content=[
+                ThinkingContent(thinking="private reasoning", thinking_signature="sig"),
+                TextContent(text="visible reply"),
+                ToolCall(id="tc1", name="read", arguments={"path": "a.ts"}),
+            ],
+            api="anthropic",
+            provider="anthropic",
+            model="test",
+            usage=create_mock_usage(0, 0),
+            stop_reason="toolUse",
+            timestamp=_now_ms(),
+        )
+    ]
+
+    result = serialize_conversation(messages)
+
+    assert result == '[Assistant]: visible reply\n\n[Assistant tool calls]: read(path="a.ts")'

@@ -12,12 +12,14 @@ import os
 import sys
 from collections.abc import Mapping
 
+import jsonschema
 from tonio.colored import fs
 
 from pidrei_tui.keybindings import TUI_KEYBINDINGS, KeybindingsManager as TuiKeybindingsManager
 
 from ..config import get_agent_dir
 from ..utils.text import strip_bom
+from .key_id_schema import RUNTIME_KEYBINDING_VALUE_SCHEMA
 
 
 _DARWIN = sys.platform == "darwin"
@@ -184,13 +186,15 @@ KEYBINDING_NAME_MIGRATIONS = {
 }
 
 
+_KEYBINDING_VALUE_VALIDATOR = jsonschema.Draft202012Validator(RUNTIME_KEYBINDING_VALUE_SCHEMA)
+
+
 def _to_keybindings_config(value: dict) -> dict:
     config: dict = {}
     for key, binding in value.items():
-        if isinstance(binding, str):
-            config[key] = binding
+        if key == "$schema":
             continue
-        if isinstance(binding, list) and all(isinstance(entry, str) for entry in binding):
+        if _KEYBINDING_VALUE_VALIDATOR.is_valid(binding):
             config[key] = binding
     return config
 

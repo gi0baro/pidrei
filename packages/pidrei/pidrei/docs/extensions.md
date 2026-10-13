@@ -295,7 +295,14 @@ session events usually have none.
 ### Changing the system prompt
 
 `before_agent_start` receives the prompt as text (`event["systemPrompt"]`) and
-as structured sections (`event["systemPromptOptions"]`). Prefer editing the
+as structured sections (`event["systemPromptOptions"]`). `event["messageType"]`
+says what started the run: `"user"` for a prompt or `pi.send_user_message()`,
+with `prompt` and `images`; `"custom"` for
+`pi.send_message(..., {"triggerTurn": True})`, with the starting `message` and
+no `prompt`. A returned `message` is added to either kind of run; check
+`messageType` to skip runs started by custom messages. pidrei counts as busy
+while a run starts, including the compaction check and `before_agent_start`, so
+messages sent meanwhile go into the starting run. Prefer editing the
 sections, selected tools or guidelines in place: pidrei then records only the
 difference in the transcript. Returning `{"systemPrompt": ...}` (or setting
 `force_system_prompt` on the options) replaces the whole prompt for that run;
@@ -531,7 +538,7 @@ context.
 | `await exec(command, args, *, cwd=None, **options)` | Run a subprocess |
 | `get_active_tools()` / `set_active_tools(names)` | The active tool set: the tools declared to the model |
 | `update_active_tools(update)` | Change the active tool set based on its current value, in one step (see below) |
-| `get_all_tools()` | Every registered tool, with its `exposure`, `namespace` and `annotations` |
+| `get_all_tools()` | Every registered tool, with its `exposure`, `namespace`, `annotations` and `reaches_tools` |
 | `get_settings()` | A copy of the effective settings (global and project merged, with overrides) |
 | `get_commands()` | Every registered command |
 | `await set_model(model)` | Switch the model for the current session (recorded in the session, restored on resume; the configured default for new sessions is unchanged). Returns `False` when the provider has no auth configured |
@@ -725,11 +732,13 @@ Registering a `"direct"` or `"model-only"` tool activates it; the other
 exposures are not activated on registration, and neither is a tool with
 `default_active=False` — name it in `--tools` or the `defaultTools` setting
 (`"+name"` adds it to the defaults), or activate it with `set_active_tools()`.
-`namespace=ToolNamespace(name=..., description=..., instructions=...)` groups
-related tools, as MCP servers do. The `codemode` tool lists a namespace under
-one heading with its `description`. `instructions` holds longer usage
+`namespace=ToolNamespace(name=..., aliases=..., description=..., instructions=...)`
+groups related tools, as MCP servers do. The `codemode` tool lists a namespace
+under one heading with its `description`. `instructions` holds longer usage
 guidance; it is not listed, and codemode scripts read it with
-`describe_namespace(name)`.
+`describe_namespace(name)`. `aliases` are other names scripts may look the
+namespace up by, for example the server name `docs` for `mcp__docs`; a name and
+the same name as a script identifier (`my-docs`, `my_docs`) match alike.
 
 `annotations=ToolAnnotations(...)` are hints about what a tool does, with the
 meaning of MCP tool annotations: `read_only_hint`, `destructive_hint`,
@@ -746,10 +755,21 @@ replacement `descriptions` for declared tools (including its own) and
 while they stay active and callable. The default system prompt leaves hidden
 tools out of its tool list and rules, and names no tool in the skills hint when
 the file reader is hidden, so the orchestrating tool should present their
-guidelines itself. `codemode` uses only this hook, `exposure`, and `ctx.execute_tool()`, so
-another tool can implement the same behavior under a different name. The
-exposure types, `ToolLoadout` and `ToolLoadoutChanges` come from
-`pidrei.core.extensions.types`.
+guidelines itself. `codemode` uses only this hook, `exposure`, `reaches_tools`,
+and `ctx.execute_tool()`, so another tool can implement the same behavior under
+a different name. The exposure types, `ToolLoadout` and `ToolLoadoutChanges`
+come from `pidrei.core.extensions.types`.
+
+A tool that reaches other tools declares which ones a call may reach with
+`async reaches_tools(input)`: `"all"`, or the words of the input that may name
+them, where a word refers to every tool or namespace whose name it contains.
+`codemode` returns `"all"` for scripts that search, list, or call tools by name
+and the words of the script otherwise; `tool_search` always returns `"all"`.
+Extensions that register tools late use it from their `tool_call` handler to
+finish registering the tools a call needs before it runs, as the MCP extension
+does for servers that are still connecting. The MCP extension also activates
+`codemode` or `tool_search` for MCP tools only when the tool of that name
+declares `reaches_tools`.
 
 ### Tool rendering
 

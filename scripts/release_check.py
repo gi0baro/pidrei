@@ -29,9 +29,7 @@ import tomllib
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The published distributions. protocol/client/server are workspace-only
-# transport remnants (spec/upstream-sync.md) and are neither
-# version-checked nor built.
+# The published distributions.
 PACKAGES = ("utils", "http", "ai", "agent", "tui", "codemode", "mcp", "pidrei")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 
