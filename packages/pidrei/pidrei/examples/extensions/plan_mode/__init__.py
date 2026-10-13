@@ -217,8 +217,14 @@ class PlanMode:
 
         return {"messages": [message for message in event["messages"] if keep(message)]}
 
-    async def on_before_agent_start(self, _event, _ctx):
-        """Inject plan/execution context before the agent starts."""
+    async def on_before_agent_start(self, event, _ctx):
+        """Inject plan/execution context before a user prompt. Runs started by custom
+        messages, such as background task notifications, skip it: the context from the
+        last prompt is still in the conversation, and adding it again on every
+        notification would only repeat it."""
+        if event["messageType"] != "user":
+            return None
+
         # One consistent read of the state (a /plan toggle may run meanwhile).
         async with self.state_lock:
             plan_mode_enabled = self.plan_mode_enabled

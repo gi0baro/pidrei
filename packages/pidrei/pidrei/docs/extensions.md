@@ -295,7 +295,14 @@ session events usually have none.
 ### Changing the system prompt
 
 `before_agent_start` receives the prompt as text (`event["systemPrompt"]`) and
-as structured sections (`event["systemPromptOptions"]`). Prefer editing the
+as structured sections (`event["systemPromptOptions"]`). `event["messageType"]`
+says what started the run: `"user"` for a prompt or `pi.send_user_message()`,
+with `prompt` and `images`; `"custom"` for
+`pi.send_message(..., {"triggerTurn": True})`, with the starting `message` and
+no `prompt`. A returned `message` is added to either kind of run; check
+`messageType` to skip runs started by custom messages. pidrei counts as busy
+while a run starts, including the compaction check and `before_agent_start`, so
+messages sent meanwhile go into the starting run. Prefer editing the
 sections, selected tools or guidelines in place: pidrei then records only the
 difference in the transcript. Returning `{"systemPrompt": ...}` (or setting
 `force_system_prompt` on the options) replaces the whole prompt for that run;

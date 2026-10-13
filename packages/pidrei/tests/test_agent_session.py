@@ -76,7 +76,7 @@ class _MockRunner:
 
         return InputEventResult(action="continue")
 
-    async def emit_before_agent_start(self, _prompt, _images, system_prompt_options):
+    async def emit_before_agent_start(self, _trigger, system_prompt_options):
         return {"messages": [], "systemPromptOptions": normalize_build_system_prompt_options(system_prompt_options)}
 
     def invalidate(self, _message=None):

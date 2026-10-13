@@ -803,7 +803,7 @@ async def extension(pi):
     runner.bind_core(extension_actions(), extension_context_actions())
 
     chained = await runner.emit_before_agent_start(
-        "hello", None, BuildSystemPromptOptions(custom_prompt="base", cwd=fx.root)
+        {"messageType": "user", "prompt": "hello"}, BuildSystemPromptOptions(custom_prompt="base", cwd=fx.root)
     )
 
     assert errors == []
