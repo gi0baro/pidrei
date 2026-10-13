@@ -100,6 +100,11 @@ Tracks [Pi 1.2.0](https://github.com/earendil-works/pi/releases/tag/v1.2.0).
   timeout, that wait is bounded at 60 seconds, as in Pi; body reads stay
   bounded by the HTTP idle timeout, so a stream that keeps sending data is
   never cut off.
+- The `codemode` system prompt guideline no longer recommends scripts for
+  batching independent tool calls. It tells the model that the tool calls of
+  one message already run in parallel, and keeps codemode for chaining
+  dependent calls and filtering large output; `all_settled` stays the way to
+  run calls in parallel inside a script.
 - Model catalog regenerated from models.dev.
 
 ### Fixed

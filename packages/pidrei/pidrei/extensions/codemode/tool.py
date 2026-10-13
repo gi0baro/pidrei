@@ -127,10 +127,13 @@ def type_check_enabled(options: CodemodeToolOptions) -> bool:
 
 
 CODEMODE_PROMPT_SNIPPET = "Run Python that calls other tools"
+# pidrei's own wording (pi: "Use codemode to batch independent tool calls (Promise.allSettled), chain
+# them, or filter large output, instead of many separate calls."): the agent loop already runs the
+# tool calls of one message in parallel, so a script is not the way to fan out independent calls.
 CODEMODE_PROMPT_GUIDELINES = (
     (
-        "Use codemode to batch independent tool calls (all_settled), chain them, or filter large output, instead "
-        "of many separate calls."
+        "Tool calls in the same message run in parallel. Use codemode to chain dependent calls or filter large "
+        "output. Inside a script, run independent calls in parallel with all_settled."
     ),
 )
 

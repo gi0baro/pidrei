@@ -1202,7 +1202,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "codemode-python",
             (
                 "description, snippet, guideline, describeScriptCall/describeOutput and the globals list "
-                "are pidrei's Python text; catalog selection, loadout and modes port 1:1"
+                "are pidrei's Python text; the guideline is pidrei's own advice (tool calls in one message "
+                "run in parallel, so scripts are for chaining and filtering), not a translation of pi's; "
+                "catalog selection, loadout and modes port 1:1"
             ),
         ),
     ),
