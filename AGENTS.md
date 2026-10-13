@@ -49,7 +49,6 @@ monorepo:
 | `packages/codemode` (`pidrei-codemode`) | `pidrei_codemode` | `packages/codemode` (the Monty sandbox; imports no pidrei package but `pidrei_utils`) |
 | `packages/mcp` (`pidrei-mcp`) | `pidrei_mcp` | `packages/mcp` (the MCP client; imports no pidrei package but `pidrei_utils` and `pidrei_http`) |
 | `packages/pidrei` (`pidrei`) | `pidrei` | `packages/coding-agent` |
-| `packages/{protocol,client,server}` | `pidrei_protocol` etc. | transport remnants, unpublished workspace members |
 
 Other places:
 
@@ -83,7 +82,7 @@ Other places:
   35–45 s. Anything past 60 s is a hang: never rerun with a bigger budget.
 - Run the suite in slices:
   - `packages/ai/tests`
-  - `packages/{agent,codemode,http,mcp,tui,utils,server,client,protocol}/tests`
+  - `packages/{agent,codemode,http,mcp,tui,utils}/tests`
   - `packages/pidrei/tests/test_[a-f]*.py`, `test_[g-r]*.py`,
     `test_[s-z]*.py`, `test_[0-9]*.py` (the numbered regression files are
     easy to forget).
@@ -412,7 +411,7 @@ experiments.
 
 - Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The
   published packages (`utils`, `http`, `ai`, `agent`, `tui`, `codemode`, `mcp`, `pidrei`) share the version and
-  pin each other exactly; the transport packages are not bumped.
+  pin each other exactly.
 - `UPSTREAM_VERSION`/`UPSTREAM_REF` in `upstream.py` and `.last_upstream_ref`
   move together (`make upstream-bump`), by convention to the commit right
   after Pi's release tag.

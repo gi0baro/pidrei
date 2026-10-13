@@ -213,7 +213,6 @@ In order:
    covers chat, image and classifier models.
 2. **Versions**: the published packages (`packages/{utils,http,ai,agent,tui,codemode,mcp,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
-   `protocol`/`client`/`server` are not bumped.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
    `packages/pidrei/pidrei/upstream.py` to the Pi version, then
    `make upstream-bump REF=<one-past-tag sha>`. The bump is ancestry-checked
@@ -269,7 +268,7 @@ TonIO, httpunk and punkreq releases are ported as their own small change,
 usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
-   (TonIO: all ten packages; httpunk and punkreq: `pidrei-http` only),
+   (TonIO: all eight packages; httpunk and punkreq: `pidrei-http` only),
    then `uv sync --all-packages`.
 2. For httpunk/punkreq, diff the two tags for the names PiDrei uses. PiDrei
    imports httpunk in exactly one place, `pidrei_http/http.py`
@@ -301,22 +300,22 @@ Each has entries in the classifier's dropped tables, with the reason.
   dependencies have no Android builds.
 - **Pi's experimental stack**: the durable harness runtime, Chord, the
   experimental coding agent (`coding-agent/src/experimental`,
-  `cli/experimental`, `mini/`, facet plugins), the protocol/server/client
-  rewrite, session backends, benchmarks. It is an unfinished rewrite the
-  product does not run on; porting it would track churn on a moving target.
-  Not porting it is a deferral, not a saving.
-  - Still ported: the transport layer (CBOR codec, framing, unix socket
-    listener and transports, unix client connect) in the unpublished
-    `protocol`/`client`/`server` packages. Pi 1.0.0 removed the harness
-    helper layer from `pi-agent-core`; the parts the product used live in
-    `pidrei` (`core/messages.py`, `core/message_wire.py`,
-    `core/tools/edit_diff.py`, `core/tools/truncate.py`, `utils/mime.py`).
+  `cli/experimental`, `mini/`, facet plugins), session backends,
+  benchmarks. It is an unfinished rewrite the product does not run on;
+  porting it would track churn on a moving target. Not porting it is a
+  deferral, not a saving.
+  - Pi 1.2.0 deleted its experimental server stack and the
+    `client`/`protocol`/`server` packages; PiDrei's unpublished transport
+    ports of them (CBOR codec, framing, unix socket transports) went with
+    them. Pi 1.0.0 removed the harness helper layer from `pi-agent-core`;
+    the parts the product used live in `pidrei` (`core/messages.py`,
+    `core/message_wire.py`, `core/tools/edit_diff.py`,
+    `core/tools/truncate.py`, `utils/mime.py`).
   - **Reopen** when Pi's product (`AgentSession` or the default interactive
-    mode) starts running on the harness, when upstream declares session
-    format 4 stable, or when `pi server`/`pi client` leave the
-    `PI_EXPERIMENTAL` gate. The port is then one end-state unit (never
+    mode) starts running on the harness, or when upstream declares session
+    format 4 stable. The port is then one end-state unit (never
     commit-by-commit), preceded by a design pass for its single-thread
-    assumptions, with the transport survivors as the first layer.
+    assumptions.
 - **RPC mode as a mode**: it is not run or audited, but its code is kept and
   kept correct; contract changes propagate to it.
 - **Self-update** machinery, installer-managed updates, and Node/Bun

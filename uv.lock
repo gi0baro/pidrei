@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14"
 
 [manifest]
@@ -7,16 +7,12 @@ members = [
     "pidrei",
     "pidrei-agent",
     "pidrei-ai",
-    "pidrei-client",
     "pidrei-codemode",
     "pidrei-http",
     "pidrei-mcp",
-    "pidrei-protocol",
-    "pidrei-server",
     "pidrei-tui",
     "pidrei-utils",
 ]
-default-groups = ["lint", "test"]
 
 [manifest.dependency-groups]
 lint = [{ name = "ruff", specifier = "~=0.16.0" }]
@@ -413,21 +409,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "pidrei-client"
-version = "0.84.4.1"
-source = { editable = "packages/client" }
-dependencies = [
-    { name = "pidrei-protocol" },
-    { name = "tonio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pidrei-protocol", editable = "packages/protocol" },
-    { name = "tonio", specifier = "~=0.10.4" },
-]
-
-[[package]]
 name = "pidrei-codemode"
 version = "1.1.0.2"
 source = { editable = "packages/codemode" }
@@ -475,26 +456,6 @@ dependencies = [
 requires-dist = [
     { name = "pidrei-http", editable = "packages/http" },
     { name = "pidrei-utils", editable = "packages/utils" },
-    { name = "tonio", specifier = "~=0.10.4" },
-]
-
-[[package]]
-name = "pidrei-protocol"
-version = "0.84.4.1"
-source = { editable = "packages/protocol" }
-
-[[package]]
-name = "pidrei-server"
-version = "0.84.4.1"
-source = { editable = "packages/server" }
-dependencies = [
-    { name = "pidrei-protocol" },
-    { name = "tonio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pidrei-protocol", editable = "packages/protocol" },
     { name = "tonio", specifier = "~=0.10.4" },
 ]
 
