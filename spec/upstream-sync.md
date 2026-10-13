@@ -833,9 +833,23 @@ machinery and the text that shows JavaScript do not.
 - **Declarations**: a change to Pi's TypeScript renderer is re-expressed in
   the Python stub renderer (`pidrei_codemode/declarations.py`), and the
   stubs must still pass Monty's type checker: check a script against them.
+  - Constraint tags go on the property's `# ` comment line, as Pi's on its
+    `//` line. `@integer` is not rendered (the stub's `int` says it), and
+    `@default` values are Python literals (`True`, `None`, dict/list reprs).
+  - An object with known properties that also allows extra keys
+    (`additionalProperties` true or a schema), Pi's index signature,
+    renders as `TypedDict(..., extra_items=Any)` (or the extra schema's
+    type); without known properties it stays `dict[str, T]`.
+  - A content block typed as one compact open `TypedDict` (MCP results)
+    cannot be narrowed to `ImageBlock` by a `type` check, so `image()`'s
+    stub also takes `Mapping[str, Any]`; the runtime validation decides.
 - **JS-only machinery is dropped**: the QuickJS worker, wasm loading, the
-  host/worker protocol, the `tools` proxy, promise and microtask handling.
-  The files that hold only that are `DROPPED` in the classifier.
+  host/worker protocol, the `tools` proxy, promise and microtask handling,
+  and the sandbox placements and deterministic runs built on them (Pi
+  1.2.0: `RemoteCodemodeSandbox`, `InlineCodemodeSandbox`,
+  `CodemodeSandboxBase`, the `portable`/`cloudflare` entries,
+  `sandbox.start()`). The files that hold only that are `DROPPED` in the
+  classifier.
 - **PiDrei-only, kept on every port**: the type check before the script runs
   (`codemode.typeCheck`, the factory's `type_check`); `all_settled`,
   `has_tool` and `call_tool`; `store(key, None)` deleting; a final expression
@@ -883,7 +897,9 @@ session's loadout guard and sets what it returns (`None` sets nothing).
 - The MCP extension's three (`ensureDiscoveryActive`, `syncResourceTools`,
   `setExposure`) compute what they need from the extension's state before the
   call; the update itself only filters or extends `active`, and records what
-  `ensureDiscoveryActive`'s warning reads afterwards. The last two follow a
+  `ensureDiscoveryActive`'s warning reads afterwards. Whether `codemode` or
+  `tool_search` can reach MCP tools (a tool of that name that declares
+  `reaches_tools`) is read from `get_all_tools()` before the call too. The last two follow a
   registration, so their update rides on that `register_tools` call as
   `update_active` (see `mcp-extension`).
 
@@ -926,9 +942,17 @@ runtime layer from TonIO, httpunk and punkreq.
   `timeout_ms` where pi uses `AbortSignal.timeout`. Only the close cancels
   an exchange: a request the client gives up on (request tokens, timeouts)
   keeps its own, as in pi, and the auth provider's work is not under the
-  token (a token refresh must not be torn). A per-request `signal` an
-  upstream change threads into the transport is not ported; one at the
-  client level maps to the request's cancel token.
+  token (a token refresh must not be torn).
+- **The dispatch gate**: Pi hands each request's send a signal aborted once
+  the request settles, and the HTTP transport checks it before every
+  dispatch, the retry after an authorization refresh included. Here it is
+  `send(message, *, cancel=None)`: the client fires the pending request's
+  `send_cancel` when it removes the entry (`_remove_pending_locked`), and the
+  HTTP transport checks it after `_headers()` and before opening the
+  exchange, raising `McpAbortError`. It never aborts an exchange already
+  sent or the shared refresh; stdio and in-memory ignore it. An upstream
+  signal that gates a dispatch ports this way (`cancel-token`); one that
+  would tear an exchange the client gave up on does not.
 - **OAuth**: `McpOAuthProvider.state()` reads and, when none is stored,
   writes in one locked step. `OAuthCallbackServer.close()` is synchronous:
   it settles the waiters and closes the server and its connections
@@ -1013,9 +1037,12 @@ awaits. Here those run on parallel coroutines.
   `run_cancellable`, cancelled by the sign-in or `--timeout`.
 - **Imports are eager**: `runtime.lazy.ts`/`cli.lazy.ts` are dropped, and the
   "MCP failed to load" reports they fed are not ported.
-- **Script API names in text** (`searchTools()`, `describeNamespace()`, the
-  `scriptNeedsServer` regex) follow recipe `codemode-python`; the regex also
-  matches `call_tool` and `has_tool`.
+- **Script API names in text** (`searchTools()`, `describeNamespace()`)
+  follow recipe `codemode-python`. Since Pi 1.2.0 the discovery regex lives
+  in codemode's `reaches_tools` (`extensions/codemode/tool.py`), where it
+  also matches `call_tool` and `has_tool`; the extension only asks a tool's
+  `reaches_tools` and matches its words against server names
+  (`_reaches_server`).
 - **Client ID Metadata Documents stay pi's**: `CLIENT_METADATA_BASE_URL` in
   `oauth.py` is `https://pi.dev/oauth`, the one place where PiDrei presents
   itself as pi (ruled for 1.0.2: PiDrei has no document of its own). A

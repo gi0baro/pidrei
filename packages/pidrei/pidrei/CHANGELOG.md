@@ -6,6 +6,167 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.2.0.0] - 2026-10-13
+
+Tracks [Pi 1.2.0](https://github.com/earendil-works/pi/releases/tag/v1.2.0).
+
+### Added
+
+- Per-key OpenRouter model lists: with an OpenRouter key, pidrei lists only
+  the chat models that key may use, with the key's context size, max output
+  and prices, including guardrails and regional endpoints set as the base URL
+  in `models.json`. The list is saved and used offline. See the providers
+  page. `pidrei_ai.providers.openrouter.personalize_openrouter_catalog()`
+  narrows a catalog the same way, and `RefreshModelsContext.base_url` gives
+  dynamic catalogs the registered provider's base URL, overrides included.
+- Configuration schemas: `settings.json`, `models.json`, `keybindings.json`
+  and theme files accept a `$schema` key for editor validation and
+  completion. The schemas are published in the pidrei repository and ship in
+  the package under `pidrei/schemas/`. See the configuration page.
+- `PIDREI_CLIPBOARD_OSC52=1` also sends copied text to the terminal with
+  OSC 52 after the local clipboard write, so copies reach a remote client's
+  clipboard when pidrei cannot detect the remote session, such as a
+  multiplexer attached from another machine or a remote IDE daemon.
+- Codemode rows show the elapsed time while a script runs and its total time
+  once it finishes, like `!` command rows.
+- Tool definitions gain `reaches_tools`: a tool that reaches other tools
+  (such as `codemode` and `tool_search`) declares which tools a call may
+  reach. The MCP extension uses it to wait for the servers a call needs, and
+  to decide whether a replacement `codemode` or `tool_search` tool can reach
+  MCP tools. See the extensions page.
+- `ToolNamespace` gains `aliases`, which codemode's `describe_namespace()`
+  and the `namespace` option of `search_tools()` match; MCP namespaces use
+  the server name.
+- `pidrei_tui.render_fake_cursor()`: components wrap their drawn cursor with
+  it, and the TUI renders it in reverse video, or leaves it out when
+  `showHardwareCursor` is on.
+- `pidrei_mcp` transports' `send()` takes a `cancel` token, which the client
+  fires once a request settles; a transport must not send the message after
+  that.
+
+### Changed
+
+- **Breaking:** themes are validated strictly, at startup as well as on
+  reload: only the documented keys and colour roles are accepted. Define
+  reusable colours under `vars`; custom keys under `colors` or `export`, and
+  extra top-level fields, make a theme invalid. The theme schema moved to
+  `pidrei/schemas/theme.schema.json`; update theme `$schema` references.
+- **Breaking:** `models.json` rejects a `contextWindow` or `maxTokens` that is
+  not positive and a `$schema` that is not a string, and keybinding entries
+  that are not valid key ids are ignored.
+- **Breaking:** `before_agent_start` also fires for runs started by
+  `pi.send_message(..., {"triggerTurn": True})` while idle. The event's
+  `messageType` is `"user"` (with `prompt` and `images`) or `"custom"` (with
+  the starting `message` and no `prompt`). Messages returned by handlers are
+  added to both kinds of run, and pending `deliverAs: "nextTurn"` messages
+  go with the custom-message run. Handlers meant only for user prompts must
+  check `event["messageType"] == "user"`.
+- **Breaking:** the session counts as busy while a run starts, including
+  during `before_agent_start` handlers: `ctx.is_idle()` is false,
+  `pi.send_message()` queues into the starting run instead of starting a
+  second one that failed with "Agent is already processing",
+  `pi.send_user_message()` needs `deliverAs`, and an abort requested
+  meanwhile aborts the run once it starts.
+- **Breaking:** `pidrei mcp list --json` reports `resources: true` for
+  servers that offer resources instead of resource and resource-template
+  counts; pidrei no longer lists resources when connecting.
+- **Breaking:** `pidrei_tui` `Editor` and `Input` wrap their drawn cursor in
+  zero-width APC markers instead of emitting reverse video directly. TUI
+  renderers resolve them; code rendering these components outside a TUI must
+  strip them, for example with `strip_terminal_sequences()`.
+- **Breaking:** `pidrei_codemode` no longer exports `MCP_PYTHON_PREAMBLE` and
+  `mcp_structured_content_schema()`, and `pidrei.extensions.codemode` no
+  longer exports `is_codemode_tool`: declarations render each output schema
+  as its own type, and MCP results are described by their output schema;
+  use `reaches_tools` to recognise tools that reach other tools.
+- **Breaking:** `pidrei_mcp`'s `CallToolResult.structured_content` accepts any
+  JSON value, including lists and `None`, as MCP 2026-07-28 allows.
+- `showHardwareCursor` shows only the terminal cursor: the focused editor no
+  longer also draws pidrei's reverse-video cursor.
+- Codemode declarations show input constraints the type cannot express
+  (minimum/maximum, length, pattern, format, default and others) as `@` tags
+  on property comments, so scripts see them without the tool repeating them
+  in descriptions. Defaults are Python literals.
+- Codemode declarations of MCP tools spell out the result's fields
+  (`content`, `structuredContent`, `isError`) instead of referring to a
+  shared result type; the codemode description no longer includes shared
+  MCP types. `image()` errors describe the accepted image block as
+  `{'type': 'image', 'data': ..., 'mimeType': ...}`.
+- Compaction and branch summaries leave thinking blocks out of the
+  serialized conversation (`serialize_conversation()`), so a summarization
+  request can no longer be larger than the context it summarizes.
+- Model catalog regenerated from models.dev.
+
+### Removed
+
+- The unpublished `pidrei-protocol`, `pidrei-client` and `pidrei-server`
+  workspace packages.
+
+### Fixed
+
+- Codemode ignored a `# @options:` line that was not the first line of the
+  script, so its `timeout_ms` never applied; the call now fails before the
+  script runs.
+- Mistral streams were aborted mid-generation (for example during long
+  thinking) after the request timeout; the timeout now applies only to
+  waiting for response headers.
+- A symlinked `AGENTS.md` in a git worktree nested inside its main
+  repository caused no project context file to load.
+- The codemode tool description no longer claims every failed tool call
+  raises: a tool whose declaration returns a `dict` returns it on failure
+  too (for example `bash` with a nonzero exit).
+- Runs started by `pi.send_message(..., {"triggerTurn": True})` removed
+  system prompt sections added in `before_agent_start` after their first
+  tool call, changing the prompt mid-run and breaking the provider prompt
+  cache.
+- Codemode scripts with many `text()` calls no longer take quadratic time to
+  join their output.
+- Print mode (`-p`) exited 0 without a warning when the final response was
+  cut off at the model's output token limit; it now prints the partial text,
+  writes a warning to stderr, and exits 1.
+- `pidrei mcp login --help` and the CLI docs described `--timeout` as only
+  the wait for the browser; it limits the whole sign-in.
+- `~` is expanded in `!pattern`, `+path` and `-path` entries of the
+  `extensions`, `skills`, `prompts` and `themes` settings.
+- MCP servers with resources registered no tools until every resource was
+  listed; `/mcp` and `pidrei mcp list` now show that a server offers
+  resources instead of counting them.
+- MCP tool calls failed when the server returned structured content that is
+  not an object; codemode declarations of MCP tools without an output schema
+  type `structuredContent` as `Any`.
+- OpenRouter router models such as `openrouter/auto` showed a cost of
+  -$1,000,000 per 1M tokens; OpenRouter's negative placeholder prices are
+  now 0.
+- Anthropic requests failed when the provider rejected the strict tool set
+  for grammar size, tool count or union limits; they now retry once with
+  `strict: "prefer"` tools non-strict, keeping `strict: "require"` tools
+  strict.
+- "The upstream provider returned an error" is retried as a transient
+  provider error.
+- Focused fullscreen overlays no longer block mouse-wheel scrolling of the
+  transcript: wheel events no component handles scroll the transcript.
+- Fragmented terminal colour replies no longer leak hex values into the
+  prompt or open the external editor.
+- Inline images render in Herdr again, through the Kitty graphics protocol.
+- Key bindings that name a shifted symbol, such as `+` or `ctrl++`, match
+  under the Kitty keyboard protocol and modifyOtherKeys.
+- The compaction indicator embedded in a custom editor uses the editor
+  border or thinking-level colour, as the working indicator does.
+- Overlay compositing no longer drops the hardware cursor position when an
+  overlay ends directly left of the cursor.
+- MCP tool calls cancelled or timed out while waiting for an OAuth refresh
+  were still sent to the server once the refresh finished.
+- MCP OAuth sign-in accepted an authorization response whose `iss`
+  parameter could not be checked because no authorization server metadata
+  was discovered; it now fails with an issuer mismatch
+  (`OAuthIssuerMismatchError.expected` is `None`).
+
+### Not ported
+
+- Pi's codemode sandbox placements (a remote Cloudflare isolate, an inline VM
+  on the calling thread, the portable entry) and deterministic, replayable
+  runs (`sandbox.start()`): PiDrei's scripts are Python on Monty.
+
 ## [1.1.0.2] - 2026-10-09
 
 ### Fixed
