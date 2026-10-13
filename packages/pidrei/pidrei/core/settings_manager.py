@@ -39,13 +39,12 @@ import tonio.colored as tonio
 from tonio.colored import fs, sync
 from tonio.colored.sync import channel
 
-from pidrei_ai.utils.retry import DEFAULT_MAX_AGENT_RETRY_DELAY_MS
-
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.lockfile import FileLock
 from ..utils.paths import normalize_path, resolve_path
 from ..utils.text import strip_bom
 from .http_config import DEFAULT_HTTP_IDLE_TIMEOUT_MS, parse_http_idle_timeout_ms
+from .settings_defaults import SETTINGS_DEFAULTS
 
 
 if TYPE_CHECKING:
@@ -77,7 +76,10 @@ def _is_mergeable_object(value: Any) -> bool:
     return isinstance(value, dict)
 
 
-_DEFAULT_COMPACTION_TOKEN_SETTINGS = {"reserveTokens": 16384, "keepRecentTokens": 20000}
+_DEFAULT_COMPACTION_TOKEN_SETTINGS = {
+    "reserveTokens": SETTINGS_DEFAULTS["compaction"]["reserveTokens"],
+    "keepRecentTokens": SETTINGS_DEFAULTS["compaction"]["keepRecentTokens"],
+}
 _MAX_SAFE_INTEGER = 2**53 - 1
 _MISSING = object()
 
@@ -802,13 +804,13 @@ class SettingsManager:
         self._update_global_settings(update)
 
     def get_steering_mode(self) -> str:
-        return self._settings.get("steeringMode") or "one-at-a-time"
+        return self._settings.get("steeringMode") or SETTINGS_DEFAULTS["steeringMode"]
 
     def set_steering_mode(self, mode: str) -> None:
         self._set_global("steeringMode", mode)
 
     def get_follow_up_mode(self) -> str:
-        return self._settings.get("followUpMode") or "one-at-a-time"
+        return self._settings.get("followUpMode") or SETTINGS_DEFAULTS["followUpMode"]
 
     def set_follow_up_mode(self, mode: str) -> None:
         self._set_global("followUpMode", mode)
@@ -862,14 +864,14 @@ class SettingsManager:
 
     def get_transport(self) -> str:
         transport = self._settings.get("transport")
-        return transport if transport is not None else "auto"
+        return transport if transport is not None else SETTINGS_DEFAULTS["transport"]
 
     def set_transport(self, transport: str) -> None:
         self._set_global("transport", transport)
 
     def get_compaction_enabled(self) -> bool:
         enabled = (self._settings.get("compaction") or {}).get("enabled")
-        return enabled if enabled is not None else True
+        return enabled if enabled is not None else SETTINGS_DEFAULTS["compaction"]["enabled"]
 
     def set_compaction_enabled(self, enabled: bool) -> None:
         self._set_global_nested("compaction", "enabled", enabled)
@@ -897,17 +899,17 @@ class SettingsManager:
         reserve = branch_summary.get("reserveTokens")
         skip = branch_summary.get("skipPrompt")
         return {
-            "reserve_tokens": reserve if reserve is not None else 16384,
-            "skip_prompt": skip if skip is not None else False,
+            "reserve_tokens": reserve if reserve is not None else SETTINGS_DEFAULTS["branchSummary"]["reserveTokens"],
+            "skip_prompt": skip if skip is not None else SETTINGS_DEFAULTS["branchSummary"]["skipPrompt"],
         }
 
     def get_branch_summary_skip_prompt(self) -> bool:
         skip = (self._settings.get("branchSummary") or {}).get("skipPrompt")
-        return skip if skip is not None else False
+        return skip if skip is not None else SETTINGS_DEFAULTS["branchSummary"]["skipPrompt"]
 
     def get_retry_enabled(self) -> bool:
         enabled = (self._settings.get("retry") or {}).get("enabled")
-        return enabled if enabled is not None else True
+        return enabled if enabled is not None else SETTINGS_DEFAULTS["retry"]["enabled"]
 
     def set_retry_enabled(self, enabled: bool) -> None:
         self._set_global_nested("retry", "enabled", enabled)
@@ -920,11 +922,11 @@ class SettingsManager:
         base_delay_ms = retry.get("baseDelayMs")
         max_agent_delay_ms = retry.get("maxAgentDelayMs")
         return {
-            "enabled": enabled if enabled is not None else True,
-            "max_retries": max_retries if max_retries is not None else 3,
-            "base_delay_ms": base_delay_ms if base_delay_ms is not None else 2000,
+            "enabled": enabled if enabled is not None else SETTINGS_DEFAULTS["retry"]["enabled"],
+            "max_retries": max_retries if max_retries is not None else SETTINGS_DEFAULTS["retry"]["maxRetries"],
+            "base_delay_ms": base_delay_ms if base_delay_ms is not None else SETTINGS_DEFAULTS["retry"]["baseDelayMs"],
             "max_agent_delay_ms": (
-                max_agent_delay_ms if max_agent_delay_ms is not None else DEFAULT_MAX_AGENT_RETRY_DELAY_MS
+                max_agent_delay_ms if max_agent_delay_ms is not None else SETTINGS_DEFAULTS["retry"]["maxAgentDelayMs"]
             ),
         }
 
@@ -945,7 +947,7 @@ class SettingsManager:
     def get_cache_warming_mode(self) -> CacheWarmingMode:
         """Read from global settings only because warming costs money."""
         mode = self._global_settings.get("cacheWarming")
-        return mode if mode in CACHE_WARMING_MODES else "streaming"
+        return mode if mode in CACHE_WARMING_MODES else SETTINGS_DEFAULTS["cacheWarming"]
 
     def set_cache_warming_mode(self, mode: CacheWarmingMode) -> None:
         self._set_global("cacheWarming", mode)
@@ -956,7 +958,11 @@ class SettingsManager:
         return {
             "timeout_ms": provider.get("timeoutMs"),
             "max_retries": provider.get("maxRetries"),
-            "max_retry_delay_ms": max_retry_delay_ms if max_retry_delay_ms is not None else 60000,
+            "max_retry_delay_ms": (
+                max_retry_delay_ms
+                if max_retry_delay_ms is not None
+                else SETTINGS_DEFAULTS["retry"]["provider"]["maxRetryDelayMs"]
+            ),
         }
 
     def get_websocket_connect_timeout_ms(self) -> int | None:
@@ -964,11 +970,11 @@ class SettingsManager:
 
     def get_hide_thinking_block(self) -> bool:
         hide = self._settings.get("hideThinkingBlock")
-        return hide if hide is not None else False
+        return hide if hide is not None else SETTINGS_DEFAULTS["hideThinkingBlock"]
 
     def get_show_cache_miss_notices(self) -> bool:
         show = self._settings.get("showCacheMissNotices")
-        return show if show is not None else False
+        return show if show is not None else SETTINGS_DEFAULTS["showCacheMissNotices"]
 
     def get_external_editor_command(self) -> str:
         configured_editor = self._settings.get("externalEditor")
@@ -994,14 +1000,14 @@ class SettingsManager:
 
     def get_quiet_startup(self) -> QuietStartup:
         quiet = self._settings.get("quietStartup")
-        return quiet if quiet is True or quiet == "header" else False
+        return quiet if quiet is True or quiet == "header" else SETTINGS_DEFAULTS["quietStartup"]
 
     def set_quiet_startup(self, quiet: QuietStartup) -> None:
         self._set_global("quietStartup", quiet)
 
     def get_default_project_trust(self) -> str:
         value = self._global_settings.get("defaultProjectTrust")
-        return value if value in ("always", "never") else "ask"
+        return value if value in ("always", "never") else SETTINGS_DEFAULTS["defaultProjectTrust"]
 
     def set_default_project_trust(self, default_project_trust: str) -> None:
         self._set_global("defaultProjectTrust", default_project_trust)
@@ -1014,14 +1020,14 @@ class SettingsManager:
 
     def get_collapse_changelog(self) -> bool:
         collapse = self._settings.get("collapseChangelog")
-        return collapse if collapse is not None else False
+        return collapse if collapse is not None else SETTINGS_DEFAULTS["collapseChangelog"]
 
     def set_collapse_changelog(self, collapse: bool) -> None:
         self._set_global("collapseChangelog", collapse)
 
     def get_enable_provider_attribution(self) -> bool:
         enabled = self._settings.get("enableProviderAttribution")
-        return enabled if enabled is not None else True
+        return enabled if enabled is not None else SETTINGS_DEFAULTS["enableProviderAttribution"]
 
     def set_enable_provider_attribution(self, enabled: bool) -> None:
         self._set_global("enableProviderAttribution", enabled)
@@ -1103,7 +1109,7 @@ class SettingsManager:
 
     def get_enable_skill_commands(self) -> bool:
         enabled = self._settings.get("enableSkillCommands")
-        return enabled if enabled is not None else True
+        return enabled if enabled is not None else SETTINGS_DEFAULTS["enableSkillCommands"]
 
     def set_enable_skill_commands(self, enabled: bool) -> None:
         self._set_global("enableSkillCommands", enabled)
@@ -1122,7 +1128,7 @@ class SettingsManager:
 
     def get_show_images(self) -> bool:
         show = (self._settings.get("terminal") or {}).get("showImages")
-        return show if show is not None else True
+        return show if show is not None else SETTINGS_DEFAULTS["terminal"]["showImages"]
 
     def set_show_images(self, show: bool) -> None:
         self._set_global_nested("terminal", "showImages", show)
@@ -1130,7 +1136,7 @@ class SettingsManager:
     def get_image_width_cells(self) -> int:
         width = (self._settings.get("terminal") or {}).get("imageWidthCells")
         if isinstance(width, bool) or not isinstance(width, (int, float)) or not math.isfinite(width):
-            return 60
+            return SETTINGS_DEFAULTS["terminal"]["imageWidthCells"]
         return max(1, math.floor(width))
 
     def set_image_width_cells(self, width: float) -> None:
@@ -1141,34 +1147,40 @@ class SettingsManager:
         clear_on_shrink = (self._settings.get("terminal") or {}).get("clearOnShrink")
         if clear_on_shrink is not None:
             return clear_on_shrink
-        return os.environ.get("PIDREI_CLEAR_ON_SHRINK") == "1"
+        if os.environ.get("PIDREI_CLEAR_ON_SHRINK") == "1":
+            return True
+        return SETTINGS_DEFAULTS["terminal"]["clearOnShrink"]
 
     def set_clear_on_shrink(self, enabled: bool) -> None:
         self._set_global_nested("terminal", "clearOnShrink", enabled)
 
     def get_show_terminal_progress(self) -> bool:
         show = (self._settings.get("terminal") or {}).get("showTerminalProgress")
-        return show if show is not None else False
+        return show if show is not None else SETTINGS_DEFAULTS["terminal"]["showTerminalProgress"]
 
     def set_show_terminal_progress(self, enabled: bool) -> None:
         self._set_global_nested("terminal", "showTerminalProgress", enabled)
 
     def get_fullscreen_exit_output(self) -> str:
-        return "resume-hint" if self._settings.get("fullscreenExitOutput") == "resume-hint" else "transcript"
+        return (
+            "resume-hint"
+            if self._settings.get("fullscreenExitOutput") == "resume-hint"
+            else SETTINGS_DEFAULTS["fullscreenExitOutput"]
+        )
 
     def set_fullscreen_exit_output(self, output: str) -> None:
         self._set_global("fullscreenExitOutput", output)
 
     def get_fullscreen_scrollbar(self) -> str:
         mode = self._settings.get("fullscreenScrollbar")
-        return mode if mode in ("always", "hidden") else "auto"
+        return mode if mode in ("always", "hidden") else SETTINGS_DEFAULTS["fullscreenScrollbar"]
 
     def set_fullscreen_scrollbar(self, mode: str) -> None:
         self._set_global("fullscreenScrollbar", mode)
 
     def get_fullscreen_copy_on_select(self) -> bool:
         enabled = self._settings.get("fullscreenCopyOnSelect")
-        return enabled if enabled is not None else True
+        return enabled if enabled is not None else SETTINGS_DEFAULTS["fullscreenCopyOnSelect"]
 
     def set_fullscreen_copy_on_select(self, enabled: bool) -> None:
         self._set_global("fullscreenCopyOnSelect", enabled)
@@ -1178,7 +1190,7 @@ class SettingsManager:
         # pi: `typeof lines === "number"` — a JSON bool is not a number there.
         if isinstance(lines, int | float) and not isinstance(lines, bool) and math.isfinite(lines):
             return max(1, min(100, math.floor(lines)))
-        return "auto"
+        return SETTINGS_DEFAULTS["fullscreenWheelScrollLines"]
 
     def set_fullscreen_wheel_scroll_lines(self, lines: WheelScrollLines) -> None:
         self._set_global(
@@ -1187,14 +1199,14 @@ class SettingsManager:
 
     def get_image_auto_resize(self) -> bool:
         auto_resize = (self._settings.get("images") or {}).get("autoResize")
-        return auto_resize if auto_resize is not None else True
+        return auto_resize if auto_resize is not None else SETTINGS_DEFAULTS["images"]["autoResize"]
 
     def set_image_auto_resize(self, enabled: bool) -> None:
         self._set_global_nested("images", "autoResize", enabled)
 
     def get_block_images(self) -> bool:
         blocked = (self._settings.get("images") or {}).get("blockImages")
-        return blocked if blocked is not None else False
+        return blocked if blocked is not None else SETTINGS_DEFAULTS["images"]["blockImages"]
 
     def set_block_images(self, blocked: bool) -> None:
         self._set_global_nested("images", "blockImages", blocked)
@@ -1220,7 +1232,7 @@ class SettingsManager:
 
     def get_double_escape_action(self) -> str:
         action = self._settings.get("doubleEscapeAction")
-        return action if action is not None else "tree"
+        return action if action is not None else SETTINGS_DEFAULTS["doubleEscapeAction"]
 
     def set_double_escape_action(self, action: str) -> None:
         self._set_global("doubleEscapeAction", action)
@@ -1228,7 +1240,7 @@ class SettingsManager:
     def get_tree_filter_mode(self) -> str:
         mode = self._settings.get("treeFilterMode")
         valid = ["default", "no-tools", "user-only", "labeled-only", "all"]
-        return mode if mode and mode in valid else "default"
+        return mode if mode and mode in valid else SETTINGS_DEFAULTS["treeFilterMode"]
 
     def set_tree_filter_mode(self, mode: str) -> None:
         self._set_global("treeFilterMode", mode)
@@ -1241,34 +1253,34 @@ class SettingsManager:
         self._set_global("showHardwareCursor", enabled)
 
     def get_tui_mode(self) -> str:
-        return "regular" if self._settings.get("tuiMode") == "regular" else "fullscreen"
+        return "regular" if self._settings.get("tuiMode") == "regular" else SETTINGS_DEFAULTS["tuiMode"]
 
     def set_tui_mode(self, mode: str) -> None:
         self._set_global("tuiMode", mode)
 
     def get_editor_padding_x(self) -> int:
         padding = self._settings.get("editorPaddingX")
-        return padding if padding is not None else 0
+        return padding if padding is not None else SETTINGS_DEFAULTS["editorPaddingX"]
 
     def set_editor_padding_x(self, padding: float) -> None:
         self._set_global("editorPaddingX", max(0, min(3, math.floor(padding))))
 
     def get_output_pad(self) -> int:
-        return 0 if self._settings.get("outputPad") == 0 else 1
+        return 0 if self._settings.get("outputPad") == 0 else SETTINGS_DEFAULTS["outputPad"]
 
     def set_output_pad(self, padding: int) -> None:
         self._set_global("outputPad", padding)
 
     def get_autocomplete_max_visible(self) -> int:
         max_visible = self._settings.get("autocompleteMaxVisible")
-        return max_visible if max_visible is not None else 5
+        return max_visible if max_visible is not None else SETTINGS_DEFAULTS["autocompleteMaxVisible"]
 
     def set_autocomplete_max_visible(self, max_visible: float) -> None:
         self._set_global("autocompleteMaxVisible", max(3, min(20, math.floor(max_visible))))
 
     def get_code_block_indent(self) -> str:
         indent = (self._settings.get("markdown") or {}).get("codeBlockIndent")
-        return indent if indent is not None else "  "
+        return indent if indent is not None else SETTINGS_DEFAULTS["markdown"]["codeBlockIndent"]
 
     def get_warnings(self) -> dict[str, Any]:
         return dict(self._settings.get("warnings") or {})

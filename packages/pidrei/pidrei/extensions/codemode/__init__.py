@@ -24,6 +24,7 @@ from typing import Any
 
 from pidrei_codemode import CodemodePool
 
+from ...core.settings_defaults import SETTINGS_DEFAULTS
 from ...core.settings_manager import CodemodeMode
 from . import execute as _execute  # noqa: F401 - imported at program start, see the module docstring
 from .tool import (
@@ -66,7 +67,7 @@ def _codemode_settings(pi: Any) -> dict[str, Any]:
 
 
 def _read_mode(pi: Any) -> CodemodeMode:
-    return "only" if _codemode_settings(pi).get("mode") == "only" else "on"
+    return "only" if _codemode_settings(pi).get("mode") == "only" else SETTINGS_DEFAULTS["codemode"]["mode"]
 
 
 def _read_inline_budget(pi: Any) -> float | None:

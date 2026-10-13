@@ -8,6 +8,7 @@ import tonio.colored as tonio
 from ..config import APP_NAME, CONFIG_DIR_NAME
 from .extensions.runner import emit_project_trust_event
 from .extensions.types import LoadExtensionsResult, ProjectTrustContext
+from .settings_defaults import SETTINGS_DEFAULTS
 from .trust_manager import (
     ProjectTrustOption,
     ProjectTrustStore,
@@ -75,7 +76,11 @@ async def resolve_project_trusted(options: ResolveProjectTrustedOptions) -> bool
     if decision is not None:
         return decision
 
-    default_trust = options.default_project_trust if options.default_project_trust is not None else "ask"
+    default_trust = (
+        options.default_project_trust
+        if options.default_project_trust is not None
+        else SETTINGS_DEFAULTS["defaultProjectTrust"]
+    )
     if default_trust == "always":
         return True
     if default_trust == "never":

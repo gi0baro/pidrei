@@ -56,15 +56,16 @@ from ....utils.fs_watch import close_watcher, watch_with_error_handler
 from ....utils.syntax_highlight import highlight, supports_language
 from ....utils.text import strip_bom
 from .system_theme import SYSTEM_THEME_NAME, generate_system_theme_colors, terminal_appearance
+from .theme_tokens import THEME_TOKENS
 
 
 # ============================================================================
 # Types & Schema
 # ============================================================================
 
-# The schema that validates the theme document shape lives in `theme_json.py`
+# The schema that validates the theme document shape lives in `theme_schema.py`
 # (ColorValue: hex, OKLCH, OKHSL, var ref "primary", empty "", or 256-color
-# index).
+# index); token metadata (slot, fallback) lives in `theme_tokens.py`.
 
 # pi: `let themeJsonValidator: ThemeJsonValidator | undefined`, set once at
 # startup. Read under `_theme_state_lock` like the other theme globals.
@@ -81,19 +82,6 @@ def set_theme_json_validator(validator) -> None:
     global _theme_json_validator
     with _theme_state_lock:
         _theme_json_validator = validator
-
-
-_BACKGROUND_TOKENS = frozenset(
-    (
-        "selectedBg",
-        "searchMatchBg",
-        "userMessageBg",
-        "customMessageBg",
-        "toolPendingBg",
-        "toolSuccessBg",
-        "toolErrorBg",
-    )
-)
 
 
 # ============================================================================
@@ -121,30 +109,17 @@ def _resolve_theme_colors(colors: dict, vars_map: dict | None = None) -> dict:
     return {key: _resolve_var_refs(value, vars_map) for key, value in colors.items()}
 
 
-def _with_theme_color_fallbacks(colors: dict) -> dict:
-    scrollbar_track = colors.get("scrollbarTrack")
-    if scrollbar_track is None:
-        scrollbar_track = colors["muted"]
-    scrollbar_thumb = colors.get("scrollbarThumb")
-    if scrollbar_thumb is None:
-        scrollbar_thumb = colors["text"]
-    fallback = colors.get("thinkingMax")
-    if fallback is None:
-        fallback = colors["thinkingXhigh"]
-    search_match_bg = colors.get("searchMatchBg")
-    if search_match_bg is None:
-        search_match_bg = colors["selectedBg"]
-    search_match_text = colors.get("searchMatchText")
-    if search_match_text is None:
-        search_match_text = colors["text"]
-    return {
-        **colors,
-        "scrollbarTrack": scrollbar_track,
-        "scrollbarThumb": scrollbar_thumb,
-        "thinkingMax": fallback,
-        "searchMatchBg": search_match_bg,
-        "searchMatchText": search_match_text,
-    }
+def _with_theme_token_fallbacks(values: dict) -> dict:
+    resolved = dict(values)
+    for name, descriptor in THEME_TOKENS.items():
+        fallback = descriptor.get("fallback")
+        if fallback is None or resolved.get(name) is not None:
+            continue
+        fallback_value = resolved.get(fallback)
+        if fallback_value is None:
+            raise ValueError(f"Theme token {name} has unresolved fallback {fallback}")
+        resolved[name] = fallback_value
+    return resolved
 
 
 # ============================================================================
@@ -246,26 +221,7 @@ class Theme:
         self._default_background_tokens: list[str] = []
         # (terminal colors, resolved colors), swapped whole: see `colors`.
         self._resolved_colors: tuple | None = None
-        thinking_max = fg_colors.get("thinkingMax")
-        if thinking_max is None:
-            thinking_max = fg_colors["thinkingXhigh"]
-        search_match_text = fg_colors.get("searchMatchText")
-        if search_match_text is None:
-            search_match_text = fg_colors["text"]
-        scrollbar_track = fg_colors.get("scrollbarTrack")
-        scrollbar_thumb = fg_colors.get("scrollbarThumb")
-        foregrounds = {
-            **fg_colors,
-            "scrollbarTrack": scrollbar_track if scrollbar_track is not None else fg_colors["muted"],
-            "scrollbarThumb": scrollbar_thumb if scrollbar_thumb is not None else fg_colors["text"],
-            "thinkingMax": thinking_max,
-            "searchMatchText": search_match_text,
-        }
-        search_match_bg = bg_colors.get("searchMatchBg")
-        backgrounds = {
-            **bg_colors,
-            "searchMatchBg": search_match_bg if search_match_bg is not None else bg_colors["selectedBg"],
-        }
+        foregrounds, backgrounds = _split_theme_colors(_with_theme_token_fallbacks({**fg_colors, **bg_colors}))
         concrete_foregrounds: list = []
         concrete_backgrounds: list = []
 
@@ -565,7 +521,7 @@ def _split_theme_colors(colors: dict) -> tuple[dict, dict]:
     fg_colors: dict = {}
     bg_colors: dict = {}
     for key, value in colors.items():
-        if key in _BACKGROUND_TOKENS:
+        if THEME_TOKENS[key]["slot"] == "background":
             bg_colors[key] = value
         else:
             fg_colors[key] = value
@@ -574,7 +530,7 @@ def _split_theme_colors(colors: dict) -> tuple[dict, dict]:
 
 def _create_theme(theme_json: dict, mode: str | None = None, source_path: str | None = None) -> Theme:
     color_mode = mode or get_terminal_color_mode()
-    resolved_colors = _resolve_theme_colors(_with_theme_color_fallbacks(theme_json["colors"]), theme_json.get("vars"))
+    resolved_colors = _with_theme_token_fallbacks(_resolve_theme_colors(theme_json["colors"], theme_json.get("vars")))
     fg_colors, bg_colors = _split_theme_colors(resolved_colors)
     return Theme(
         fg_colors,
@@ -594,7 +550,7 @@ def _create_system_theme(mode: str | None = None) -> Theme:
     generated = generate_system_theme_colors(
         {**terminal, "saturation": 0 if pending else 1, "appearanceHint": detect_terminal_theme(terminal, scheme)}
     )
-    fg_colors, bg_colors = _split_theme_colors(generated["colors"])
+    fg_colors, bg_colors = _split_theme_colors(_with_theme_token_fallbacks(generated["colors"]))
     return Theme(
         fg_colors,
         bg_colors,

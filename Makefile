@@ -34,6 +34,10 @@ release-check:
 models-data:
 	uv run python packages/ai/scripts/generate_models.py
 
+.PHONY: config-schemas
+config-schemas:
+	uv run python packages/pidrei/scripts/generate_schemas.py
+
 # Where the pi checkout lives; override with `make upstream-diff PI_ROOT=...`.
 PI_ROOT ?= $(HOME)/Downloads/code/pi
 

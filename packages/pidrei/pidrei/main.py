@@ -591,6 +591,8 @@ async def main(args: list[str], *, extension_factories: list[Any] | None = None)
 
 async def _main(args: list[str], *, extension_factories: list[Any] | None = None) -> None:
     reset_timings()
+    # Commands and startup selectors can load user-authored themes before runtime creation.
+    set_theme_json_validator(validate_theme_json)
     extension_factories = [*builtin_extensions(), *(extension_factories or [])]
     offline_mode = "--offline" in args or _is_truthy_env_flag(os.environ.get("PIDREI_OFFLINE"))
     if offline_mode:
@@ -920,8 +922,6 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     initial = await _prepare_initial_message(parsed, stdin_content)
     time("prepareInitialMessage")
-    # pi reads user-authored themes, so it opts into full validation before any theme loads.
-    set_theme_json_validator(validate_theme_json)
     await init_theme(settings_manager.get_theme(), app_mode == "interactive")
     time("initTheme")
 

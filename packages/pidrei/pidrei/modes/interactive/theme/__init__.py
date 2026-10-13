@@ -34,7 +34,7 @@ from .theme import (
     theme,
 )
 from .theme_controller import InteractiveThemeController, request_terminal_colors
-from .theme_json import validate_theme_json
+from .theme_schema import validate_theme_json
 
 
 __all__ = [

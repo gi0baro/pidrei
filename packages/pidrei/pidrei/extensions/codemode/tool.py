@@ -53,6 +53,7 @@ from pidrei_codemode import (
 
 from ...config import get_docs_path
 from ...core.extensions.types import ToolDefinition, ToolLoadout, ToolLoadoutChanges, ToolNamespace
+from ...core.settings_defaults import SETTINGS_DEFAULTS
 from ...core.settings_manager import CodemodeMode
 from ...core.tools.tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .renderer import CODEMODE_RENDERERS
@@ -129,7 +130,9 @@ class CodemodeToolOptions:
 
 
 def type_check_enabled(options: CodemodeToolOptions) -> bool:
-    return options.get_type_check() if options.get_type_check is not None else True
+    return (
+        options.get_type_check() if options.get_type_check is not None else SETTINGS_DEFAULTS["codemode"]["typeCheck"]
+    )
 
 
 CODEMODE_PROMPT_SNIPPET = "Run Python that calls other tools"
@@ -316,7 +319,7 @@ def global_signatures(models: bool) -> dict[str, str]:
 # --- declarations ----------------------------------------------------------------
 
 # Default for the inline budget, in estimated tokens.
-DEFAULT_CODEMODE_INLINE_BUDGET = 3000
+DEFAULT_CODEMODE_INLINE_BUDGET = SETTINGS_DEFAULTS["codemode"]["inlineBudget"]
 # Characters per token when estimating the cost of a tool section.
 _CHARS_PER_TOKEN = 4
 
@@ -516,7 +519,7 @@ def _prepare_codemode_loadout(loadout: ToolLoadout, options: CodemodeToolOptions
     Listing by exposure, not by the active set, keeps the codemode description
     unchanged when `tool_search` loads a tool, so loads do not redeclare
     codemode."""
-    mode = options.get_mode() if options.get_mode is not None else "on"
+    mode = options.get_mode() if options.get_mode is not None else SETTINGS_DEFAULTS["codemode"]["mode"]
 
     def is_direct(tool: AgentTool) -> bool:
         return loadout.get_exposure(tool.name) == "direct"

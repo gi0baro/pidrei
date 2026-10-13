@@ -75,6 +75,10 @@ changing a theme anywhere else.
 | `colors` | Semantic roles; the schema marks which are required |
 | `export` | Optional `pageBg`, `cardBg` and `infoBg` for HTML exports; derived from `userMessageBg` when omitted |
 
+Theme objects are strict: only the keys above and the documented colour roles
+are accepted. Define reusable custom colours under `vars`; custom keys under
+`colors` or `export`, and extra top-level fields, make the theme invalid.
+
 A colour value is one of:
 
 | Form | Example | Meaning |
@@ -104,9 +108,10 @@ and fullscreen (`selectedBg`, `searchMatch*`, `scrollbar*`), messages
 markdown (`md*`), diffs (`toolDiff*`), syntax highlighting (`syntax*`), and
 editor modes (`thinking*`, `bashMode`).
 
-The full list of roles is in `theme-schema.json`, shipped next to the built-in
-themes. Point `$schema` at it and an editor will complete and validate as you
-type. Five roles are optional, so older themes keep loading: `thinkingMax`
+The full list of roles is in the
+[theme schema](https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/theme.schema.json),
+also shipped in the installed package as `pidrei/schemas/theme.schema.json`.
+Point `$schema` at it and an editor will complete and validate as you type. Five roles are optional, so older themes keep loading: `thinkingMax`
 falls back to `thinkingXhigh`, `scrollbarTrack` (the fullscreen scrollbar
 track foreground) falls back to `muted`, `scrollbarThumb` (the thumb
 foreground, shared by the normal and expanded states) falls back to `text`,

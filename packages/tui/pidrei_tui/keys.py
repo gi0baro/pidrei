@@ -218,6 +218,10 @@ setattr(Key, "return", "return")
 
 SYMBOL_KEYS = frozenset("`-=[]\\;',./!@#$%^&*()_+|~{}:<>?")
 
+SHIFTED_SYMBOL_KEYS = frozenset("~!@#$%^&*()_+|{}:<>?")
+
+MODIFIER_NAMES = ("shift", "alt", "ctrl", "super")
+
 MODIFIERS = {
     "shift": 1,
     "alt": 2,
@@ -299,6 +303,18 @@ def _normalize_shifted_letter_identity_codepoint(codepoint: int, modifier: int) 
     if (effective_modifier & MODIFIERS["shift"]) != 0 and 65 <= codepoint <= 90:
         return codepoint + 32
     return codepoint
+
+
+def _get_logical_shifted_symbol_candidate(
+    codepoint: int | None, modifier: int, allowed_symbols: frozenset[str]
+) -> tuple[int, int] | None:
+    """`(codepoint, modifier)` with the implicit Shift consumed, or None."""
+    if codepoint is None or (modifier & MODIFIERS["shift"]) == 0:
+        return None
+    normalized_codepoint = _normalize_kitty_functional_codepoint(codepoint)
+    if _safe_chr(normalized_codepoint) not in allowed_symbols:
+        return None
+    return normalized_codepoint, modifier & ~MODIFIERS["shift"]
 
 
 LEGACY_KEY_SEQUENCES = {
@@ -595,10 +611,6 @@ def _matches_kitty_sequence(data: str, expected_codepoint: int, expected_modifie
     actual_mod = parsed["modifier"] & ~LOCK_MASK
     expected_mod = expected_modifier & ~LOCK_MASK
 
-    # Check if modifiers match
-    if actual_mod != expected_mod:
-        return False
-
     normalized_codepoint = _normalize_shifted_letter_identity_codepoint(
         _normalize_kitty_functional_codepoint(parsed["codepoint"]),
         parsed["modifier"],
@@ -608,9 +620,23 @@ def _matches_kitty_sequence(data: str, expected_codepoint: int, expected_modifie
         expected_modifier,
     )
 
-    # Primary match: codepoint matches directly after normalizing functional keys
-    if normalized_codepoint == normalized_expected_codepoint:
+    # Physical match: primary codepoint and every reported modifier match.
+    if actual_mod == expected_mod and normalized_codepoint == normalized_expected_codepoint:
         return True
+
+    # Logical match: Kitty reports symbols such as "+" as Shift plus the physical "=" key.
+    # Bindings name the produced symbol, so consume that implicit Shift while preserving
+    # Ctrl, Alt, and Super. The physical "shift+=" spelling remains valid through the match above.
+    logical_shifted_symbol = _get_logical_shifted_symbol_candidate(parsed["shiftedKey"], actual_mod, SYMBOL_KEYS)
+    if (
+        logical_shifted_symbol is not None
+        and (logical_shifted_symbol[1] & ~LOCK_MASK) == expected_mod
+        and logical_shifted_symbol[0] == _normalize_kitty_functional_codepoint(expected_codepoint)
+    ):
+        return True
+
+    if actual_mod != expected_mod:
+        return False
 
     # Alternate match: use base layout key for non-Latin keyboard layouts.
     # This allows Ctrl+С (Cyrillic) to match Ctrl+c (Latin) when terminal reports
@@ -712,14 +738,18 @@ def _is_digit_key(key: str) -> bool:
 
 
 def _matches_printable_modify_other_keys(data: str, expected_keycode: int, expected_modifier: int) -> bool:
-    if expected_modifier == 0:
-        return False
     parsed = _parse_modify_other_keys_sequence(data)
-    if not parsed or parsed["modifier"] != expected_modifier:
+    if not parsed:
         return False
-    return _normalize_shifted_letter_identity_codepoint(
+    physical_match = parsed["modifier"] == expected_modifier and _normalize_shifted_letter_identity_codepoint(
         parsed["codepoint"], parsed["modifier"]
     ) == _normalize_shifted_letter_identity_codepoint(expected_keycode, expected_modifier)
+    if physical_match:
+        return True
+    logical_shifted_symbol = _get_logical_shifted_symbol_candidate(
+        parsed["codepoint"], parsed["modifier"], SHIFTED_SYMBOL_KEYS
+    )
+    return logical_shifted_symbol == (expected_keycode, expected_modifier)
 
 
 def _format_key_name_with_modifiers(key_name: str, modifier: int) -> str | None:
@@ -740,16 +770,24 @@ def _format_key_name_with_modifiers(key_name: str, modifier: int) -> str | None:
 
 
 def _parse_key_id(key_id: str) -> dict | None:
-    parts = key_id.lower().split("+")
-    key = parts[-1] if parts else ""
-    if not key:
+    key = key_id.lower()
+    modifiers: set[str] = set()
+    while True:
+        modifier = next((name for name in MODIFIER_NAMES if key.startswith(f"{name}+")), None)
+        if modifier is None:
+            break
+        if modifier in modifiers:
+            return None
+        modifiers.add(modifier)
+        key = key[len(modifier) + 1 :]
+    if not key or ("+" in key and key != "+"):
         return None
     return {
         "key": key,
-        "ctrl": "ctrl" in parts,
-        "shift": "shift" in parts,
-        "alt": "alt" in parts,
-        "super": "super" in parts,
+        "ctrl": "ctrl" in modifiers,
+        "shift": "shift" in modifiers,
+        "alt": "alt" in modifiers,
+        "super": "super" in modifiers,
     }
 
 
@@ -1075,7 +1113,11 @@ def matches_key(data: str, key_id: str) -> bool:  # noqa: C901
             )
 
         # Check both raw char and Kitty sequence (needed for release events)
-        return data == key or _matches_kitty_sequence(data, codepoint, 0)
+        return (
+            data == key
+            or _matches_kitty_sequence(data, codepoint, 0)
+            or _matches_printable_modify_other_keys(data, codepoint, 0)
+        )
 
     return False
 
@@ -1147,11 +1189,19 @@ def parse_key(data: str) -> str | None:
     """
     kitty = _parse_kitty_sequence(data)
     if kitty:
-        return _format_parsed_key(kitty["codepoint"], kitty["modifier"], kitty["baseLayoutKey"])
+        logical_shifted_symbol = _get_logical_shifted_symbol_candidate(
+            kitty["shiftedKey"], kitty["modifier"], SYMBOL_KEYS
+        )
+        codepoint, modifier = logical_shifted_symbol or (kitty["codepoint"], kitty["modifier"])
+        return _format_parsed_key(codepoint, modifier, kitty["baseLayoutKey"])
 
     modify_other_keys = _parse_modify_other_keys_sequence(data)
     if modify_other_keys:
-        return _format_parsed_key(modify_other_keys["codepoint"], modify_other_keys["modifier"])
+        logical_shifted_symbol = _get_logical_shifted_symbol_candidate(
+            modify_other_keys["codepoint"], modify_other_keys["modifier"], SHIFTED_SYMBOL_KEYS
+        )
+        codepoint, modifier = logical_shifted_symbol or (modify_other_keys["codepoint"], modify_other_keys["modifier"])
+        return _format_parsed_key(codepoint, modifier)
 
     # Mode-aware legacy sequences
     # When Kitty protocol is active, ambiguous sequences are interpreted as custom terminal mappings:
