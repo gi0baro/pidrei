@@ -110,6 +110,7 @@ from .tui import (
     dispatch_mouse_event,
     is_focusable,
     is_viewport_tui,
+    render_fake_cursor,
     retarget_mouse_event,
 )
 from .tui_alt_screen import TuiAltScreen
@@ -218,6 +219,7 @@ __all__ = [
     "parse_keyboard_protocol_negotiation_sequence",
     "parse_terminal_color_scheme_report",
     "prime_capabilities",
+    "render_fake_cursor",
     "render_image",
     "render_latex",
     "reset_capabilities_cache",

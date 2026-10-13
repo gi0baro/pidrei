@@ -495,7 +495,7 @@ async def test_drops_the_fullscreen_selection_when_session_entries_are_re_render
 
 
 class _StatusEditor:
-    """pi's StatusEditor fake: the two members `is_working_status_editor` checks."""
+    """pi's StatusEditor fake: the two members `is_embedded_status` checks."""
 
     def __init__(self, embed_working_status: bool) -> None:
         self.embed_working_status = embed_working_status

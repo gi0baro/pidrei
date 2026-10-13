@@ -221,6 +221,116 @@ async def test_keeps_fragmented_mouse_sequences_buffered_across_delayed_chunks_b
     delayed_buffer.destroy()
 
 
+# Terminal Reply Strings
+
+_REPLIES = [
+    ("\x1b]4;1;", "\x1b]4;1;rgb:eaea/6c6c/6d6d\x07"),  # Ghostty's Ayu Light palette color 1.
+    ("\x1b]10;", "\x1b]10;rgb:ffff/ffff/ffff\x1b\\"),
+    ("\x1b]11;", "\x1b]11;rgb:0000/0000/0000\x07"),
+    ("\x1b]4;1;", "\x1b]4;1;rgb:6464/6464/4d4d\x07"),  # Another reported color-reply tail.
+    ("\x1bP>|", "\x1bP>|Ghostty 1.3.1\x1b\\"),
+    ("\x1b_Gi=1;", "\x1b_Gi=1;OK\x1b\\"),
+    ("\x1b]7501;?", "\x1b]7501;?\x1b\\"),
+]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(("header", "reply"), _REPLIES)
+async def test_keeps_a_delayed_reply_intact_at_every_split_after_its_reply_header(header, reply):
+    for split in range(len(header), len(reply)):
+        buffer, sequences, timers = _make_manual_buffer()
+        buffer.process(reply[:split])
+        timers.tick(5000)
+        buffer.process(f"{reply[split:]}x")
+        assert not any(matches_key(sequence, "ctrl+g") for sequence in sequences), split
+        assert sequences == [reply, "x"], split
+
+
+@pytest.mark.tonio
+async def test_keeps_an_osc_reply_buffered_across_multiple_expired_sequence_timeouts():
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
+    buffer.process("\x1b]4;1;rgb:eaea/6c")
+    timers.tick(100)
+    assert emitted == []
+    buffer.process("6c/6d6d")
+    timers.tick(100)
+    assert emitted == []
+    buffer.process("\x07")
+    assert emitted == [_REPLIES[0][1]]
+
+
+@pytest.mark.tonio
+async def test_still_times_out_bare_string_introducers_as_alt_keys():
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
+    for prefix in ("\x1b]", "\x1bP", "\x1b_"):
+        buffer.process(prefix)
+        timers.tick(10)
+    assert emitted == ["\x1b]", "\x1bP", "\x1b_"]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "ambiguous",
+    [
+        "\x1b]a",
+        "\x1b]1",
+        "\x1b]10",
+        "\x1b]0;title",
+        "\x1b]4;",
+        "\x1b]4;a;",
+        "\x1bPa",
+        "\x1bP>",
+        "\x1b_a",
+        "\x1b_G",
+        "\x1b_Gi=1",
+    ],
+)
+async def test_recovers_batched_legacy_alt_input_within_the_sequence_timeout(ambiguous):
+    buffer, sequences, timers = _make_manual_buffer()
+    buffer.process(ambiguous)
+    timers.tick(20)
+    buffer.process("x\r\x03\x04")
+    timers.tick(49)
+    assert sequences == []
+    timers.tick(1)
+    assert sequences == [ambiguous[:2], *ambiguous[2:], "x", "\r", "\x03", "\x04"]
+    assert buffer.get_buffer() == ""
+
+    buffer.process("y\r\x03\x04")
+    assert sequences[-4:] == ["y", "\r", "\x03", "\x04"]
+
+
+@pytest.mark.tonio
+async def test_recognizes_a_reply_header_assembled_within_the_ambiguous_input_timeout():
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
+    buffer.process("\x1b]1")
+    timers.tick(5)
+    buffer.process("0;")
+    timers.tick(5000)
+    assert emitted == []
+    buffer.process("rgb:ffff/ffff/ffff\x1b\\")
+    assert emitted == [_REPLIES[1][1]]
+
+
+@pytest.mark.tonio
+async def test_recovers_from_an_unterminated_reply_when_a_new_escape_sequence_arrives():
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
+    buffer.process("\x1b]4;1;rgb:eaea/6c")
+    timers.tick(100)
+    buffer.process("\x1b")
+    timers.tick(100)
+    buffer.process("[Ahello")
+    assert emitted == ["\x1b[A", "h", "e", "l", "l", "o"]
+
+
+@pytest.mark.tonio
+async def test_discards_a_canceled_reply_without_swallowing_subsequent_input():
+    buffer, emitted = _make_buffer()
+    for cancel in ("\x18", "\x1a"):
+        buffer.process(f"\x1b]11;rgb:0000{cancel}x")
+    assert emitted == ["x", "x"]
+
+
 # Mixed Content
 
 

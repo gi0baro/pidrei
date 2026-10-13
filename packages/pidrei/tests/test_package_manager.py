@@ -516,6 +516,24 @@ def disabled_names(resources) -> set[str]:
     return {os.path.basename(resource.path) for resource in resources if not resource.enabled}
 
 
+# #10765
+@pytest.mark.tonio
+async def test_expands_tilde_in_exclusion_and_exact_patterns(dirs):
+    dirs.set_home(dirs.root)
+    skills_dir = os.path.join(dirs.root, "extra", "skills")
+    skills = {
+        name: write_skill(os.path.join(skills_dir, name, "SKILL.md"), name)
+        for name in ("keep", "glob-excluded", "exact-excluded")
+    }
+    dirs.settings.set_skill_paths(["~/extra/skills", "!~/extra/skills/glob-*", "-~/extra/skills/exact-excluded"])
+
+    result = await dirs.manager.resolve()
+
+    assert find(result.skills, skills["keep"]).enabled
+    assert not find(result.skills, skills["glob-excluded"]).enabled
+    assert not find(result.skills, skills["exact-excluded"]).enabled
+
+
 @pytest.mark.tonio
 async def test_excludes_extensions_with_a_bang_pattern(dirs):
     extension_dir = os.path.join(dirs.agent_dir, "extensions")

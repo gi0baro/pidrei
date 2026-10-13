@@ -49,6 +49,7 @@ its own `bin` directory under the agent dir first, if you put them there.
 | Variable | Effect |
 |----------|--------|
 | `PIDREI_HARDWARE_CURSOR` | Use the terminal's own cursor |
+| `PIDREI_CLIPBOARD_OSC52` | Set to `1` to also send copied text to the terminal with OSC 52 after the local clipboard write, as pidrei does over SSH. Use it when a remote client reaches pidrei without SSH variables, such as a multiplexer attached from another machine or a remote IDE daemon |
 | `PIDREI_CLEAR_ON_SHRINK` | Clear the screen when the terminal shrinks |
 | `PIDREI_CACHE_RETENTION` | Provider cache retention behaviour |
 

@@ -10,7 +10,7 @@ import grapheme as grapheme_lib
 from ..keybindings import get_keybindings
 from ..keys import decode_kitty_printable
 from ..kill_ring import KillRing
-from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult
+from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult, render_fake_cursor
 from ..undo_stack import UndoStack
 from ..utils import is_whitespace_char, slice_by_column, truncate_to_width, visible_width
 from ..word_navigation import find_word_backward, find_word_forward
@@ -381,7 +381,7 @@ class Input:
             at_cursor = first_grapheme if first_grapheme is not None else " "
             after_cursor = placeholder[len(at_cursor) :]
             marker = CURSOR_MARKER if self.focused else ""
-            cursor_char = f"\x1b[7m{self._placeholder_style(at_cursor)}\x1b[27m"
+            cursor_char = render_fake_cursor(self._placeholder_style(at_cursor))
             text_with_cursor = marker + cursor_char + self._placeholder_style(after_cursor)
             padding = " " * max(0, available_width - visible_width(text_with_cursor))
             return [prompt + text_with_cursor + padding]
@@ -432,8 +432,8 @@ class Input:
         # Hardware cursor marker (zero-width, emitted before fake cursor for IME positioning)
         marker = CURSOR_MARKER if self.focused else ""
 
-        # Use inverse video to show cursor
-        cursor_char = f"\x1b[7m{at_cursor}\x1b[27m"  # ESC[7m = reverse video, ESC[27m = normal
+        # TUI draws the fake cursor in reverse video, or omits it when the hardware cursor is shown
+        cursor_char = render_fake_cursor(at_cursor)
         text_with_cursor = before_cursor + marker + cursor_char + after_cursor
 
         # Calculate visual width

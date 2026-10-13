@@ -36,7 +36,7 @@ from pidrei_tui.terminal_image import (
     reset_capabilities_cache,
     set_capabilities,
 )
-from pidrei_tui.tui import TuiMouseEventResult
+from pidrei_tui.tui import TuiMouseEventResult, render_fake_cursor
 from pidrei_tui.tui_alt_screen import TuiAltScreen
 
 from .virtual_terminal import VirtualTerminal
@@ -1404,6 +1404,27 @@ async def test_selects_visible_text_with_the_mouse_and_copies_it_with_osc52_afte
 
 
 @pytest.mark.tonio
+async def test_keeps_the_selection_highlight_after_a_fake_cursor_cell():
+    terminal = RecordingTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    tui.add_child(Text(f"> {render_fake_cursor('a')}bcd", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;6;1M")
+    await terminal.send_input("\x1b[<3;6;1m")
+    await terminal.wait_for_render(since)
+
+    assert await terminal.wait_for_write("\x1b[27m\x1b[7mbcd"), (
+        "selection inverse must be reapplied after the fake cursor ends"
+    )
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_uses_an_injected_copy_selection_handler_instead_of_osc52_and_reports_success():
     terminal = RecordingTerminal(20, 4)
     copied: list[str] = []
@@ -1960,7 +1981,7 @@ class InputOverlay:
 
 
 @pytest.mark.tonio
-async def test_gives_wheel_and_viewport_keys_to_a_focused_overlay():
+async def test_gives_viewport_keys_to_a_focused_overlay():
     terminal = VirtualTerminal(20, 6)
     tui = TuiAltScreen(terminal)
     tui.add_child(Text(_lines(12), 0, 0))
@@ -1972,8 +1993,7 @@ async def test_gives_wheel_and_viewport_keys_to_a_focused_overlay():
     await terminal.wait_for_render()
     assert overlay.focused is True
 
-    wheel = "\x1b[<64;10;3M"
-    keys = ["\x1b[5~", "\x1b[6~", "\x1bOH", "\x1bOF", wheel]
+    keys = ["\x1b[5~", "\x1b[6~", "\x1bOH", "\x1bOF"]
     since = terminal.frames
     for key in keys:
         await terminal.send_input(key)
@@ -2129,6 +2149,28 @@ async def test_dispatches_clicks_to_nested_mouse_regions_without_breaking_drag_s
     await terminal.wait_for_render(since)
     assert clicks[0] == 1
     assert await terminal.wait_for_write("\x1b]52;c;")
+    await tui.stop()
+
+
+# #10769
+@pytest.mark.tonio
+async def test_scrolls_the_transcript_on_wheel_input_a_focused_overlay_does_not_handle():
+    terminal = VirtualTerminal(20, 6)
+    tui = TuiAltScreen(terminal)
+    tui.add_child(Text(_lines(12), 0, 0))
+    overlay = InputOverlay()
+    await tui.start()
+    await terminal.wait_for_render()
+    top_before = tui.viewport_top
+    tui.show_overlay(overlay, {"anchor": "top-left", "width": 10})
+    await terminal.wait_for_render()
+    assert overlay.focused is True
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<64;3;1M")
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top < top_before
+    assert overlay.inputs == []
     await tui.stop()
 
 

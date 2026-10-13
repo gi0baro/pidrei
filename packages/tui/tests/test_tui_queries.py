@@ -6,6 +6,7 @@ import contextlib
 import pytest
 import tonio.colored as tonio
 
+from pidrei_tui.stdin_buffer import StdinBuffer
 from pidrei_tui.terminal_image import get_cell_dimensions, reset_capabilities_cache, set_cell_dimensions
 from pidrei_tui.tui_main_screen import TuiMainScreen
 
@@ -197,6 +198,43 @@ async def test_queries_all_colors_in_one_write_and_consumes_the_replies():
         assert reports.reports == [{"foreground": WHITE, "background": BLACK, "palette": [BLACK] * 16}]
         await terminal.send_input(DA1)
         assert component.inputs == ["x"]
+    finally:
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_consumes_delayed_ghostty_color_fragments_without_typing_their_tail_or_opening_the_editor():
+    # pi wires the buffer's data events straight into the terminal; its
+    # listeners are synchronous here, so the sequences are collected and then
+    # fed to the terminal. The buffer runs on a manual clock (pi's mocked timers).
+    terminal, tui, component, reports = await setup_color_query()
+    now = [0.0]
+    buffer = StdinBuffer(clock=lambda: now[0])
+    sequences: list[str] = []
+    buffer.on_data(sequences.append)
+
+    async def deliver():
+        pending = sequences[:]
+        sequences.clear()
+        for sequence in pending:
+            await terminal.send_input(sequence)
+
+    try:
+        applied = tui.query_terminal_colors(timeout_ms=1000)
+        # Captured from Ghostty 1.3.1 with Ayu Light, split at the reported tail.
+        buffer.process("\x1b]4;1;rgb:eaea/6c")
+        now[0] += 0.1
+        buffer.expire()
+        buffer.process(f"6c/6d6d\x07{DA1}")
+        await deliver()
+        await applied.wait(5)
+        assert reports.reports == [{"foreground": None, "background": None, "palette": None}]
+        assert component.inputs == []
+
+        # A real Ctrl+G must still reach the editor after the reply.
+        buffer.process("\x07")
+        await deliver()
+        assert component.inputs == ["\x07"]
     finally:
         await tui.stop()
 

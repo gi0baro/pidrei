@@ -116,7 +116,13 @@ def serialize_conversation(messages: list[Message]) -> str:
     Call convert_to_llm() first to handle custom message types.
 
     Tool results are truncated to keep the summarization request within
-    reasonable token budgets. Full content is not needed for summarization."""
+    reasonable token budgets. Full content is not needed for summarization.
+
+    Thinking is omitted. Providers return summaries of the real reasoning, and
+    replayed thinking is often not part of the model's live context: for example,
+    a block that does not match its request is dropped. Including it can make the
+    summarization request larger than the context it summarizes. Visible text,
+    tool calls, and tool results record what happened."""
     parts: list[str] = []
 
     for msg in messages:
@@ -126,18 +132,13 @@ def serialize_conversation(messages: list[Message]) -> str:
             if content:
                 parts.append(f"[User]: {content}")
         elif role == "assistant":
-            thinking_parts: list[str] = []
             tool_calls: list[str] = []
 
             for block in msg.content:
-                if block.type == "thinking":
-                    thinking_parts.append(block.thinking)
-                elif block.type == "toolCall":
+                if block.type == "toolCall":
                     args_str = ", ".join(f"{k}={safe_json_stringify(v)}" for k, v in block.arguments.items())
                     tool_calls.append(f"{block.name}({args_str})")
 
-            if thinking_parts:
-                parts.append("[Assistant thinking]: " + "\n".join(thinking_parts))
             if any(block.type == "text" for block in msg.content):
                 parts.append(f"[Assistant]: {content_text(msg.content)}")
             if tool_calls:

@@ -2,11 +2,13 @@
 
 pi injects a `fetch`; pidrei's transport seam is `MistralOptions.client`
 (`FakeMistralClient` records the URL, wire payload, and headers the adapter
-would have sent). pi's "applies the request timeout while waiting for an SSE
-chunk" case is not mirrored: pi implements the timeout itself
-(`AbortSignal.timeout(timeoutMs ?? 60_000)`), while pidrei maps `timeout_ms`
-to the punkreq read timeout — dependency behavior the test policy says not to
-re-test, and a fake client never reaches it.
+would have sent). pi bounds the wait for response headers with its own
+`AbortSignal.timeout`; pidrei maps `timeout_ms` to the punkreq read timeout, so
+the header-timeout case fakes the seam's `RequestTimeout` and checks the error
+the adapter reports. pi's "does not abort an active stream that lasts longer
+than the request timeout" case is not mirrored: a fake client has no deadline,
+and the read timeout bounds each wait for bytes, never the whole stream
+(dependency behavior the test policy says not to re-test).
 """
 
 import json
@@ -31,6 +33,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 from tests.mistral_helpers import FakeMistralClient, FakeMistralResponse, sse_body
 
@@ -434,6 +437,25 @@ async def test_aborts_while_waiting_for_an_sse_chunk():
     message = await result
 
     assert message.stop_reason == "aborted"
+
+
+@pytest.mark.tonio
+async def test_applies_the_request_timeout_while_waiting_for_response_headers():
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+
+    class HeaderTimeoutClient(FakeMistralClient):
+        async def post_chat_completions(self, url, wire_payload, *, headers, timeout_ms, cancel):
+            self.requests.append({"url": url, "payload": wire_payload, "headers": headers, "timeout_ms": timeout_ms})
+            raise http.RequestTimeout("read timed out")
+
+    client = HeaderTimeoutClient()
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", client=client, timeout_ms=5)
+    ).result()
+
+    assert message.stop_reason == "error"
+    assert message.error_message == "Mistral response headers timed out after 5ms"
+    assert client.requests[0]["timeout_ms"] == 5
 
 
 @pytest.mark.tonio

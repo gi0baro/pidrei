@@ -397,7 +397,8 @@ class TuiAltScreen(TuiBase):
         else:
             width = max(1, self.terminal.columns)
             with self.state_lock:
-                document = self.render(width)
+                # Resolved in the same lock hold: it reads the hardware cursor setting.
+                document = self._resolve_fake_cursors(self.render(width))
             document_lines = [OSC133_ZONE_PREFIX.sub("", line) for line in document]
             self._last_document = [
                 line if is_image_line(line) or visible_width(line) <= width else slice_by_column(line, 0, width, True)
@@ -751,8 +752,6 @@ class TuiAltScreen(TuiBase):
                 if self._apply_mouse_dispatch_result(event, result):
                     self.request_render()
                 return True
-            if self._should_defer_viewport_input_to_overlay():
-                return False
             self._route_wheel(wheel_event, wheel_delta)
             return True
         mouse_event = self._parse_sgr_mouse_event(data)
@@ -1732,7 +1731,8 @@ class TuiAltScreen(TuiBase):
         next_layout = render_layout_frame(root, width, height, self.request_render)
         if self._refresh_search(next_layout):
             next_layout = render_layout_frame(root, width, height, self.request_render)
-        screen = [OSC133_ZONE_PREFIX.sub("", line) for line in next_layout.lines]
+        # Resolve fake cursors before highlighting and compositing, which only track SGR codes
+        screen = self._resolve_fake_cursors([OSC133_ZONE_PREFIX.sub("", line) for line in next_layout.lines])
         screen = self._apply_search_highlights(screen, next_layout)
         screen = self._composite_scroll_to_end_indicator(screen, next_layout, width)
         screen = self._composite_overlays(screen, width, height)

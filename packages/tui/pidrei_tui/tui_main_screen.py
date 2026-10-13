@@ -243,7 +243,8 @@ class TuiMainScreen(TuiBase):
         height = self.terminal.rows
 
         # Render all components to get new lines
-        new_lines = self.render(width)
+        # Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
+        new_lines = self._resolve_fake_cursors(self.render(width))
 
         # Composite overlays into the rendered lines (before differential compare)
         if self._overlay_stack:

@@ -206,7 +206,9 @@ the `KeybindingsManager` the factory receives. A component that shows a text
 cursor sets a `focused` attribute (the `Focusable` protocol) and emits
 `CURSOR_MARKER` right before the cursor, so the hardware cursor — and IME
 candidate windows for Chinese, Japanese, Korean input — land in the right
-place. A container wrapping an `Input` or `Editor` must pass its own `focused`
+place. Wrap the cursor cell in `render_fake_cursor()` so the TUI draws it in
+reverse video, or hides it after `CURSOR_MARKER` when the hardware cursor is
+shown. A container wrapping an `Input` or `Editor` must pass its own `focused`
 state down to that child.
 
 To replace the main editor, subclass `CustomEditor`

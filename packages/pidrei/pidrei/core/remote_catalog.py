@@ -7,6 +7,7 @@ client (pidrei-ai's HTTP seam).
 
 import json
 import urllib.parse
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -88,14 +89,6 @@ def _parse_catalog(provider_id: str, value: Any) -> list[AnyModel]:
     return [model for model in models if model is not None]
 
 
-def _remote_models(entry: ModelsStoreEntry | None, local_generated_at: int | None) -> list[AnyModel]:
-    if entry is None:
-        return []
-    if local_generated_at is not None and (entry.last_modified is None or entry.last_modified <= local_generated_at):
-        return []
-    return list(entry.models)
-
-
 def _parse_last_modified(value: str | None) -> int:
     if not value:
         return 0
@@ -103,6 +96,40 @@ def _parse_last_modified(value: str | None) -> int:
         return int(parsedate_to_datetime(value).timestamp() * 1000)
     except TypeError, ValueError:
         return 0
+
+
+def _read_catalog(provider_id: str, response: CatalogResponse) -> tuple[list[AnyModel], int, str | None]:
+    """Read a successful pi.dev catalog response as `(models, last_modified, etag)`. A missing or
+    invalid Last-Modified header is 0."""
+    return (
+        _parse_catalog(provider_id, json.loads(response.body)),
+        _parse_last_modified(response.headers.get("last-modified")),
+        response.headers.get("etag"),
+    )
+
+
+def _is_newer(last_modified: int | None, local_generated_at: int | None) -> bool:
+    """Whether a pi.dev catalog is newer than the model data shipped with pidrei."""
+    return local_generated_at is None or (last_modified is not None and last_modified > local_generated_at)
+
+
+def _remote_models(entry: ModelsStoreEntry | None, local_generated_at: int | None) -> list[AnyModel]:
+    return list(entry.models) if entry is not None and _is_newer(entry.last_modified, local_generated_at) else []
+
+
+def _request_catalog(
+    fetch: Any, provider_id: str, catalog_base_url: str, cancel: Any, validator: str | None = None
+) -> Awaitable[CatalogResponse]:
+    url = urllib.parse.urljoin(catalog_base_url, f"/api/models/providers/{urllib.parse.quote(provider_id, safe='')}")
+    url = f"{url}?{urllib.parse.urlencode({'types': ','.join(REMOTE_CATALOG_MODEL_TYPES)})}"
+    headers = {"accept": "application/json", "User-Agent": get_pidrei_user_agent(VERSION)}
+    if validator is not None:
+        headers["if-none-match"] = validator
+    return fetch(url, headers, cancel)
+
+
+# Replaces the catalog with a credential-specific model list.
+type PersonalizeCatalog = Callable[[Sequence[AnyModel], RefreshModelsContext], Awaitable[Sequence[AnyModel]]]
 
 
 class RemoteCatalogProvider:
@@ -163,6 +190,9 @@ class RemoteCatalogProvider:
             return
         if not context.allow_network or context.cancel.cancelled:
             return
+        # Skip the request if pi.dev was checked less than REMOTE_CATALOG_REFRESH_INTERVAL_MS ago.
+        # An entry without last_modified (saved by an older pidrei, or after a failed first request) is
+        # always refetched: _remote_models() ignores it, so waiting would leave the overlay empty.
         if (
             not context.force
             and stored is not None
@@ -175,14 +205,9 @@ class RemoteCatalogProvider:
         # Only revalidate when a cached body backs the validator, so a 304 can
         # never leave the overlay empty.
         validator = stored.etag if stored is not None and stored.models else None
-        url = urllib.parse.urljoin(
-            self._catalog_base_url, f"/api/models/providers/{urllib.parse.quote(self._provider.id, safe='')}"
+        response = await _request_catalog(
+            self._fetch, self._provider.id, self._catalog_base_url, context.cancel, validator
         )
-        url = f"{url}?{urllib.parse.urlencode({'types': ','.join(REMOTE_CATALOG_MODEL_TYPES)})}"
-        headers = {"accept": "application/json", "User-Agent": get_pidrei_user_agent(VERSION)}
-        if validator is not None:
-            headers["if-none-match"] = validator
-        response = await self._fetch(url, headers, context.cancel)
         if context.cancel.cancelled:
             return
         checked_at = clock.now_ms()
@@ -223,16 +248,10 @@ class RemoteCatalogProvider:
                 )
             )
             raise Exception(f"Model catalog request failed for {self._provider.id}: {response.status}")
-        refreshed = _parse_catalog(self._provider.id, json.loads(response.body))
-        last_modified = _parse_last_modified(response.headers.get("last-modified"))
+        refreshed, last_modified, etag = _read_catalog(self._provider.id, response)
         if context.cancel.cancelled:
             return
-        entry = ModelsStoreEntry(
-            models=refreshed,
-            checked_at=checked_at,
-            last_modified=last_modified,
-            etag=response.headers.get("etag"),
-        )
+        entry = ModelsStoreEntry(models=refreshed, checked_at=checked_at, last_modified=last_modified, etag=etag)
         published = _remote_models(entry, self._local_generated_at)
 
         def _apply_refreshed() -> None:
@@ -250,6 +269,95 @@ def with_remote_catalog(
 ) -> RemoteCatalogProvider:
     return RemoteCatalogProvider(
         provider,
+        catalog_base_url if catalog_base_url is not None else DEFAULT_CATALOG_BASE_URL,
+        local_generated_at,
+        fetch if fetch is not None else _default_fetch,
+    )
+
+
+class PersonalizedCatalogProvider(RemoteCatalogProvider):
+    """Like `RemoteCatalogProvider`, but on each network refresh the catalog (built-in models plus a
+    newer pi.dev catalog) is passed through `personalize` and the result is saved. The saved entry
+    holds the personalized list, not the pi.dev catalog, and replaces the catalog, including offline.
+    The refresh interval and etag revalidation are skipped. An empty list (nothing saved yet, or an
+    empty catalog saved by an older pidrei after a failed or missing pi.dev catalog) falls back to
+    the built-in models."""
+
+    def __init__(
+        self,
+        provider: Provider,
+        personalize: PersonalizeCatalog,
+        catalog_base_url: str,
+        local_generated_at: int | None,
+        fetch: Any,
+    ):
+        super().__init__(provider, catalog_base_url, local_generated_at, fetch)
+        self._personalize = personalize
+        # Rebound whole by the publish updates; readers pin one read.
+        self._personal_models: Sequence[AnyModel] = []
+
+    def _builtin_models(self) -> list[AnyModel]:
+        get_all_models = self._provider.get_all_models
+        return get_all_models() if get_all_models is not None else self._provider.get_models()
+
+    def get_models(self) -> list[Model]:
+        return [model for model in self.get_all_models() if is_model_type(model, "chat")]
+
+    def get_all_models(self) -> list[AnyModel]:
+        personal_models = self._personal_models
+        return list(personal_models) if personal_models else self._builtin_models()
+
+    async def refresh_models(self, context: RefreshModelsContext) -> None:
+        restored = [
+            model
+            for model in (context.stored.models if context.stored is not None else [])
+            if model.provider == self.id
+        ]
+
+        def _apply_restored() -> None:
+            self._personal_models = restored
+
+        if not await context.publish(ModelsPublication(update=_apply_restored)):
+            return
+        if not context.allow_network or context.cancel.cancelled:
+            return
+
+        response = await _request_catalog(self._fetch, self.id, self._catalog_base_url, context.cancel)
+        if context.cancel.cancelled:
+            return
+        remote: list[AnyModel] = []
+        if response.status not in (404, 501):
+            if not (200 <= response.status < 300):
+                raise Exception(f"Model catalog request failed for {self.id}: {response.status}")
+            models, last_modified, _etag = _read_catalog(self.id, response)
+            if _is_newer(last_modified, self._local_generated_at):
+                remote = models
+        personalized = list(await self._personalize(_merge_models(self._builtin_models(), remote), context))
+        if context.cancel.cancelled:
+            return
+
+        def _apply_personalized() -> None:
+            self._personal_models = personalized
+
+        await context.publish(
+            ModelsPublication(
+                persist=ModelsStoreEntry(models=personalized, checked_at=clock.now_ms()),
+                update=_apply_personalized,
+            )
+        )
+
+
+def with_personalized_catalog(
+    provider: Provider,
+    personalize: PersonalizeCatalog,
+    catalog_base_url: str | None = None,
+    local_generated_at: int | None = None,
+    *,
+    fetch: Any = None,
+) -> PersonalizedCatalogProvider:
+    return PersonalizedCatalogProvider(
+        provider,
+        personalize,
         catalog_base_url if catalog_base_url is not None else DEFAULT_CATALOG_BASE_URL,
         local_generated_at,
         fetch if fetch is not None else _default_fetch,

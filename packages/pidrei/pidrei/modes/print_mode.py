@@ -180,6 +180,9 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
                     for content in last_message.content:
                         if getattr(content, "type", None) == "text":
                             write_raw_stdout(f"{content.text}\n")
+                    if last_message.stop_reason == "length":
+                        write_stderr("Response was truncated: the model reached its output token limit.\n")
+                        exit_code = 1
 
         return exit_code
     except Exception as error:

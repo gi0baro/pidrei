@@ -172,10 +172,13 @@ def _load_project_context_files_blocking(*, cwd: str, agent_dir: str) -> list[Ag
     current_dir = resolved_cwd
     while True:
         context_file = _load_context_file_from_dir_blocking(current_dir)
+        # Compare the directory's real path, not the file's: a worktree AGENTS.md that
+        # symlinks to the main repo's file resolves to the shadowed path itself.
         is_shadowed = (
             shadowed_context_file is not None
             and context_file is not None
-            and canonicalize_path_blocking(context_file.path) == shadowed_context_file
+            and os.path.join(canonicalize_path_blocking(current_dir), os.path.basename(context_file.path))
+            == shadowed_context_file
         )
         if context_file is not None and not is_shadowed and context_file.path not in seen_paths:
             ancestor_context_files.insert(0, context_file)

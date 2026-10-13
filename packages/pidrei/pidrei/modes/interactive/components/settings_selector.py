@@ -732,7 +732,7 @@ class SettingsSelectorComponent(Container):
             {
                 "id": "show-hardware-cursor",
                 "label": "Show hardware cursor",
-                "description": "Show the terminal cursor while still positioning it for IME support",
+                "description": "Use the terminal cursor instead of PiDrei's drawn cursor",
                 "currentValue": "true" if config["showHardwareCursor"] else "false",
                 "values": ["true", "false"],
             },

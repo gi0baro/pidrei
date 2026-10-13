@@ -43,6 +43,16 @@ DEFAULT_SEQUENCE_TIMEOUT_MS = 50
 DEFAULT_ESCAPE_TIMEOUT_MS = 10
 BRACKETED_PASTE_START = "\x1b[200~"
 BRACKETED_PASTE_END = "\x1b[201~"
+# Color and program-status OSC replies, XTVersion, and Kitty graphics replies.
+# Until their header is complete, the input may be batched legacy Alt keystrokes.
+_TERMINAL_REPLY_HEADER_RE = re.compile(
+    r"^\x1b(?:\](?:1[01];|4;\d{1,3};|7501;\?)|P>\||_G(?:[a-z]=\d+,)*[a-z]=\d+;)", re.ASCII
+)
+
+
+def _is_control_string(data: str) -> bool:
+    return data.startswith((f"{ESC}]", f"{ESC}P", f"{ESC}_"))
+
 
 _SGR_MOUSE_RE = re.compile(r"^<\d+;\d+;\d+[Mm]$")
 _DIGITS_RE = re.compile(r"^\d+$")
@@ -184,9 +194,21 @@ def _extract_complete_sequences(buffer: str) -> tuple[list[str], str]:
 
         # Try to extract a sequence starting at this position
         if remaining.startswith(ESC):
+            terminal_reply = _is_control_string(remaining) and _TERMINAL_REPLY_HEADER_RE.match(remaining) is not None
             # Find the end of this escape sequence
             seq_end = 1
             while seq_end <= len(remaining):
+                if terminal_reply and seq_end > 2:
+                    char = remaining[seq_end - 1]
+                    if char in ("\x18", "\x1a"):
+                        # CAN and SUB cancel the string, not subsequent keyboard input.
+                        pos += seq_end
+                        break
+                    if char == ESC and seq_end < len(remaining) and remaining[seq_end] != "\\":
+                        # A new escape sequence aborts an unterminated reply. Keep a
+                        # trailing ESC buffered until we can distinguish it from ST.
+                        pos += seq_end - 1
+                        break
                 candidate = remaining[:seq_end]
                 status = _is_complete_sequence(candidate)
 
@@ -236,10 +258,13 @@ class StdinBuffer:
 
     Handles partial escape sequences that arrive across multiple chunks.
     ``timeout`` is the maximum time in milliseconds to wait for an incomplete
-    sequence such as CSI or mouse (default 50); after that the buffer is
-    flushed even if incomplete. ``escape_timeout`` is the maximum time to wait
-    after a lone ESC before treating it as Escape (default 10); increase for
-    high-latency Alt+key input (SSH). ``clock`` returns the current time in
+    keyboard or mouse sequence (default 50); after that the buffer is flushed
+    even if incomplete. Strings with a recognized terminal reply header wait for
+    their terminator instead, so delayed replies cannot become keypresses.
+    Ambiguous legacy Alt-key input still uses this timeout.
+    ``escape_timeout`` is the maximum time to wait after a lone ESC before
+    treating it as Escape (default 10); increase for high-latency Alt+key input
+    (SSH). ``clock`` returns the current time in
     seconds (default: ``pidrei_tui.clock.monotonic``); ``deadline`` is on it.
     """
 
@@ -307,7 +332,13 @@ class StdinBuffer:
         self._deadline = None
         emissions: list[tuple[str, str]] = []
         for sequence in self._flush():
-            self._emit_data_sequence(sequence, emissions)
+            if len(sequence) > 2 and _is_control_string(sequence):
+                # Recover the Alt key and reparse its tail so batched text,
+                # Enter, and control keys are not swallowed as one event.
+                self._emit_data_sequence(sequence[:2], emissions)
+                self._process(sequence[2:], emissions)
+            else:
+                self._emit_data_sequence(sequence, emissions)
         self._dispatch(emissions)
 
     def _dispatch(self, emissions: list[tuple[str, str]]) -> None:
@@ -392,6 +423,12 @@ class StdinBuffer:
             self._emit_data_sequence(sequence, out)
 
         if len(self._buffer) > 0:
+            # Only a recognizable reply header establishes a delimited string.
+            # Flushing it would turn a delayed tail into text and an OSC's BEL
+            # terminator into Ctrl+G (the external editor shortcut). Other input,
+            # including Alt+] followed by text, must retain bounded recovery.
+            if _TERMINAL_REPLY_HEADER_RE.match(self._buffer):
+                return
             self._schedule_flush_timer()
 
     def _schedule_flush_timer(self) -> None:

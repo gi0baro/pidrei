@@ -40,7 +40,7 @@ from pidrei_ai.utils.tasks import gather
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
-from ..utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
+from ..utils.paths import canonicalize_path_blocking, is_local_path, normalize_path, resolve_path
 from .exec import exec_command
 from .extensions.loader import is_extension_file, resolve_extension_entries_blocking
 from .pidrei_manifest import read_pidrei_manifest_blocking
@@ -212,17 +212,26 @@ def _matches_any_pattern(file_path: str, patterns: list[str], base_dir: str) -> 
     parent_name = os.path.basename(parent_dir) if is_skill_file else None
 
     for pattern in patterns:
-        if _minimatch(rel, pattern) or _minimatch(name, pattern) or _minimatch(file_path, pattern):
+        normalized_pattern = normalize_path(pattern)
+        if (
+            _minimatch(rel, normalized_pattern)
+            or _minimatch(name, normalized_pattern)
+            or _minimatch(file_path, normalized_pattern)
+        ):
             return True
         if not is_skill_file:
             continue
-        if _minimatch(parent_rel, pattern) or _minimatch(parent_name, pattern) or _minimatch(parent_dir, pattern):
+        if (
+            _minimatch(parent_rel, normalized_pattern)
+            or _minimatch(parent_name, normalized_pattern)
+            or _minimatch(parent_dir, normalized_pattern)
+        ):
             return True
     return False
 
 
 def _normalize_exact_pattern(pattern: str) -> str:
-    return pattern.removeprefix("./")
+    return normalize_path(pattern.removeprefix("./"))
 
 
 def _matches_any_exact_pattern(file_path: str, patterns: list[str], base_dir: str) -> bool:

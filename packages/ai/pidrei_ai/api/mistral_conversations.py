@@ -112,13 +112,23 @@ async def request_mistral_stream(model: Model, payload: dict[str, Any], api_key:
     client = (
         options.client if options.client is not None else _PunkreqMistralClient(env=options.env, fetch=options.fetch)
     )
-    response = await client.post_chat_completions(
-        url,
-        to_mistral_wire_payload(payload),
-        headers=headers,
-        timeout_ms=options.timeout_ms,
-        cancel=options.cancel,
-    )
+    # The timeout covers only the wait for response headers. Long streams (e.g. extended thinking)
+    # must not be cut off by a fixed deadline; body stalls are left to the HTTP client idle timeout.
+    # (Here it is the punkreq read timeout, which bounds each wait for bytes, never the whole stream.)
+    timeout_ms = options.timeout_ms if options.timeout_ms is not None else 60_000
+    try:
+        response = await client.post_chat_completions(
+            url,
+            to_mistral_wire_payload(payload),
+            headers=headers,
+            timeout_ms=timeout_ms,
+            cancel=options.cancel,
+        )
+    except http.RequestTimeout as error:
+        if options.cancel is None or not options.cancel.cancelled:
+            formatted = str(int(timeout_ms)) if float(timeout_ms).is_integer() else str(timeout_ms)
+            raise RuntimeError(f"Mistral response headers timed out after {formatted}ms") from error
+        raise
 
     await maybe_call(
         options.on_response, ProviderResponse(status=response.status_code, headers=dict(response.headers)), model

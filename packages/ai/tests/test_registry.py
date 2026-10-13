@@ -1,5 +1,6 @@
 """Tests for the models registry port (registry.py)."""
 
+import copy
 import threading
 from dataclasses import replace
 
@@ -675,6 +676,27 @@ async def test_lets_providers_choose_persistent_deletion_and_ephemeral_publicati
     assert result.errors == {}
     assert state["entry"] is None
     assert state["phase"] == "ephemeral"
+
+
+@pytest.mark.tonio
+async def test_passes_the_registered_providers_base_url_including_wrapper_overrides_to_refresh_models():
+    # A models.json baseUrl (e.g. a regional OpenRouter host) is applied by a wrapper around the
+    # built-in provider. The built-in refresh must still request that URL.
+    base_urls: list[str | None] = []
+
+    async def refresh(context):
+        base_urls.append(context.base_url)
+
+    inner = DynamicTestProvider("dynamic", refresh)
+    inner.base_url = "https://default.example.test/v1"
+    # pi spreads the inner provider with an overriding baseUrl; the registered object carries it.
+    registered = copy.copy(inner)
+    registered.base_url = "https://regional.example.test/v1"
+    models = create_models()
+    models.set_provider(registered)
+
+    await models.refresh()
+    assert base_urls == ["https://regional.example.test/v1", "https://regional.example.test/v1"]
 
 
 @pytest.mark.tonio

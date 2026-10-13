@@ -29,7 +29,9 @@ pidrei -p "Summarize the changes in this repository"
 Print mode runs the prompts, writes the final assistant text to stdout, and
 exits. Intermediate events are not shown, which suits command substitution,
 pipelines, and one-shot jobs. Errors go to stderr, and a final response that
-stopped with `error` or `aborted` exits nonzero.
+stopped with `error` or `aborted` exits nonzero. A response cut off at the
+model's output token limit (`length` stop reason) still prints its partial
+text to stdout, writes a warning to stderr, and exits nonzero.
 
 Without an explicit mode, a non-TTY stdin or stdout selects print mode too, so
 `git diff | pidrei "Review this"` needs no `-p`.

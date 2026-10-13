@@ -34,7 +34,7 @@ from pidrei_utils.timers import Timeout
 from ..keybindings import get_keybindings
 from ..keys import decode_printable_key, matches_key
 from ..kill_ring import KillRing
-from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult
+from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult, render_fake_cursor
 from ..undo_stack import UndoStack
 from ..utils import (
     autocomplete_boundary_regex,
@@ -545,12 +545,12 @@ class Editor:
                     after_graphemes = self._segment(after, "grapheme")
                     first_grapheme = after_graphemes[0]["segment"] if after_graphemes else ""
                     rest_after = after[len(first_grapheme) :]
-                    cursor = f"\x1b[7m{first_grapheme}\x1b[0m"
+                    cursor = render_fake_cursor(first_grapheme)
                     display_text = before + marker + cursor + rest_after
                     # line_visible_width stays the same - we're replacing, not adding
                 else:
                     # Cursor is at the end - add highlighted space
-                    cursor = "\x1b[7m \x1b[0m"
+                    cursor = render_fake_cursor(" ")
                     display_text = before + marker + cursor
                     line_visible_width = line_visible_width + 1
                     # If cursor overflows content width into the padding, flag it

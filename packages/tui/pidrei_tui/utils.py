@@ -1451,8 +1451,9 @@ def extract_segments(
             # Include ANSI codes in their respective segments
             if current_col < before_end:
                 pending_ansi_before += ansi["code"]
-            elif after_start <= current_col < after_end and after_started:
-                # Only include after we've started "after" (styling already prepended)
+            elif after_start <= current_col < after_end and (after_started or ansi["code"].startswith("\x1b_")):
+                # SGR codes are only included after "after" started (styling already prepended). Zero-width APC
+                # markers like CURSOR_MARKER are not tracked styling, so keep them at the boundary too.
                 after += ansi["code"]
             i += ansi["length"]
             continue

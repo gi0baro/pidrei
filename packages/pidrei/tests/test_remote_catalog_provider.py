@@ -13,10 +13,16 @@ import pytest
 
 from pidrei.config import VERSION
 from pidrei.core.model_wire import model_to_dict
-from pidrei.core.remote_catalog import REMOTE_CATALOG_MODEL_TYPES, CatalogResponse, with_remote_catalog
+from pidrei.core.remote_catalog import (
+    REMOTE_CATALOG_MODEL_TYPES,
+    CatalogResponse,
+    with_personalized_catalog,
+    with_remote_catalog,
+)
 from pidrei_ai.auth.types import ApiKeyAuth, ApiKeyCredential, AuthResult, ModelAuth, ProviderAuth
-from pidrei_ai.models_store import InMemoryModelsStore
+from pidrei_ai.models_store import InMemoryModelsStore, ModelsStoreEntry
 from pidrei_ai.registry import RefreshModelsContext, create_models, create_provider
+from pidrei_ai.types import ImageModel, ModelCost
 from pidrei_utils.cancel import CancelToken
 from tests.model_runtime_helpers import UnusedStreams, make_model
 
@@ -25,17 +31,20 @@ def model_dict(id: str) -> dict:
     return model_to_dict(make_model("test-provider", id))
 
 
-def make_provider(local_generated_at=None, *, fetch):
+def builtin_provider():
     async def resolve(_ctx, _credential, _cancel):
         return AuthResult(auth=ModelAuth())
 
-    provider = create_provider(
+    return create_provider(
         id="test-provider",
         auth=ProviderAuth(api_key=ApiKeyAuth(name="Test", resolve=resolve)),
         models=[make_model("test-provider", "static")],
         api=UnusedStreams(),
     )
-    return with_remote_catalog(provider, "https://pi.dev", local_generated_at, fetch=fetch)
+
+
+def make_provider(local_generated_at=None, *, fetch):
+    return with_remote_catalog(builtin_provider(), "https://pi.dev", local_generated_at, fetch=fetch)
 
 
 async def refresh_provider(provider, store: InMemoryModelsStore, **overrides) -> None:
@@ -259,3 +268,62 @@ async def test_treats_unimplemented_catalog_routes_as_an_unavailable_overlay():
     stored = await store.read(provider.id)
     assert stored.models == []
     assert isinstance(stored.checked_at, int)
+
+
+# personalized catalog provider
+
+IMAGE_MODEL = ImageModel(
+    id="image",
+    name="image",
+    api="openrouter-images",
+    provider="test-provider",
+    base_url="https://example.test/v1",
+    input=["text"],
+    output=["image"],
+    cost=ModelCost(input=0, output=0, cache_read=0, cache_write=0),
+)
+
+
+@pytest.mark.tonio
+async def test_keeps_the_saved_list_and_saves_nothing_when_personalization_fails():
+    # Saving the catalog without personalization would replace the key's list with every model.
+    async def fetch(_url, _headers, _cancel):
+        return CatalogResponse(status=404, headers={}, body="not found")
+
+    store = InMemoryModelsStore()
+    saved = ModelsStoreEntry(models=[make_model("test-provider", "allowed")], checked_at=1)
+    await store.write("test-provider", saved)
+
+    async def personalize(_catalog, _context):
+        raise RuntimeError("user models request failed")
+
+    provider = with_personalized_catalog(builtin_provider(), personalize, fetch=fetch)
+
+    with pytest.raises(RuntimeError, match="user models request failed"):
+        await refresh_provider(provider, store)
+    assert [entry.id for entry in provider.get_models()] == ["allowed"]
+    assert await store.read(provider.id) == saved
+
+
+@pytest.mark.tonio
+async def test_restores_a_saved_list_as_is_and_falls_back_to_the_builtin_models_only_when_it_is_empty():
+    async def fetch(_url, _headers, _cancel):
+        raise AssertionError("not used offline")
+
+    async def personalize(_catalog, _context):
+        raise AssertionError("not used offline")
+
+    store = InMemoryModelsStore()
+    provider = with_personalized_catalog(builtin_provider(), personalize, fetch=fetch)
+
+    # pidrei versions before per-key lists stored the plain pi.dev catalog here, and saved an empty
+    # list after a missing pi.dev catalog or a failed first request. Only such an entry can be empty.
+    await store.write(provider.id, ModelsStoreEntry(models=[], checked_at=1))
+    await refresh_provider(provider, store, allow_network=False)
+    assert [entry.id for entry in provider.get_models()] == ["static"]
+
+    # A key that may use no chat models keeps its image models and shows no chat models.
+    await store.write(provider.id, ModelsStoreEntry(models=[IMAGE_MODEL], checked_at=1))
+    await refresh_provider(provider, store, allow_network=False)
+    assert provider.get_models() == []
+    assert [entry.id for entry in provider.get_all_models()] == ["image"]

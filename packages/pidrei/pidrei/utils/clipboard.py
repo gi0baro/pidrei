@@ -34,7 +34,15 @@ _MAX_OSC52_ENCODED_LENGTH = 100_000
 
 
 def _is_remote_session(env) -> bool:
-    return bool(env.get("SSH_CONNECTION") or env.get("SSH_CLIENT") or env.get("MOSH_CONNECTION"))
+    """Remote sessions also emit OSC 52 so the client terminal receives the copy. PIDREI_CLIPBOARD_OSC52=1
+    covers remote clients that leave no SSH markers, such as multiplexer attaches (#10114, #10835)
+    or IDE daemons (#10826)."""
+    return bool(
+        env.get("SSH_CONNECTION")
+        or env.get("SSH_CLIENT")
+        or env.get("MOSH_CONNECTION")
+        or env.get("PIDREI_CLIPBOARD_OSC52") == "1"
+    )
 
 
 def _emit_osc52(text: str, write_terminal: Callable[[str], None]) -> bool:

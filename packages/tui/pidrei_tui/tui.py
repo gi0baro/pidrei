@@ -279,6 +279,20 @@ def is_focusable(component) -> bool:
 # TUI finds and strips this marker, then positions the hardware cursor there.
 CURSOR_MARKER = "\x1b_pidrei:c\x07"
 
+# Fake cursor markers - zero-width APC sequences around the text drawn as the cursor. See _resolve_fake_cursors().
+FAKE_CURSOR_START = "\x1b_pidrei:fc\x07"
+FAKE_CURSOR_END = "\x1b_pidrei:/fc\x07"
+# CURSOR_MARKER + FAKE_CURSOR_START + text + FAKE_CURSOR_END. Truncating the line right after the cursor cell drops the end.
+_FOCUSED_FAKE_CURSOR = re.compile(
+    f"({re.escape(CURSOR_MARKER)}){re.escape(FAKE_CURSOR_START)}(.*?)(?:{re.escape(FAKE_CURSOR_END)}|\\Z)", re.DOTALL
+)
+
+
+def render_fake_cursor(text: str) -> str:
+    """Wrap text in fake cursor markers."""
+    return f"{FAKE_CURSOR_START}{text}{FAKE_CURSOR_END}"
+
+
 # OverlayAnchor: "center" | "top-left" | "top-right" | "bottom-left" |
 # "bottom-right" | "top-center" | "bottom-center" | "left-center" | "right-center"
 
@@ -1802,7 +1816,7 @@ class TuiBase(Container, ABC):
             max_height = first_layout["maxHeight"]
 
             # Render component at calculated width
-            overlay_lines = component.render(width)
+            overlay_lines = self._resolve_fake_cursors(component.render(width))
 
             # Apply maxHeight if specified
             if max_height is not None and len(overlay_lines) > max_height:
@@ -1904,6 +1918,23 @@ class TuiBase(Container, ABC):
     # ------------------------------------------------------------------
     # Terminal queries
     # ------------------------------------------------------------------
+
+    def _resolve_fake_cursors(self, lines: list[str]) -> list[str]:
+        """Resolve fake cursor markers to reverse video. When the hardware cursor is shown, a fake cursor
+        directly after CURSOR_MARKER is dropped because the terminal cursor is drawn there. Fake cursors
+        of components without focus have no CURSOR_MARKER and stay visible.
+
+        Reads `_show_hardware_cursor`: call it where the frame's state is pinned (under the state lock).
+        """
+        show_hardware_cursor = self._show_hardware_cursor
+        resolved_lines = []
+        for line in lines:
+            if FAKE_CURSOR_START not in line:
+                resolved_lines.append(line)
+                continue
+            resolved = _FOCUSED_FAKE_CURSOR.sub(r"\1\2", line, count=1) if show_hardware_cursor else line
+            resolved_lines.append(resolved.replace(FAKE_CURSOR_START, "\x1b[7m").replace(FAKE_CURSOR_END, "\x1b[27m"))
+        return resolved_lines
 
     def query_terminal_colors(self, *, timeout_ms: float) -> tonio.Event:
         """Query the terminal's theme colors: the default foreground (OSC 10),
