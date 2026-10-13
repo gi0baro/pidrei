@@ -162,8 +162,9 @@ async def test_waits_for_the_command_write_before_emitting_remote_osc52():
 
 
 # Regression test for #10826, #10835, #10114: remote clients without SSH markers. pi also runs
-# the darwin and win32 copies; those go through its native helper (darwin) or are not a pidrei
-# platform (win32), and the OSC 52 decision under test is the same on every platform.
+# the darwin and win32 copies. The OSC 52 decision under test does not depend on the platform,
+# so the Linux copy covers it; on darwin pbcopy stands in for pi's native helper, and win32 is
+# not a pidrei platform.
 @LINUX_ONLY
 @pytest.mark.tonio
 async def test_pidrei_clipboard_osc52_emits_osc52_after_a_successful_linux_copy():

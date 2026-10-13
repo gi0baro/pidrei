@@ -17,6 +17,7 @@ import base64
 import copy
 import os
 import re
+import sys
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -26,6 +27,7 @@ from typing import Any, Literal
 
 import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
+from tonio.colored.exceptions import CancelledError
 
 from pidrei_agent.agent import Agent
 from pidrei_agent.agent_loop import RunToolCallOptions, run_tool_call
@@ -1315,7 +1317,7 @@ class AgentSession:
 
     async def _emit_agent_settled(self) -> None:
         # `_is_agent_run_active` is cleared by the caller, before the pending
-        # bash flush (see `_start_run`).
+        # bash flush (see `_release_run`).
         if self._cache_warmer is not None:
             self._cache_warmer.on_agent_settled()
         with self._state_guard:
@@ -2114,7 +2116,12 @@ class AgentSession:
         before_agent_start handlers run are queued into this run instead of starting
         another, and an abort requested meanwhile aborts the run as soon as it exists
         (`_handle_agent_event`). `on_started` is called once the run's messages are
-        prepared, before the first request."""
+        prepared, before the first request.
+
+        Every exit hands the claim back (`_end_run`, `_abandon_run`). pi leaves the
+        session busy when a flush or `onStarted` throws after its preparation; and
+        a pidrei caller can be cancelled, where every await on the unwinding chain
+        raises again."""
         try:
             # An idle-path writer (`record_bash_result`, `_append_custom_message_when_idle`)
             # that decided before the claim may still be persisting: it finishes before
@@ -2123,21 +2130,19 @@ class AgentSession:
             async with self._run_admission:
                 pass
             messages = await self._prepare_run(trigger)
-        except Exception:
-            # As at the end of a run (see the `finally` below).
-            async with self._run_admission:
-                with self._state_guard:
-                    self._is_agent_run_active = False
-                await self._flush_pending_bash_messages()
-                await self._flush_pending_custom_messages()
-            self._resolve_idle_wait_if_idle()
+            # Messages held while the run was starting go before its starting messages, as they would
+            # have while idle. No run exists yet, so they cannot split a tool call from its result.
+            await self._flush_pending_bash_messages()
+            await self._flush_pending_custom_messages()
+            if on_started is not None:
+                on_started()
+        except CancelledError:
+            self._abandon_run(settle=False)
             raise
-        # Messages held while the run was starting go before its starting messages, as they would
-        # have while idle. No run exists yet, so they cannot split a tool call from its result.
-        await self._flush_pending_bash_messages()
-        await self._flush_pending_custom_messages()
-        if on_started is not None:
-            on_started()
+        except Exception:
+            # No run started: no agent_settled.
+            await self._end_run(settle=False)
+            raise
 
         try:
             with self._state_guard:
@@ -2161,15 +2166,59 @@ class AgentSession:
                     break
                 await self.agent.continue_()
         finally:
-            if self._agent_run_abort_requested:
-                self._finish_cancelled_retry()
-            with self._state_guard:
-                self._failed_response = None
-            self._run_system_prompt_options = None
-            # Post-run recovery was the last reader of the run-scoped identity tables.
-            self._entry_ids_by_message = {}
-            self._boundary_dispatched_messages = {}
-            self._message_replacements = {}
+            if isinstance(sys.exception(), CancelledError):
+                # The caller was cancelled: the agent's run was aborted with it (the
+                # agent fires its run's token when its awaiter unwinds). Input arriving
+                # before the claim is handed back waits for the settlement, then takes
+                # the idle path, instead of being posted into a run that is gone.
+                with self._state_guard:
+                    self._agent_run_abort_requested = True
+                self._close_run_input()
+                self._abandon_run(settle=True)
+            else:
+                await self._end_run(settle=True)
+
+    def _clear_run_state(self) -> None:
+        """Drop what the run set up for itself; synchronous, so the cancel path can run it."""
+        if self._agent_run_abort_requested:
+            self._finish_cancelled_retry()
+        with self._state_guard:
+            self._failed_response = None
+        self._run_system_prompt_options = None
+        # Post-run recovery was the last reader of the run-scoped identity tables.
+        self._entry_ids_by_message = {}
+        self._boundary_dispatched_messages = {}
+        self._message_replacements = {}
+
+    async def _end_run(self, *, settle: bool) -> None:
+        """Hand the claim back at the end of a run, or after a start that failed.
+        The release runs as its own coroutine (`_release_run`): a cancel reaching
+        this caller while it waits does not cut it short."""
+        self._clear_run_state()
+        await gather(self._release_run(settle=settle))
+
+    def _abandon_run(self, *, settle: bool) -> None:
+        """`_end_run` for a caller unwinding a cancel, which cannot await: the
+        release is detached once the agent has wound its aborted run down, so the
+        next run cannot be admitted while the agent still holds this one."""
+        self._clear_run_state()
+
+        async def release() -> None:
+            try:
+                await self.agent.wait_for_idle()
+                await self._release_run(settle=settle)
+            except Exception as error:
+                self._extension_runner.emit_error(
+                    ExtensionError(extension_path="<runtime>", event="agent_settled", error=str(error))
+                )
+
+        tonio.spawn.without_tracking(release())
+
+    async def _release_run(self, *, settle: bool) -> None:
+        """Clear the busy flag and flush what was queued during the run, then settle
+        (`agent_settled`, which also releases idle waiters) or, when no run started,
+        release idle waiters. The waiters are released even if a flush fails."""
+        try:
             # The flag flips before the flush, under the guard that
             # `record_bash_result` takes for its pending-vs-direct decision:
             # a bash result recorded in the settle window then persists
@@ -2186,7 +2235,11 @@ class AgentSession:
                     self._is_agent_run_active = False
                 await self._flush_pending_bash_messages()
                 await self._flush_pending_custom_messages()
-            await self._emit_agent_settled()
+        finally:
+            if settle:
+                await self._emit_agent_settled()
+            else:
+                self._resolve_idle_wait_if_idle()
 
     async def _prepare_run(self, trigger: dict[str, Any]) -> list[Any]:
         """Prepare a run and return its starting messages: compact first when needed,

@@ -274,6 +274,9 @@ async def test_accepts_schema_in_keybindings_json_without_treating_it_as_an_acti
                 "$schema": _schema_url("keybindings"),
                 "app.session.new": "ctrl+n",
                 "extension.invalid": "ctrl+not-a-key",
+                # pidrei-only: Python's `$` matches before a final newline; ECMAScript's does not.
+                "app.session.rename": "ctrl+r\n",
+                "app.session.delete": ["ctrl+d", "ctrl+x\n"],
             }
         ),
         encoding="utf-8",

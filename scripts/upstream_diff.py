@@ -702,7 +702,6 @@ RENAMES = {
     # pi's manifest is package.json's `pi` key; pidrei's is pyproject.toml's
     # `[tool.pidrei]`, so the module follows the pi→pidrei rename (U10).
     "packages/coding-agent/src/core/pi-manifest.ts": "packages/pidrei/pidrei/core/pidrei_manifest.py",
-    "packages/coding-agent/src/modes/interactive/theme/theme-schema.json": "packages/pidrei/pidrei/modes/interactive/theme/theme-schema.json",
     "packages/tui/src/TuiAltScreen.ts": "packages/tui/pidrei_tui/tui_alt_screen.py",
     # 0.84.2 additions. test-theme-colors.ts is a manual CLI tool, not a
     # collected test; its mirror keeps the non-test_ name for the same reason.
@@ -866,6 +865,14 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "_executeNestedToolCall/_handleAgentEvent: no takeRecord in the "
                 "message_start listener; nested events go through agent.observe; "
                 "the NestedToolCallRunner is created with the session"
+            ),
+        ),
+        (
+            "session-run-lifecycle",
+            (
+                "prompt/sendCustomMessage/_startRun: a run is claimed in the _state_guard "
+                "section that finds the session idle; _run_input_closed gates queued input "
+                "and _run_admission the idle-path writers"
             ),
         ),
     ),
@@ -1143,6 +1150,22 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "packages/coding-agent/test/first-time-setup.test.ts": (
         ("no-telemetry", "analytics-settings cases are not mirrored"),
+    ),
+    # Configuration schemas (1.2.0.0): PiDrei's settings set, schema URLs and the
+    # runtime key-id anchor (recipe `config-schemas`).
+    "packages/coding-agent/src/core/settings-schema.ts": (
+        ("no-telemetry", "no enableAnalytics/trackingId; enableInstallTelemetry is enableProviderAttribution"),
+        ("config-schemas", "PiDrei's settings: no npmCommand, no markdown.mermaid; codemode.typeCheck"),
+    ),
+    "packages/coding-agent/src/core/settings-defaults.ts": (
+        ("no-telemetry", "no enableAnalytics; enableInstallTelemetry is enableProviderAttribution"),
+        ("config-schemas", "PiDrei's settings: no markdown.mermaid; codemode.typeCheck"),
+    ),
+    "packages/coding-agent/src/core/key-id-schema.ts": (
+        ("config-schemas", "the published pattern ends in `$`; runtime validation uses the `\\Z` variant"),
+    ),
+    "packages/coding-agent/scripts/generate-schemas.ts": (
+        ("config-schemas", "SCHEMA_BASE_URL is PiDrei's GitHub raw URL; regenerate with make config-schemas"),
     ),
     # Codemode scripts are Python on Monty (1.0.0.0): behaviour ports, the
     # JavaScript-shaped text and machinery are translated or dropped.

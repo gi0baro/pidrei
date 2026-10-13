@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 import tonio.colored as tonio
+from fake_timers import fake_timers
 from mcp_helpers import header, headers_of, loopback_servers, read_json
 
 from pidrei_mcp import (
@@ -543,11 +544,14 @@ async def test_does_not_retry_requests_that_were_cancelled_while_authorization_w
             )
         )
         cancel = CancelToken()
-        aborted = tonio.spawn(client.call_tool("aborted", {}, cancel=cancel))
-        timed_out = tonio.spawn(client.call_tool("timed-out", {}, timeout_ms=200))
-        kept = tonio.spawn(client.call_tool("kept"))
-        await all_waiting.wait(_WAIT_S)
-        assert all_waiting.is_set()
+        with fake_timers() as fake:
+            aborted = tonio.spawn(client.call_tool("aborted", {}, cancel=cancel))
+            timed_out = tonio.spawn(client.call_tool("timed-out", {}, timeout_ms=200))
+            kept = tonio.spawn(client.call_tool("kept"))
+            await all_waiting.wait(_WAIT_S)
+            assert all_waiting.is_set()
+            # The request timeout fires only once all three wait on the refresh.
+            fake.advance(200)
         cancel.cancel()
         with pytest.raises(BaseExceptionGroup) as aborted_error:
             await aborted

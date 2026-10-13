@@ -19,7 +19,7 @@ from pidrei_tui.keybindings import TUI_KEYBINDINGS, KeybindingsManager as TuiKey
 
 from ..config import get_agent_dir
 from ..utils.text import strip_bom
-from .key_id_schema import KEYBINDING_VALUE_SCHEMA
+from .key_id_schema import RUNTIME_KEYBINDING_VALUE_SCHEMA
 
 
 _DARWIN = sys.platform == "darwin"
@@ -186,7 +186,7 @@ KEYBINDING_NAME_MIGRATIONS = {
 }
 
 
-_KEYBINDING_VALUE_VALIDATOR = jsonschema.Draft202012Validator(KEYBINDING_VALUE_SCHEMA)
+_KEYBINDING_VALUE_VALIDATOR = jsonschema.Draft202012Validator(RUNTIME_KEYBINDING_VALUE_SCHEMA)
 
 
 def _to_keybindings_config(value: dict) -> dict:

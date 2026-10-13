@@ -41,7 +41,7 @@ class _RecordingGoogleGenAI:
     def __init__(self, config):
         constructor_calls.append(dict(config))
 
-    async def generate_content_stream(self, _params, *, env=None, cancel=None):
+    async def generate_content_stream(self, _params, *, env=None, cancel=None, timeout_ms=None):
         async def _chunks():
             yield VERTEX_CHUNK
 

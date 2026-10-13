@@ -133,7 +133,10 @@ def stream(
             if next_params is not None:
                 params = next_params
             google_stream = await retry_google_request(
-                lambda: client.generate_content_stream(params, env=opts.env, cancel=opts.cancel), opts
+                lambda: client.generate_content_stream(
+                    params, env=opts.env, cancel=opts.cancel, timeout_ms=opts.timeout_ms
+                ),
+                opts,
             )
 
             out_stream.push(StartEvent(partial=output))

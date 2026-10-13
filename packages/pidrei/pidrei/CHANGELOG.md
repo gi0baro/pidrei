@@ -95,21 +95,18 @@ Tracks [Pi 1.2.0](https://github.com/earendil-works/pi/releases/tag/v1.2.0).
 - Compaction and branch summaries leave thinking blocks out of the
   serialized conversation (`serialize_conversation()`), so a summarization
   request can no longer be larger than the context it summarizes.
+- Mistral: a request that times out waiting for the response reports
+  `Mistral response headers timed out after <n>ms`. When the caller passes no
+  timeout, that wait is bounded at 60 seconds, as in Pi; body reads stay
+  bounded by the HTTP idle timeout, so a stream that keeps sending data is
+  never cut off.
 - Model catalog regenerated from models.dev.
-
-### Removed
-
-- The unpublished `pidrei-protocol`, `pidrei-client` and `pidrei-server`
-  workspace packages.
 
 ### Fixed
 
 - Codemode ignored a `# @options:` line that was not the first line of the
   script, so its `timeout_ms` never applied; the call now fails before the
   script runs.
-- Mistral streams were aborted mid-generation (for example during long
-  thinking) after the request timeout; the timeout now applies only to
-  waiting for response headers.
 - A symlinked `AGENTS.md` in a git worktree nested inside its main
   repository caused no project context file to load.
 - The codemode tool description no longer claims every failed tool call
@@ -156,6 +153,12 @@ Tracks [Pi 1.2.0](https://github.com/earendil-works/pi/releases/tag/v1.2.0).
   overlay ends directly left of the cursor.
 - MCP tool calls cancelled or timed out while waiting for an OAuth refresh
   were still sent to the server once the refresh finished.
+- Google Gemini and Vertex requests follow the HTTP idle timeout setting,
+  like the other providers; they ignored it and always allowed 10 minutes
+  without data.
+- SDK: a `session.prompt()` whose caller is cancelled (for example under
+  a timeout) no longer leaves the session busy; the run is aborted and
+  settles, and the session takes new prompts.
 - MCP OAuth sign-in accepted an authorization response whose `iss`
   parameter could not be checked because no authorization server metadata
   was discovered; it now fails with an issuer mismatch

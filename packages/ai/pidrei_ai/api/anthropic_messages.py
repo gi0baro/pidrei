@@ -1348,7 +1348,8 @@ def _is_strict_tool_limit_error(error: AnthropicApiError) -> bool:
 
 def _is_preferred_strict(tool: Tool) -> bool:
     config = tool.constrained_sampling
-    return config is not None and config.type == "json_schema" and config.strict == "prefer"
+    # `False` opts the tool out of constrained sampling: not a preferred-strict tool.
+    return config is not None and config is not False and config.type == "json_schema" and config.strict == "prefer"
 
 
 def _find_fallback_cost(model: Model, served_model: str) -> ModelCost | None:

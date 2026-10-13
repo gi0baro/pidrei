@@ -175,6 +175,7 @@ class GoogleGenAI:
         *,
         env: ProviderEnv | None = None,
         cancel: CancelToken | None = None,
+        timeout_ms: float | None = None,
     ) -> AsyncGenerator[dict[str, Any]]:
         """`await client.models.generateContentStream(params)`.
 
@@ -183,13 +184,18 @@ class GoogleGenAI:
         the SDK's promise, this resolves once the response headers arrive (so a
         retry wrapper around the call covers the request, and `GoogleApiError`
         raises here); only the body is consumed through the returned generator.
+
+        pi passes no timeout to the SDK: its requests are bounded by the HTTP
+        client's idle timeouts, which pidrei's callers pass as `timeout_ms`.
+        Each read (the head, then every body chunk) is bounded by it, else by
+        the streaming default.
         """
         url = self._request_url(params["model"])
         body = build_request_body(params, vertexai=self._vertexai)
         headers = await self._headers(env)
 
         client = http.client_for(url, env)
-        response = await client.post(url, json=body, headers=headers, timeout=http.STREAMING_TIMEOUT)
+        response = await client.post(url, json=body, headers=headers, timeout=http.request_timeout(timeout_ms))
         if not 200 <= response.status_code < 300:
             raw = (await response.read()).decode("utf-8", "replace")
             raise GoogleApiError(response.status_code, _error_message(response.status_code, raw))

@@ -197,6 +197,20 @@ async def test_retries_with_original_non_strict_schemas_and_preserves_required_t
     assert result.diagnostics[0].details == {"reason": "strict_tool_limits_exceeded"}
 
 
+# pidrei-only: pi's `config && ...` skips a tool whose constrained sampling is disabled (`false`).
+@pytest.mark.tonio
+async def test_retries_a_tool_set_that_also_disables_constrained_sampling_on_a_tool():
+    disabled = Tool(name="disabled", description="Look up a value", parameters=_PARAMETERS, constrained_sampling=False)
+    harness = Harness(lambda request, attempt: error_response(request) if attempt == 1 else success_response(request))
+
+    result = await stream_anthropic(MODEL, context([tool("preferred", "prefer"), disabled]), harness.options()).result()
+
+    assert result.stop_reason == "stop"
+    assert len(harness.payloads) == 2
+    assert "strict" not in harness.payloads[1]["tools"][0]
+    assert harness.payloads[1]["tools"][1] == harness.payloads[0]["tools"][1]
+
+
 @pytest.mark.tonio
 async def test_downgrades_inline_additions_and_same_name_redefinitions_without_downgrading_require():
     transcript = context([tool("lookup", "require")])

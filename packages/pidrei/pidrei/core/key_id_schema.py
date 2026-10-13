@@ -20,17 +20,28 @@ _BASE_KEY_PATTERN = "(?:[a-z0-9]|{})".format(
 )
 _DUPLICATE_MODIFIER_PATTERN = "|".join(f"{modifier}\\+.*{modifier}\\+" for modifier in _MODIFIERS)
 
-KEY_ID_SCHEMA: dict[str, Any] = {
-    "type": "string",
-    "pattern": (
-        f"^(?!.*(?:{_DUPLICATE_MODIFIER_PATTERN}))(?:(?:{'|'.join(_MODIFIERS)})\\+){{0,4}}{_BASE_KEY_PATTERN}$"
-    ),
-    "description": "Key identifier with optional ctrl, shift, alt, or super modifiers.",
-}
+
+def _key_id_schema(end_anchor: str) -> dict[str, Any]:
+    return {
+        "type": "string",
+        "pattern": (
+            f"^(?!.*(?:{_DUPLICATE_MODIFIER_PATTERN}))(?:(?:{'|'.join(_MODIFIERS)})\\+){{0,4}}"
+            f"{_BASE_KEY_PATTERN}{end_anchor}"
+        ),
+        "description": "Key identifier with optional ctrl, shift, alt, or super modifiers.",
+    }
 
 
-def keybinding_value_schema(**options: Any) -> dict[str, Any]:
-    return {"anyOf": [KEY_ID_SCHEMA, {"type": "array", "items": KEY_ID_SCHEMA}], **options}
+KEY_ID_SCHEMA = _key_id_schema("$")
+
+
+def keybinding_value_schema(*, key_id_schema: dict[str, Any] = KEY_ID_SCHEMA, **options: Any) -> dict[str, Any]:
+    return {"anyOf": [key_id_schema, {"type": "array", "items": key_id_schema}], **options}
 
 
 KEYBINDING_VALUE_SCHEMA = keybinding_value_schema()
+
+# What keybindings.json values are validated against at runtime. Python's `$` also matches
+# before a final newline, where ECMAScript's (read by the editors the published schema serves)
+# does not; `\Z` is the whole-string anchor, so "ctrl+x\n" is rejected by both.
+RUNTIME_KEYBINDING_VALUE_SCHEMA = keybinding_value_schema(key_id_schema=_key_id_schema("\\Z"))
