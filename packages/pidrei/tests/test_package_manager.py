@@ -49,6 +49,12 @@ class _Dirs:
         self.previous_offline = os.environ.pop("PIDREI_OFFLINE", None)
         self.previous_home = os.environ.get("HOME")
         self.root = tempfile.mkdtemp(prefix="pidrei-pm-test-")
+        # resolve() also scans ~/.agents/skills (and `~` patterns expand), so every
+        # test runs against its own empty home: a populated machine must not fail,
+        # or vacuously pass, the empty-resource asserts. `set_home` can still move it.
+        self.home = os.path.join(self.root, "home")
+        os.makedirs(self.home)
+        os.environ["HOME"] = self.home
         self.agent_dir = os.path.join(self.root, "agent")
         os.makedirs(self.agent_dir)
         self.settings = SettingsManager.in_memory()
