@@ -12,13 +12,12 @@ import pytest
 from pidrei_ai.api.openai_responses import (
     OpenAIResponsesOptions,
     _create_client,
-    build_params,
     stream as stream_responses,
 )
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, OpenAIResponsesCompat, TranscriptContext, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
-from tests.test_openai_responses import FakeClient, make_model
+from tests.test_openai_responses import FakeClient, build_request_params, make_model
 
 
 def make_context() -> TranscriptContext:
@@ -36,28 +35,28 @@ def test_omits_reasoning_when_no_reasoning_is_requested():
     # pi uses a github-copilot catalog model: the provider guard skips the
     # reasoning-off effort payload entirely.
     model = make_model(provider="github-copilot")
-    params = build_params(model, make_context(), OpenAIResponsesOptions())
+    params = build_request_params(model, make_context(), OpenAIResponsesOptions())
     assert "reasoning" not in params
 
 
 def test_sends_max_output_tokens_by_default():
-    params = build_params(make_model(), make_context(), OpenAIResponsesOptions(max_tokens=1024))
+    params = build_request_params(make_model(), make_context(), OpenAIResponsesOptions(max_tokens=1024))
     assert params["max_output_tokens"] == 1024
 
 
 def test_omits_max_output_tokens_when_supports_max_output_tokens_is_false():
     model = make_model(compat=OpenAIResponsesCompat(supports_max_output_tokens=False))
-    params = build_params(model, make_context(), OpenAIResponsesOptions(max_tokens=1024))
+    params = build_request_params(model, make_context(), OpenAIResponsesOptions(max_tokens=1024))
     assert "max_output_tokens" not in params
 
 
 def test_forwards_required_tool_choice():
-    params = build_params(make_model(), make_context(), OpenAIResponsesOptions(tool_choice="required"))
+    params = build_request_params(make_model(), make_context(), OpenAIResponsesOptions(tool_choice="required"))
     assert params["tool_choice"] == "required"
 
 
 def test_clamps_prompt_cache_key_to_64_characters():
-    params = build_params(make_model(), make_context(), OpenAIResponsesOptions(session_id="s" * 80))
+    params = build_request_params(make_model(), make_context(), OpenAIResponsesOptions(session_id="s" * 80))
     assert params["prompt_cache_key"] == "s" * 64
 
 
@@ -138,7 +137,7 @@ def test_sets_strict_mode_explicitly_for_cloudflare_openai_responses_tools():
             ),
         ],
     )
-    params = build_params(model, normalize_context(context), OpenAIResponsesOptions())
+    params = build_request_params(model, normalize_context(context), OpenAIResponsesOptions())
     assert [(tool.get("name"), tool.get("strict")) for tool in params["tools"]] == [
         ("ordinary", False),
         ("constrained", True),

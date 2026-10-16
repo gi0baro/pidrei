@@ -268,6 +268,9 @@ OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {
     "gpt-6-luna",
     "gpt-6.1-sol",
 }
+# OpenAI documents configuration_update for the GPT-6 family.
+# https://developers.openai.com/api/docs/guides/reasoning
+OPENAI_MID_CONVO_EFFORT_MODEL_IDS = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"}
 OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000
 OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.4",
@@ -1037,6 +1040,17 @@ def apply_openai_explicit_prompt_cache_metadata(model: dict[str, Any]) -> None:
     merge_compat(model, {"supportsExplicitPromptCacheMode": True})
 
 
+# GPT-6 models accept `configuration_update` input items that change the reasoning effort
+# without changing the cached prompt prefix. Not enabled for openai-codex (Codex CLI keeps it
+# behind a flag that is off by default) or proxies.
+def apply_openai_mid_convo_effort_metadata(model: dict[str, Any]) -> None:
+    if model["provider"] != "openai" or model["api"] != "openai-responses":
+        return
+    if model["id"] not in OPENAI_MID_CONVO_EFFORT_MODEL_IDS:
+        return
+    merge_compat(model, {"supportsMidConvoEffort": True})
+
+
 # Anthropic ephemeral entries have a hard five-minute lifetime; `ttl: "1h"`
 # extends it to one hour. Only direct Anthropic is annotated so cache warming
 # does not assume equivalent behavior through proxies.
@@ -1488,7 +1502,7 @@ async def load_models_dev_classifier_models(client: Client) -> list[dict[str, An
 
 
 # OpenCode Zen serves Jev through its TypeSafe-compatible System One endpoint.
-# Neither its /zen/v1/models listing nor models.dev carries metadata for it.
+# Neither its /inference/v1/models listing nor models.dev carries metadata for it.
 # https://opencode.ai/docs/zen
 OPENCODE_CLASSIFIER_MODELS: list[dict[str, Any]] = [
     {
@@ -1497,7 +1511,7 @@ OPENCODE_CLASSIFIER_MODELS: list[dict[str, Any]] = [
         "name": "Jev 1.13",
         "api": "typesafe-system-one",
         "provider": "opencode",
-        "baseUrl": "https://opencode.ai/zen/v1",
+        "baseUrl": "https://opencode.ai/inference/v1",
         "input": ["text"],
         "cost": {"input": 0.042, "output": 0, "cacheRead": 0, "cacheWrite": 0},
         "contextWindow": 32000,
@@ -1508,7 +1522,7 @@ OPENCODE_CLASSIFIER_MODELS: list[dict[str, Any]] = [
         "name": "Jev 1.13 Free",
         "api": "typesafe-system-one",
         "provider": "opencode",
-        "baseUrl": "https://opencode.ai/zen/v1",
+        "baseUrl": "https://opencode.ai/inference/v1",
         "input": ["text"],
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
         "contextWindow": 32000,
@@ -2283,8 +2297,8 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
     #   @ai-sdk/openai → openai-responses, @ai-sdk/anthropic → anthropic-messages,
     #   @ai-sdk/google → google-generative-ai, otherwise openai-completions.
     for key, provider, base_path in (
-        ("opencode", "opencode", "https://opencode.ai/zen"),
-        ("opencode-go", "opencode-go", "https://opencode.ai/zen/go"),
+        ("opencode", "opencode", "https://opencode.ai/inference"),
+        ("opencode-go", "opencode-go", "https://opencode.ai/inference/go"),
     ):
         for model_id, source in _models_of(catalog, key).items():
             if not _tool_capable(source):
@@ -2323,18 +2337,14 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
                 compat = {**(compat or {}), "thinkingFormat": "deepseek", "supportsReasoningEffort": False}
 
             # Fix known mismatches between models.dev npm data and actual OpenCode Go
-            # endpoint behaviour: these are reported as @ai-sdk/anthropic but the Go
-            # endpoints either reject Anthropic SDK auth (MiniMax M2.7) or are served
-            # through the OpenAI-compatible /v1/chat/completions path (Qwen 3.5/3.6).
-            if provider == "opencode-go":
-                if model_id == "minimax-m2.7":
-                    api = "openai-completions"
-                    base_url = f"{base_path}/v1"
-                if model_id in ("qwen3.5-plus", "qwen3.6-plus"):
-                    api = "openai-completions"
-                    base_url = f"{base_path}/v1"
-                    # Qwen/DashScope uses enable_thinking at the top level.
-                    compat = {**(compat or {}), "thinkingFormat": "qwen"}
+            # endpoint behaviour. models.dev reports these models as @ai-sdk/anthropic,
+            # but OpenCode Go serves them through the OpenAI-compatible
+            # /v1/chat/completions path.
+            if provider == "opencode-go" and model_id in ("qwen3.5-plus", "qwen3.6-plus"):
+                api = "openai-completions"
+                base_url = f"{base_path}/v1"
+                # Qwen/DashScope uses enable_thinking at the top level.
+                compat = {**(compat or {}), "thinkingFormat": "qwen"}
 
             if api == "openai-completions":
                 compat = {**(compat or {}), "maxTokensField": "max_tokens"}
@@ -2537,9 +2547,22 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
     # Xiaomi MiMo. Built-in `xiaomi` targets the API billing endpoint (single stable
     # URL, keys from platform.xiaomimimo.com). The three `xiaomi-token-plan-*`
     # providers cover prepaid Token Plan endpoints in cn / ams / sgp.
+    # MiMo Chat Completions only documents thinking.type enabled/disabled and
+    # rejects some reasoning_effort values (e.g. "minimal"). Xiaomi documents
+    # all effort levels as identical, so expose only off and high.
     xiaomi_compat: dict[str, Any] = {
+        "supportsReasoningEffort": False,
         "requiresReasoningContentOnAssistantMessages": True,
         "thinkingFormat": "deepseek",
+    }
+    xiaomi_thinking_level_map: dict[str, str | None] = {
+        "off": "off",
+        "minimal": None,
+        "low": None,
+        "medium": None,
+        "high": "high",
+        "xhigh": None,
+        "max": None,
     }
     for source_key, provider, base_url in (
         ("xiaomi", "xiaomi", "https://api.xiaomimimo.com/v1"),
@@ -2561,13 +2584,15 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
                     "baseUrl": base_url,
                     "compat": dict(xiaomi_compat),
                     "reasoning": source.get("reasoning") is True,
+                    **(
+                        {"thinkingLevelMap": dict(xiaomi_thinking_level_map)} if source.get("reasoning") is True else {}
+                    ),
                     "input": _input(source),
                     "cost": get_models_dev_cost(source.get("cost")),
                     "contextWindow": _context(source),
                     "maxTokens": _max_tokens(source),
                 }
             )
-            record(provider, model_id, source)
 
     models.extend(_process_qwen_token_plan_models(catalog, record))
 
@@ -2866,8 +2891,10 @@ MINIMAX_DIRECT_SUPPORTED_IDS = {"MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniM
 # OpenAI Codex (ChatGPT OAuth) models. Not fetched from models.dev; a small explicit
 # list avoids aliases. Older limits are based on observed server behavior; GPT-5.6
 # and GPT-6 use Codex's 272k default catalog limit.
+# GPT-6.1 Sol uses the 500k default returned by /backend-api/codex/models.
 CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 CODEX_CONTEXT = 272000
+CODEX_GPT_61_SOL_CONTEXT = 500000
 CODEX_GPT_56_CONTEXT = 272000
 CODEX_SPARK_CONTEXT = 128000
 CODEX_MAX_TOKENS = 128000
@@ -2900,7 +2927,7 @@ CODEX_MODELS: list[dict[str, Any]] = [
         "gpt-6.1-sol",
         "GPT-6.1 Sol",
         with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
-        context_window=CODEX_CONTEXT,
+        context_window=CODEX_GPT_61_SOL_CONTEXT,
         model_input=["text", "image"],
     ),
     _codex_model(
@@ -3148,6 +3175,7 @@ def apply_model_metadata(all_models: list[dict[str, Any]], reasoning_options: di
         apply_openai_completions_transcript_metadata(model)
         apply_openai_responses_transcript_metadata(model)
         apply_openai_explicit_prompt_cache_metadata(model)
+        apply_openai_mid_convo_effort_metadata(model)
         apply_prompt_cache_metadata(model)
         apply_image_input_metadata(model)
     apply_anthropic_allowed_fallback_model_metadata(

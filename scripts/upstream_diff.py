@@ -660,6 +660,26 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/src/utils/image-resize-worker.ts",
         "Node worker thread for image resizing; pidrei resizes with Pillow on the blocking pool (image_process.py)",
     ),
+    # 1.3.0 drops (1.3.0 delta port).
+    (
+        "packages/coding-agent/docs/nvidia-rtx-llama-cpp.md",
+        "llama.cpp extension not ported (see pidrei/extensions/__init__.py)",
+    ),
+)
+#: 1.3.0 (`3daa2028`): pi's two-worker admission limit bounds Bun workers that
+#: outlive a non-blocking terminate. pidrei's stop() SIGKILLs the Monty worker,
+#: so none survives, and Monty's pool already bounds checkouts by queueing.
+_CODEMODE_WORKER_ADMISSION_REASON = (
+    "codemode worker admission (acquireWorker/onWorkerStarted, two-worker limit) not ported: "
+    "pidrei SIGKILLs Monty workers and Monty's pool queues checkouts (recipe codemode-python)"
+)
+DROPPED_PREFIXES += tuple(
+    (path, _CODEMODE_WORKER_ADMISSION_REASON)
+    for path in (
+        "packages/codemode/test/worker-lifetime.test.ts",
+        "packages/codemode/test/fixtures/worker-process-exit.ts",
+        "packages/coding-agent/test/codemode-worker-admission.test.ts",
+    )
 )
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
@@ -741,6 +761,11 @@ RENAMES = {
     # dropped) and the calls/output/store/limits half every VM placement
     # shares (runtime/execution.ts), which is what pidrei's Monty driver mirrors.
     "packages/codemode/src/runtime/execution.ts": "packages/codemode/pidrei_codemode/runtime/host.py",
+    # 1.3.0: the mirror predates the sync under a shorter name (its docstring
+    # names pi's file).
+    "packages/ai/test/transform-messages-copilot-openai-to-anthropic.test.ts": (
+        "packages/ai/tests/test_transform_messages_copilot.py"
+    ),
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one

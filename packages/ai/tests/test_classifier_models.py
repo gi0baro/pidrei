@@ -160,8 +160,8 @@ def test_exposes_jev_only_through_classifier_catalog_accessors():
     ("provider", "id", "url"),
     [
         ("vercel-ai-gateway", "typesafe-ai/jev", "https://ai-gateway.vercel.sh/typesafe/v1/systemone"),
-        ("opencode", "jev-1.13", "https://opencode.ai/zen/v1/systemone"),
-        ("opencode", "jev-1.13-free", "https://opencode.ai/zen/v1/systemone"),
+        ("opencode", "jev-1.13", "https://opencode.ai/inference/v1/systemone"),
+        ("opencode", "jev-1.13-free", "https://opencode.ai/inference/v1/systemone"),
     ],
 )
 async def test_routes_jev_to_its_typesafe_compatible_endpoint(provider, id, url):

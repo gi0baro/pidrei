@@ -1445,14 +1445,8 @@ def stream(  # noqa: C901
 
                 delta = choice.get("delta")
                 if delta:
-                    content = delta.get("content")
-                    if content is not None and len(content) > 0:
-                        block = ensure_text_block()
-                        block.text += content
-                        out_stream.push(
-                            TextDeltaEvent(content_index=content_index(block), delta=content, partial=output)
-                        )
-
+                    # Handle reasoning before content: some proxies (e.g. LiteLLM) aggregate reasoning and
+                    # answer into one delta, and the thinking block must precede the text block.
                     # Reasoning may arrive in reasoning_content (llama.cpp),
                     # reasoning, or reasoning_text; use the first non-empty
                     # field to avoid duplication.
@@ -1476,6 +1470,27 @@ def stream(  # noqa: C901
                             ThinkingDeltaEvent(
                                 content_index=content_index(block), delta=reasoning_delta, partial=output
                             )
+                        )
+
+                    reasoning_details = delta.get("reasoning_details")
+                    if isinstance(reasoning_details, list):
+                        for detail in reasoning_details:
+                            if not _is_openai_reasoning_detail(detail):
+                                continue
+                            ensure_thinking_block("")
+                            if streamed_reasoning_details is None:
+                                streamed_reasoning_details = []
+                            # Keep provider replay data in the existing signature slot. OpenRouter streams
+                            # reasoning_details as deltas: consecutive text/summary deltas are merged into
+                            # logical entries, while encrypted entries remain opaque and discrete.
+                            _append_openai_reasoning_detail(streamed_reasoning_details, detail)
+
+                    content = delta.get("content")
+                    if content is not None and len(content) > 0:
+                        block = ensure_text_block()
+                        block.text += content
+                        out_stream.push(
+                            TextDeltaEvent(content_index=content_index(block), delta=content, partial=output)
                         )
 
                     if delta.get("tool_calls"):
@@ -1504,19 +1519,6 @@ def stream(  # noqa: C901
                             out_stream.push(
                                 ToolCallDeltaEvent(content_index=content_index(block), delta=call_delta, partial=output)
                             )
-
-                    reasoning_details = delta.get("reasoning_details")
-                    if isinstance(reasoning_details, list):
-                        for detail in reasoning_details:
-                            if not _is_openai_reasoning_detail(detail):
-                                continue
-                            ensure_thinking_block("")
-                            if streamed_reasoning_details is None:
-                                streamed_reasoning_details = []
-                            # Keep provider replay data in the existing signature slot. OpenRouter streams
-                            # reasoning_details as deltas: consecutive text/summary deltas are merged into
-                            # logical entries, while encrypted entries remain opaque and discrete.
-                            _append_openai_reasoning_detail(streamed_reasoning_details, detail)
 
             for block in list(blocks):
                 finish_block(block)

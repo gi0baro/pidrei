@@ -10,7 +10,7 @@ from typing import Any
 from partial_json_parser import loads as _partial_parse
 
 
-_VALID_JSON_ESCAPES = frozenset('"\\/bfnrtu')
+_VALID_JSON_ESCAPES = frozenset('"\\/bfnrt')
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _CONTROL_ESCAPES = {"\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 

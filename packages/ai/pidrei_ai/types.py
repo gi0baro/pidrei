@@ -544,6 +544,10 @@ class OpenAIResponsesCompat:
     # Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching).
     # Older OpenAI models reject the parameter. Default: False.
     supports_explicit_prompt_cache_mode: bool | None = None
+    # Whether thinking level changes are sent as `configuration_update` input items instead of
+    # changing `reasoning.effort`, so a change keeps the prompt cache. Ignored with Sign in with
+    # ChatGPT on the openai provider. Default: False.
+    supports_mid_convo_effort: bool | None = None
     # Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: True.
     supports_max_output_tokens: bool | None = None
 

@@ -1,9 +1,11 @@
 """Port of pi's opencode-go provider factory (packages/ai/src/providers/opencode-go.ts).
 
-`api` dispatches on `model.api`: anthropic-messages, openai-completions, openai-responses.
+`api` dispatches on `model.api`: anthropic-messages, google-generative-ai,
+openai-completions, openai-responses.
 """
 
 from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
+from pidrei_ai.api.google_generative_ai_lazy import google_generative_ai_api
 from pidrei_ai.api.openai_completions_lazy import openai_completions_api
 from pidrei_ai.api.openai_responses_lazy import openai_responses_api
 from pidrei_ai.auth.helpers import env_api_key_auth
@@ -21,6 +23,7 @@ def opencode_go_provider() -> Provider:
         models=list(MODELS.get("opencode-go", [])),
         api={
             "anthropic-messages": with_opencode_session_header(anthropic_messages_api()),
+            "google-generative-ai": with_opencode_session_header(google_generative_ai_api()),
             "openai-completions": with_opencode_session_header(openai_completions_api()),
             "openai-responses": with_opencode_session_header(openai_responses_api()),
         },

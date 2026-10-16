@@ -47,6 +47,8 @@ OPENAI_TOOL_CALL_PROVIDERS = frozenset(("openai", "openai-codex", "opencode"))
 # OpenAI Responses rejects max_output_tokens below 16.
 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16
 CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage"
+# Fixed reasoning.effort while configuration_update items carry the thinking level.
+CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium"
 
 
 def _is_chatgpt_sign_in(model: Model, api_key: str | None) -> bool:
@@ -222,6 +224,7 @@ class _ResolvedCompat:
     supports_tool_search: bool
     supports_explicit_prompt_cache_mode: bool
     supports_max_output_tokens: bool
+    supports_mid_convo_effort: bool
 
 
 def get_compat(model: Model) -> _ResolvedCompat:
@@ -243,7 +246,23 @@ def get_compat(model: Model) -> _ResolvedCompat:
         supports_tool_search=pick(compat.supports_tool_search if compat else None, False),
         supports_explicit_prompt_cache_mode=pick(compat.supports_explicit_prompt_cache_mode if compat else None, False),
         supports_max_output_tokens=pick(compat.supports_max_output_tokens if compat else None, True),
+        supports_mid_convo_effort=pick(compat.supports_mid_convo_effort if compat else None, False),
     )
+
+
+def get_configuration_update_effort(
+    model: Model, options: OpenAIResponsesOptions, compat: _ResolvedCompat
+) -> str | None:
+    """Effort to send in configuration_update items, or None to send it as reasoning.effort."""
+    if (
+        not compat.supports_mid_convo_effort
+        or not options.reasoning_effort
+        # Sign in with ChatGPT rejects configuration_update items.
+        or _is_chatgpt_sign_in(model, options.api_key)
+    ):
+        return None
+    mapped = model.thinking_level_map.get(options.reasoning_effort) if model.thinking_level_map is not None else None
+    return mapped if mapped is not None else options.reasoning_effort
 
 
 def _get_prompt_cache_retention(compat: _ResolvedCompat, cache_retention: str) -> str | None:
@@ -313,15 +332,10 @@ def build_params(
     model: Model,
     context: TranscriptContext,
     options: OpenAIResponsesOptions,
-    compat: _ResolvedCompat | None = None,
-    grammar_tool_input_properties: dict[str, str] | None = None,
+    compat: _ResolvedCompat,
+    grammar_tool_input_properties: dict[str, str],
+    configuration_update_effort: str | None,
 ) -> dict:
-    compat = compat if compat is not None else get_compat(model)
-    if grammar_tool_input_properties is None:
-        grammar_tool_input_properties = create_grammar_tool_input_properties(
-            get_declared_tools(context.messages), compat.supports_openai_grammar_tools
-        )
-
     transcript_tools = resolve_transcript_tools(
         context.messages, compat.supports_additional_tools or compat.supports_tool_search
     )
@@ -337,6 +351,7 @@ def build_params(
             "supports_strict_mode": compat.supports_strict_mode,
             "supports_openai_grammar_tools": compat.supports_openai_grammar_tools,
         },
+        configuration_update_effort=configuration_update_effort,
     )
 
     cache_retention = _resolve_cache_retention(options.cache_retention, options.env)
@@ -383,9 +398,10 @@ def build_params(
         if reasoning_effort:
             if options.reasoning_effort:
                 mapped = mapping.get(options.reasoning_effort)
-                effort = mapped if mapped is not None else options.reasoning_effort
+                requested_effort = mapped if mapped is not None else options.reasoning_effort
             else:
-                effort = reasoning_effort
+                requested_effort = reasoning_effort
+            effort = requested_effort if configuration_update_effort is None else CONFIGURATION_UPDATE_REQUEST_EFFORT
             params["reasoning"] = {"effort": effort, "summary": options.reasoning_summary or "auto"}
             params["include"] = ["reasoning.encrypted_content"]
         elif model.provider != "github-copilot" and not ("off" in mapping and mapping["off"] is None):
@@ -435,13 +451,16 @@ def stream(
 ) -> AssistantMessageEventStream:
     opts = _responses_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
-    normalized_context = resolve_transcript(context, get_compat(model).supports_mid_convo_system_messages)
+    compat = get_compat(model)
+    configuration_update_effort = get_configuration_update_effort(model, opts, compat)
+    normalized_context = resolve_transcript(context, compat.supports_mid_convo_system_messages)
 
     output = AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
+        provider_thinking_level=configuration_update_effort,
         usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=clock.now_ms(),
@@ -455,7 +474,6 @@ def stream(
                 api_key = _get_client_api_key(model.provider, opts.api_key, opts.headers)
             cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
             cache_session_id = None if cache_retention == "none" else opts.session_id
-            compat = get_compat(model)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
                 get_declared_tools(normalized_context.messages), compat.supports_openai_grammar_tools
             )
@@ -466,7 +484,14 @@ def stream(
                     model, normalized_context, api_key, opts.headers, cache_session_id, opts.env, opts.fetch
                 )
             )
-            params = build_params(model, normalized_context, opts, compat, grammar_tool_input_properties)
+            params = build_params(
+                model,
+                normalized_context,
+                opts,
+                compat,
+                grammar_tool_input_properties,
+                configuration_update_effort,
+            )
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params

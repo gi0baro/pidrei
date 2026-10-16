@@ -18,10 +18,7 @@ from pidrei_ai.api.openai_completions import (
     OpenAICompletionsOptions,
     build_params as build_completions_params,
 )
-from pidrei_ai.api.openai_responses import (
-    OpenAIResponsesOptions,
-    build_params as build_responses_params,
-)
+from pidrei_ai.api.openai_responses import OpenAIResponsesOptions
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
@@ -36,7 +33,10 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.transcript import normalize_context
 from tests.test_openai_completions import make_model as make_completions_model
-from tests.test_openai_responses import make_model as make_responses_model
+from tests.test_openai_responses import (
+    build_request_params as build_responses_params,
+    make_model as make_responses_model,
+)
 
 
 class PayloadCaptured(Exception):

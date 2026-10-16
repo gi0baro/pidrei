@@ -934,6 +934,13 @@ machinery and the text that shows JavaScript do not.
   `CodemodeSandboxBase`, the `portable`/`cloudflare` entries,
   `sandbox.start()`). The files that hold only that are `DROPPED` in the
   classifier.
+  - Pi 1.3.0's worker admission (`acquireWorker()`, `onWorkerStarted()`,
+    the process-wide two-worker counter and its "worker limit reached"
+    error) is dropped too. It bounds Bun workers that keep running after a
+    non-blocking `terminate()`. PiDrei's `stop()` SIGKILLs the Monty worker,
+    so none outlives its script, and Monty's pool already bounds checkouts by
+    queueing them; a cap that rejects would fail a parallel codemode call
+    that waits today.
 - **PiDrei-only, kept on every port**: the type check before the script runs
   (`codemode.typeCheck`, the factory's `type_check`); `all_settled`,
   `has_tool` and `call_tool`; `store(key, None)` deleting; a final expression

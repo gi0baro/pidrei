@@ -10,7 +10,7 @@ from dataclasses import replace
 import pytest
 
 from pidrei_ai.api.openai_completions import OpenAICompletionsOptions, stream as stream_completions
-from pidrei_ai.types import AssistantMessage, Context, Model, ModelCost, Tool
+from pidrei_ai.types import AssistantMessage, Context, Model, ModelCost, TextContent, ThinkingContent, Tool
 from tests.test_openai_completions import FakeResponse, chunk_body
 
 
@@ -240,3 +240,30 @@ async def test_merges_consecutive_text_and_summary_reasoning_details_deltas_befo
     await run_stream(client, [assistant_message])
 
     assert assistant_payload(client.payloads[1])["reasoning_details"] == expected
+
+
+# describe("openai-completions reasoning and content in one delta")
+
+
+@pytest.mark.tonio
+async def test_places_thinking_before_text_when_one_delta_carries_reasoning_content_and_content():
+    # pi #10926
+    client = QueuedClient(
+        [[chunk({"role": "assistant", "reasoning_content": "thinking", "content": "answer"}, "stop")]]
+    )
+
+    assistant_message = await run_stream(client)
+
+    assert list(assistant_message.content) == [
+        ThinkingContent(thinking="thinking", thinking_signature="reasoning_content"),
+        TextContent(text="answer"),
+    ]
+
+
+@pytest.mark.tonio
+async def test_places_thinking_before_text_when_one_delta_carries_reasoning_details_and_content():
+    client = QueuedClient([[chunk({"reasoning_details": [REASONING_DETAIL], "content": "answer"}, "stop")]])
+
+    assistant_message = await run_stream(client)
+
+    assert [block.type for block in assistant_message.content] == ["thinking", "text"]

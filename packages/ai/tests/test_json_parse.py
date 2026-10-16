@@ -17,11 +17,10 @@ def test_repair_escapes_raw_control_characters_in_strings():
     assert repair_json('{"a":"x\x01y"}') == '{"a":"x\\u0001y"}'
 
 
-def test_repair_keeps_incomplete_unicode_escape_unchanged():
-    # `u` is itself in the valid-escape set, so a \u with bad hex digits falls
-    # through to the plain-escape branch and stays as-is (pi behavior); the
-    # subsequent JSON.parse failure is then re-raised unrepaired.
-    assert repair_json('{"a":"\\u12"}') == '{"a":"\\u12"}'
+def test_repair_doubles_incomplete_unicode_escape():
+    # A \u without four hex digits is an invalid escape like any other, so it
+    # is kept as literal text (pi #10868).
+    assert repair_json('{"a":"\\u12"}') == '{"a":"\\\\u12"}'
 
 
 def test_repair_trailing_backslash():
@@ -67,3 +66,25 @@ def test_streaming_prefix_with_raw_control_character_still_repairs():
 
 def test_streaming_garbage_returns_empty_dict():
     assert parse_streaming_json("not json at all") == {}
+
+
+# Mirror of pi's json-parse.test.ts (parseStreamingJson).
+
+
+def test_streaming_keeps_invalid_unicode_escapes_as_literal_text_without_dropping_fields():
+    # pi #10868
+    assert parse_streaming_json(r'{"text":"\url{x}"}') == {"text": "\\url{x}"}
+    assert parse_streaming_json(r'{"path":"a.tex","content":"\usepackage{x}","mode":"w"}') == {
+        "path": "a.tex",
+        "content": "\\usepackage{x}",
+        "mode": "w",
+    }
+
+
+def test_streaming_decodes_valid_unicode_escapes():
+    # The \u escape for "é", spelled in two pieces.
+    assert parse_streaming_json(r'{"text":"caf\u' + r'00e9 \url"}') == {"text": "café \\url"}
+
+
+def test_streaming_omits_a_unicode_escape_cut_off_mid_stream():
+    assert parse_streaming_json(r'{"text":"ab\u00') == {"text": "ab"}
