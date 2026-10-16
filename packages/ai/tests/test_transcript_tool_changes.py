@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from pidrei_ai.api import anthropic_messages, openai_completions, openai_responses
+from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     Context,
@@ -318,6 +319,26 @@ async def test_anchors_kimi_additions_in_tool_bearing_system_messages():
         None,
         "updated guidance",
     ]
+
+
+# pi #10720: Kimi Coding uses Chat Completions so K3-style models keep added tools out of the top-level list.
+@pytest.mark.tonio
+@pytest.mark.parametrize("model_id", ["k3", "k3-256k", "kimi-for-coding"])
+async def test_anchors_additions_for_kimi_coding(model_id):
+    payload = await capture_payload(get_builtin_model("kimi-coding", model_id), ADDITION_CONTEXT)
+
+    assert [value["function"]["name"] for value in payload["tools"]] == ["base_tool"]
+    tool_message = next(message for message in payload["messages"] if "tools" in message)
+    assert [value["function"]["name"] for value in tool_message["tools"]] == ["late_tool"]
+
+
+# pi #10720: Kimi Code Highspeed rejects tool-bearing system messages.
+@pytest.mark.tonio
+async def test_keeps_kimi_coding_highspeed_additions_in_top_level_tools():
+    payload = await capture_payload(get_builtin_model("kimi-coding", "kimi-for-coding-highspeed"), ADDITION_CONTEXT)
+
+    assert [value["function"]["name"] for value in payload["tools"]] == ["base_tool", "late_tool"]
+    assert not any("tools" in message for message in payload["messages"])
 
 
 @pytest.mark.tonio

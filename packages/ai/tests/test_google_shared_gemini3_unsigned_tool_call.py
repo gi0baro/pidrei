@@ -241,9 +241,10 @@ def test_cross_model_signatures_are_gone_before_conversion_even_sees_them():
     """Pins the layering, not just the outcome.
 
     `convert_messages` re-checks provider+model before keeping a signature, but
-    `transform_messages` has already stripped it (thinking and text blocks are
-    rebuilt as plain text, tool calls have `thought_signature` cleared), so that
-    re-check is defence in depth and cannot be reached with a signature present.
+    `transform_messages` has already stripped it (thinking blocks are dropped,
+    text blocks are rebuilt as plain text, tool calls have `thought_signature`
+    cleared), so that re-check is defence in depth and cannot be reached with a
+    signature present.
     """
     model = make_gemini3_model("google-generative-ai", "google")
     valid = "AAAAAAAAAAAAAAAAAAAAAA=="
@@ -253,5 +254,5 @@ def test_cross_model_signatures_are_gone_before_conversion_even_sees_them():
     # this the same model — `transform_messages` also compares the api, and wins.
     by_api = convert_messages(model, signed_context(model.id, "openai-completions", valid))
 
-    assert signatures_in(by_id) == [None, None, None]
-    assert signatures_in(by_api) == [None, None, None]
+    assert signatures_in(by_id) == [None, None]
+    assert signatures_in(by_api) == [None, None]

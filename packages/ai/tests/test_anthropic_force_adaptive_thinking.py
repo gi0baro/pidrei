@@ -1,7 +1,4 @@
-"""Mirror of pi's anthropic-force-adaptive-thinking.test.ts.
-
-The Kimi Coding cases join when that provider's catalog lands (initial port).
-"""
+"""Mirror of pi's anthropic-force-adaptive-thinking.test.ts."""
 
 from dataclasses import replace
 

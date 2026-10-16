@@ -1,6 +1,6 @@
 """Port of pi's kimi-coding provider factory (packages/ai/src/providers/kimi-coding.ts)."""
 
-from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
+from pidrei_ai.api.openai_completions_lazy import openai_completions_api
 from pidrei_ai.auth.helpers import env_api_key_auth, lazy_oauth
 from pidrei_ai.auth.oauth.load import load_kimi_coding_oauth
 from pidrei_ai.auth.types import ProviderAuth
@@ -12,7 +12,7 @@ def kimi_coding_provider() -> Provider:
     return create_provider(
         id="kimi-coding",
         name="Kimi For Coding",
-        base_url="https://api.kimi.com/coding",
+        base_url="https://api.kimi.com/coding/v1",
         auth=ProviderAuth(
             api_key=env_api_key_auth("Kimi API key", ["KIMI_API_KEY"]),
             oauth=lazy_oauth(
@@ -23,5 +23,5 @@ def kimi_coding_provider() -> Provider:
             ),
         ),
         models=list(MODELS.get("kimi-coding", [])),
-        api=anthropic_messages_api(),
+        api=openai_completions_api(),
     )

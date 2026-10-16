@@ -32,7 +32,6 @@ from pidrei_ai.types import (
     ModelCost,
     OpenAIResponsesCompat,
     TextContent,
-    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     Usage,
@@ -110,7 +109,7 @@ def make_output(model: Model) -> AssistantMessageBuilder:
 def test_generates_unique_fallback_message_ids_for_multiple_text_blocks():
     model = make_model(provider="openai-codex", id="gpt-5.5")
     assistant = AssistantMessage(
-        content=[ThinkingContent(thinking="private reasoning"), TextContent(text="visible answer")],
+        content=[TextContent(text="first answer"), TextContent(text="visible answer")],
         api="anthropic-messages",
         provider="anthropic",
         model="claude-opus-4-8",
@@ -288,6 +287,23 @@ async def test_tool_call_blocks_are_clean_at_output_item_done():
     tool_call_end = next(event for event in stream.pushed if event.type == "toolcall_end")
     assert tool_call_end.tool_call is tool_call_end.partial.content[0]
     assert tool_call_end.tool_call == persisted.freeze()
+
+
+@pytest.mark.tonio
+async def test_marks_malformed_final_arguments_instead_of_keeping_the_parsed_prefix():
+    # pi #10897
+    model = make_model()
+    output = make_output(model)
+    arguments_json = '{"path":"README.md","content":"updated","mode":.5}'
+
+    await process_responses_stream(
+        events_from(function_call_events(arguments_json)), output, AssistantMessageEventStream(), model
+    )
+
+    tool_call = output.content[0]
+    assert tool_call.type == "toolCall"
+    assert tool_call.arguments == {}
+    assert tool_call.arguments_error.endswith(f"Received arguments:\n{arguments_json}")
 
 
 @pytest.mark.tonio

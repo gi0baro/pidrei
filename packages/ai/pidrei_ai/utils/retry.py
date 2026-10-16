@@ -60,7 +60,8 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         "504",
         "520",
         "524",
-        "service.?unavailable",
+        # Also matches "The service is temporarily unavailable" (#10965).
+        "service.?(?:is.?)?(?:temporarily.?)?unavailable",
         "server.?error",
         "internal.?error",
         # Wrapper/provider text for transient upstream failures, including OpenRouter

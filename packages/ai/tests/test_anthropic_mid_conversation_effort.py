@@ -66,7 +66,7 @@ def assistant(model: Model, level: str | None = None) -> AssistantMessage:
     )
 
 
-async def capture(model: Model, context: Context, effort: str | None = None) -> tuple[dict, AssistantMessage]:
+async def capture(model: Model, context: Context, options: dict | None = None) -> tuple[dict, AssistantMessage]:
     captured: list[dict] = []
 
     async def on_payload(value, _model):
@@ -77,7 +77,10 @@ async def capture(model: Model, context: Context, effort: str | None = None) -> 
         model,
         context,
         AnthropicOptions(
-            api_key="test-key", cache_retention="none", thinking_enabled=True, effort=effort, on_payload=on_payload
+            api_key="test-key",
+            cache_retention="none",
+            on_payload=on_payload,
+            **{"thinking_enabled": True, **(options or {})},
         ),
     ).result()
     if not captured:
@@ -96,9 +99,9 @@ def effort_messages(payload: dict) -> list[dict]:
 @pytest.mark.tonio
 async def test_reconstructs_an_exact_historical_marker_prefix_and_appends_the_current_marker():
     model = managed_model()
-    first_payload, first_message = await capture(model, Context(messages=[user("one", 1)]), "low")
+    first_payload, first_message = await capture(model, Context(messages=[user("one", 1)]), {"effort": "low"})
     second_payload, _ = await capture(
-        model, Context(messages=[user("one", 1), assistant(model, "low"), user("two", 2)]), "high"
+        model, Context(messages=[user("one", 1), assistant(model, "low"), user("two", 2)]), {"effort": "high"}
     )
 
     assert first_payload["messages"] == [
@@ -120,7 +123,7 @@ async def test_reconstructs_an_exact_historical_marker_prefix_and_appends_the_cu
 @pytest.mark.tonio
 @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
 async def test_preserves_native_effort(effort):
-    payload, message = await capture(managed_model(), Context(messages=[user("one", 1)]), effort)
+    payload, message = await capture(managed_model(), Context(messages=[user("one", 1)]), {"effort": effort})
     assert effort_messages(payload) == [{"role": "system", "content": [], "output_config": {"effort": effort}}]
     assert message.provider_thinking_level == effort
 
@@ -150,16 +153,49 @@ async def test_does_not_invent_markers_for_legacy_or_other_provider_assistants()
     payload, _ = await capture(
         model,
         Context(messages=[user("one", 1), legacy, user("two", 2), other_provider, user("three", 3)]),
-        "medium",
+        {"effort": "medium"},
     )
     assert effort_messages(payload) == [{"role": "system", "content": [], "output_config": {"effort": "medium"}}]
+
+
+@pytest.mark.tonio
+async def test_sends_plain_disabled_thinking_without_effort_when_off_is_supported():
+    model = managed_model()
+    model.thinking_level_map = {"minimal": None, "low": "low", "medium": "medium", "high": "high", "max": "max"}
+    # Anthropic rejects block_binding with disabled thinking, and rejects effort markers
+    # that change level (here low, then medium) while thinking is disabled.
+    payload, message = await capture(
+        model,
+        Context(
+            messages=[
+                user("one", 1),
+                assistant(model, "low"),
+                user("two", 2),
+                assistant(model, "medium"),
+                user("three", 3),
+            ]
+        ),
+        {"thinking_enabled": False},
+    )
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "output_config" not in payload
+    assert effort_messages(payload) == []
+    assert message.provider_thinking_level is None
+
+
+@pytest.mark.tonio
+async def test_keeps_adaptive_thinking_when_off_is_unsupported():
+    payload, message = await capture(managed_model(), Context(messages=[user("one", 1)]), {"thinking_enabled": False})
+    assert payload["thinking"]["type"] == "adaptive"
+    assert effort_messages(payload) == [{"role": "system", "content": [], "output_config": {"effort": "high"}}]
+    assert message.provider_thinking_level == "high"
 
 
 @pytest.mark.tonio
 async def test_leaves_unsupported_models_on_top_level_effort():
     model = managed_model()
     model.compat = AnthropicMessagesCompat(force_adaptive_thinking=True)
-    payload, message = await capture(model, Context(messages=[user("one", 1)]), "low")
+    payload, message = await capture(model, Context(messages=[user("one", 1)]), {"effort": "low"})
     assert payload["messages"] == [{"role": "user", "content": "one"}]
     assert payload["output_config"] == {"effort": "low"}
     assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
@@ -237,3 +273,13 @@ def test_generates_exact_model_and_transport_gates():
     assert open_router.compat.supports_mid_convo_effort is True
     assert unsupported.compat.supports_mid_convo_effort is None
     assert get_builtin_model("anthropic", "claude-opus-5").compat.allowed_fallback_models is None
+
+
+def test_supports_off_only_on_managed_models_that_accept_disabled_thinking():
+    for model_id in ("claude-opus-5", "claude-haiku-5-5"):
+        model = get_builtin_model("anthropic", model_id)
+        assert model.compat.supports_mid_convo_effort is True
+        assert (model.thinking_level_map or {}).get("off", "") is not None
+    for model_id in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"):
+        model = get_builtin_model("anthropic", model_id)
+        assert "off" in model.thinking_level_map and model.thinking_level_map["off"] is None

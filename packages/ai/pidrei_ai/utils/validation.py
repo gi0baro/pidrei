@@ -309,6 +309,8 @@ def validate_tool_call(tools: list[Tool], tool_call: ToolCall) -> Any:
 
 def validate_tool_arguments(tool: Tool, tool_call: ToolCall) -> Any:
     """Validate tool call arguments, coercing pi-style; raises on failure."""
+    if tool_call.arguments_error:
+        raise ValueError(f'Invalid arguments for tool "{tool_call.name}": {tool_call.arguments_error}')
     args = copy.deepcopy(tool_call.arguments)
     _normalize_optional_nulls(args, tool.parameters)
     coerced = _coerce_with_json_schema(args, tool.parameters)

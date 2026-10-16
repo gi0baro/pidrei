@@ -75,7 +75,7 @@ from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
-from pidrei_ai.utils.json_parse import parse_streaming_json
+from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
@@ -1337,7 +1337,7 @@ def stream(  # noqa: C901
                         if delta is not None:
                             out_stream.push(ToolCallDeltaEvent(content_index=index, delta=delta, partial=output))
                     else:
-                        block.arguments = parse_streaming_json(entry.partial_args)
+                        block.arguments, block.arguments_error = parse_tool_call_arguments(entry.partial_args)
                     scratch.pop(id(block), None)
                     out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 

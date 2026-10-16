@@ -78,6 +78,18 @@ class TestProviderRetryClassification:
         # Regression for #10379.
         assert is_retryable_assistant_error(error_message(text)) is True
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Regression for #10965 (provider unknown, no status code in the message).
+            "The service is temporarily unavailable. Please retry later.",
+            # Bedrock ServiceUnavailableException as formatted by format_bedrock_error.
+            "Service unavailable: The service is temporarily unavailable.",
+        ],
+    )
+    def test_matches_service_unavailable_wording(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):
         assert is_retryable_assistant_error(error_message(OPENAI_RESPONSES_EARLY_EOF_MESSAGE)) is True
 

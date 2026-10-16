@@ -172,6 +172,10 @@ class ToolCall:
     thought_signature: str | None = None  # Google-specific: opaque signature for thought context reuse
     # OpenAI Responses namespace for calls to dynamically loaded or namespaced tools.
     namespace: str | None = None
+    # Set when the model's complete arguments text was not a valid JSON object; `arguments` is
+    # then `{}`. Describes the problem and includes the text the model sent; tool argument
+    # validation fails with it.
+    arguments_error: str | None = None
     type: Literal["toolCall"] = "toolCall"
 
 

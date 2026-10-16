@@ -71,6 +71,7 @@ class ToolCallBuilder:
     arguments: dict[str, Any]
     thought_signature: str | None = None
     namespace: str | None = None
+    arguments_error: str | None = None
     type: Literal["toolCall"] = "toolCall"
 
     def freeze(self) -> ToolCall:
@@ -80,6 +81,7 @@ class ToolCallBuilder:
             arguments=self.arguments,
             thought_signature=self.thought_signature,
             namespace=self.namespace,
+            arguments_error=self.arguments_error,
         )
 
 

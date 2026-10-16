@@ -71,12 +71,12 @@ async def test_oauth_params_use_cc_casing_and_claude_code_identity():
         )
     )
 
-    params, _ = _build_params(model, context, True, AnthropicOptions())
+    params, _, _ = _build_params(model, context, True, AnthropicOptions())
 
     assert params["tools"][0]["name"] == "TodoWrite"
     assert params["system"][0]["text"] == "You are Claude Code, Anthropic's official CLI for Claude."
     assert params["system"][1]["text"] == "Custom system prompt."
 
-    non_oauth, _ = _build_params(model, context, False, AnthropicOptions())
+    non_oauth, _, _ = _build_params(model, context, False, AnthropicOptions())
     assert non_oauth["tools"][0]["name"] == "todowrite"
     assert non_oauth["system"][0]["text"] == "Custom system prompt."

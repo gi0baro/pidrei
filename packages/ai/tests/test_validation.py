@@ -169,3 +169,16 @@ def test_error_message_structure_mirrors_pi():
     assert "  - count: " in message  # localized error path
     assert "  - path: " in message  # missing required property path
     assert "Received arguments:" in message
+
+
+def test_reports_malformed_arguments_json_instead_of_validating_empty_arguments():
+    # pi #10897
+    tool = Tool(
+        name="echo",
+        description="Echo tool",
+        parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+    )
+    tool_call = ToolCall(id="tool-1", name="echo", arguments={}, arguments_error="Unexpected token")
+
+    with pytest.raises(ValueError, match='Invalid arguments for tool "echo": Unexpected token'):
+        validate_tool_arguments(tool, tool_call)

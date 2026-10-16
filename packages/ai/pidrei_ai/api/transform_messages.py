@@ -1,16 +1,17 @@
 """Port of pi's cross-provider message transforms (packages/ai/src/api/transform-messages.ts).
 
-Handles unsupported-image downgrade, cross-model thinking replay (thinking →
-plain text, redacted thinking dropped), thought-signature stripping, tool-call
+Handles unsupported-image downgrade, cross-model thinking replay (thinking from
+another model dropped), thought-signature stripping, tool-call
 id normalization, skipping errored/aborted assistant turns, and synthesizing
 "No result provided" tool results for orphaned tool calls.
 """
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from pidrei_ai.types import (
     AssistantMessage,
+    ImageContent,
     Message,
     Model,
     TextContent,
@@ -22,6 +23,37 @@ from pidrei_utils import clock
 
 NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)"
 NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)"
+ERROR_TOOL_IMAGE_PLACEHOLDER = "(image attached after the tool results)"
+
+
+@dataclass(slots=True, frozen=True)
+class SplitErrorToolResult:
+    """An error tool result split into a text-only result and the images to send after the tool results."""
+
+    # The result content with each run of images replaced by a note.
+    content: list[TextContent]
+    # Text naming the tool call, to send before `images`.
+    caption: str
+    images: list[ImageContent]
+
+
+def split_error_tool_result_images(msg: ToolResultMessage) -> SplitErrorToolResult | None:
+    """Split the images out of an error tool result, for APIs that reject images in error results
+    (Anthropic, and Claude on Bedrock).
+
+    Send the returned content as the tool result and the caption and images after all tool results
+    of the turn, in the same user message. Returns None for results that need no split (#10794).
+    """
+    if not msg.is_error:
+        return None
+    images = [block for block in msg.content if block.type == "image"]
+    if not images:
+        return None
+    return SplitErrorToolResult(
+        content=_replace_images_with_placeholder(msg.content, ERROR_TOOL_IMAGE_PLACEHOLDER),
+        caption=f"Images from the error result of tool call {msg.tool_call_id} ({msg.tool_name}):",
+        images=images,
+    )
 
 
 def _replace_images_with_placeholder(content: list, placeholder: str) -> list[TextContent]:
@@ -107,21 +139,19 @@ def transform_messages(
             transformed_content: list = []
             for block in message.content:
                 if block.type == "thinking":
-                    # Redacted thinking is opaque encrypted content, only valid
-                    # for the same model; drop it cross-model to avoid API errors.
-                    if block.redacted:
-                        if is_same_model:
-                            transformed_content.append(block)
+                    # Thinking from another model is dropped. Signatures and encrypted reasoning are
+                    # only valid for the model that produced them, and sending readable thinking as
+                    # plain text makes the new model treat it as part of the visible reply.
+                    if not is_same_model:
                         continue
-                    # Same model: keep thinking blocks with signatures (needed
-                    # for replay) even if the thinking text is empty.
-                    if is_same_model and block.thinking_signature:
+                    # Keep redacted and signed blocks even if the thinking text is empty
+                    # (OpenAI encrypted reasoning); they are needed for replay.
+                    if block.redacted or block.thinking_signature:
                         transformed_content.append(block)
                         continue
-                    # Skip empty thinking blocks, convert others to plain text.
                     if not block.thinking or block.thinking.strip() == "":
                         continue
-                    transformed_content.append(block if is_same_model else TextContent(text=block.thinking))
+                    transformed_content.append(block)
                     continue
 
                 if block.type == "text":

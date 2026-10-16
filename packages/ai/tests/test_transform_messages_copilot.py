@@ -15,7 +15,6 @@ from pidrei_ai.types import (
     AssistantMessage,
     Model,
     TextContent,
-    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     Usage,
@@ -44,30 +43,6 @@ def openai_assistant(content, *, api: str = "openai-responses", model: str = "gp
         stop_reason="toolUse",
         timestamp=1,
     )
-
-
-def test_converts_thinking_blocks_to_plain_text_when_the_source_model_differs():
-    messages = [
-        UserMessage(content="hello", timestamp=1),
-        openai_assistant(
-            [
-                ThinkingContent(thinking="Let me think about this...", thinking_signature="reasoning_content"),
-                TextContent(text="Hi there!"),
-            ],
-            api="openai-completions",
-            model="gpt-4o",
-        ),
-    ]
-
-    result = transform_messages(
-        messages, copilot_claude_model(), normalize_tool_call_id=anthropic_normalize_tool_call_id
-    )
-    assistant_message = next(message for message in result if message.role == "assistant")
-
-    text_blocks = [block for block in assistant_message.content if block.type == "text"]
-    thinking_blocks = [block for block in assistant_message.content if block.type == "thinking"]
-    assert thinking_blocks == []
-    assert len(text_blocks) >= 2
 
 
 def test_removes_thought_signature_from_tool_calls_when_migrating_between_models():

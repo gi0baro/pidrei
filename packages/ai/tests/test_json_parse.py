@@ -1,6 +1,11 @@
 import pytest
 
-from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json, repair_json
+from pidrei_ai.utils.json_parse import (
+    parse_json_with_repair,
+    parse_streaming_json,
+    parse_tool_call_arguments,
+    repair_json,
+)
 
 
 def test_repair_doubles_invalid_escapes():
@@ -88,3 +93,36 @@ def test_streaming_decodes_valid_unicode_escapes():
 
 def test_streaming_omits_a_unicode_escape_cut_off_mid_stream():
     assert parse_streaming_json(r'{"text":"ab\u00') == {"text": "ab"}
+
+
+# Mirror of pi's json-parse.test.ts (parseToolCallArguments, pi #10897).
+
+
+def test_tool_call_arguments_parses_complete_json_and_repairs_invalid_escapes():
+    assert parse_tool_call_arguments(r'{"kind":"seek","note":"\url"}') == ({"kind": "seek", "note": "\\url"}, None)
+
+
+def test_tool_call_arguments_uses_empty_arguments_for_empty_text():
+    assert parse_tool_call_arguments("") == ({}, None)
+
+
+def test_tool_call_arguments_does_not_keep_the_valid_prefix_of_malformed_json():
+    raw = '{"action":"apply","actions":[{"kind":"seek","time":.5}]}'
+    arguments, arguments_error = parse_tool_call_arguments(raw)
+    assert arguments == {}
+    assert "\n\nReceived arguments:\n" in arguments_error
+    assert arguments_error.endswith(raw)
+
+
+def test_tool_call_arguments_does_not_complete_cut_off_json():
+    raw = '{"kind":"seek","clipId":"clip-fl'
+    arguments, arguments_error = parse_tool_call_arguments(raw)
+    assert arguments == {}
+    assert arguments_error.endswith(raw)
+
+
+def test_tool_call_arguments_rejects_json_that_is_not_an_object():
+    assert parse_tool_call_arguments("[1,2]") == (
+        {},
+        "Tool arguments must be a JSON object\n\nReceived arguments:\n[1,2]",
+    )

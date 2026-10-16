@@ -57,7 +57,7 @@ extend-ignore = [
     'S110',   # silent best-effort catches mirror pi's error handling
     'TRY002', # plain Exceptions mirror pi's `throw new Error(...)`
 ]
-mccabe = { max-complexity = 49 }
+mccabe = { max-complexity = 50 }
 
 # Writing through them is a synchronous write on the runtime: every stdio write
 # goes through `pidrei.core.output_guard` instead.

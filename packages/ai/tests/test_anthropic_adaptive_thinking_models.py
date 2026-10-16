@@ -1,7 +1,7 @@
 """Mirror of pi's anthropic-adaptive-thinking-models.test.ts.
 
 pi's expected list spans providers pidrei has not wired yet (cloudflare,
-kimi-coding, opencode, vercel); those entries join with their providers.
+opencode, vercel); those entries join with their providers.
 """
 
 import re
@@ -21,9 +21,7 @@ EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
     "fireworks/accounts/fireworks/models/qwen3p8-max",
 ]
 
-_ADAPTIVE_ID_PATTERN = re.compile(
-    r"(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5|kimi-coding/)"
-)
+_ADAPTIVE_ID_PATTERN = re.compile(r"(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5)")
 
 
 def get_all_models():

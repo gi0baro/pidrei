@@ -117,6 +117,7 @@ def serialize_content_block(block: Any) -> Any:
         data = {"type": "toolCall", "id": block.id, "name": block.name, "arguments": block.arguments}
         _put(data, "thoughtSignature", block.thought_signature)
         _put(data, "namespace", block.namespace)
+        _put(data, "argumentsError", block.arguments_error)
         return data
     if block_type == "image":
         return {"type": "image", "data": block.data, "mimeType": block.mime_type}
@@ -142,6 +143,7 @@ def parse_content_block(data: Any) -> Any:
             arguments=data.get("arguments") or {},
             thought_signature=data.get("thoughtSignature"),
             namespace=data.get("namespace"),
+            arguments_error=data.get("argumentsError"),
         )
     if block_type == "image":
         return ImageContent(data=data.get("data", ""), mime_type=data.get("mimeType", ""))

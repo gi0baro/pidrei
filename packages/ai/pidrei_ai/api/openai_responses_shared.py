@@ -49,7 +49,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
-from pidrei_ai.utils.json_parse import parse_streaming_json
+from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import resolve_transcript, resolve_transcript_tools
@@ -679,7 +679,9 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 and slot.kind == "toolCall"
                 and slot.partial_json is not None
             ):
-                slot.block.arguments = parse_streaming_json(item.get("arguments") or slot.partial_json or "{}")
+                slot.block.arguments, slot.block.arguments_error = parse_tool_call_arguments(
+                    item.get("arguments") or slot.partial_json
+                )
                 if item.get("namespace") is not None:
                     slot.block.namespace = item["namespace"]
                 slot.partial_json = None
