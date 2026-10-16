@@ -94,6 +94,9 @@ class MockRuntime:
             return True
         return self._configured(provider)
 
+    def configured_auth_check(self):
+        return self.has_configured_auth
+
 
 def _reference_model(provider: str, id: str):
     return make_model(

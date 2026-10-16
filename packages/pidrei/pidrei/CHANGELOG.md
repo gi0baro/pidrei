@@ -81,6 +81,12 @@ Tracks [Pi 1.3.0](https://github.com/earendil-works/pi/releases/tag/v1.3.0).
   window Codex now provides.
 - Claude Haiku 5.5 and Claude Opus 5 did not support the `off` thinking
   level; `off` now disables thinking without effort settings.
+- Finished tool calls whose arguments contained `NaN`, `Infinity` or
+  `-Infinity` were accepted instead of being reported back to the model as
+  malformed, as Pi does.
+- `--model` resolution could see two authentication states when a provider
+  refresh landed mid-resolution, reporting a model as ambiguous across
+  providers that were never authenticated at the same time.
 
 ### Not ported
 

@@ -528,7 +528,7 @@ def resolve_cli_model(
         ModelReferenceRequest(text=cli_model, provider=provider, thinking_suffix="strict", fuzzy=True),
         models,
         # An inline key goes to whichever provider is selected, so stored credentials must not choose it
-        (lambda _provider: False) if inline_api_key else model_runtime.has_configured_auth,
+        (lambda _provider: False) if inline_api_key else model_runtime.configured_auth_check(),
     )
     if result.status == "resolved":
         return ResolveCliModelResult(model=result.model, thinking_level=result.thinking_level, warning=result.warning)

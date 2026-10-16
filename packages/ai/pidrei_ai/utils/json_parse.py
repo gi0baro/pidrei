@@ -85,15 +85,25 @@ def _is_repairable(error: ValueError) -> bool:
     return isinstance(error, json.JSONDecodeError) and error.msg.startswith("Invalid")
 
 
+def _reject_constant(constant: str) -> Any:
+    # `JSON.parse` has no NaN/Infinity/-Infinity; Python's decoder accepts them
+    # unless told otherwise.
+    raise ValueError(f"Unexpected token {constant}")
+
+
+def _loads(json_text: str) -> Any:
+    return json.loads(json_text, parse_constant=_reject_constant)
+
+
 def parse_json_with_repair(json_text: str) -> Any:
     try:
-        return json.loads(json_text)
+        return _loads(json_text)
     except ValueError as error:
         if not _is_repairable(error):
             raise
         repaired = repair_json(json_text)
         if repaired != json_text:
-            return json.loads(repaired)
+            return _loads(repaired)
         raise
 
 

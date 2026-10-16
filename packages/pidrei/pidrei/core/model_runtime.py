@@ -790,6 +790,13 @@ class ModelRuntime:
     def has_configured_auth(self, provider_id: str) -> bool:
         return provider_id in self._snapshot.configured_providers
 
+    def configured_auth_check(self) -> Callable[[str], bool]:
+        """`has_configured_auth` pinned to one availability snapshot, for a
+        decision that checks several providers: a refresh landing between two
+        checks must not show both the old and the new credentials."""
+        configured = self._snapshot.configured_providers
+        return configured.__contains__
+
     # -- auth ------------------------------------------------------------------
 
     async def get_auth(
