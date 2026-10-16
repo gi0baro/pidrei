@@ -60,10 +60,10 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "qwen-token-plan": "qwen3.7-max",
     "qwen-token-plan-cn": "qwen3.7-max",
     "qwen-token-plan-individual": "qwen3.8-max",
-    "xiaomi": "mimo-v2.5-pro",
-    "xiaomi-token-plan-cn": "mimo-v2.5-pro",
-    "xiaomi-token-plan-ams": "mimo-v2.5-pro",
-    "xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+    "xiaomi": "mimo-v2.6-pro",
+    "xiaomi-token-plan-cn": "mimo-v2.6-pro",
+    "xiaomi-token-plan-ams": "mimo-v2.6-pro",
+    "xiaomi-token-plan-sgp": "mimo-v2.6-pro",
 }
 
 
@@ -274,7 +274,7 @@ def _select_reference(
     usable: Callable[[str], bool],
 ) -> ModelReferenceResult | None:
     """`provider/rest` is only a hint: the whole text may also be a model id on another provider,
-    such as gateway id `zai/glm-5` or commandcode id `xiaomi/mimo-v2.5-pro`. The named provider wins
+    such as gateway id `zai/glm-5` or commandcode id `xiaomi/mimo-v2.6-pro`. The named provider wins
     when usable, since that is what the syntax usually means; otherwise a sole usable raw match wins,
     since the named provider could not serve the request. An unusable named match is still preferred
     over unusable raw matches, so `--api-key` can set up the named provider."""

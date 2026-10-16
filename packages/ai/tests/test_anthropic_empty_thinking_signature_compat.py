@@ -19,7 +19,7 @@ from tests.anthropic_helpers import capture_payload, now_ms
 
 def make_model(allow_empty_signature: bool | None = None) -> Model:
     return Model(
-        id="mimo-v2.5-pro",
+        id="mimo-v2.6-pro",
         name="MiMo-V2.5-Pro",
         api="anthropic-messages",
         provider="xiaomi-token-plan-ams",
@@ -39,7 +39,7 @@ def make_context(
     thinking_signature: str,
     thinking: str = "internal reasoning",
     provider: str = "xiaomi-token-plan-ams",
-    model_id: str = "mimo-v2.5-pro",
+    model_id: str = "mimo-v2.6-pro",
     extra_content: list | None = None,
 ) -> Context:
     assistant = AssistantMessage(

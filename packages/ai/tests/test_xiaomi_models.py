@@ -15,7 +15,7 @@ from pidrei_ai.utils.transcript import normalize_context
 
 XIAOMI_PROVIDERS = ["xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"]
 DEPRECATED_MODEL_IDS = ["mimo-v2-flash", "mimo-v2-omni", "mimo-v2-pro"]
-REPLACEMENT_MODEL_IDS = ["mimo-v2.5", "mimo-v2.5-pro"]
+REPLACEMENT_MODEL_IDS = ["mimo-v2.6-flash", "mimo-v2.6-pro"]
 
 
 @pytest.mark.parametrize("provider", XIAOMI_PROVIDERS)

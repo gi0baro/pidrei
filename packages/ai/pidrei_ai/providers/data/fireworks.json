@@ -208,6 +208,54 @@
       },
       "type": "chat"
     },
+    "chat:accounts/fireworks/models/muse-spark-open": {
+      "id": "accounts/fireworks/models/muse-spark-open",
+      "name": "Muse Spark Open",
+      "provider": "fireworks",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.25,
+        "output": 4.25,
+        "cacheRead": 0.15,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.fireworks.ai/inference",
+      "compat": {
+        "allowEmptySignature": true,
+        "sendSessionAffinityHeaders": true,
+        "supportsEagerToolInputStreaming": false,
+        "supportsCacheControlOnTools": false,
+        "supportsLongCacheRetention": false,
+        "forceAdaptiveThinking": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:accounts/fireworks/models/nemotron-3-ultra-nvfp4": {
       "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
       "name": "Nemotron 3 Ultra 550B A55B",
