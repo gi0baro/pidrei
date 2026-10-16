@@ -1,6 +1,6 @@
 """Port of pi's cli/credential-print.ts: the `auth print-*` command surface."""
 
-from ..core.model_resolver import resolve_cli_model
+from ..core.model_resolver import ModelReferenceRequest, resolve_cli_model, resolve_model_reference
 from .auth_command import AuthCommandError, get_auth_credential, validate_auth_command_args
 
 
@@ -44,15 +44,16 @@ async def resolve_credential_for_print(
         else:
             providers.append((provider.id, None))
     else:
+        models = list(model_runtime.get_models())
         for provider in model_runtime.get_providers():
             if provider.id not in credential_types:
                 continue
-            resolved = resolve_cli_model(cli_provider=provider.id, cli_model=cli_model, model_runtime=model_runtime)
-            if (
-                resolved.model is not None
-                and not resolved.error
-                and not (resolved.warning and "Using custom model id" in resolved.warning)
-            ):
+            resolved = resolve_model_reference(
+                ModelReferenceRequest(text=cli_model, provider=provider.id, thinking_suffix="strict", fuzzy=True),
+                models,
+                lambda _provider: True,
+            )
+            if resolved.status == "resolved":
                 providers.append((provider.id, resolved.model))
         if not providers:
             raise AuthCommandError(f'Model "{cli_model}" not found. Use --list-models to see available models.')

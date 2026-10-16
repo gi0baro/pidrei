@@ -6,8 +6,9 @@ the minimatch subset used by model patterns (`*`/`?` do not cross `/`,
 """
 
 import re
-import sys
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+from typing import Literal
 
 from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import models_are_equal
@@ -102,88 +103,250 @@ def _minimatch(value: str, pattern: str) -> bool:
 
 
 def _is_alias(id: str) -> bool:
-    """A model ID looks like an alias when it has no date suffix (-YYYYMMDD)."""
-    if id.endswith("-latest"):
-        return True
-    return re.search(r"-\d{8}$", id) is None
+    return id.endswith("-latest") or re.search(r"-\d{8}$", id) is None
 
 
-def find_exact_model_reference_match(model_reference: str, available_models: list[Model]) -> Model | None:
-    """Find an exact model reference match: bare model id or canonical
-    provider/modelId. Ambiguous bare-id matches across providers are rejected."""
-    trimmed_reference = model_reference.strip()
-    if not trimmed_reference:
-        return None
-
-    normalized_reference = trimmed_reference.lower()
-
-    canonical_matches = [
-        model for model in available_models if f"{model.provider}/{model.id}".lower() == normalized_reference
-    ]
-    if len(canonical_matches) == 1:
-        return canonical_matches[0]
-    if len(canonical_matches) > 1:
-        return None
-
-    slash_index = trimmed_reference.find("/")
-    if slash_index != -1:
-        provider = trimmed_reference[:slash_index].strip()
-        model_id = trimmed_reference[slash_index + 1 :].strip()
-        if provider and model_id:
-            provider_matches = [
-                model
-                for model in available_models
-                if model.provider.lower() == provider.lower() and model.id.lower() == model_id.lower()
-            ]
-            if len(provider_matches) == 1:
-                return provider_matches[0]
-            if len(provider_matches) > 1:
-                return None
-
-    id_matches = [model for model in available_models if model.id.lower() == normalized_reference]
-    return id_matches[0] if len(id_matches) == 1 else None
+# Model reference resolution. Candidates are collected before a provider is chosen, so catalog order
+# never decides the provider and an ambiguous match is reported instead of falling through to a
+# weaker one.
 
 
-def _try_match_model(model_pattern: str, available_models: list[Model]) -> Model | None:
-    exact_match = find_exact_model_reference_match(model_pattern, available_models)
-    if exact_match is not None:
-        return exact_match
-
-    # No exact match - fall back to partial matching
-    lowered = model_pattern.lower()
-    matches = [
-        model
-        for model in available_models
-        if lowered in model.id.lower() or (model.name is not None and lowered in model.name.lower())
-    ]
-
-    if not matches:
-        return None
-
-    aliases = [model for model in matches if _is_alias(model.id)]
-    dated_versions = [model for model in matches if not _is_alias(model.id)]
-
-    if aliases:
-        # Prefer alias - if multiple aliases, pick the one that sorts highest
-        aliases.sort(key=lambda model: model.id, reverse=True)
-        return aliases[0]
-    dated_versions.sort(key=lambda model: model.id, reverse=True)
-    return dated_versions[0]
+@dataclass(slots=True, kw_only=True)
+class ModelReferenceRequest:
+    # Bare model id or `provider/id`, optionally followed by `:<thinking>`.
+    text: str
+    # Only consider models from this provider.
+    provider: str | None = None
+    # A trailing `:<suffix>` is only considered when the full text matches no model, since ids such as
+    # OpenRouter's `qwen/qwen3-coder:exacto` contain colons.
+    # - `none`: the suffix stays part of the id
+    # - `strict`: a valid thinking level is parsed; any other suffix stays part of the id
+    # - `lenient`: like `strict`, but an invalid suffix is dropped with a warning
+    thinking_suffix: Literal["none", "strict", "lenient"]
+    # Match id and name substrings when no exact match exists.
+    fuzzy: bool
 
 
 @dataclass(slots=True)
-class ParsedModelResult:
-    model: Model | None
+class ModelReferenceTarget:
+    provider: str
+    # Non-empty; the first model is the one the provider prefix or constraint matched.
+    provider_models: list[Model]
+    # Text after the provider prefix as typed, including any `:<suffix>`.
+    model_text: str
+    # `model_text` without a valid thinking suffix (unless `thinking_suffix` is `none`).
+    model_id: str
+    thinking_level: str | None = None
+
+
+@dataclass(slots=True)
+class ModelReferenceResult:
+    status: Literal["resolved", "ambiguous", "not-found"]
+    # Set when resolved.
+    model: Model | None = None
+    # Set when ambiguous.
+    candidates: list[Model] = field(default_factory=list)
+    usable_count: int = 0
     thinking_level: str | None = None
     warning: str | None = None
+    # Set on not-found when a provider is explicit or named by a `provider/` prefix, for building a
+    # custom model id.
+    target: ModelReferenceTarget | None = None
 
 
-def _build_fallback_model(provider: str, model_id: str, available_models: list[Model]) -> Model | None:
-    provider_models = [model for model in available_models if model.provider == provider]
-    if not provider_models:
+def _split_thinking_suffix(text: str) -> tuple[str, str] | None:
+    colon_index = text.rfind(":")
+    suffix = text[colon_index + 1 :]
+    if colon_index == -1 or not is_valid_thinking_level(suffix):
         return None
+    return text[:colon_index], suffix
 
-    default_id = DEFAULT_MODEL_PER_PROVIDER.get(provider)
+
+def _split_provider_prefix(text: str, models: list[Model]) -> tuple[str, str] | None:
+    slash_index = text.find("/")
+    if slash_index == -1:
+        return None
+    prefix = text[:slash_index].strip().lower()
+    model_text = text[slash_index + 1 :].strip()
+    if not prefix or not model_text:
+        return None
+    provider = next((model.provider for model in models if model.provider.lower() == prefix), None)
+    return (provider, model_text) if provider else None
+
+
+def resolve_model_reference(
+    request: ModelReferenceRequest,
+    models: list[Model],
+    usable: Callable[[str], bool],
+) -> ModelReferenceResult:
+    """`usable` only breaks ties between providers, so a unique match resolves even without
+    credentials (`--api-key` first-time setup)."""
+    text = request.text.strip()
+    if not text:
+        return ModelReferenceResult(status="not-found")
+    constraint = request.provider.lower() if request.provider else None
+    pool = [model for model in models if model.provider.lower() == constraint] if constraint else list(models)
+    result = _resolve_text(text, request, pool, usable)
+    if result.status != "not-found":
+        return result
+
+    split = _split_provider_prefix(text, pool)
+    if constraint:
+        anchor = pool[0] if pool else None
+    else:
+        anchor = next((model for model in pool if split and model.provider == split[0]), None)
+    if anchor is None:
+        return result
+    model_text = split[1] if split else text
+    suffix = None if request.thinking_suffix == "none" else _split_thinking_suffix(model_text)
+    return ModelReferenceResult(
+        status="not-found",
+        target=ModelReferenceTarget(
+            provider=anchor.provider,
+            provider_models=[
+                anchor,
+                *(model for model in pool if model.provider == anchor.provider and model is not anchor),
+            ],
+            model_text=model_text,
+            model_id=suffix[0] if suffix else model_text,
+            thinking_level=suffix[1] if suffix else None,
+        ),
+    )
+
+
+def find_exact_model_reference_match(model_reference: str, available_models: list[Model]) -> Model | None:
+    """Exact `provider/id` or bare id lookup without thinking suffixes or fuzzy matching."""
+    result = resolve_model_reference(
+        ModelReferenceRequest(text=model_reference, thinking_suffix="none", fuzzy=False),
+        available_models,
+        lambda _provider: True,
+    )
+    return result.model if result.status == "resolved" else None
+
+
+def _resolve_text(
+    text: str,
+    request: ModelReferenceRequest,
+    pool: list[Model],
+    usable: Callable[[str], bool],
+) -> ModelReferenceResult:
+    reference = _select_reference(text, pool, request.fuzzy, usable)
+    if reference is not None:
+        return reference
+
+    if request.fuzzy:
+        fuzzy = _select_fuzzy(_fuzzy_matches(text, pool), usable)
+        if fuzzy is not None:
+            return fuzzy
+
+    if request.thinking_suffix == "none":
+        return ModelReferenceResult(status="not-found")
+    thinking = _split_thinking_suffix(text)
+    if thinking is not None:
+        base, thinking_level = thinking
+        inner = _resolve_text(base, request, pool, usable)
+        if inner.status == "not-found":
+            return inner
+        # Only use this thinking level if no warning from inner recursion
+        return replace(inner, thinking_level=None if inner.warning else thinking_level)
+    # Keep an invalid suffix as part of the id and fail, rather than resolve a different model
+    if request.thinking_suffix == "strict":
+        return ModelReferenceResult(status="not-found")
+    colon_index = text.rfind(":")
+    if colon_index == -1:
+        return ModelReferenceResult(status="not-found")
+
+    suffix = text[colon_index + 1 :]
+    inner = _resolve_text(text[:colon_index], request, pool, usable)
+    if inner.status == "not-found":
+        return inner
+    return replace(
+        inner,
+        thinking_level=None,
+        warning=f'Invalid thinking level "{suffix}" in pattern "{text}". Using default instead.',
+    )
+
+
+def _select_reference(
+    text: str,
+    pool: list[Model],
+    fuzzy: bool,
+    usable: Callable[[str], bool],
+) -> ModelReferenceResult | None:
+    """`provider/rest` is only a hint: the whole text may also be a model id on another provider,
+    such as gateway id `zai/glm-5` or commandcode id `xiaomi/mimo-v2.5-pro`. The named provider wins
+    when usable, since that is what the syntax usually means; otherwise a sole usable raw match wins,
+    since the named provider could not serve the request. An unusable named match is still preferred
+    over unusable raw matches, so `--api-key` can set up the named provider."""
+    lower_text = text.lower()
+    raw = [model for model in pool if model.id.lower() == lower_text]
+    split = _split_provider_prefix(text, pool)
+    named: Model | None = None
+    if split:
+        provider, model_text = split
+        provider_models = [model for model in pool if model.provider == provider]
+        lower_model_text = model_text.lower()
+        # The provider's own literal id (OpenRouter's `openrouter/free`) beats its fuzzy matches
+        named = next((model for model in provider_models if model.id.lower() == lower_model_text), None)
+        if named is None:
+            named = next((model for model in raw if model.provider == provider), None)
+        if named is None and fuzzy:
+            named = _best_fuzzy_match(_fuzzy_matches(model_text, provider_models))
+
+    others = [model for model in raw if model is not named]
+    candidates = [named, *others] if named is not None else others
+    if not candidates:
+        return None
+    if len({model.provider for model in candidates}) == 1:
+        return ModelReferenceResult(status="resolved", model=candidates[0])
+    if named is not None and usable(named.provider):
+        return ModelReferenceResult(status="resolved", model=named)
+    usable_others = [model for model in others if usable(model.provider)]
+    if len(usable_others) == 1:
+        return ModelReferenceResult(status="resolved", model=usable_others[0])
+    if not usable_others and named is not None:
+        return ModelReferenceResult(status="resolved", model=named)
+    return ModelReferenceResult(status="ambiguous", candidates=candidates, usable_count=len(usable_others))
+
+
+def _fuzzy_matches(text: str, models: list[Model]) -> list[Model]:
+    lower_text = text.lower()
+    return [
+        model
+        for model in models
+        if lower_text in model.id.lower() or (model.name is not None and lower_text in model.name.lower())
+    ]
+
+
+def _select_fuzzy(matches: list[Model], usable: Callable[[str], bool]) -> ModelReferenceResult | None:
+    if not matches:
+        return None
+    multiple_providers = len({model.provider for model in matches}) > 1
+    usable_matches = [model for model in matches if usable(model.provider)] if multiple_providers else []
+    pool = usable_matches or matches
+    best = _best_fuzzy_match(pool)
+    if best is None:
+        return None
+    # The same id on several providers would otherwise be decided by catalog order
+    tied = [model for model in pool if model.id == best.id]
+    if len({model.provider for model in tied}) == 1:
+        return ModelReferenceResult(status="resolved", model=best)
+    return ModelReferenceResult(
+        status="ambiguous",
+        candidates=tied,
+        usable_count=len(tied) if usable_matches else 0,
+    )
+
+
+def _best_fuzzy_match(matches: list[Model]) -> Model | None:
+    """Prefer aliases (`claude-sonnet-4-5`) over dated versions (`claude-sonnet-4-5-20250929`), then
+    the latest."""
+    aliases = [model for model in matches if _is_alias(model.id)]
+    return max(aliases or matches, key=lambda model: model.id, default=None)
+
+
+def _build_fallback_model(provider_models: list[Model], model_id: str) -> Model:
+    default_id = DEFAULT_MODEL_PER_PROVIDER.get(provider_models[0].provider)
     base_model = (
         next((model for model in provider_models if model.id == default_id), provider_models[0])
         if default_id
@@ -193,58 +356,10 @@ def _build_fallback_model(provider: str, model_id: str, available_models: list[M
     return replace(base_model, id=model_id, name=model_id)
 
 
-def parse_model_pattern(
-    pattern: str,
-    available_models: list[Model],
-    *,
-    allow_invalid_thinking_level_fallback: bool = True,
-) -> ParsedModelResult:
-    """Parse a pattern to extract model and thinking level, tolerating colons
-    inside model IDs (e.g. OpenRouter's :exacto suffix)."""
-    exact_match = _try_match_model(pattern, available_models)
-    if exact_match is not None:
-        return ParsedModelResult(model=exact_match)
-
-    last_colon_index = pattern.rfind(":")
-    if last_colon_index == -1:
-        return ParsedModelResult(model=None)
-
-    prefix = pattern[:last_colon_index]
-    suffix = pattern[last_colon_index + 1 :]
-
-    if is_valid_thinking_level(suffix):
-        result = parse_model_pattern(
-            prefix, available_models, allow_invalid_thinking_level_fallback=allow_invalid_thinking_level_fallback
-        )
-        if result.model is not None:
-            # Only use this thinking level if no warning from inner recursion
-            return ParsedModelResult(
-                model=result.model,
-                thinking_level=None if result.warning else suffix,
-                warning=result.warning,
-            )
-        return result
-
-    if not allow_invalid_thinking_level_fallback:
-        # In strict mode (CLI --model parsing), treat it as part of the model id and fail.
-        # This avoids accidentally resolving to a different model.
-        return ParsedModelResult(model=None)
-
-    result = parse_model_pattern(
-        prefix, available_models, allow_invalid_thinking_level_fallback=allow_invalid_thinking_level_fallback
-    )
-    if result.model is not None:
-        return ParsedModelResult(
-            model=result.model,
-            warning=f'Invalid thinking level "{suffix}" in pattern "{pattern}". Using default instead.',
-        )
-    return result
-
-
 @dataclass(slots=True)
 class ModelScopeDiagnostic:
     type: str
-    code: str  # "no-match" | "invalid-thinking-level"
+    code: str  # "no-match" | "invalid-thinking-level" | "ambiguous"
     message: str
     pattern: str
 
@@ -259,70 +374,89 @@ def resolve_model_scope_from_models(
     patterns: list[str],
     models: list[Model],
 ) -> ResolveModelScopeResult:
-    available_models = list(models)
+    """Resolve scope patterns (`--models`, `enabledModels`) to models with optional thinking levels.
+
+    Every model in `models` is usable, so credentials cannot choose between providers offering the
+    same id. All of them are added, with a warning so the user can pick one with `provider/id`.
+    """
     scoped_models: list[ScopedModel] = []
     diagnostics: list[ModelScopeDiagnostic] = []
+
+    def add(model: Model, thinking_level: str | None) -> None:
+        if not any(models_are_equal(scoped.model, model) for scoped in scoped_models):
+            scoped_models.append(ScopedModel(model=model, thinking_level=thinking_level))
+
+    def no_match(pattern: str) -> None:
+        diagnostics.append(
+            ModelScopeDiagnostic(
+                type="warning", code="no-match", message=f'No models match pattern "{pattern}"', pattern=pattern
+            )
+        )
+
+    def ambiguous(pattern: str, candidates: list[Model]) -> None:
+        providers = sorted({model.provider for model in candidates})
+        diagnostics.append(
+            ModelScopeDiagnostic(
+                type="warning",
+                code="ambiguous",
+                message=(
+                    f'Pattern "{pattern}" matches several providers: {", ".join(providers)}. '
+                    "Use provider/id to choose one."
+                ),
+                pattern=pattern,
+            )
+        )
 
     for pattern in patterns:
         # Check if pattern contains glob characters
         if "*" in pattern or "?" in pattern or "[" in pattern:
             # Extract optional thinking level suffix (e.g., "provider/*:high")
-            colon_index = pattern.rfind(":")
-            glob_pattern = pattern
-            thinking_level: str | None = None
+            thinking = _split_thinking_suffix(pattern)
+            glob_pattern, thinking_level = thinking if thinking else (pattern, None)
 
-            if colon_index != -1:
-                suffix = pattern[colon_index + 1 :]
-                if is_valid_thinking_level(suffix):
-                    thinking_level = suffix
-                    glob_pattern = pattern[:colon_index]
-
-            exact_match = find_exact_model_reference_match(glob_pattern, available_models)
-            if exact_match is not None:
-                if not any(models_are_equal(scoped.model, exact_match) for scoped in scoped_models):
-                    scoped_models.append(ScopedModel(model=exact_match, thinking_level=thinking_level))
-                continue
-
-            # Match against "provider/modelId" format OR just model ID
-            # This allows "*sonnet*" to match without requiring "anthropic/*sonnet*"
-            matching_models = [
-                model
-                for model in available_models
-                if _minimatch(f"{model.provider}/{model.id}", glob_pattern) or _minimatch(model.id, glob_pattern)
-            ]
-
-            if not matching_models:
-                diagnostics.append(
-                    ModelScopeDiagnostic(
-                        type="warning", code="no-match", message=f'No models match pattern "{pattern}"', pattern=pattern
-                    )
-                )
-                continue
-
-            for model in matching_models:
-                if not any(models_are_equal(scoped.model, model) for scoped in scoped_models):
-                    scoped_models.append(ScopedModel(model=model, thinking_level=thinking_level))
+            # Ids such as `bracketed-model[1m]` are not globs
+            exact = resolve_model_reference(
+                ModelReferenceRequest(text=glob_pattern, thinking_suffix="none", fuzzy=False),
+                models,
+                lambda _provider: True,
+            )
+            if exact.status == "resolved":
+                matches = [exact.model]
+            elif exact.status == "ambiguous":
+                matches = exact.candidates
+                ambiguous(pattern, matches)
+            else:
+                # Match against "provider/modelId" format OR just model ID
+                # This allows "*sonnet*" to match without requiring "anthropic/*sonnet*"
+                matches = [
+                    model
+                    for model in models
+                    if _minimatch(f"{model.provider}/{model.id}", glob_pattern) or _minimatch(model.id, glob_pattern)
+                ]
+            if not matches:
+                no_match(pattern)
+            for model in matches:
+                add(model, thinking_level)
             continue
 
-        parsed = parse_model_pattern(pattern, available_models)
-
-        if parsed.warning:
-            diagnostics.append(
-                ModelScopeDiagnostic(
-                    type="warning", code="invalid-thinking-level", message=parsed.warning, pattern=pattern
-                )
-            )
-
-        if parsed.model is None:
-            diagnostics.append(
-                ModelScopeDiagnostic(
-                    type="warning", code="no-match", message=f'No models match pattern "{pattern}"', pattern=pattern
-                )
-            )
+        result = resolve_model_reference(
+            ModelReferenceRequest(text=pattern, thinking_suffix="lenient", fuzzy=True),
+            models,
+            lambda _provider: True,
+        )
+        if result.status == "not-found":
+            no_match(pattern)
             continue
-
-        if not any(models_are_equal(scoped.model, parsed.model) for scoped in scoped_models):
-            scoped_models.append(ScopedModel(model=parsed.model, thinking_level=parsed.thinking_level))
+        if result.warning:
+            diagnostics.append(
+                ModelScopeDiagnostic(
+                    type="warning", code="invalid-thinking-level", message=result.warning, pattern=pattern
+                )
+            )
+        if result.status == "ambiguous":
+            ambiguous(pattern, result.candidates)
+        for model in [result.model] if result.status == "resolved" else result.candidates:
+            add(model, result.thinking_level)
 
     return ResolveModelScopeResult(scoped_models=scoped_models, diagnostics=diagnostics)
 
@@ -362,6 +496,8 @@ def resolve_cli_model(
     cli_provider: str | None = None,
     cli_model: str | None = None,
     cli_thinking: str | None = None,
+    # `--api-key` was supplied for the selected provider.
+    inline_api_key: bool = False,
     model_runtime,
 ) -> ResolveCliModelResult:
     """Resolve a single model from CLI flags (--provider/--model, fuzzy rules)."""
@@ -370,150 +506,71 @@ def resolve_cli_model(
 
     # Important: use *all* models here, not just models with pre-configured auth.
     # This allows "--api-key" to be used for first-time setup.
-    available_models = list(model_runtime.get_models())
-    if not available_models:
+    models = list(model_runtime.get_models())
+    if not models:
         return ResolveCliModelResult(
             model=None,
             error="No models available. Check your installation or add models to models.json.",
         )
 
-    # Build canonical provider lookup (case-insensitive)
-    provider_map: dict[str, str] = {}
-    for model in available_models:
-        provider_map[model.provider.lower()] = model.provider
-
-    provider = provider_map.get(cli_provider.lower()) if cli_provider else None
+    provider = (
+        next((model.provider for model in models if model.provider.lower() == cli_provider.lower()), None)
+        if cli_provider
+        else None
+    )
     if cli_provider and not provider:
         return ResolveCliModelResult(
             model=None,
             error=f'Unknown provider "{cli_provider}". Use --list-models to see available providers/models.',
         )
 
-    # If no explicit --provider, try to interpret "provider/model" format first.
-    pattern = cli_model
-    inferred_provider = False
-
-    if not provider:
-        slash_index = cli_model.find("/")
-        if slash_index != -1:
-            maybe_provider = cli_model[:slash_index]
-            canonical = provider_map.get(maybe_provider.lower())
-            if canonical:
-                provider = canonical
-                pattern = cli_model[slash_index + 1 :]
-                inferred_provider = True
-
-    # If no provider was inferred from the slash, try exact matches without provider inference.
-    # This handles models whose IDs naturally contain slashes (e.g. OpenRouter-style IDs).
-    # Bare exact IDs can exist in multiple providers, so do not choose by catalog order.
-    # Prefer the sole authenticated provider when there is one; otherwise require an
-    # explicit provider to avoid silently selecting an unusable provider.
-    if not provider:
-        lower = cli_model.lower()
-        exact_matches = [
-            model
-            for model in available_models
-            if model.id.lower() == lower or f"{model.provider}/{model.id}".lower() == lower
-        ]
-        if len(exact_matches) == 1:
-            return ResolveCliModelResult(model=exact_matches[0])
-        if len(exact_matches) > 1:
-            authenticated_exact_matches = [
-                model for model in exact_matches if model_runtime.has_configured_auth(model.provider)
-            ]
-            if len(authenticated_exact_matches) == 1:
-                return ResolveCliModelResult(model=authenticated_exact_matches[0])
-
-            matches = ", ".join(sorted(f"{model.provider}/{model.id}" for model in exact_matches))
-            auth_hint = (
-                "No matching provider is authenticated."
-                if not authenticated_exact_matches
-                else "More than one matching provider is authenticated."
-            )
-            return ResolveCliModelResult(
-                model=None,
-                error=(
-                    f'Model "{cli_model}" is ambiguous across providers: {matches}. '
-                    f"{auth_hint} Use --provider or provider/model."
-                ),
-            )
-
-    if cli_provider and provider:
-        # If both were provided, tolerate --model <provider>/<pattern> by stripping the provider prefix
-        prefix = f"{provider}/"
-        if cli_model.lower().startswith(prefix.lower()):
-            pattern = cli_model[len(prefix) :]
-
-    candidates = [model for model in available_models if model.provider == provider] if provider else available_models
-    parsed = parse_model_pattern(pattern, candidates, allow_invalid_thinking_level_fallback=False)
-
-    if parsed.model is not None:
-        # If provider inference matched an unauthenticated provider/model pair, prefer
-        # one exact raw model-id match that is authenticated.
-        if inferred_provider:
-            raw_exact_matches = [
-                model
-                for model in available_models
-                if model.id.lower() == cli_model.lower() and not models_are_equal(model, parsed.model)
-            ]
-            if raw_exact_matches and not model_runtime.has_configured_auth(parsed.model.provider):
-                authenticated_raw_matches = [
-                    model for model in raw_exact_matches if model_runtime.has_configured_auth(model.provider)
-                ]
-                if len(authenticated_raw_matches) == 1:
-                    return ResolveCliModelResult(model=authenticated_raw_matches[0])
-        return ResolveCliModelResult(model=parsed.model, thinking_level=parsed.thinking_level, warning=parsed.warning)
-
-    # If we inferred a provider from the slash but found no match within that provider,
-    # fall back to matching the full input as a raw model id across all models.
-    if inferred_provider:
-        lower = cli_model.lower()
-        exact = next(
-            (
-                model
-                for model in available_models
-                if model.id.lower() == lower or f"{model.provider}/{model.id}".lower() == lower
+    result = resolve_model_reference(
+        ModelReferenceRequest(text=cli_model, provider=provider, thinking_suffix="strict", fuzzy=True),
+        models,
+        # An inline key goes to whichever provider is selected, so stored credentials must not choose it
+        (lambda _provider: False) if inline_api_key else model_runtime.has_configured_auth,
+    )
+    if result.status == "resolved":
+        return ResolveCliModelResult(model=result.model, thinking_level=result.thinking_level, warning=result.warning)
+    if result.status == "ambiguous":
+        matches = ", ".join(sorted(f"{model.provider}/{model.id}" for model in result.candidates))
+        if inline_api_key:
+            auth_hint = "--api-key does not choose a provider."
+        elif result.usable_count == 0:
+            auth_hint = "No matching provider is authenticated."
+        else:
+            auth_hint = "More than one matching provider is authenticated."
+        return ResolveCliModelResult(
+            model=None,
+            error=(
+                f'Model "{cli_model}" is ambiguous across providers: {matches}. '
+                f"{auth_hint} Use --provider or provider/model."
             ),
-            None,
         )
-        if exact is not None:
-            return ResolveCliModelResult(model=exact)
-        fallback = parse_model_pattern(cli_model, available_models, allow_invalid_thinking_level_fallback=False)
-        if fallback.model is not None:
-            return ResolveCliModelResult(
-                model=fallback.model, thinking_level=fallback.thinking_level, warning=fallback.warning
-            )
 
-    if provider:
-        # Parse thinking level suffix from the pattern before building the fallback model,
-        # but only when --thinking is not explicitly provided.
-        fallback_pattern = pattern
-        fallback_thinking: str | None = None
-        if not cli_thinking:
-            last_colon = pattern.rfind(":")
-            if last_colon != -1:
-                suffix = pattern[last_colon + 1 :]
-                if is_valid_thinking_level(suffix):
-                    fallback_pattern = pattern[:last_colon]
-                    fallback_thinking = suffix
+    target = result.target
+    if target is None:
+        return ResolveCliModelResult(
+            model=None,
+            error=f'Model "{cli_model}" not found. Use --list-models to see available models.',
+        )
 
-        fallback_model = _build_fallback_model(provider, fallback_pattern, available_models)
-        if fallback_model is not None:
-            requested_thinking = cli_thinking if cli_thinking else fallback_thinking
-            model = (
-                replace(fallback_model, reasoning=True)
-                if requested_thinking and requested_thinking != "off"
-                else fallback_model
-            )
-            not_found = f'Model "{fallback_pattern}" not found for provider "{provider}". Using custom model id.'
-            fallback_warning = f"{parsed.warning} {not_found}" if parsed.warning else not_found
-            return ResolveCliModelResult(model=model, thinking_level=fallback_thinking, warning=fallback_warning)
-
-    display = f"{provider}/{pattern}" if provider else cli_model
+    # Use the thinking level suffix only when --thinking is not explicitly provided; otherwise it
+    # stays part of the custom model id.
+    # e.g. "zai-org/GLM-5.1-FP8:high" → model_id="zai-org/GLM-5.1-FP8", fallback_thinking="high"
+    model_id = target.model_text if cli_thinking else target.model_id
+    fallback_thinking = None if cli_thinking else target.thinking_level
+    fallback_model = _build_fallback_model(target.provider_models, model_id)
+    requested_thinking = cli_thinking or fallback_thinking
+    model = (
+        replace(fallback_model, reasoning=True)
+        if requested_thinking and requested_thinking != "off"
+        else fallback_model
+    )
     return ResolveCliModelResult(
-        model=None,
-        warning=parsed.warning,
-        error=f'Model "{display}" not found. Use --list-models to see available models.',
+        model=model,
+        thinking_level=fallback_thinking,
+        warning=f'Model "{model_id}" not found for provider "{target.provider}". Using custom model id.',
     )
 
 
@@ -526,8 +583,6 @@ class InitialModelResult:
 
 async def find_initial_model(
     *,
-    cli_provider: str | None = None,
-    cli_model: str | None = None,
     scoped_models: list[ScopedModel],
     is_continuing: bool,
     default_provider: str | None = None,
@@ -536,25 +591,16 @@ async def find_initial_model(
     model_thinking_levels: dict[str, str] | None = None,
     model_runtime,
 ) -> InitialModelResult:
-    """Find the initial model: CLI args, scoped models, saved default, then
-    the first available model with valid auth."""
-    # 1. CLI args take priority
-    if cli_provider and cli_model:
-        resolved = resolve_cli_model(cli_provider=cli_provider, cli_model=cli_model, model_runtime=model_runtime)
-        if resolved.error:
-            write_stderr(f"\x1b[31m{resolved.error}\x1b[0m\n")
-            sys.exit(1)
-        if resolved.model is not None:
-            return InitialModelResult(model=resolved.model, thinking_level=DEFAULT_THINKING_LEVEL)
-
-    # 2. Use first model from scoped models (skip if continuing/resuming)
+    """Find the initial model: scoped models, saved default, then the first
+    available model with valid auth."""
+    # 1. Use first model from scoped models (skip if continuing/resuming)
     if scoped_models and not is_continuing:
         scoped_model = scoped_models[0]
         per_model = (model_thinking_levels or {}).get(f"{scoped_model.model.provider}/{scoped_model.model.id}")
         thinking = scoped_model.thinking_level or per_model or default_thinking_level or DEFAULT_THINKING_LEVEL
         return InitialModelResult(model=scoped_model.model, thinking_level=thinking)
 
-    # 3. Try saved default from settings if auth is configured.
+    # 2. Try saved default from settings if auth is configured.
     if default_provider and default_model_id:
         found = model_runtime.get_model(default_provider, default_model_id)
         if found is not None and model_runtime.has_configured_auth(found.provider):
@@ -562,7 +608,7 @@ async def find_initial_model(
             thinking = per_model or default_thinking_level or DEFAULT_THINKING_LEVEL
             return InitialModelResult(model=found, thinking_level=thinking)
 
-    # 4. Try first available model with valid API key
+    # 3. Try first available model with valid API key
     available_models = list(model_runtime.get_available_snapshot())
 
     if available_models:
@@ -575,7 +621,7 @@ async def find_initial_model(
 
         return InitialModelResult(model=available_models[0], thinking_level=DEFAULT_THINKING_LEVEL)
 
-    # 5. No model found
+    # 4. No model found
     return InitialModelResult(model=None, thinking_level=DEFAULT_THINKING_LEVEL)
 
 
