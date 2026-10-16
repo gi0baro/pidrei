@@ -73,7 +73,7 @@ def test_same_model_keeps_thinking_and_signatures():
     assert out.content[1].text == "hi"
 
 
-def test_cross_model_thinking_becomes_text_and_redacted_is_dropped():
+def test_cross_model_thinking_is_dropped_including_redacted():
     messages = [
         assistant(
             [
@@ -86,10 +86,7 @@ def test_cross_model_thinking_becomes_text_and_redacted_is_dropped():
         )
     ]
     (out,) = transform_messages(messages, MODEL)
-    assert [(block.type, getattr(block, "text", None)) for block in out.content] == [
-        ("text", "reasoning here"),
-        ("text", "answer"),
-    ]
+    assert list(out.content) == [TextContent(text="answer")]
 
 
 def test_cross_model_tool_calls_lose_thought_signature_and_normalize_ids():

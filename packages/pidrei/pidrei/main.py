@@ -484,6 +484,7 @@ def _build_session_options(
             cli_provider=parsed.provider,
             cli_model=parsed.model,
             cli_thinking=parsed.thinking,
+            inline_api_key=bool(parsed.api_key),
             model_runtime=model_runtime,
         )
         if resolved.warning:

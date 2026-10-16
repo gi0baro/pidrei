@@ -136,7 +136,7 @@ def test_does_not_treat_http_429_style_errors_as_overflow():
 
 def test_detects_xiaomi_style_overflow_length_stop_with_zero_output_and_filled_context():
     message = create_length_stop_message(
-        input_tokens=58, cache_read=1048512, output=0, provider="xiaomi", model="mimo-v2.5-pro"
+        input_tokens=58, cache_read=1048512, output=0, provider="xiaomi", model="mimo-v2.6-pro"
     )
     assert is_context_overflow(message, 1048576) is True
 

@@ -167,6 +167,15 @@ async def test_disables_gemini_2_5_thinking_when_reasoning_is_omitted(adapter, m
     assert config["thinkingConfig"] == {"thinkingBudget": 0}
 
 
+# Regression test for https://github.com/earendil-works/pi/issues/10890
+@pytest.mark.tonio
+@pytest.mark.parametrize(("adapter", "make_model"), GOOGLE_ADAPTERS)
+async def test_uses_thinking_levels_for_gemini_4_models(adapter, make_model):
+    config = await _capture_config(adapter, make_model("gemini-4-argon", {}), "medium")
+
+    assert config["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "MEDIUM"}
+
+
 @pytest.mark.tonio
 @pytest.mark.parametrize("reasoning", ["xhigh", "max"])
 async def test_maps_google_generative_ai_extended_levels_to_a_supported_level(reasoning):

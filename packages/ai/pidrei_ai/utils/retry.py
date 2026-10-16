@@ -60,7 +60,8 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         "504",
         "520",
         "524",
-        "service.?unavailable",
+        # Also matches "The service is temporarily unavailable" (#10965).
+        "service.?(?:is.?)?(?:temporarily.?)?unavailable",
         "server.?error",
         "internal.?error",
         # Wrapper/provider text for transient upstream failures, including OpenRouter
@@ -68,6 +69,9 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         # "The upstream provider returned an error" (#10842).
         "provider.?returned.?(?:an.?)?error",
         "exceeded request buffer limit while retrying upstream",
+        # Gateway failure relaying the upstream response stream, sent as an OpenAI
+        # Responses `response.failed` event without an error code (#10920).
+        "unable to forward upstream",
         # Network, proxy, and transport failures.
         "network.?error",
         "connection.?error",

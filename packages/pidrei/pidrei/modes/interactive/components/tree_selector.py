@@ -23,6 +23,7 @@ from pidrei_tui import (
 from pidrei_utils import clock
 from pidrei_utils.timers import Timeout
 
+from ....core.tools.render_utils import format_read_line_range
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import format_key_text, key_hint
@@ -856,14 +857,7 @@ class TreeList:
         args = args or {}
         if name == "read":
             path = shorten(str(args.get("path") or args.get("file_path") or ""))
-            offset = args.get("offset")
-            limit = args.get("limit")
-            display = path
-            if offset is not None or limit is not None:
-                start = offset if offset is not None else 1
-                end = start + limit - 1 if limit is not None else ""
-                display += f":{start}{f'-{end}' if end else ''}"
-            return f"[read: {display}]"
+            return f"[read: {path}{format_read_line_range(args.get('offset'), args.get('limit'))}]"
         if name == "write":
             path = shorten(str(args.get("path") or args.get("file_path") or ""))
             return f"[write: {path}]"

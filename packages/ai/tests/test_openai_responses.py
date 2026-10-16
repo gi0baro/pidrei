@@ -12,9 +12,12 @@ import time
 
 import pytest
 
+from pidrei_ai.api.constrained_sampling import create_grammar_tool_input_properties
 from pidrei_ai.api.openai_responses import (
     OpenAIResponsesOptions,
     build_params,
+    get_compat,
+    get_configuration_update_effort,
     stream as stream_responses,
 )
 from pidrei_ai.api.openai_responses_shared import (
@@ -29,7 +32,6 @@ from pidrei_ai.types import (
     ModelCost,
     OpenAIResponsesCompat,
     TextContent,
-    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     Usage,
@@ -37,6 +39,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
+from pidrei_ai.utils.transcript import get_declared_tools
 
 
 ALLOWED = {"openai", "openai-codex", "opencode"}
@@ -71,6 +74,21 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def build_request_params(model: Model, context, options: OpenAIResponsesOptions) -> dict:
+    """`build_params` with the inputs `stream()` derives for it (pi's buildParams takes them explicitly)."""
+    compat = get_compat(model)
+    return build_params(
+        model,
+        context,
+        options,
+        compat,
+        create_grammar_tool_input_properties(
+            get_declared_tools(context.messages), compat.supports_openai_grammar_tools
+        ),
+        get_configuration_update_effort(model, options, compat),
+    )
+
+
 # freeze-at-seam translation (spec/upstream-sync.md): the streamed output message is a
 # producer-private builder; pi passes its mutable message here.
 def make_output(model: Model) -> AssistantMessageBuilder:
@@ -91,7 +109,7 @@ def make_output(model: Model) -> AssistantMessageBuilder:
 def test_generates_unique_fallback_message_ids_for_multiple_text_blocks():
     model = make_model(provider="openai-codex", id="gpt-5.5")
     assistant = AssistantMessage(
-        content=[ThinkingContent(thinking="private reasoning"), TextContent(text="visible answer")],
+        content=[TextContent(text="first answer"), TextContent(text="visible answer")],
         api="anthropic-messages",
         provider="anthropic",
         model="claude-opus-4-8",
@@ -269,6 +287,23 @@ async def test_tool_call_blocks_are_clean_at_output_item_done():
     tool_call_end = next(event for event in stream.pushed if event.type == "toolcall_end")
     assert tool_call_end.tool_call is tool_call_end.partial.content[0]
     assert tool_call_end.tool_call == persisted.freeze()
+
+
+@pytest.mark.tonio
+async def test_marks_malformed_final_arguments_instead_of_keeping_the_parsed_prefix():
+    # pi #10897
+    model = make_model()
+    output = make_output(model)
+    arguments_json = '{"path":"README.md","content":"updated","mode":.5}'
+
+    await process_responses_stream(
+        events_from(function_call_events(arguments_json)), output, AssistantMessageEventStream(), model
+    )
+
+    tool_call = output.content[0]
+    assert tool_call.type == "toolCall"
+    assert tool_call.arguments == {}
+    assert tool_call.arguments_error.endswith(f"Received arguments:\n{arguments_json}")
 
 
 @pytest.mark.tonio
@@ -683,7 +718,7 @@ async def test_forwards_parsed_provider_stream_events_in_order():
 
 def test_build_params_defaults_and_reasoning():
     model = make_model()
-    params = build_params(
+    params = build_request_params(
         model,
         Context(messages=[UserMessage(content="q", timestamp=1)]),
         OpenAIResponsesOptions(max_tokens=5, session_id="sess", reasoning_effort="high"),
@@ -697,19 +732,19 @@ def test_build_params_defaults_and_reasoning():
 
 
 def test_build_params_reasoning_off_variants():
-    default_off = build_params(
+    default_off = build_request_params(
         make_model(), Context(messages=[UserMessage(content="q", timestamp=1)]), OpenAIResponsesOptions()
     )
     assert default_off["reasoning"] == {"effort": "none"}
 
-    mapped_off = build_params(
+    mapped_off = build_request_params(
         make_model(thinking_level_map={"off": "minimal"}),
         Context(messages=[UserMessage(content="q", timestamp=1)]),
         OpenAIResponsesOptions(),
     )
     assert mapped_off["reasoning"] == {"effort": "minimal"}
 
-    null_off = build_params(
+    null_off = build_request_params(
         make_model(thinking_level_map={"off": None}),
         Context(messages=[UserMessage(content="q", timestamp=1)]),
         OpenAIResponsesOptions(),
@@ -719,7 +754,7 @@ def test_build_params_reasoning_off_variants():
 
 def test_build_params_explicit_prompt_cache_mode():
     model = make_model(compat=OpenAIResponsesCompat(supports_explicit_prompt_cache_mode=True))
-    params = build_params(
+    params = build_request_params(
         model,
         Context(messages=[UserMessage(content="q", timestamp=1)]),
         OpenAIResponsesOptions(cache_retention="none"),
@@ -729,14 +764,14 @@ def test_build_params_explicit_prompt_cache_mode():
 
 
 def test_build_params_long_retention_and_xai_include():
-    params = build_params(
+    params = build_request_params(
         make_model(),
         Context(messages=[UserMessage(content="q", timestamp=1)]),
         OpenAIResponsesOptions(session_id="s", cache_retention="long"),
     )
     assert params["prompt_cache_retention"] == "24h"
 
-    xai = build_params(
+    xai = build_request_params(
         make_model(provider="xai", base_url="https://api.x.ai/v1"),
         Context(messages=[UserMessage(content="q", timestamp=1)]),
         OpenAIResponsesOptions(),

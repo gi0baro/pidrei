@@ -10,7 +10,7 @@ from typing import Any
 from partial_json_parser import loads as _partial_parse
 
 
-_VALID_JSON_ESCAPES = frozenset('"\\/bfnrtu')
+_VALID_JSON_ESCAPES = frozenset('"\\/bfnrt')
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _CONTROL_ESCAPES = {"\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
@@ -95,6 +95,27 @@ def parse_json_with_repair(json_text: str) -> Any:
         if repaired != json_text:
             return json.loads(repaired)
         raise
+
+
+def parse_tool_call_arguments(json_text: str | None) -> tuple[dict[str, Any], str | None]:
+    """Parse the model's complete arguments text of a finished tool call.
+
+    Unlike `parse_streaming_json`, this never keeps a partially parsed prefix:
+    once the call is finished, text that is not a valid JSON object means the
+    model sent malformed arguments. Returns `(arguments, arguments_error)`; on
+    failure the arguments are `{}` and the error describes the problem,
+    including the text the model sent, so tool validation can report it back
+    to the model.
+    """
+    if not json_text or not json_text.strip():
+        return {}, None
+    try:
+        parsed = parse_json_with_repair(json_text)
+    except (ValueError, RecursionError) as error:
+        return {}, f"{error}\n\nReceived arguments:\n{json_text}"
+    if not isinstance(parsed, dict):
+        return {}, f"Tool arguments must be a JSON object\n\nReceived arguments:\n{json_text}"
+    return parsed, None
 
 
 def parse_streaming_json(partial_json: str | None) -> Any:

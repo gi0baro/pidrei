@@ -49,7 +49,7 @@ from pidrei_ai.api.simple_options import (
     clamp_max_tokens_to_context,
     clamp_reasoning,
 )
-from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.api.transform_messages import split_error_tool_result_images, transform_messages
 from pidrei_ai.builders import (
     AssistantMessageBuilder,
     TextContentBuilder,
@@ -90,7 +90,7 @@ from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
-from pidrei_ai.utils.json_parse import parse_streaming_json
+from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text
@@ -751,7 +751,7 @@ def _handle_content_block_stop(
         _flush_redacted_content(blocks, redacted_chunks, index)
         out_stream.push(ThinkingEndEvent(content_index=index, content=block.thinking, partial=output))
     elif block.type == "toolCall":
-        block.arguments = parse_streaming_json(partial_json.pop(index, ""))
+        block.arguments, block.arguments_error = parse_tool_call_arguments(partial_json.pop(index, ""))
         out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 
 
@@ -1004,32 +1004,32 @@ def convert_messages(
         elif m.role == "toolResult":
             # Bedrock requires all tool results to be in one user message, so
             # consecutive toolResult messages are collected together.
-            tool_results: list[dict[str, Any]] = [
-                {
-                    "toolResult": {
-                        "toolUseId": m.tool_call_id,
-                        "content": _convert_tool_result_content(m.content),
-                        "status": TOOL_RESULT_STATUS_ERROR if m.is_error else TOOL_RESULT_STATUS_SUCCESS,
-                    }
-                }
-            ]
-
-            j = i + 1
+            tool_results: list[dict[str, Any]] = []
+            # Claude rejects error tool results that contain anything but text, so for Claude their
+            # images follow all tool results of the turn (#10794). Other models keep them in place.
+            error_images: list[dict[str, Any]] = []
+            j = i
             while j < len(transformed_messages) and transformed_messages[j].role == "toolResult":
-                next_msg = transformed_messages[j]
+                tool_msg = transformed_messages[j]
+                split = split_error_tool_result_images(tool_msg) if _is_anthropic_claude_model(model) else None
                 tool_results.append(
                     {
                         "toolResult": {
-                            "toolUseId": next_msg.tool_call_id,
-                            "content": _convert_tool_result_content(next_msg.content),
-                            "status": TOOL_RESULT_STATUS_ERROR if next_msg.is_error else TOOL_RESULT_STATUS_SUCCESS,
+                            "toolUseId": tool_msg.tool_call_id,
+                            "content": _convert_tool_result_content(split.content if split else tool_msg.content),
+                            "status": TOOL_RESULT_STATUS_ERROR if tool_msg.is_error else TOOL_RESULT_STATUS_SUCCESS,
                         }
                     }
                 )
+                if split:
+                    error_images.append({"text": split.caption})
+                    error_images.extend(
+                        {"image": create_image_block(image.mime_type, image.data)} for image in split.images
+                    )
                 j += 1
 
             i = j - 1
-            result.append({"role": CONVERSATION_ROLE_USER, "content": tool_results})
+            result.append({"role": CONVERSATION_ROLE_USER, "content": [*tool_results, *error_images]})
 
         i += 1
 

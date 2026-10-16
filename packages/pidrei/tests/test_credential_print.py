@@ -35,6 +35,23 @@ async def test_prints_a_resolved_api_key():
 
 
 @pytest.mark.tonio
+async def test_resolves_model_without_provider_only_among_catalog_models_of_configured_providers():
+    runtime = await create_runtime(
+        AuthStorage.in_memory(
+            {
+                "openai": ApiKeyCredential(key="openai-test-key"),
+                "anthropic": ApiKeyCredential(key="anthropic-test-key"),
+            }
+        )
+    )
+
+    # anthropic has no gpt-5.5; an uncatalogued id on a configured provider must not count as a match.
+    assert await resolve_credential_for_print(parse_args(["--model", "gpt-5.5"]), runtime, "api_key") == (
+        "openai-test-key"
+    )
+
+
+@pytest.mark.tonio
 async def test_prints_bearer_tokens_resolved_from_an_authorization_header():
     runtime = await create_runtime(
         AuthStorage.in_memory(

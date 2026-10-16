@@ -18,7 +18,7 @@ from typing import Any, Literal, Protocol
 from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
-from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.api.transform_messages import split_error_tool_result_images, transform_messages
 from pidrei_ai.auth.anthropic_federation import (
     OAUTH_API_BETA_HEADER,
     AnthropicFederationConfig,
@@ -47,6 +47,7 @@ from pidrei_ai.types import (
     DiagnosticErrorInfo,
     DoneEvent,
     ErrorEvent,
+    ImageContent,
     Message,
     Model,
     ModelCost,
@@ -74,7 +75,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
-from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json
+from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
@@ -253,6 +254,10 @@ def _supports_mid_convo_effort(model: Model) -> bool:
     return compat is not None and compat.supports_mid_convo_effort is True
 
 
+def _convert_image_block(image: ImageContent) -> dict[str, Any]:
+    return {"type": "image", "source": {"type": "base64", "media_type": image.mime_type, "data": image.data}}
+
+
 def _convert_content_blocks(content: list) -> str | list[dict[str, Any]]:
     """Convert text/image blocks to Anthropic API format."""
     has_images = any(block.type == "image" for block in content)
@@ -264,12 +269,7 @@ def _convert_content_blocks(content: list) -> str | list[dict[str, Any]]:
         if block.type == "text":
             blocks.append({"type": "text", "text": sanitize_surrogates(block.text)})
         else:
-            blocks.append(
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": block.mime_type, "data": block.data},
-                }
-            )
+            blocks.append(_convert_image_block(block))
 
     if not any(block["type"] == "text" for block in blocks):
         blocks.insert(0, {"type": "text", "text": "(see attached image)"})
@@ -666,13 +666,11 @@ def stream(
     normalized_context = resolve_transcript(context, _get_compat(model).supports_mid_convo_system_messages)
     current_tools = get_current_tools(normalized_context.messages)
 
-    provider_thinking_level = (opts.effort or "high") if _supports_mid_convo_effort(model) else None
     output = AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
-        provider_thinking_level=provider_thinking_level,
         usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=clock.now_ms(),
@@ -719,9 +717,11 @@ def stream(
             while True:
                 if opts.cancel is not None:
                     opts.cancel.raise_if_cancelled()
-                params, has_preferred_strict_tools = _build_params(
+                params, has_preferred_strict_tools, provider_thinking_level = _build_params(
                     model, normalized_context, is_oauth, opts, disable_preferred_strict_tools
                 )
+                if provider_thinking_level:
+                    output.provider_thinking_level = provider_thinking_level
                 next_params = await maybe_call(opts.on_payload, params, model)
                 if next_params is not None:
                     params = next_params
@@ -883,7 +883,9 @@ def stream(
                                 ThinkingEndEvent(content_index=content_index, content=block.thinking, partial=output)
                             )
                         elif block.type == "toolCall":
-                            block.arguments = parse_streaming_json(partial_json.pop(content_index, ""))
+                            block.arguments, block.arguments_error = parse_tool_call_arguments(
+                                partial_json.pop(content_index, "")
+                            )
                             out_stream.push(
                                 ToolCallEndEvent(content_index=content_index, tool_call=block, partial=output)
                             )
@@ -1016,11 +1018,11 @@ def _normalize_tool_call_id(id: str, model: Model, source: AssistantMessage) -> 
     return re.sub(r"[^a-zA-Z0-9_-]", "_", id)[:64]
 
 
-def _convert_tool_result(msg: ToolResultMessage) -> dict[str, Any]:
+def _convert_tool_result(msg: ToolResultMessage, content: list | None = None) -> dict[str, Any]:
     return {
         "type": "tool_result",
         "tool_use_id": msg.tool_call_id,
-        "content": _convert_content_blocks(msg.content),
+        "content": _convert_content_blocks(msg.content if content is None else content),
         "is_error": msg.is_error,
     }
 
@@ -1091,12 +1093,7 @@ def _convert_messages(
                         if item.text.strip():
                             blocks.append({"type": "text", "text": sanitize_surrogates(item.text)})
                     else:
-                        blocks.append(
-                            {
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": item.mime_type, "data": item.data},
-                            }
-                        )
+                        blocks.append(_convert_image_block(item))
                 if blocks:
                     params.append({"role": "user", "content": blocks})
         elif msg.role == "assistant":
@@ -1155,13 +1152,21 @@ def _convert_messages(
         elif msg.role == "toolResult":
             # Collect consecutive toolResult messages (z.ai Anthropic endpoint).
             tool_results: list[dict[str, Any]] = []
+            # Anthropic rejects error tool results that contain anything but text, so their images follow
+            # all tool results of the turn, which must come first in the user message (#10794).
+            error_images: list[dict[str, Any]] = []
             j = i
             while j < len(transformed_messages) and transformed_messages[j].role == "toolResult":
-                tool_results.append(_convert_tool_result(transformed_messages[j]))  # type: ignore[arg-type]
+                tool_msg = transformed_messages[j]
+                split = split_error_tool_result_images(tool_msg)  # type: ignore[arg-type]
+                tool_results.append(_convert_tool_result(tool_msg, split.content if split else None))  # type: ignore[arg-type]
+                if split:
+                    error_images.append({"type": "text", "text": split.caption})
+                    error_images.extend(_convert_image_block(image) for image in split.images)
                 j += 1
             i = j - 1
 
-            params.append({"role": "user", "content": tool_results})
+            params.append({"role": "user", "content": [*tool_results, *error_images]})
         i += 1
 
     flush_pending_system_messages()
@@ -1367,8 +1372,13 @@ def _build_params(
     is_oauth_token: bool,
     options: AnthropicOptions,
     disable_preferred_strict_tools: bool = False,
-) -> tuple[dict[str, Any], bool]:
-    """`(params, has_preferred_strict_tools)`: whether a `strict: "prefer"` tool went out strict."""
+) -> tuple[dict[str, Any], bool, AnthropicEffort | None]:
+    """`(params, has_preferred_strict_tools, provider_thinking_level)`.
+
+    `has_preferred_strict_tools`: whether a `strict: "prefer"` tool went out strict.
+    `provider_thinking_level`: effort of the final effort marker, recorded on the reply so
+    later requests can replay it.
+    """
     cache_control = _get_cache_control(model, options.cache_retention, options.env)
     compat = _get_compat(model)
     initial_system_message = get_initial_system_message(context.messages)
@@ -1404,12 +1414,19 @@ def _build_params(
     )
 
     supports_mid_convo_effort = _supports_mid_convo_effort(model)
+    thinking_disabled = (
+        model.reasoning
+        and options.thinking_enabled is False
+        and (model.thinking_level_map or {}).get("off", "") is not None
+    )
+    # Effort cannot change between messages while thinking is disabled, so "off" sends no effort markers.
+    effort_messages = supports_mid_convo_effort and not thinking_disabled
     converted = _convert_messages(
         conversation_messages,
         is_oauth_token,
         cache_control,
         compat.allow_empty_signature,
-        model.provider if supports_mid_convo_effort else None,
+        model.provider if effort_messages else None,
         convert_tool_definitions if native_tool_changes else None,
     )
     active_effort: AnthropicEffort = options.effort or "high"
@@ -1417,7 +1434,7 @@ def _build_params(
     params: dict[str, Any] = {
         "model": model.id,
         "messages": _insert_thinking_level_messages(converted, active_effort)
-        if supports_mid_convo_effort
+        if effort_messages
         else converted.messages,
         "max_tokens": options.max_tokens if options.max_tokens is not None else model.max_tokens,
         "stream": True,
@@ -1472,32 +1489,33 @@ def _build_params(
         if tools:
             params["tools"] = convert_tool_definitions(tools, tool_cache_control)
 
-    # Managed effort models always use adaptive thinking so prefix mismatches can
-    # be dropped instead of surfacing as persistent 400 responses.
-    if supports_mid_convo_effort:
+    if thinking_disabled:
+        # No effort is sent, so the model default applies. Anthropic rejects `block_binding`
+        # with disabled thinking.
+        params["thinking"] = {"type": "disabled"}
+    elif effort_messages:
+        # Managed effort models use adaptive thinking so prefix mismatches can
+        # be dropped instead of surfacing as persistent 400 responses.
         params["thinking"] = {
             "type": "adaptive",
             "display": options.thinking_display or "summarized",
             "block_binding": {"prefix_mismatch_behavior": "drop_block"},
         }
         params["output_config"] = {"effort": "high"}
-    elif model.reasoning:
-        if options.thinking_enabled:
-            # Default "summarized" so Opus 4.7/Mythos Preview behave like older
-            # Claude 4 models (whose API default is also "summarized").
-            display = options.thinking_display or "summarized"
-            if _force_adaptive_thinking(model):
-                params["thinking"] = {"type": "adaptive", "display": display}
-                if options.effort:
-                    params["output_config"] = {"effort": options.effort}
-            else:
-                params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": options.thinking_budget_tokens or 1024,
-                    "display": display,
-                }
-        elif options.thinking_enabled is False and (model.thinking_level_map or {}).get("off", "") is not None:
-            params["thinking"] = {"type": "disabled"}
+    elif model.reasoning and options.thinking_enabled:
+        # Default "summarized" so Opus 4.7/Mythos Preview behave like older
+        # Claude 4 models (whose API default is also "summarized").
+        display = options.thinking_display or "summarized"
+        if _force_adaptive_thinking(model):
+            params["thinking"] = {"type": "adaptive", "display": display}
+            if options.effort:
+                params["output_config"] = {"effort": options.effort}
+        else:
+            params["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": options.thinking_budget_tokens or 1024,
+                "display": display,
+            }
 
     if options.metadata:
         user_id = options.metadata.get("user_id")
@@ -1514,4 +1532,4 @@ def _build_params(
     if model_compat and model_compat.allowed_fallback_models:
         params["fallbacks"] = [{"model": fallback.model} for fallback in model_compat.allowed_fallback_models]
 
-    return params, has_preferred_strict_tools
+    return params, has_preferred_strict_tools, active_effort if effort_messages else None

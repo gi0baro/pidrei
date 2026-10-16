@@ -104,14 +104,15 @@ def test_includes_xhigh_for_openai_codex_models(model_id):
 
 
 @pytest.mark.parametrize(
-    ("model_id", "cost"),
+    ("model_id", "cost", "codex_context_window"),
     [
-        ("gpt-6-sol", ModelCost(input=2, output=10, cache_read=0.2, cache_write=2.5)),
-        ("gpt-6-luna", ModelCost(input=0.1, output=0.5, cache_read=0.01, cache_write=0.125)),
-        ("gpt-6.1-sol", ModelCost(input=2, output=10, cache_read=0.1, cache_write=2.5)),
+        ("gpt-6-sol", ModelCost(input=2, output=10, cache_read=0.2, cache_write=2.5), 272000),
+        ("gpt-6-luna", ModelCost(input=0.1, output=0.5, cache_read=0.01, cache_write=0.125), 272000),
+        # Codex serves GPT-6.1 Sol with a 500K default context window (#10840)
+        ("gpt-6.1-sol", ModelCost(input=2, output=10, cache_read=0.1, cache_write=2.5), 500000),
     ],
 )
-def test_includes_official_metadata_for_openai_and_codex(model_id, cost):
+def test_includes_official_metadata_for_openai_and_codex(model_id, cost, codex_context_window):
     for provider in ("openai", "openai-codex"):
         model = next((model for model in MODELS[provider] if model.id == model_id), None)
         assert model is not None, provider
@@ -131,7 +132,7 @@ def test_includes_official_metadata_for_openai_and_codex(model_id, cost):
                 )
             ],
         )
-        assert model.context_window == 272000
+        assert model.context_window == (codex_context_window if provider == "openai-codex" else 272000)
         assert model.max_tokens == 128000
         assert isinstance(model.compat, OpenAIResponsesCompat)
         assert model.compat.supports_additional_tools is True
@@ -154,12 +155,6 @@ def test_does_not_support_off_for_gpt_6_1_sol():
         assert model.thinking_level_map["off"] is None
 
 
-def test_includes_low_for_deepseek_v4_flash_on_opencode_go():
-    flash = next(model for model in MODELS["opencode-go"] if model.id == "deepseek-v4-flash")
-
-    assert get_supported_thinking_levels(flash) == ["off", "low", "high", "max"]
-
-
 def test_preserves_low_high_max_metadata_for_deepseek_v4_1_flash_on_openrouter():
     model = next((model for model in MODELS["openrouter"] if model.id == "deepseek/deepseek-v4.1-flash"), None)
     assert model is not None
@@ -172,6 +167,13 @@ def test_preserves_low_high_max_metadata_for_deepseek_v4_1_flash_on_opencode_go(
     assert model is not None
 
     assert get_supported_thinking_levels(model) == ["low", "high", "max"]
+
+
+def test_excludes_off_for_always_thinking_kimi_coding_highspeed():
+    model = next((model for model in MODELS["kimi-coding"] if model.id == "kimi-for-coding-highspeed"), None)
+    assert model is not None
+
+    assert "off" not in get_supported_thinking_levels(model)
 
 
 def test_includes_xhigh_and_max_for_bedrock_claude_opus_5():

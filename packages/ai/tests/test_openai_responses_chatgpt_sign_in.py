@@ -8,8 +8,9 @@ from dataclasses import replace
 
 import pytest
 
-from pidrei_ai.api.openai_responses import OpenAIResponsesOptions, build_params
+from pidrei_ai.api.openai_responses import OpenAIResponsesOptions
 from pidrei_ai.types import Context, Model, ModelCost, OpenAIResponsesCompat, TextContent, UserMessage
+from tests.test_openai_responses import build_request_params
 
 
 MODEL = Model(
@@ -29,7 +30,7 @@ CONTEXT = Context(system_prompt="", messages=[UserMessage(content=[TextContent(t
 
 
 def capture_payload(api_key: str, request_model: Model = MODEL) -> dict:
-    return build_params(
+    return build_request_params(
         request_model,
         CONTEXT,
         OpenAIResponsesOptions(api_key=api_key, max_tokens=1000, temperature=0.5, cache_retention="long"),

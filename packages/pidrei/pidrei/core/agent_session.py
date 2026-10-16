@@ -20,7 +20,7 @@ import re
 import sys
 import threading
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
 from typing import Any, Literal
@@ -371,8 +371,9 @@ class AgentSessionConfig:
     cache_warmer: CacheWarmer | None = None
     # Initial active built-in tool names. Default: [read, bash, edit, write]
     initial_active_tool_names: list[str] | None = None
-    # Whether the initial tools come from the `defaultTools` setting. When true, reload activates
-    # tools newly added to the setting. Tools removed from it stay active.
+    # Whether the initial tools come from the `defaultTools` setting. When true, a resumed session
+    # replaces them with the loadout its transcript records, with `default_tool_modifiers` applied,
+    # and reload activates tools newly added to the setting. Tools removed from it stay active.
     uses_default_tools: bool = False
     # `+name`/`-name` entries applied on top of the `defaultTools` setting, from `--tools`. Reload
     # applies them to the reloaded setting too, so a removed tool stays removed.
@@ -716,8 +717,8 @@ class AgentSession:
             active_tool_names=self._initial_active_tool_names,
             include_all_extension_tools=True,
         )
-        if self._initial_active_tool_names is None:
-            self._restore_tools_from_transcript()
+        if self._uses_default_tools:
+            self._restore_tools_from_transcript(self._default_tool_modifiers)
 
     @property
     def model_runtime(self) -> Any:
@@ -2084,17 +2085,18 @@ class AgentSession:
 
         self.agent.transform_context = transform_context
 
-    def _restore_tools_from_transcript(self) -> None:
+    def _restore_tools_from_transcript(self, modifiers: Sequence[str] = ()) -> None:
         """Restore the active tool loadout declared by the session transcript, if
         it declares one. Tools reachable only from other tools are never
         declared, but they do not depend on the active set, so the transcript's
-        declarations are the whole loadout."""
+        declarations are the whole loadout. `modifiers` are `+name`/`-name`
+        entries applied to the restored loadout."""
         current = get_current_system_message(self.session_manager.build_session_context().messages)
         with self._tool_loadout_guard:
             self._pending_tool_names.clear()
             if current is None:
                 return
-            names = [tool.name for tool in current.tools_added or []]
+            names = apply_tool_modifiers([tool.name for tool in current.tools_added or []], modifiers)
             self._pending_tool_names = dict.fromkeys(name for name in names if self._is_allowed_tool(name))
             self._set_active_tools(names)
 

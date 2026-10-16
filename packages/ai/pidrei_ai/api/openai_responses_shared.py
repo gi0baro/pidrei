@@ -49,7 +49,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
-from pidrei_ai.utils.json_parse import parse_streaming_json
+from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import resolve_transcript, resolve_transcript_tools
@@ -124,9 +124,19 @@ def convert_responses_messages(
     supports_additional_tools: bool = False,
     supports_tool_search: bool = False,
     tool_options: dict | None = None,
+    configuration_update_effort: str | None = None,
 ) -> list[dict]:
     """`supports_mid_convo_system_messages`: whether later system messages are sent in
-    place; otherwise they are folded into the leading prompt."""
+    place; otherwise they are folded into the leading prompt.
+
+    `configuration_update_effort`: effort for the reply being generated. When set, the
+    thinking level is sent as configuration_update items instead of a changing
+    reasoning.effort, which would invalidate the prompt cache. Each item sets the effort
+    from that point on: one goes before every earlier reply with the level recorded on it
+    (`provider_thinking_level`), and one with this effort goes at the end. Earlier input
+    therefore never changes. OpenAI documents the item before user messages only. After
+    tool results it was verified on gpt-6-luna (October 2026) to be accepted and to apply
+    to the next reply."""
     grammar_tool_input_properties = grammar_tool_input_properties or {}
     normalized_context = resolve_transcript(context, supports_mid_convo_system_messages)
     messages: list[dict] = []
@@ -196,6 +206,9 @@ def convert_responses_messages(
                 "tools": convert_responses_tools(tools, **{**(tool_options or {}), "tool_search_result": True}),
             }
         )
+
+    def push_configuration_update(effort: str) -> None:
+        messages.append({"type": "configuration_update", "reasoning": {"effort": effort}})
 
     supports_developer_role = getattr(model.compat, "supports_developer_role", None)
     instruction_role = "developer" if model.reasoning and supports_developer_role is not False else "system"
@@ -312,6 +325,8 @@ def convert_responses_messages(
                         output.append(entry)
             if not output:
                 continue
+            if configuration_update_effort is not None and is_same_model and msg.provider_thinking_level is not None:
+                push_configuration_update(msg.provider_thinking_level)
             messages.extend(output)
         elif msg.role == "toolResult":
             call_id = msg.tool_call_id.partition("|")[0]
@@ -323,6 +338,8 @@ def convert_responses_messages(
                 messages.append({"type": "function_call_output", "call_id": call_id, "output": result_output})
         if not is_leading_system_message:
             msg_index += 1
+    if configuration_update_effort is not None:
+        push_configuration_update(configuration_update_effort)
 
     return messages
 
@@ -662,7 +679,9 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 and slot.kind == "toolCall"
                 and slot.partial_json is not None
             ):
-                slot.block.arguments = parse_streaming_json(item.get("arguments") or slot.partial_json or "{}")
+                slot.block.arguments, slot.block.arguments_error = parse_tool_call_arguments(
+                    item.get("arguments") or slot.partial_json
+                )
                 if item.get("namespace") is not None:
                     slot.block.namespace = item["namespace"]
                 slot.partial_json = None

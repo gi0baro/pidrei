@@ -267,8 +267,10 @@ class TestParseCommandArgs:
         assert parse_command_args("a\tb\tc") == ["a", "b", "c"]
 
     def test_handles_quoted_empty_string(self):
-        # Note: Empty quotes are skipped by current implementation
-        assert parse_command_args('"" " "') == [" "]
+        # Empty quotes keep their position as an empty argument (#10867)
+        assert parse_command_args('"" " "') == ["", " "]
+        assert parse_command_args("a '' c") == ["a", "", "c"]
+        assert parse_command_args('a ""') == ["a", ""]
 
     def test_handles_arguments_with_special_characters(self):
         assert parse_command_args("$100 @user #tag") == ["$100", "@user", "#tag"]
@@ -314,6 +316,16 @@ def make_template(name, content):
 
 
 class TestExpandPromptTemplate:
+    # #10867
+    def test_uses_positional_default_for_empty_quoted_argument_without_shifting_later_args(self):
+        template = make_template("review", "Review $2. Focus: ${1:-correctness}.")
+        assert (
+            expand_prompt_template('/review "" src/index.ts', [template]) == "Review src/index.ts. Focus: correctness."
+        )
+        assert (
+            expand_prompt_template("/review '' src/index.ts", [template]) == "Review src/index.ts. Focus: correctness."
+        )
+
     def test_splits_template_arguments_on_unquoted_newlines(self):
         result = expand_prompt_template(
             "/arg-test label-2\n\nHere is some description #2.",

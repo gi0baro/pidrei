@@ -52,6 +52,7 @@ def resolve_google_thinking_level(model: Model, level: ThinkingLevel) -> Resolve
 
 
 _GEMINI_3_THINKING_LEVEL = re.compile(r"gemini-3(?:\.\d+)?-(?:pro|flash)")
+_GEMINI_4_AND_LATER = re.compile(r"gemini-(?:[4-9]|[1-9]\d)")
 _GEMMA_4 = re.compile(r"gemma-?4")
 
 
@@ -64,6 +65,8 @@ def uses_google_thinking_level(model: Model) -> bool:
         # Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
         # gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
         _GEMINI_3_THINKING_LEVEL.search(id) is not None
+        # Match Gemini 4 and later, such as gemini-4-argon (#10890).
+        or _GEMINI_4_AND_LATER.search(id) is not None
         or id == "gemini-flash-latest"
         or id == "gemini-flash-lite-latest"
         # Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.

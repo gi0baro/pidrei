@@ -20,6 +20,8 @@ from pidrei.core.sdk import CreateAgentSessionOptions, create_agent_session
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
 from pidrei_ai.providers.all import get_builtin_model
+from pidrei_ai.types import SystemMessage, Tool, UserMessage
+from pidrei_utils import clock
 
 
 async def _ok(*_args):
@@ -302,6 +304,118 @@ async def test_reload_keeps_explicit_tool_options(dirs):
         assert sorted(excluded.get_active_tool_names()) == ["bash", "edit", "inactive_tool", "read", "write"]
     finally:
         excluded.dispose()
+
+
+# --- resume (#10785) -------------------------------------------------------------
+
+
+async def resume_extension_tools(pi) -> None:
+    inactive = _tool("inactive_tool", "Inactive Tool", "Extension tool registered inactive")
+    inactive.default_active = False
+    pi.register_tool(inactive)
+    pi.register_tool(_tool("active_tool", "Active Tool", "Extension tool registered active"))
+
+
+async def create_recorded_session(dirs, tool_names: list[str]) -> SessionManager:
+    """A session whose transcript records the loadout `tool_names`, as a run records it."""
+    session_manager = SessionManager.in_memory(dirs.root)
+    await session_manager.append_message(
+        SystemMessage(
+            content="",
+            tools_added=[
+                Tool(name=name, description=name, parameters={"type": "object", "properties": {}})
+                for name in tool_names
+            ],
+            timestamp=clock.now_ms(),
+        )
+    )
+    return session_manager
+
+
+async def resume(dirs, session_manager: SessionManager, options=None):
+    settings_manager = SettingsManager.in_memory()
+    resource_loader = await DefaultResourceLoader(
+        cwd=dirs.root,
+        agent_dir=dirs.agent_dir,
+        settings_manager=settings_manager,
+        extension_factories=[resume_extension_tools],
+    )
+    await resource_loader.reload()
+    session_options = CreateAgentSessionOptions(
+        cwd=dirs.root,
+        agent_dir=dirs.agent_dir,
+        model=get_builtin_model("anthropic", "claude-sonnet-4-5"),
+        settings_manager=settings_manager,
+        session_manager=session_manager,
+        resource_loader=resource_loader,
+    )
+    for key, value in (options or {}).items():
+        setattr(session_options, key, value)
+    return (await create_agent_session(session_options)).session
+
+
+@pytest.mark.tonio
+async def test_resume_restores_the_loadout_the_transcript_records(dirs):
+    # active_tool was deactivated during the session, inactive_tool activated.
+    session = await resume(dirs, await create_recorded_session(dirs, ["read", "grep", "inactive_tool"]))
+    try:
+        assert sorted(session.get_active_tool_names()) == ["grep", "inactive_tool", "read"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_resume_does_not_restore_excluded_tools(dirs):
+    session = await resume(
+        dirs,
+        await create_recorded_session(dirs, ["read", "grep", "inactive_tool"]),
+        {"exclude_tools": ["inactive_tool"]},
+    )
+    try:
+        assert sorted(session.get_active_tool_names()) == ["grep", "read"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_resume_uses_explicit_tool_options_instead_of_the_recorded_loadout(dirs):
+    recorded = ["read", "grep", "inactive_tool"]
+
+    allowlisted = await resume(dirs, await create_recorded_session(dirs, recorded), {"tools": ["read", "write"]})
+    try:
+        assert allowlisted.get_active_tool_names() == ["read", "write"]
+    finally:
+        allowlisted.dispose()
+
+    builtinless = await resume(dirs, await create_recorded_session(dirs, recorded), {"no_tools": "builtin"})
+    try:
+        assert builtinless.get_active_tool_names() == ["active_tool"]
+    finally:
+        builtinless.dispose()
+
+
+@pytest.mark.tonio
+async def test_resume_applies_plus_name_and_minus_name_tool_options_to_the_recorded_loadout(dirs):
+    session = await resume(
+        dirs,
+        await create_recorded_session(dirs, ["read", "grep", "inactive_tool"]),
+        {"tools": ["-grep", "+write"]},
+    )
+    try:
+        assert sorted(session.get_active_tool_names()) == ["inactive_tool", "read", "write"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_resume_uses_the_default_tools_when_the_transcript_records_no_loadout(dirs):
+    session_manager = SessionManager.in_memory(dirs.root)
+    await session_manager.append_message(UserMessage(content="hi", timestamp=clock.now_ms()))
+    session = await resume(dirs, session_manager)
+    try:
+        assert sorted(session.get_active_tool_names()) == ["active_tool", "bash", "edit", "read", "write"]
+    finally:
+        session.dispose()
 
 
 @pytest.mark.tonio

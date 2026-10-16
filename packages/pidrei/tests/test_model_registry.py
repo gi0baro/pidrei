@@ -790,7 +790,7 @@ class TestModelOverrides:
                     "baseUrl": "https://my-proxy.example.com/v1",
                     "api": "openai-completions",
                     "models": [{"id": "custom/cached-model", "promptCache": {"short": 120}}],
-                    "modelOverrides": {"anthropic/claude-sonnet-4": {"promptCache": {"short": 300}}},
+                    "modelOverrides": {"anthropic/claude-sonnet-4.5": {"promptCache": {"short": 300}}},
                 },
                 "anthropic": {"modelOverrides": {"claude-sonnet-4-6": {"promptCache": {"long": 1800}}}},
             },
@@ -801,7 +801,7 @@ class TestModelOverrides:
 
         assert registry.get_error() is None
         assert next(m for m in openrouter if m.id == "custom/cached-model").prompt_cache == {"short": 120}
-        assert next(m for m in openrouter if m.id == "anthropic/claude-sonnet-4").prompt_cache == {"short": 300}
+        assert next(m for m in openrouter if m.id == "anthropic/claude-sonnet-4.5").prompt_cache == {"short": 300}
         assert next(m for m in openrouter if m.id == "anthropic/claude-opus-4.1").prompt_cache is None
         # Overrides merge per tier with the built-in catalog.
         assert registry.find("anthropic", "claude-sonnet-4-6").prompt_cache == {"short": 300, "long": 1800}

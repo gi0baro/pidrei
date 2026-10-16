@@ -1,7 +1,4 @@
-"""Mirror of pi's anthropic-empty-thinking-signature-compat.test.ts.
-
-The Kimi Coding case joins when that provider's catalog lands (initial port).
-"""
+"""Mirror of pi's anthropic-empty-thinking-signature-compat.test.ts."""
 
 import pytest
 
@@ -22,7 +19,7 @@ from tests.anthropic_helpers import capture_payload, now_ms
 
 def make_model(allow_empty_signature: bool | None = None) -> Model:
     return Model(
-        id="mimo-v2.5-pro",
+        id="mimo-v2.6-pro",
         name="MiMo-V2.5-Pro",
         api="anthropic-messages",
         provider="xiaomi-token-plan-ams",
@@ -42,7 +39,7 @@ def make_context(
     thinking_signature: str,
     thinking: str = "internal reasoning",
     provider: str = "xiaomi-token-plan-ams",
-    model_id: str = "mimo-v2.5-pro",
+    model_id: str = "mimo-v2.6-pro",
     extra_content: list | None = None,
 ) -> Context:
     assistant = AssistantMessage(
@@ -113,14 +110,3 @@ async def test_preserves_unsigned_thinking_for_fireworks(model_id):
         {"type": "thinking", "thinking": "internal reasoning", "signature": ""},
         {"type": "text", "text": "answer"},
     ]
-
-
-# Regression for #9323: opting into unsigned replay must not change cross-model conversion.
-@pytest.mark.tonio
-async def test_still_converts_cross_model_fireworks_thinking_to_text():
-    model = get_builtin_model("fireworks", "accounts/fireworks/models/deepseek-v4p1-flash")
-    payload = await capture_payload(
-        model,
-        context=make_context("", "internal reasoning", "fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"),
-    )
-    assert assistant_content(payload) == [{"type": "text", "text": "internal reasoning"}]

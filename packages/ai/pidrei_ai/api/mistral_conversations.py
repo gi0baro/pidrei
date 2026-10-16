@@ -61,7 +61,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
-from pidrei_ai.utils.json_parse import parse_streaming_json
+from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
@@ -650,7 +650,7 @@ async def consume_chat_stream(
         block = output.content[index]
         if block.type != "toolCall":
             continue
-        block.arguments = parse_streaming_json(partial_args.get(index, ""))
+        block.arguments, block.arguments_error = parse_tool_call_arguments(partial_args.get(index, ""))
         out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 
 

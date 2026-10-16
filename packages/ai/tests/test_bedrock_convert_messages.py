@@ -9,7 +9,7 @@ all `convert_messages` reads.
 """
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
 import pytest
@@ -20,9 +20,11 @@ from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
+    ImageContent,
     JsonSchemaConstrainedSampling,
     TextContent,
     Tool,
+    ToolCall,
     ToolResultMessage,
     Usage,
     UserMessage,
@@ -325,6 +327,86 @@ async def test_replaces_blank_tool_result_content_with_a_placeholder():
 
     assert len(payload["messages"]) == 1
     assert payload["messages"][0]["content"][0]["toolResult"]["content"] == [{"text": "<empty>"}]
+
+
+@pytest.mark.tonio
+async def test_moves_images_of_error_tool_results_after_the_tool_results():
+    # Regression for #10794: Claude rejects error tool results that contain images.
+    payload = await capture_payload(
+        Context(
+            messages=[
+                replace(
+                    assistant(
+                        [
+                            ToolCall(id="call-1", name="codemode", arguments={}),
+                            ToolCall(id="call-2", name="read", arguments={}),
+                        ]
+                    ),
+                    stop_reason="toolUse",
+                ),
+                ToolResultMessage(
+                    tool_call_id="call-1",
+                    tool_name="codemode",
+                    content=[
+                        TextContent(text="Script failed"),
+                        ImageContent(data="AAAA", mime_type="image/png"),
+                        TextContent(text="Script error"),
+                    ],
+                    is_error=True,
+                    timestamp=1,
+                ),
+                ToolResultMessage(
+                    tool_call_id="call-2",
+                    tool_name="read",
+                    content=[ImageContent(data="BBBB", mime_type="image/png")],
+                    is_error=False,
+                    timestamp=1,
+                ),
+            ]
+        )
+    )
+
+    content = payload["messages"][1]["content"]
+    assert len(content) == 4
+    assert content[0]["toolResult"] == {
+        "toolUseId": "call-1",
+        "content": [
+            {"text": "Script failed"},
+            {"text": "(image attached after the tool results)"},
+            {"text": "Script error"},
+        ],
+        "status": "error",
+    }
+    assert content[1]["toolResult"]["status"] == "success"
+    assert [block["image"]["format"] for block in content[1]["toolResult"]["content"]] == ["png"]
+    assert content[2] == {"text": "Images from the error result of tool call call-1 (codemode):"}
+    assert content[3]["image"]["format"] == "png"
+
+
+@pytest.mark.tonio
+async def test_keeps_images_in_error_tool_results_for_non_claude_models():
+    payload = await capture_payload(
+        Context(
+            messages=[
+                ToolResultMessage(
+                    tool_call_id="call-1",
+                    tool_name="codemode",
+                    content=[TextContent(text="Script failed"), ImageContent(data="AAAA", mime_type="image/png")],
+                    is_error=True,
+                    timestamp=1,
+                )
+            ]
+        ),
+        replace(BASE_MODEL, id="amazon.nova-lite-v1:0", name="Nova Lite"),
+    )
+
+    content = payload["messages"][0]["content"]
+    assert len(content) == 1
+    tool_result = content[0]["toolResult"]
+    assert (tool_result["toolUseId"], tool_result["status"]) == ("call-1", "error")
+    assert tool_result["content"][0] == {"text": "Script failed"}
+    assert tool_result["content"][1]["image"]["format"] == "png"
+    assert len(tool_result["content"]) == 2
 
 
 @pytest.mark.tonio

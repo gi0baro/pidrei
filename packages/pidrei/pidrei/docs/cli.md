@@ -59,10 +59,10 @@ pidrei --model sonnet:high
 | Option | Behavior |
 |--------|----------|
 | `--provider <name>` | Restrict `--model` lookup to one provider; requires `--model` |
-| `--model <pattern>` | Exact or fuzzy ID/name match; accepts `provider/id` and a `:<thinking>` suffix |
-| `--api-key <key>` | Non-persistent key for this run; needs a model from `--model` or `--models` |
+| `--model <pattern>` | Exact or fuzzy ID/name match; accepts `provider/id` and a `:<thinking>` suffix. When several providers match, prefers the one with credentials, otherwise asks for `--provider` |
+| `--api-key <key>` | Non-persistent key for this run; needs a model from `--model` or `--models`. Does not choose between providers offering the same model |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; overrides a `:<thinking>` suffix and is clamped to the model |
-| `--models <patterns>` | Comma-separated scope for startup and Ctrl+P cycling: IDs, fuzzy matches, case-insensitive globs (`anthropic/*`), optional `:<thinking>` |
+| `--models <patterns>` | Comma-separated scope for startup and Ctrl+P cycling: IDs, fuzzy matches, case-insensitive globs (`anthropic/*`), optional `:<thinking>`. A model offered by several providers is added for each, with a warning |
 | `--list-models [search]` | List available models, optionally fuzzy-filtered, and exit |
 
 Credentials are covered in [providers.md](providers.md), custom model entries in

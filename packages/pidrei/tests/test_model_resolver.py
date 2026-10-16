@@ -1,16 +1,19 @@
 """Mirror of pi coding-agent test/model-resolver.test.ts (plus max-thinking.test.ts's
 CLI/settings assertions; its theme half is Phase 4)."""
 
+from dataclasses import dataclass, replace
+
 import pytest
 
 from pidrei.cli.args import is_valid_thinking_level
 from pidrei.core import model_resolver
 from pidrei.core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,
+    ModelReferenceRequest,
     ModelScopeDiagnostic,
     find_initial_model,
-    parse_model_pattern,
     resolve_cli_model,
+    resolve_model_reference,
     resolve_model_scope,
     resolve_model_scope_with_diagnostics,
 )
@@ -69,14 +72,6 @@ MOCK_OPENROUTER_MODELS = [
 ALL_MODELS = [*MOCK_MODELS, *MOCK_OPENROUTER_MODELS]
 
 
-def _ambiguous_models() -> list:
-    """The same bare id under two providers (pi's gpt-5.6-sol case)."""
-    return [
-        make_model(provider, "gpt-5.6-sol", api="anthropic-messages", name="GPT 5.6 Sol")
-        for provider in ("azure", "openai-codex")
-    ]
-
-
 class MockRuntime:
     def __init__(self, models, *, configured=None):
         self._models = models
@@ -100,112 +95,213 @@ class MockRuntime:
         return self._configured(provider)
 
 
-class TestParseModelPattern:
-    def test_exact_match_returns_model_with_none_thinking_level(self):
-        result = parse_model_pattern("claude-sonnet-4-5", ALL_MODELS)
-        assert result.model.id == "claude-sonnet-4-5"
-        assert result.thinking_level is None
-        assert result.warning is None
+def _reference_model(provider: str, id: str):
+    return make_model(
+        provider, id, base_url="https://example.invalid", reasoning=True, context_window=128000, max_tokens=8192
+    )
 
-    def test_partial_match_returns_best_model_with_none_thinking_level(self):
-        result = parse_model_pattern("sonnet", ALL_MODELS)
-        assert result.model.id == "claude-sonnet-4-5"
-        assert result.thinking_level is None
-        assert result.warning is None
 
-    def test_no_match_returns_none_model_and_thinking_level(self):
-        result = parse_model_pattern("nonexistent", ALL_MODELS)
-        assert result.model is None
-        assert result.thinking_level is None
-        assert result.warning is None
+REFERENCE_CATALOG = [
+    _reference_model("anthropic", "claude-sonnet-4-5"),
+    _reference_model("anthropic", "claude-sonnet-4-5-20250929"),
+    _reference_model("anthropic", "claude-opus-4-8"),
+    _reference_model("anthropic", "exact"),
+    # Fuzzy-matches "shared"; an ambiguous exact "shared" must not fall through to it.
+    _reference_model("anthropic", "shared-pro"),
+    _reference_model("openai", "gpt-4o"),
+    _reference_model("openrouter", "qwen/qwen3-coder:exacto"),
+    _reference_model("openrouter", "openai/gpt-4o:extended"),
+    _reference_model("gw-a", "shared"),
+    _reference_model("gw-a", "anthropic/future"),
+    _reference_model("gw-a", "anthropic/exact"),
+    _reference_model("gw-a", "anthropic/claude-opus-4.8"),
+    _reference_model("gw-a", "anthropic/claude-opus"),
+    _reference_model("gw-b", "shared"),
+    _reference_model("gw-b", "anthropic/future"),
+    _reference_model("gw-b", "claude-opus-4-8"),
+    _reference_model("gw-b", "gw-b/free"),
+    _reference_model("gw-b", "zz:free"),
+]
 
-    def test_sonnet_high_returns_sonnet_with_high_thinking_level(self):
-        result = parse_model_pattern("sonnet:high", ALL_MODELS)
-        assert result.model.id == "claude-sonnet-4-5"
-        assert result.thinking_level == "high"
-        assert result.warning is None
 
-    def test_gpt_4o_medium_returns_gpt_4o_with_medium_thinking_level(self):
-        result = parse_model_pattern("gpt-4o:medium", ALL_MODELS)
-        assert result.model.id == "gpt-4o"
-        assert result.thinking_level == "medium"
-        assert result.warning is None
+@dataclass(frozen=True, slots=True)
+class ReferenceCase:
+    name: str
+    text: str
+    # {"model", "thinking_level"?, "warning"?} | {"ambiguous", "usable_count"} | "not-found"
+    expected: dict | str
+    usable: tuple[str, ...] = ()
+    provider: str | None = None
+    thinking_suffix: str = "strict"
+    fuzzy: bool = True
 
-    def test_all_valid_thinking_levels_work(self):
-        for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
-            result = parse_model_pattern(f"sonnet:{level}", ALL_MODELS)
-            assert result.model.id == "claude-sonnet-4-5"
-            assert result.thinking_level == level
-            assert result.warning is None
 
-    def test_sonnet_random_returns_sonnet_with_none_thinking_level_and_warning(self):
-        result = parse_model_pattern("sonnet:random", ALL_MODELS)
-        assert result.model.id == "claude-sonnet-4-5"
-        assert result.thinking_level is None
-        assert "Invalid thinking level" in result.warning
-        assert "random" in result.warning
+REFERENCE_CASES = [
+    # Reference syntax
+    ReferenceCase("exact id", "claude-sonnet-4-5", {"model": "anthropic/claude-sonnet-4-5"}),
+    ReferenceCase("exact id is case-insensitive", "GPT-4O", {"model": "openai/gpt-4o"}),
+    ReferenceCase("fuzzy prefers aliases over dated ids", "sonnet", {"model": "anthropic/claude-sonnet-4-5"}),
+    ReferenceCase("thinking suffix", "sonnet:high", {"model": "anthropic/claude-sonnet-4-5", "thinking_level": "high"}),
+    ReferenceCase(
+        "colon in a literal id is not a thinking suffix",
+        "qwen/qwen3-coder:exacto",
+        {"model": "openrouter/qwen/qwen3-coder:exacto"},
+    ),
+    ReferenceCase(
+        "provider prefix, colon id, and thinking suffix",
+        "openrouter/qwen/qwen3-coder:exacto:high",
+        {"model": "openrouter/qwen/qwen3-coder:exacto", "thinking_level": "high"},
+    ),
+    ReferenceCase(
+        "raw id wins when the provider prefix names no matching model",
+        "openai/gpt-4o:extended",
+        {"model": "openrouter/openai/gpt-4o:extended"},
+    ),
+    ReferenceCase(
+        "fuzzy searches the prefixed provider first", "openrouter/qwen", {"model": "openrouter/qwen/qwen3-coder:exacto"}
+    ),
+    ReferenceCase("strict keeps an invalid suffix in the id", "gpt-4o:random", "not-found"),
+    ReferenceCase(
+        "lenient drops an invalid suffix with a warning",
+        "gpt-4o:random",
+        {"model": "openai/gpt-4o", "warning": 'Invalid thinking level "random"'},
+        thinking_suffix="lenient",
+    ),
+    ReferenceCase(
+        "lenient invalid outer suffix discards the inner thinking level",
+        "qwen/qwen3-coder:exacto:high:random",
+        {"model": "openrouter/qwen/qwen3-coder:exacto", "warning": 'Invalid thinking level "random"'},
+        thinking_suffix="lenient",
+    ),
+    ReferenceCase("none keeps the suffix in the id", "gpt-4o:high", "not-found", thinking_suffix="none"),
+    ReferenceCase("exact-only skips fuzzy matches", "sonnet", "not-found", fuzzy=False),
+    ReferenceCase("empty text", "  ", "not-found"),
+    # Exact matches across providers
+    # #7327
+    ReferenceCase("sole usable provider wins", "shared", {"model": "gw-b/shared"}, usable=("gw-b",)),
+    ReferenceCase(
+        "no usable provider is ambiguous instead of falling through to fuzzy",
+        "shared",
+        {"ambiguous": ["gw-a/shared", "gw-b/shared"], "usable_count": 0},
+    ),
+    ReferenceCase(
+        "several usable providers are ambiguous",
+        "shared",
+        {"ambiguous": ["gw-a/shared", "gw-b/shared"], "usable_count": 2},
+        usable=("gw-a", "gw-b"),
+    ),
+    ReferenceCase(
+        "thinking suffix does not change provider selection",
+        "shared:high",
+        {"model": "gw-b/shared", "thinking_level": "high"},
+        usable=("gw-b",),
+    ),
+    ReferenceCase(
+        "thinking suffix does not bypass ambiguity",
+        "shared:high",
+        {"ambiguous": ["gw-a/shared", "gw-b/shared"], "usable_count": 2},
+        usable=("gw-a", "gw-b"),
+    ),
+    # #10160
+    ReferenceCase(
+        "provider prefix without a direct model selects the usable raw id",
+        "anthropic/future",
+        {"model": "gw-b/anthropic/future"},
+        usable=("gw-b",),
+    ),
+    # #5823
+    ReferenceCase(
+        "usable qualified match beats a usable raw id",
+        "anthropic/exact",
+        {"model": "anthropic/exact"},
+        usable=("anthropic", "gw-a"),
+    ),
+    # #5643
+    ReferenceCase(
+        "usable raw id beats an unusable qualified match",
+        "anthropic/exact",
+        {"model": "gw-a/anthropic/exact"},
+        usable=("gw-a",),
+    ),
+    ReferenceCase(
+        "unusable qualified match is kept when nothing is usable", "anthropic/exact", {"model": "anthropic/exact"}
+    ),
+    # Like `mistral/codestral` -> mistral/codestral-latest despite gateway id `mistral/codestral`
+    ReferenceCase(
+        "named provider's usable fuzzy match beats a raw id elsewhere",
+        "anthropic/claude-opus",
+        {"model": "anthropic/claude-opus-4-8"},
+        usable=("anthropic",),
+    ),
+    ReferenceCase(
+        "usable raw id beats the named provider's unusable fuzzy match",
+        "anthropic/claude-opus",
+        {"model": "gw-a/anthropic/claude-opus"},
+        usable=("gw-a",),
+    ),
+    ReferenceCase(
+        "named provider's fuzzy match is kept when nothing is usable",
+        "anthropic/claude-opus",
+        {"model": "anthropic/claude-opus-4-8"},
+    ),
+    ReferenceCase("named provider's literal id beats its fuzzy matches", "gw-b/free", {"model": "gw-b/gw-b/free"}),
+    # Fuzzy matches across providers
+    ReferenceCase(
+        "fuzzy prefers usable providers", "opus", {"model": "gw-a/anthropic/claude-opus-4.8"}, usable=("gw-a",)
+    ),
+    ReferenceCase(
+        "fuzzy id tie across usable providers is ambiguous",
+        "opus",
+        {"ambiguous": ["anthropic/claude-opus-4-8", "gw-b/claude-opus-4-8"], "usable_count": 2},
+        usable=("anthropic", "gw-a", "gw-b"),
+    ),
+    ReferenceCase(
+        "fuzzy id tie resolves to the sole usable provider",
+        "opus",
+        {"model": "anthropic/claude-opus-4-8"},
+        usable=("anthropic",),
+    ),
+    # Explicit provider constraint
+    ReferenceCase(
+        "explicit provider ignores usable providers elsewhere",
+        "shared",
+        {"model": "gw-a/shared"},
+        provider="gw-a",
+        usable=("gw-b",),
+    ),
+    ReferenceCase("explicit provider accepts its own prefix", "GW-B/shared", {"model": "gw-b/shared"}, provider="gw-b"),
+    ReferenceCase("explicit provider allows fuzzy matches", "4o", {"model": "openai/gpt-4o"}, provider="openai"),
+    ReferenceCase("explicit provider never leaves the provider", "gpt-4o", "not-found", provider="gw-a"),
+]
 
-    def test_gpt_4o_invalid_returns_gpt_4o_with_none_thinking_level_and_warning(self):
-        result = parse_model_pattern("gpt-4o:invalid", ALL_MODELS)
-        assert result.model.id == "gpt-4o"
-        assert result.thinking_level is None
-        assert "Invalid thinking level" in result.warning
 
-    def test_qwen3_coder_exacto_matches_the_model_with_none_thinking_level(self):
-        result = parse_model_pattern("qwen/qwen3-coder:exacto", ALL_MODELS)
-        assert result.model.id == "qwen/qwen3-coder:exacto"
-        assert result.thinking_level is None
-        assert result.warning is None
+def _model_ref(model) -> str:
+    return f"{model.provider}/{model.id}"
 
-    def test_openrouter_qwen_qwen3_coder_exacto_matches_with_provider_prefix(self):
-        result = parse_model_pattern("openrouter/qwen/qwen3-coder:exacto", ALL_MODELS)
-        assert result.model.id == "qwen/qwen3-coder:exacto"
-        assert result.model.provider == "openrouter"
-        assert result.thinking_level is None
-        assert result.warning is None
 
-    def test_qwen3_coder_exacto_high_matches_model_with_high_thinking_level(self):
-        result = parse_model_pattern("qwen/qwen3-coder:exacto:high", ALL_MODELS)
-        assert result.model.id == "qwen/qwen3-coder:exacto"
-        assert result.thinking_level == "high"
-        assert result.warning is None
-
-    def test_openrouter_qwen3_coder_exacto_high_matches_with_provider_and_thinking_level(self):
-        result = parse_model_pattern("openrouter/qwen/qwen3-coder:exacto:high", ALL_MODELS)
-        assert result.model.id == "qwen/qwen3-coder:exacto"
-        assert result.model.provider == "openrouter"
-        assert result.thinking_level == "high"
-        assert result.warning is None
-
-    def test_gpt_4o_extended_matches_the_extended_model_with_none_thinking_level(self):
-        result = parse_model_pattern("openai/gpt-4o:extended", ALL_MODELS)
-        assert result.model.id == "openai/gpt-4o:extended"
-        assert result.thinking_level is None
-        assert result.warning is None
-
-    def test_qwen3_coder_exacto_random_returns_model_with_none_thinking_level_and_warning(self):
-        result = parse_model_pattern("qwen/qwen3-coder:exacto:random", ALL_MODELS)
-        assert result.model.id == "qwen/qwen3-coder:exacto"
-        assert result.thinking_level is None
-        assert "Invalid thinking level" in result.warning
-        assert "random" in result.warning
-
-    def test_qwen3_coder_exacto_high_random_returns_model_with_none_thinking_level_and_warning(self):
-        result = parse_model_pattern("qwen/qwen3-coder:exacto:high:random", ALL_MODELS)
-        assert result.model.id == "qwen/qwen3-coder:exacto"
-        assert result.thinking_level is None
-        assert "Invalid thinking level" in result.warning
-        assert "random" in result.warning
-
-    def test_empty_pattern_matches_via_partial_matching(self):
-        result = parse_model_pattern("", ALL_MODELS)
-        assert result.model is not None
-        assert result.thinking_level is None
-
-    def test_pattern_ending_with_colon_treats_empty_suffix_as_invalid(self):
-        result = parse_model_pattern("sonnet:", ALL_MODELS)
-        assert result.model.id == "claude-sonnet-4-5"
-        assert "Invalid thinking level" in result.warning
+@pytest.mark.parametrize("case", REFERENCE_CASES, ids=[case.name for case in REFERENCE_CASES])
+def test_resolve_model_reference(case: ReferenceCase):
+    request = ModelReferenceRequest(
+        text=case.text, provider=case.provider, thinking_suffix=case.thinking_suffix, fuzzy=case.fuzzy
+    )
+    # Catalog order must never decide the result.
+    for models in (REFERENCE_CATALOG, list(reversed(REFERENCE_CATALOG))):
+        result = resolve_model_reference(request, models, lambda provider: provider in case.usable)
+        expected = case.expected
+        if expected == "not-found":
+            assert result.status == "not-found"
+        elif "ambiguous" in expected:
+            assert result.status == "ambiguous"
+            assert sorted(_model_ref(model) for model in result.candidates) == expected["ambiguous"]
+            assert result.usable_count == expected["usable_count"]
+        else:
+            assert result.status == "resolved"
+            assert _model_ref(result.model) == expected["model"]
+            assert result.thinking_level == expected.get("thinking_level")
+            if "warning" in expected:
+                assert expected["warning"] in result.warning
+            else:
+                assert result.warning is None
 
 
 class TestResolveModelScopeWithDiagnostics:
@@ -243,6 +339,31 @@ class TestResolveModelScopeWithDiagnostics:
 
         assert scoped_models == []
         assert 'Warning: No models match pattern "missing"' in "".join(captured)
+
+    @pytest.mark.tonio
+    async def test_adds_every_provider_for_a_pattern_matching_the_same_id_on_several_providers(self):
+        runtime = MockRuntime(
+            [
+                *ALL_MODELS,
+                replace(MOCK_MODELS[1], provider="azure"),
+                replace(MOCK_MODELS[1], provider="openai-codex", id="gpt-4o-mini"),
+            ]
+        )
+
+        for pattern, thinking_level in (("gpt-4o:high", "high"), ("GPT-4o", None)):
+            result = await resolve_model_scope_with_diagnostics([pattern], runtime)
+
+            assert sorted(
+                (f"{scoped.model.provider}/{scoped.model.id}", scoped.thinking_level) for scoped in result.scoped_models
+            ) == [("azure/gpt-4o", thinking_level), ("openai/gpt-4o", thinking_level)]
+            assert result.diagnostics == [
+                ModelScopeDiagnostic(
+                    type="warning",
+                    code="ambiguous",
+                    message=f'Pattern "{pattern}" matches several providers: azure, openai. Use provider/id to choose one.',
+                    pattern=pattern,
+                )
+            ]
 
     @pytest.mark.tonio
     async def test_resolves_bracketed_model_ids_as_exact_references_before_glob_matching(self):
@@ -285,30 +406,6 @@ class TestResolveModelScopeWithDiagnostics:
 
 
 class TestResolveCliModel:
-    def test_resolves_model_provider_id_without_provider_flag(self):
-        result = resolve_cli_model(cli_model="openai/gpt-4o", model_runtime=MockRuntime(ALL_MODELS))
-        assert result.error is None
-        assert result.model.provider == "openai"
-        assert result.model.id == "gpt-4o"
-
-    def test_resolves_fuzzy_patterns_within_an_explicit_provider(self):
-        result = resolve_cli_model(cli_provider="openai", cli_model="4o", model_runtime=MockRuntime(ALL_MODELS))
-        assert result.error is None
-        assert result.model.provider == "openai"
-        assert result.model.id == "gpt-4o"
-
-    def test_supports_model_pattern_thinking_without_explicit_thinking_flag(self):
-        result = resolve_cli_model(cli_model="sonnet:high", model_runtime=MockRuntime(ALL_MODELS))
-        assert result.error is None
-        assert result.model.id == "claude-sonnet-4-5"
-        assert result.thinking_level == "high"
-
-    def test_prefers_exact_model_id_match_over_provider_inference(self):
-        result = resolve_cli_model(cli_model="openai/gpt-4o:extended", model_runtime=MockRuntime(ALL_MODELS))
-        assert result.error is None
-        assert result.model.provider == "openrouter"
-        assert result.model.id == "openai/gpt-4o:extended"
-
     def test_does_not_strip_invalid_suffix_as_thinking_level_in_model_flag(self):
         result = resolve_cli_model(
             cli_provider="openai", cli_model="gpt-4o:extended", model_runtime=MockRuntime(ALL_MODELS)
@@ -330,89 +427,44 @@ class TestResolveCliModel:
         assert result.model is None
         assert "No models available" in result.error
 
-    def test_prefers_the_sole_authenticated_provider_for_an_ambiguous_bare_exact_model_id(self):
-        result = resolve_cli_model(
-            cli_model="gpt-5.6-sol",
-            model_runtime=MockRuntime(_ambiguous_models(), configured=lambda provider: provider == "openai-codex"),
-        )
-        assert result.error is None
-        assert result.model.provider == "openai-codex"
-        assert result.model.id == "gpt-5.6-sol"
 
-    def test_requires_an_explicit_provider_for_an_ambiguous_bare_exact_model_id(self):
-        result = resolve_cli_model(
-            cli_model="gpt-5.6-sol",
-            model_runtime=MockRuntime(_ambiguous_models(), configured=lambda _provider: False),
-        )
+class TestDuplicateRawIdsBehindAKnownProviderPrefix:
+    """pi's "duplicate raw ids behind a known provider prefix (#10160)" describe."""
+
+    @staticmethod
+    def _runtime(configured: list[str]):
+        direct = replace(MOCK_MODELS[0], id="claude-sonnet-4-5", provider="anthropic")
+        openrouter = replace(MOCK_MODELS[0], id="anthropic/claude-opus-5.5", provider="openrouter")
+        vercel = replace(MOCK_MODELS[0], id="anthropic/claude-opus-5.5", provider="vercel-ai-gateway")
+        return MockRuntime([direct, openrouter, vercel], configured=lambda provider: provider in configured)
+
+    def test_selects_the_authenticated_gateway_with_or_without_a_thinking_suffix(self):
+        for cli_model, thinking_level in (
+            ("anthropic/claude-opus-5.5", None),
+            ("anthropic/claude-opus-5.5:high", "high"),
+        ):
+            result = resolve_cli_model(cli_model=cli_model, model_runtime=self._runtime(["vercel-ai-gateway"]))
+
+            assert result.error is None
+            assert result.model.provider == "vercel-ai-gateway"
+            assert result.thinking_level == thinking_level
+
+    def test_reports_ambiguity_instead_of_choosing_by_catalog_order(self):
+        result = resolve_cli_model(cli_model="anthropic/claude-opus-5.5", model_runtime=self._runtime([]))
+
         assert result.model is None
-        assert 'Model "gpt-5.6-sol" is ambiguous across providers' in result.error
-        assert "azure/gpt-5.6-sol" in result.error
-        assert "openai-codex/gpt-5.6-sol" in result.error
-        assert "Use --provider or provider/model" in result.error
+        assert "openrouter/anthropic/claude-opus-5.5, vercel-ai-gateway/anthropic/claude-opus-5.5" in result.error
+        assert "No matching provider is authenticated. Use --provider or provider/model." in result.error
 
-    def test_prefers_provider_model_split_over_gateway_model_with_matching_id(self):
-        zai_model = make_model(
-            "zai",
-            "glm-5",
-            api="anthropic-messages",
-            base_url="https://open.bigmodel.cn/api/paas/v4",
-            name="GLM-5",
-            reasoning=True,
-            context_window=128000,
-            max_tokens=8192,
-        )
-        gateway_model = make_model(
-            "vercel-ai-gateway",
-            "zai/glm-5",
-            api="anthropic-messages",
-            base_url="https://ai-gateway.vercel.sh",
-            name="GLM-5",
-            reasoning=True,
-            context_window=128000,
-            max_tokens=8192,
-        )
-        runtime = MockRuntime([*ALL_MODELS, zai_model, gateway_model])
-
-        result = resolve_cli_model(cli_model="zai/glm-5", model_runtime=runtime)
-
-        assert result.error is None
-        assert result.model.provider == "zai"
-        assert result.model.id == "glm-5"
-
-    def test_prefers_an_authenticated_exact_raw_model_id_over_an_unauthenticated_inferred_provider(self):
-        commandcode_model = make_model(
-            "commandcode",
-            "xiaomi/mimo-v2.5-pro",
-            api="anthropic-messages",
-            base_url="https://example.invalid",
-            name="Xiaomi MiMo via Commandcode",
-            context_window=128000,
-            max_tokens=8192,
-        )
-        xiaomi_model = make_model(
-            "xiaomi",
-            "mimo-v2.5-pro",
-            api="anthropic-messages",
-            base_url="https://api.xiaomimimo.com",
-            name="Xiaomi MiMo",
-            context_window=128000,
-            max_tokens=8192,
-        )
-        runtime = MockRuntime(
-            [*ALL_MODELS, commandcode_model, xiaomi_model], configured=lambda provider: provider == "commandcode"
+    def test_does_not_let_stored_credentials_choose_the_provider_for_api_key(self):
+        result = resolve_cli_model(
+            cli_model="anthropic/claude-opus-5.5",
+            inline_api_key=True,
+            model_runtime=self._runtime(["vercel-ai-gateway"]),
         )
 
-        result = resolve_cli_model(cli_model="xiaomi/mimo-v2.5-pro", model_runtime=runtime)
-
-        assert result.error is None
-        assert result.model.provider == "commandcode"
-        assert result.model.id == "xiaomi/mimo-v2.5-pro"
-
-    def test_resolves_provider_prefixed_fuzzy_patterns(self):
-        result = resolve_cli_model(cli_model="openrouter/qwen", model_runtime=MockRuntime(ALL_MODELS))
-        assert result.error is None
-        assert result.model.provider == "openrouter"
-        assert result.model.id == "qwen/qwen3-coder:exacto"
+        assert result.model is None
+        assert "--api-key does not choose a provider." in result.error
 
 
 class TestCustomModelFallbackWithThinkingSuffix:
@@ -515,18 +567,6 @@ class TestDefaultModelSelection:
 
     def test_qwen_token_plan_individual_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual"] == "qwen3.8-max"
-
-    @pytest.mark.tonio
-    async def test_find_initial_model_accepts_explicit_provider_custom_model_ids(self):
-        result = await find_initial_model(
-            cli_provider="openrouter",
-            cli_model="openrouter/openai/ghost-model",
-            scoped_models=[],
-            is_continuing=False,
-            model_runtime=MockRuntime(ALL_MODELS),
-        )
-        assert result.model.provider == "openrouter"
-        assert result.model.id == "openai/ghost-model"
 
     @pytest.mark.tonio
     async def test_find_initial_model_selects_ai_gateway_default_when_available(self):

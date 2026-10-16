@@ -1823,49 +1823,6 @@
       },
       "type": "chat"
     },
-    "chat:anthropic/claude-sonnet-4": {
-      "id": "anthropic/claude-sonnet-4",
-      "name": "Claude Sonnet 4",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "compat": {
-        "allowEmptySignature": true
-      },
-      "cost": {
-        "input": 3.0,
-        "output": 15.0,
-        "cacheRead": 0.3,
-        "cacheWrite": 3.75,
-        "tiers": [
-          {
-            "inputTokensAbove": 200000,
-            "input": 6.0,
-            "output": 22.5,
-            "cacheRead": 0.6,
-            "cacheWrite": 7.5
-          }
-        ]
-      },
-      "contextWindow": 1000000,
-      "maxTokens": 64000,
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
     "chat:anthropic/claude-sonnet-4.5": {
       "id": "anthropic/claude-sonnet-4.5",
       "name": "Claude Sonnet 4.5",
@@ -3762,32 +3719,9 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 262144,
-      "maxTokens": 32768,
-      "type": "chat"
-    },
-    "chat:inclusionai/ling-3.1-flash-free": {
-      "id": "inclusionai/ling-3.1-flash-free",
-      "name": "Ling 3.1 Flash (Free)",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "compat": {
-        "allowEmptySignature": true
-      },
-      "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
+        "input": 0.3,
+        "output": 0.9,
+        "cacheRead": 0.06,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -3826,6 +3760,29 @@
           }
         }
       },
+      "type": "chat"
+    },
+    "chat:liquid/lfm2.5-24b-a2b": {
+      "id": "liquid/lfm2.5-24b-a2b",
+      "name": "LFM2.5-24B-A2B",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.05,
+        "output": 0.7,
+        "cacheRead": 0.025,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 128000,
+      "maxTokens": 8200,
       "type": "chat"
     },
     "chat:meituan/longcat-2.5-preview": {
@@ -4187,6 +4144,40 @@
         "input": 0.1,
         "output": 0.2,
         "cacheRead": 0.002,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:meta/muse-spark-open": {
+      "id": "meta/muse-spark-open",
+      "name": "Muse Spark Open",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 1.25,
+        "output": 4.25,
+        "cacheRead": 0.15,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -5056,6 +5047,63 @@
       },
       "contextWindow": 262144,
       "maxTokens": 131072,
+      "type": "chat"
+    },
+    "chat:nvidia/nemotron-3.5-lightning-free": {
+      "id": "nvidia/nemotron-3.5-lightning-free",
+      "name": "Nemotron 3.5 Lightning Free",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 65000,
+      "type": "chat"
+    },
+    "chat:nvidia/nemotron-3.5-super-vl": {
+      "id": "nvidia/nemotron-3.5-super-vl",
+      "name": "NVIDIA Nemotron 3.5 Super VL",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.2,
+        "output": 0.5,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
       "type": "chat"
     },
     "chat:nvidia/nemotron-nano-12b-v2-vl": {
@@ -8468,6 +8516,52 @@
       },
       "type": "chat"
     },
+    "chat:reflection/beam": {
+      "id": "reflection/beam",
+      "name": "Beam 1.0",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 1.3,
+        "output": 4.3,
+        "cacheRead": 0.13,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "type": "chat"
+    },
+    "chat:reflection/beam-free": {
+      "id": "reflection/beam-free",
+      "name": "Beam 1.0 (Free)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "type": "chat"
+    },
     "chat:sakana/fugu-max": {
       "id": "sakana/fugu-max",
       "name": "Fugu Max",
@@ -9335,6 +9429,29 @@
       },
       "type": "chat"
     },
+    "chat:stealth/cat-jam": {
+      "id": "stealth/cat-jam",
+      "name": "Cat Jam",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "type": "chat"
+    },
     "chat:stealth/glyph-cluster": {
       "id": "stealth/glyph-cluster",
       "name": "Glyph Cluster",
@@ -9380,6 +9497,40 @@
       },
       "contextWindow": 256000,
       "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:stepfun/step-5-preview": {
+      "id": "stepfun/step-5-preview",
+      "name": "Step 5 Preview",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.95,
+        "output": 2.565,
+        "cacheRead": 0.0475,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
       "inputLimits": {
         "images": {
           "resize": {
@@ -9554,9 +9705,9 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.435,
-        "output": 0.87,
-        "cacheRead": 0.0036,
+        "input": 0.3045,
+        "output": 0.609,
+        "cacheRead": 0.0028,
         "cacheWrite": 0.0
       },
       "contextWindow": 1050000,
@@ -10149,12 +10300,30 @@
         "text"
       ],
       "cost": {
-        "input": 0.04,
+        "input": 0.02,
         "output": 0.0,
         "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 65536
+    },
+    "classifier:liquid/d1-ultra": {
+      "type": "classifier",
+      "id": "liquid/d1-ultra",
+      "name": "Liquid d1 Ultra",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32768
     },
     "classifier:microsoft/microsoft-decision-1": {
       "type": "classifier",
@@ -10192,6 +10361,24 @@
       },
       "contextWindow": 1050000
     },
+    "classifier:perplexity/pplx-decider-v1.1-27b": {
+      "type": "classifier",
+      "id": "perplexity/pplx-decider-v1.1-27b",
+      "name": "Decider V1.1 27B",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.02,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144
+    },
     "classifier:scaledown/scaledown-classify-1": {
       "type": "classifier",
       "id": "scaledown/scaledown-classify-1",
@@ -10214,6 +10401,42 @@
       "type": "classifier",
       "id": "typesafe-ai/jev",
       "name": "Jev",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32000
+    },
+    "classifier:typesafe-ai/jev-1.13.0": {
+      "type": "classifier",
+      "id": "typesafe-ai/jev-1.13.0",
+      "name": "Jev 1.13.0",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32000
+    },
+    "classifier:typesafe-ai/jev-1.14.0": {
+      "type": "classifier",
+      "id": "typesafe-ai/jev-1.14.0",
+      "name": "Jev 1.14.0",
       "api": "typesafe-system-one",
       "provider": "vercel-ai-gateway",
       "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",

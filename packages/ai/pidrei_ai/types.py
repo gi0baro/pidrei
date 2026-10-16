@@ -172,6 +172,10 @@ class ToolCall:
     thought_signature: str | None = None  # Google-specific: opaque signature for thought context reuse
     # OpenAI Responses namespace for calls to dynamically loaded or namespaced tools.
     namespace: str | None = None
+    # Set when the model's complete arguments text was not a valid JSON object; `arguments` is
+    # then `{}`. Describes the problem and includes the text the model sent; tool argument
+    # validation fails with it.
+    arguments_error: str | None = None
     type: Literal["toolCall"] = "toolCall"
 
 
@@ -544,6 +548,10 @@ class OpenAIResponsesCompat:
     # Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching).
     # Older OpenAI models reject the parameter. Default: False.
     supports_explicit_prompt_cache_mode: bool | None = None
+    # Whether thinking level changes are sent as `configuration_update` input items instead of
+    # changing `reasoning.effort`, so a change keeps the prompt cache. Ignored with Sign in with
+    # ChatGPT on the openai provider. Default: False.
+    supports_mid_convo_effort: bool | None = None
     # Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: True.
     supports_max_output_tokens: bool | None = None
 

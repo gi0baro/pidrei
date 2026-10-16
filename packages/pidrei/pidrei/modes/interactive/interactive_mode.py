@@ -2996,7 +2996,7 @@ class InteractiveMode:
         done = tonio.Event()
         # Written under the UI state lock (the mount hold and `close`); the
         # waiting handle reads `value` after `done`.
-        state: dict = {"component": None, "closed": False, "value": None, "editor_text": ""}
+        state: dict = {"component": None, "overlay_handle": None, "closed": False, "value": None, "editor_text": ""}
 
         def restore_editor() -> None:
             self._editor_container.clear()
@@ -3012,10 +3012,12 @@ class InteractiveMode:
                 state["closed"] = True
                 state["value"] = result
                 component = state["component"]
+                overlay_handle = state["overlay_handle"]
                 if not is_overlay:
                     restore_editor()
-                elif component is not None:
-                    self.ui.hide_overlay()
+                elif overlay_handle is not None:
+                    # Remove this overlay, not the topmost one: another overlay may have opened above it.
+                    overlay_handle.hide()
                 # Note: both branches above already request a render
                 with contextlib.suppress(Exception):
                     if component is not None and getattr(component, "dispose", None) is not None:
@@ -3031,11 +3033,11 @@ class InteractiveMode:
                     # Fallback: use component's width property if available
                     width = getattr(component, "width", None)
                     resolved_options = {"width": width} if width else None
-                handle = self.ui.show_overlay(component, resolved_options)
+                state["overlay_handle"] = self.ui.show_overlay(component, resolved_options)
                 # Expose handle to caller for visibility control
                 on_handle = options.get("onHandle")
                 if on_handle is not None:
-                    on_handle(guard_overlay_handle(self.ui, handle))
+                    on_handle(guard_overlay_handle(self.ui, state["overlay_handle"]))
             else:
                 self._dispose_active_selector()
                 self._editor_container.clear()

@@ -418,6 +418,14 @@ OPENAI_RESPONSES_COMPAT_SCHEMA: dict[str, Any] = {
             description="Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
             default=False,
         ),
+        "supportsMidConvoEffort": _boolean(
+            description=(
+                "Whether thinking level changes are sent as configuration_update input items instead of changing "
+                "reasoning.effort, so a change keeps the prompt cache. Only used by the openai-responses API, and "
+                "ignored with Sign in with ChatGPT on the openai provider."
+            ),
+            default=False,
+        ),
         "supportsMaxOutputTokens": _boolean(
             description="Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
             default=True,
@@ -563,6 +571,13 @@ _PROVIDER_COMPAT_PROPERTY_OVERRIDES: dict[str, Any] = {
     ),
     "sessionAffinityFormat": _session_affinity_format(
         description="Session-affinity header format. Defaults are API-specific or auto-detected."
+    ),
+    "supportsMidConvoEffort": _boolean(
+        description=(
+            "Whether thinking level changes are sent inside the conversation instead of changing the request's "
+            "effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs."
+        ),
+        default=False,
     ),
     "supportsLongCacheRetention": _boolean(
         description="Whether the provider supports long prompt cache retention. Defaults are API-specific or auto-detected."

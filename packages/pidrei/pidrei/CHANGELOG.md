@@ -6,6 +6,91 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.3.0.0] - 2026-10-16
+
+Tracks [Pi 1.3.0](https://github.com/earendil-works/pi/releases/tag/v1.3.0).
+
+### Added
+
+- Changing the thinking level mid-session on OpenAI GPT-6 models with an API
+  key keeps the prompt cache: the level is sent inside the conversation
+  instead of changing the request's effort. `models.json` controls it with
+  `compat.supportsMidConvoEffort`, which now applies to the
+  `openai-responses` API as well as `anthropic-messages`.
+- The OpenCode Go provider serves Google Generative AI models.
+
+### Changed
+
+- **Breaking:** the `kimi-coding` provider uses OpenAI Chat Completions at
+  `https://api.kimi.com/coding/v1`, the protocol the official Kimi Code client
+  uses, so K3, K3-256K and Kimi For Coding accept tools added mid-conversation
+  without invalidating the prompt cache. `models.json` overrides of the
+  `kimi-coding` base URL must now include `/v1`.
+- **Breaking:** `pidrei_ai` no longer has `AssistantMessageFrame`,
+  `AssistantMessageFrameEncoder` and `reduce_assistant_message_frames()`.
+- Switching models drops thinking blocks from earlier replies of a different
+  model instead of sending them as plain text, where the new model could take
+  the old model's reasoning for its own and start writing reasoning into the
+  visible answer.
+- `--model` no longer picks a provider by catalog order when several
+  providers offer the match: it prefers the one with credentials and
+  otherwise reports the ambiguity. `--models` and `enabledModels` add the
+  model for every provider that offers it, with a warning, and `--api-key`
+  never decides the provider.
+- Tool calls whose final arguments are malformed JSON fail validation and
+  show the model the raw arguments it sent, instead of running with the
+  fields parsed before the error. `ToolCall` gains `arguments_error`.
+- OpenCode Zen and OpenCode Go use the `opencode.ai/inference` endpoints.
+- Xiaomi MiMo models expose only the `off` and `high` thinking levels and
+  send only the thinking on/off toggle. The Xiaomi providers' default model
+  is `mimo-v2.6-pro`.
+- Model catalog regenerated from models.dev.
+
+### Fixed
+
+- Resumed sessions dropped tools activated during the session. Resume now
+  restores the session's active tools, with `--tools +name`/`-name` entries
+  applied to them, unless `--tools` with tool names, `--no-tools` or
+  `--no-builtin-tools` selects tools explicitly.
+- Prompt templates dropped empty quoted arguments (`""` or `''`), which
+  shifted later positional arguments and kept positional defaults from
+  applying.
+- `read` line-range labels for numeric-string or null arguments in the TUI,
+  the session tree, HTML exports and the example extensions.
+- `done()` of an extension's `ctx.ui.custom(..., {"overlay": True})` closed
+  the topmost overlay instead of its own, leaving the finished overlay on
+  screen and another extension's dialog unresolved.
+- Tool-call argument parsing dropped fields when a string contained an
+  invalid `\u` escape such as `\usepackage`.
+- Anthropic and Bedrock Claude requests failed with a 400 when an error tool
+  result contained images; the images are now sent after the turn's tool
+  results, so the model still sees them.
+- OpenCode Go Gemini models failed with a 404, and OpenCode Go MiniMax M2.7
+  with "Model does not support this protocol" (it now uses the Anthropic
+  Messages API).
+- Gateway `Unable to forward upstream stream` errors and `The service is
+  temporarily unavailable` errors are retried; the latter also made
+  compaction fail on its first attempt.
+- OpenAI-compatible responses showed thinking after the answer when a proxy
+  such as LiteLLM sent reasoning and content in the same stream chunk.
+- Gemini 4 requests on Google Vertex failed with "Thinking budget is not
+  supported", and their thinking level was ignored on the Gemini API; Gemini 4
+  and later models are sent `thinkingLevel`.
+- Xiaomi MiMo models failed with a 400 at the `minimal` thinking level.
+- `openai-codex/gpt-6.1-sol` used a 272K context window instead of the 500K
+  window Codex now provides.
+- Claude Haiku 5.5 and Claude Opus 5 did not support the `off` thinking
+  level; `off` now disables thinking without effort settings.
+
+### Not ported
+
+- Pi's `sessionShareDestination` setting: it chooses between GitHub gists and
+  Radius for `/share`, and PiDrei's `/share` uploads only to gists.
+- Pi's limit of two live codemode workers: PiDrei kills a stopped script's
+  worker process at once, and scripts beyond the worker pool's size wait for
+  a worker instead of failing.
+- Pi's NVIDIA RTX llama.cpp guide: the llama.cpp extension is not ported.
+
 ## [1.2.0.0] - 2026-10-13
 
 Tracks [Pi 1.2.0](https://github.com/earendil-works/pi/releases/tag/v1.2.0).
