@@ -319,6 +319,68 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         await ui.stop()
 
 
+# Regression test for #10648: closing a lower overlay removed the topmost overlay instead.
+@pytest.mark.tonio
+@pytest.mark.parametrize("non_capturing", [False, True], ids=["capturing", "non-capturing"])
+async def test_closing_a_lower_overlay_custom_ui_removes_its_own_overlay_not_the_topmost_one(non_capturing):
+    terminal = VirtualTerminal(80, 24)
+    ui = TuiMainScreen(terminal)
+    editor_container = Container()
+    editor = FakeFocusableComponent("EDITOR")
+    lower = FakeFocusableComponent("LOWER")
+    upper = FakeFocusableComponent("UPPER")
+    closers: dict = {}
+    fake = SimpleNamespace(
+        editor=editor,
+        _editor_container=editor_container,
+        _keybindings={},
+        ui=ui,
+        _extension_tui=ExtensionTui(ui),
+        _dispose_active_selector=lambda: None,
+    )
+
+    def lower_factory(_tui, _theme, _keybindings, done):
+        closers["lower"] = done
+        return lower
+
+    def upper_factory(_tui, _theme, _keybindings, done):
+        closers["upper"] = done
+        return upper
+
+    editor_container.add_child(editor)
+    ui.add_child(editor_container)
+    ui.set_focus(editor)
+    await ui.start()
+    try:
+        lower_done = InteractiveMode._show_extension_custom(
+            fake, lower_factory, {"overlay": True, "overlayOptions": {"nonCapturing": non_capturing}}
+        )
+        await flush_tui(ui, terminal)
+        upper_done = InteractiveMode._show_extension_custom(fake, upper_factory, {"overlay": True})
+        await flush_tui(ui, terminal)
+        assert upper.focused is True
+
+        closers["lower"]("lower closed")
+        assert await lower_done == "lower closed"
+        await flush_tui(ui, terminal)
+
+        viewport = "\n".join(terminal.get_viewport())
+        assert "UPPER" in viewport
+        assert "LOWER" not in viewport
+        await terminal.send_input("x")
+        await flush_tui(ui, terminal)
+        assert upper.inputs == ["x"]
+        assert lower.inputs == []
+
+        closers["upper"]("upper closed")
+        assert await upper_done == "upper closed"
+        await flush_tui(ui, terminal)
+        assert ui.has_overlay() is False
+        assert editor.focused is True
+    finally:
+        await ui.stop()
+
+
 class TestCreateExtensionUIContextAddAutocompleteProvider:
     def test_stores_wrapper_factories_and_rebuilds_autocomplete_immediately(self):
         def wrapper(current):

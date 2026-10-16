@@ -31,7 +31,7 @@ from pidrei.core.tools import (
     create_read_tool_definition,
     create_write_tool_definition,
 )
-from pidrei.core.tools.render_utils import shorten_path
+from pidrei.core.tools.render_utils import format_read_line_range, shorten_path
 from pidrei_tui import Text
 
 
@@ -116,11 +116,9 @@ async def extension(pi):
         args = args or {}
         display = path_display(args, theme)
 
-        # Show line range if specified
-        if args.get("offset") is not None or args.get("limit") is not None:
-            start_line = args.get("offset") if args.get("offset") is not None else 1
-            end_line = start_line + args["limit"] - 1 if args.get("limit") is not None else ""
-            display += theme.fg("warning", f":{start_line}{f'-{end_line}' if end_line else ''}")
+        line_range = format_read_line_range(args.get("offset"), args.get("limit"))
+        if line_range:
+            display += theme.fg("warning", line_range)
 
         return Text(f"{theme.fg('toolTitle', theme.bold('read'))} {display}", 0, 0)
 

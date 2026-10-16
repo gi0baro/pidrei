@@ -17,7 +17,7 @@ from ....modes.interactive.components.keybinding_hints import key_hint, key_text
 from ....modes.interactive.theme import get_language_from_path, highlight_code
 from ....utils.paths import format_path_relative_to_cwd_or_absolute
 from ..path_utils import resolve_to_cwd
-from ..render_utils import get_text_output, render_tool_path, replace_tabs, str_or_none
+from ..render_utils import format_read_line_range, get_text_output, render_tool_path, replace_tabs, str_or_none
 from ..truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, format_size
 from .types import ToolRenderers
 
@@ -25,19 +25,16 @@ from .types import ToolRenderers
 _COMPACT_RESOURCE_FILE_NAMES = {"AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
 
 
-def _format_read_line_range(args: dict | None, theme) -> str:
+def _styled_read_line_range(args: dict | None, theme) -> str:
     args = args or {}
-    if args.get("offset") is None and args.get("limit") is None:
-        return ""
-    start_line = args.get("offset") if args.get("offset") is not None else 1
-    end_line = start_line + args["limit"] - 1 if args.get("limit") is not None else ""
-    return theme.fg("warning", f":{start_line}{f'-{end_line}' if end_line else ''}")
+    line_range = format_read_line_range(args.get("offset"), args.get("limit"))
+    return theme.fg("warning", line_range) if line_range else ""
 
 
 def _format_read_call(args: dict | None, theme, cwd: str) -> str:
     args = args or {}
     path_display = render_tool_path(str_or_none(args.get("file_path", args.get("path"))), theme, cwd)
-    return f"{theme.fg('toolTitle', theme.bold('read'))} {path_display}{_format_read_line_range(args, theme)}"
+    return f"{theme.fg('toolTitle', theme.bold('read'))} {path_display}{_styled_read_line_range(args, theme)}"
 
 
 def _to_posix_path(path: str) -> str:
@@ -89,7 +86,7 @@ def _format_compact_read_call(classification: dict, args: dict | None, theme) ->
         return (
             theme.fg("customMessageLabel", "\x1b[1m[skill]\x1b[22m ")
             + theme.fg("customMessageText", classification["label"])
-            + _format_read_line_range(args, theme)
+            + _styled_read_line_range(args, theme)
             + expand_hint
         )
 
@@ -97,7 +94,7 @@ def _format_compact_read_call(classification: dict, args: dict | None, theme) ->
         theme.fg("toolTitle", theme.bold(f"read {classification['kind']}"))
         + " "
         + theme.fg("accent", classification["label"])
-        + _format_read_line_range(args, theme)
+        + _styled_read_line_range(args, theme)
         + expand_hint
     )
 

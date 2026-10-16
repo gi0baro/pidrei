@@ -1,6 +1,7 @@
 """Mirror of pi coding-agent src/core/tools/render-utils.ts."""
 
 import json
+import math
 import os
 from pathlib import Path
 
@@ -36,6 +37,39 @@ def str_or_none(value):
     if value is None:
         return ""
     return None
+
+
+def _parse_line_number(value) -> float | None:
+    if isinstance(value, str) and value.strip() != "":
+        try:
+            value = float(value)
+        except ValueError:
+            return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return value if isinstance(value, int) or math.isfinite(value) else None
+
+
+def _js_number(value: float) -> str:
+    # JS template interpolation of a number: integral floats print bare.
+    return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+
+
+def format_read_line_range(offset, limit) -> str:
+    """Format finite numbers or numeric strings as a read line range, omitting malformed ranges."""
+    # Strict schemas represent omitted optional arguments as null.
+    if offset is None and limit is None:
+        return ""
+    start = 1 if offset is None else _parse_line_number(offset)
+    if start is None:
+        return ""
+    if limit is None:
+        return f":{_js_number(start)}"
+    count = _parse_line_number(limit)
+    if count is None:
+        return ""
+    end = start + count - 1
+    return f":{_js_number(start)}{f'-{_js_number(end)}' if end else ''}"
 
 
 def replace_tabs(text: str) -> str:

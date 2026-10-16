@@ -178,6 +178,7 @@ async def create_harness(
             resource_loader=resource_loader,
             base_tools_override={tool.name: tool for tool in tools} if tools else None,
             initial_active_tool_names=initial_active_tool_names,
+            uses_default_tools=initial_active_tool_names is None,
             allowed_tool_names=allowed_tool_names,
             excluded_tool_names=excluded_tool_names,
             extension_runner_ref=extension_runner_ref,

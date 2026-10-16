@@ -49,7 +49,7 @@ from pidrei.core.resource_loader import DefaultResourceLoader
 from pidrei.core.sdk import CreateAgentSessionOptions, create_agent_session
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
-from pidrei.core.tools.render_utils import shorten_path
+from pidrei.core.tools.render_utils import format_read_line_range, shorten_path
 from pidrei.modes.interactive.theme import get_markdown_theme
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -110,13 +110,10 @@ def format_tool_call(tool_name: str, args: dict, theme) -> str:
         return theme.fg("muted", "$ ") + theme.fg("toolOutput", preview)
     if tool_name == "read":
         file_path = shorten_path(args.get("file_path") or args.get("path") or "...")
-        offset = args.get("offset")
-        limit = args.get("limit")
+        line_range = format_read_line_range(args.get("offset"), args.get("limit"))
         text = theme.fg("accent", file_path)
-        if offset is not None or limit is not None:
-            start_line = offset if offset is not None else 1
-            end_line = start_line + limit - 1 if limit is not None else ""
-            text += theme.fg("warning", f":{start_line}{f'-{end_line}' if end_line else ''}")
+        if line_range:
+            text += theme.fg("warning", line_range)
         return theme.fg("muted", "read ") + text
     if tool_name == "write":
         file_path = shorten_path(args.get("file_path") or args.get("path") or "...")

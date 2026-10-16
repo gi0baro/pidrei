@@ -30,6 +30,8 @@ def parse_command_args(args_string: str) -> list[str]:
     """Parse command arguments respecting quoted strings (bash-style)."""
     args: list[str] = []
     current = ""
+    # Tracks whether a token has started, so quoted empty strings ("" or '') are kept as arguments
+    has_token = False
     in_quote: str | None = None
 
     for char in args_string:
@@ -40,14 +42,17 @@ def parse_command_args(args_string: str) -> list[str]:
                 current += char
         elif char in ('"', "'"):
             in_quote = char
+            has_token = True
         elif char.isspace():
-            if current:
+            if has_token:
                 args.append(current)
                 current = ""
+                has_token = False
         else:
             current += char
+            has_token = True
 
-    if current:
+    if has_token:
         args.append(current)
 
     return args
