@@ -650,6 +650,10 @@ LIVE_API_AI_TESTS = (
     "tool-call-without-result",
     "total-tokens",
     "unicode-surrogate",
+    # 1.4.0 additions (1.4.0 delta port).
+    "classifier-images-live",
+    "openai-codex-cache-affinity-e2e",
+    "xiaomi-token-plan-ams-anthropic-empty-signature-smoke",
 )
 DROPPED_PREFIXES += tuple(
     (f"packages/ai/test/{name}.test.ts", "live-API test, not ported") for name in LIVE_API_AI_TESTS
@@ -669,9 +673,13 @@ DROPPED_PREFIXES += (
 #: 1.3.0 (`3daa2028`): pi's two-worker admission limit bounds Bun workers that
 #: outlive a non-blocking terminate. pidrei's stop() SIGKILLs the Monty worker,
 #: so none survives, and Monty's pool already bounds checkouts by queueing.
+#: 1.4.0 (`885a564b`) queues scripts in front of that limit (60 s cap,
+#: PI_CODEMODE_MAX_WORKERS); dropped with it, its execute.ts and docs hunks
+#: included.
 _CODEMODE_WORKER_ADMISSION_REASON = (
-    "codemode worker admission (acquireWorker/onWorkerStarted, two-worker limit) not ported: "
-    "pidrei SIGKILLs Monty workers and Monty's pool queues checkouts (recipe codemode-python)"
+    "codemode worker admission (acquireWorker/onWorkerStarted, two-worker limit, 1.4.0's queue "
+    "in front of it) not ported: pidrei SIGKILLs Monty workers and Monty's pool queues checkouts "
+    "(recipe codemode-python)"
 )
 DROPPED_PREFIXES += tuple(
     (path, _CODEMODE_WORKER_ADMISSION_REASON)
@@ -680,6 +688,43 @@ DROPPED_PREFIXES += tuple(
         "packages/codemode/test/fixtures/worker-process-exit.ts",
         "packages/coding-agent/test/codemode-worker-admission.test.ts",
     )
+)
+#: 1.4.0 drops (1.4.0 delta port).
+_TELEMETRY_REASON = "telemetry not ported (no phone-home; 0.84.1 delta port)"
+_WINDOWS_SHELL_REASON = "Windows shell detection, not ported (POSIX-only; 1.4.0 delta port)"
+_EXIT_RESTORE_REASON = (
+    "terminal restore on process exit without stop() not ported: every pidrei exit with a TUI up "
+    "runs ui.stop() or returns through main() (recipe tui-island; 1.4.0 delta port)"
+)
+_VIRTUAL_MODULES_REASON = (
+    "jiti virtual-module table not ported: there is no module-alias table "
+    "(see pidrei/core/extensions/loader.py docstring)"
+)
+DROPPED_PREFIXES += (
+    # pi-ai request spans (`2ec55d80`); the lazy/simple-options/models/types
+    # hunks of that commit are per-hunk skips
+    ("packages/ai/src/telemetry.ts", _TELEMETRY_REASON),
+    ("packages/ai/test/telemetry.test.ts", _TELEMETRY_REASON),
+    # `28bea006`, `61060ddf`: the shell.ts/tools-manager.ts hunks are Windows
+    # branches (per-hunk skips)
+    ("packages/coding-agent/test/shell-path-exists.test.ts", _WINDOWS_SHELL_REASON),
+    ("packages/coding-agent/test/powershell-config.test.ts", _WINDOWS_SHELL_REASON),
+    ("packages/coding-agent/test/windows-shell-config.test.ts", _WINDOWS_SHELL_REASON),
+    (
+        "packages/coding-agent/test/suite/regressions/6596-taskkill-enoent.test.ts",
+        "Windows taskkill path, not ported (POSIX-only; 1.4.0 delta port)",
+    ),
+    # `9df819de`: the terminal.ts/tui.ts/tui-alt-screen.ts hunks are dropped
+    # with the tests
+    ("packages/tui/test/exit-restore.test.ts", _EXIT_RESTORE_REASON),
+    ("packages/tui/test/fixtures/exit-without-stop.ts", _EXIT_RESTORE_REASON),
+    # `22dc6c26`: the `@earendil-works/pi-ai/models` alias; the loader.ts hunk
+    # is a per-hunk skip
+    ("packages/coding-agent/src/core/extensions/virtual-modules.ts", _VIRTUAL_MODULES_REASON),
+    (
+        "packages/coding-agent/test/suite/regressions/11156-pi-ai-models-virtual-module.test.ts",
+        _VIRTUAL_MODULES_REASON,
+    ),
 )
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
@@ -766,6 +811,9 @@ RENAMES = {
     "packages/ai/test/transform-messages-copilot-openai-to-anthropic.test.ts": (
         "packages/ai/tests/test_transform_messages_copilot.py"
     ),
+    # 1.4.0: coding-agent's own User-Agent helper; pidrei's has always been
+    # utils/user_agent.py (like pi-ai's above).
+    "packages/coding-agent/src/utils/pi-user-agent.ts": "packages/pidrei/pidrei/utils/user_agent.py",
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
@@ -1176,6 +1224,13 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/test/first-time-setup.test.ts": (
         ("no-telemetry", "analytics-settings cases are not mirrored"),
     ),
+    # Client identity (1.4.0.0): the mechanism ports, the identity values are PiDrei's.
+    "packages/ai/src/utils/identity.ts": (
+        ("no-telemetry", "PIDREI_ATTRIBUTION and the pidrei User-Agent; NVIDIA origin is PiDrei by the casing rule"),
+    ),
+    "packages/coding-agent/src/core/client-identity.ts": (
+        ("no-telemetry", "gated by enableProviderAttribution / PIDREI_PROVIDER_ATTRIBUTION, not install telemetry"),
+    ),
     # Configuration schemas (1.2.0.0): PiDrei's settings set, schema URLs and the
     # runtime key-id anchor (recipe `config-schemas`).
     "packages/coding-agent/src/core/settings-schema.ts": (
@@ -1191,6 +1246,14 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "packages/coding-agent/scripts/generate-schemas.ts": (
         ("config-schemas", "SCHEMA_BASE_URL is PiDrei's GitHub raw URL; regenerate with make config-schemas"),
+    ),
+    # The models.json reference page (1.4.0.0), rendered from the same schemas.
+    "packages/coding-agent/scripts/generate-references.ts": (
+        (
+            "config-schemas",
+            "renders docs/models-configuration.md from PiDrei's schema dicts; SCHEMA_BASE_URL is PiDrei's; "
+            "regenerate with make references",
+        ),
     ),
     # Codemode scripts are Python on Monty (1.0.0.0): behaviour ports, the
     # JavaScript-shaped text and machinery are translated or dropped.
@@ -1367,6 +1430,20 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "by interactive mode; ensurePngTranscoder/loadPngTranscoder have no counterpart",
         ),
     ),
+    "packages/tui/src/layout.ts": (
+        (
+            "scrollbar-cell-shortcuts",
+            "_replace_scrollbar_cell measures common rows from their end (utils.measure_line_end) before pi's "
+            "walk; the shortcuts must give replaceScrollbarCell's exact output",
+        ),
+    ),
+    "packages/coding-agent/src/core/cache-warmer.ts": (
+        (
+            "warm-identity",
+            "warm requests resolve the client identity when sent (CacheWarmer's get_identity); pi replays the "
+            "warmed request's identity",
+        ),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -1441,7 +1518,12 @@ TEST_HOMES = {
     "packages/tui/test/tui-shrink.test.ts": "covered by packages/tui/tests/test_tui_render.py",
     "packages/tui/test/settings-list.test.ts": "PARITY GAP: components/settings_list.py ported, pre-existing cases unmirrored — new in-range cases port into a new test_settings_list.py",
     "packages/coding-agent/test/model-runtime-cloudflare-compat.test.ts": "covered by packages/pidrei/tests/test_model_registry.py + test_model_runtime.py",
-    "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": "covered by packages/pidrei/tests/test_provider_attribution.py",
+    # deleted upstream in 1.4.0 (`adc5fa9f`); its cases moved to
+    # sdk-client-identity.test.ts, which maps mechanically
+    "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": (
+        "covered by packages/pidrei/tests/test_sdk_client_identity.py (test_provider_attribution.py is "
+        "deleted with core/provider_attribution.py)"
+    ),
     "packages/coding-agent/test/model-runtime-test-utils.ts": "pi test infra; pidrei equivalent is packages/pidrei/tests/model_runtime_helpers.py — absorb deltas where ported tests need them",
     "packages/ai/test/deferred-tools.test.ts": (
         "deleted upstream in 9e05370b (deferred tools replaced by transcript system messages); "
@@ -1452,8 +1534,8 @@ TEST_HOMES = {
         "(OpenRouter default/opt-out, Baseten catalog); the rest of the prompt-cache suite is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-result-images.test.ts": (
-        "partial mirror: test_openai_completions_tool_result_images.py holds the 0.87.1 empty-text-part case; "
-        "the tool-result image batching cases are a PARITY GAP"
+        "partial mirror: test_openai_completions_tool_result_images.py holds the 0.87.1 empty-text-part case "
+        "and the 1.4.0 '(no tool output)' placeholder case; the tool-result image batching cases are a PARITY GAP"
     ),
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
@@ -1589,6 +1671,12 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/regressions/6363-agent-settled-event.test.ts": (
         "covered by packages/pidrei/tests/test_agent_session_boundaries.py "
         "(test_marks_the_exhausted_retry_run_as_final and the agent_settled assertions around it)"
+    ),
+    # 1.4.0 additions (1.4.0 delta port).
+    "packages/coding-agent/test/export-html-cjk.test.ts": (
+        "partial mirror: packages/pidrei/tests/test_export_html_cjk.py checks the export embeds "
+        "marked-cjk-friendly and hooks emStrong; running the viewer script (pi's node:vm cases) is a "
+        "PARITY GAP, the tests have no JS runtime"
     ),
 }
 

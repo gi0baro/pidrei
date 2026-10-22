@@ -11,6 +11,7 @@ from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     convert_responses_tools,
+    get_responses_tool_support,
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
@@ -18,6 +19,7 @@ from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
     CacheRetention,
+    ClientIdentity,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -33,11 +35,11 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -47,6 +49,10 @@ OPENAI_TOOL_CALL_PROVIDERS = frozenset(("openai", "openai-codex", "opencode"))
 # OpenAI Responses rejects max_output_tokens below 16.
 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16
 CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage"
+CHATGPT_WORKSPACE_LIMIT_HINT = (
+    "You've reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at "
+    "admin.openai.com → Workspace → Usage limits."
+)
 # Fixed reasoning.effort while configuration_update items carry the thinking level.
 CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium"
 
@@ -305,6 +311,7 @@ def _create_client(
     session_id: str | None,
     env: ProviderEnv | None = None,
     fetch: http.FetchFunction | None = None,
+    identity: ClientIdentity | None = None,
 ) -> OpenAIResponsesClient:
     compat = get_compat(model)
     headers: dict[str, Any] = dict(model.headers or {})
@@ -322,7 +329,7 @@ def _create_client(
     if options_headers:
         headers.update(options_headers)
 
-    set_default_user_agent(headers)
+    set_default_identity_headers(headers, model, identity)
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
     return _PunkreqResponsesClient(model.base_url, final_headers, env, fetch=fetch)
@@ -337,7 +344,12 @@ def build_params(
     configuration_update_effort: str | None,
 ) -> dict:
     transcript_tools = resolve_transcript_tools(
-        context.messages, compat.supports_additional_tools or compat.supports_tool_search
+        context.messages,
+        get_responses_tool_support(
+            supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
+            supports_additional_tools=compat.supports_additional_tools,
+            supports_tool_search=compat.supports_tool_search,
+        ),
     )
     messages = convert_responses_messages(
         model,
@@ -481,7 +493,14 @@ def stream(
                 opts.client
                 if opts.client is not None
                 else _create_client(
-                    model, normalized_context, api_key, opts.headers, cache_session_id, opts.env, opts.fetch
+                    model,
+                    normalized_context,
+                    api_key,
+                    opts.headers,
+                    cache_session_id,
+                    opts.env,
+                    opts.fetch,
+                    opts.identity,
                 )
             )
             params = build_params(
@@ -538,11 +557,13 @@ def stream(
                 f"{'OpenAI' if model.provider == 'openai' else model.provider} API error",
             )
             # Sign in with ChatGPT shares the subscription's usage limit with other apps.
-            output.error_message = (
-                f"{error_message}\nCheck your ChatGPT usage: {CHATGPT_USAGE_URL}"
-                if "subscription_sharing_usage_limit_exceeded" in error_message
-                else error_message
-            )
+            # On ChatGPT Business plans, the workspace admin also sets a per-user limit.
+            if "subscription_sharing_usage_limit_exceeded" in error_message:
+                output.error_message = f"{error_message}\nCheck your ChatGPT usage: {CHATGPT_USAGE_URL}"
+            elif "subscription_sharing_workplace_individual_usage_limit_exceeded" in error_message:
+                output.error_message = f"{error_message}\n{CHATGPT_WORKSPACE_LIMIT_HINT}"
+            else:
+                output.error_message = error_message
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

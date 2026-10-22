@@ -12,6 +12,7 @@ from typing import Any
 
 from pidrei_ai.types import (
     AssistantImages,
+    ClientIdentity,
     ImageContent,
     ImageModel,
     ImagesContext,
@@ -25,6 +26,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.headers import provider_headers_to_record
+from pidrei_ai.utils.identity import get_identity_headers
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_http import http
@@ -99,6 +101,7 @@ async def generate_images(
             options.headers if options else None,
             options.env if options else None,
             options.fetch if options else None,
+            options.identity if options else None,
         )
         params = build_params(model, context)
         next_params = await maybe_call(options.on_payload if options else None, params, model)
@@ -155,8 +158,9 @@ def create_client(
     options_headers: ProviderHeaders | None = None,
     env=None,
     fetch: http.FetchFunction | None = None,
+    identity: ClientIdentity | None = None,
 ) -> _OpenRouterImagesClient:
-    headers = provider_headers_to_record({**(model.headers or {}), **(options_headers or {})}) or {}
+    headers = provider_headers_to_record(get_identity_headers(model, identity), model.headers, options_headers) or {}
     headers["authorization"] = f"Bearer {api_key}"
     return _OpenRouterImagesClient(model.base_url, headers, env, fetch=fetch)
 

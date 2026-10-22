@@ -212,32 +212,73 @@ pidrei starts
   ├─► session_start        { reason: "startup" }
   └─► resources_discover   { reason: "startup" }
 
+/new, /resume, /fork, /clone or /reload
+  ├─► session_before_switch (/new, /resume) or session_before_fork (/fork, /clone): may cancel
+  ├─► session_shutdown     (the old runtime)
+  ├─► project_trust        (when the replacement enters a new working directory)
+  ├─► session_start        { reason: "new" | "resume" | "fork" | "reload" }
+  └─► resources_discover   { reason: "startup" | "reload" }
+
+quit
+  └─► session_shutdown     { reason: "quit" }
+
 user sends a prompt
   ├─► (extension commands are checked first and bypass the rest)
   ├─► input                (intercept, transform, or handle)
   ├─► (skill / template expansion, if not handled)
   ├─► before_agent_start   (inject a message, modify the system prompt)
-  ├─► agent_start
-  │
-  │   ┌── turn (repeats while the model calls tools) ──┐
-  │   ├─► turn_start                                   │
-  │   ├─► context                  (modify conversation)
-  │   ├─► context_with_system      (modify full transcript)
-  │   ├─► before_provider_headers  (mutate headers)    │
-  │   ├─► before_provider_request  (inspect/replace)   │
-  │   ├─► after_provider_response  (status/headers)    │
-  │   ├─► message_start / message_update / message_end │
-  │   ├─► tool_call                (block or rewrite)  │
-  │   ├─► tool_result              (rewrite output)    │
-  │   └─► turn_end                 (append entries, continue)
-  │       └─► threshold compaction before a naturally required next turn
-  │
-  ├─► agent_end
-  ├─► retry backoff or final-attempt recovery (when selected)
-  │   └─► fresh agent_start on successful recovery
-  ├─► agent_before_settle          (append entries, continue)
-  └─► agent_settled                (final, notification only)
+  ├─► agent_start  ◄──────────────────────────────┐
+  │     turns, see below                          │
+  ├─► agent_end                                   │
+  │     more work? (retry, recovery, compaction   │
+  │     retry, queued work) ── yes ───────────────┤
+  ├─► agent_before_settle  (append entries)       │
+  │     continuation requested? ── yes ───────────┘
+  └─► agent_settled        (final, notification only)
+
+each turn (repeats while the model calls tools)
+  ├─► turn_start
+  ├─► model request
+  │     ├─► context                  (modify conversation)
+  │     ├─► context_with_system      (modify full transcript)
+  │     ├─► before_provider_headers  (mutate headers)
+  │     ├─► before_provider_request  (inspect/replace)
+  │     ├─► after_provider_response  (status/headers)
+  │     └─► provider_stream_event, message_start / message_update / message_end
+  ├─► each tool call
+  │     ├─► tool_execution_start
+  │     ├─► tool_call                (block or rewrite)
+  │     ├─► tool_execution_update    (while the tool runs)
+  │     ├─► tool_result              (rewrite output)
+  │     └─► tool_execution_end
+  └─► turn_end                       (append entries, continue)
+        └─► threshold compaction before a naturally required next turn
 ```
+
+Message events also cover user and tool-result messages; the diagram shows
+only the assistant stream, where it occurs in each turn. Provider hooks run
+only when the transport exposes the matching stage. `agent_end` is not a
+final-idle signal: use `agent_before_settle` to append final entries or
+request one last continuation, and `agent_settled` for notification-only work
+once nothing continues automatically.
+
+### Choosing an event
+
+| Goal | Event |
+|------|-------|
+| Inspect, transform or consume raw user input | `input` |
+| Change prompt sections or active tools, or add context, before a run | `before_agent_start` |
+| Observe one low-level agent run | `agent_start`, `agent_end` |
+| Act after one model response and its tool calls | `turn_end` |
+| Filter the conversation for one provider request | `context` |
+| Transform the complete transcript, system messages included | `context_with_system` |
+| Change the request headers or the serialized provider payload | `before_provider_headers`, `before_provider_request` |
+| Observe provider response metadata or parsed stream events | `after_provider_response`, `provider_stream_event` |
+| Authorize or modify a tool call | `tool_call` |
+| Redact, annotate or replace a tool result | `tool_result` |
+| Append final entries or request one last continuation | `agent_before_settle` |
+| Run notification work after automatic processing has stopped | `agent_settled` |
+| Set up or release session-scoped resources | `session_start`, `session_shutdown` |
 
 ### Catalogue
 
@@ -250,7 +291,7 @@ user sends a prompt
 | `session_compact` / `session_compact_failed` | After compaction succeeds / after it fails or is aborted | — |
 | `session_before_fork` / `session_before_switch` | Before the matching session action | `{"cancel": True}` |
 | `session_before_tree` | Before `/tree` navigation | `{"cancel": True}`, a `summary`, or `customInstructions` / `replaceInstructions` / `label` |
-| `resources_discover` | Startup and `/reload` | Add resource paths |
+| `resources_discover` | After every `session_start` (`reason` is `"reload"` after a reload, else `"startup"`) | Add resource paths |
 | `input` | User submitted input | Transform, or handle it entirely |
 | `before_agent_start` | Before the loop starts | Message; prompt sections, tools and rules via the mutable `event["systemPromptOptions"]` (sent as a patch); or the whole system prompt for the run |
 | `agent_start` / `agent_end` | Around each low-level run (pidrei may still retry, compact, or continue) | — |
@@ -265,7 +306,8 @@ user sends a prompt
 | `after_provider_response` | After each response arrives | — (inspect status/headers) |
 | `provider_stream_event` | Each parsed provider stream event, before pidrei normalizes it (`provider`, `api`, `model`, `data`) | — (notification-only, not persisted) |
 | `cache_warming_decision` | Before each prompt-cache refresh, with pidrei's decision (`warmCost`, `missCost`, `continuationProbability`, `action`) | Return `{"action": "warm"}` or `{"action": "stop"}`; the last handler that returns an action wins; `"stop"` ends warming until the next real request |
-| `message_start` / `message_update` / `message_end` | Assistant message stream | `message_end` may rewrite |
+| `message_start` / `message_update` / `message_end` | Each user, assistant and tool-result message; `message_update` streams the assistant's | `message_end` may rewrite |
+| `tool_execution_start` / `tool_execution_update` / `tool_execution_end` | Around each tool call: before `tool_call`, while the tool runs, after `tool_result` | — |
 | `tool_call` | Before a tool runs (`parentToolCallId` set for calls another tool made) | Block it, or rewrite arguments |
 | `tool_result` | After a tool runs (`parentToolCallId` as for `tool_call`; `structuredContent` when the tool returned one) | Rewrite the result; replacing `content` without `structuredContent` drops it |
 | `mcp_servers_change` | An extension registered or unregistered an MCP server after load (`servers`) | — |
@@ -276,8 +318,8 @@ user sends a prompt
 Handlers that return `None` leave the event unchanged. Handlers that return a
 value replace the corresponding field — the table's "can change" column says
 which; a return value on a notification-only event has no effect. Ordering
-follows extension load order. `tool_result` handlers compose, each seeing the
-previous handler's changes.
+follows extension load order; [Handler composition](#handler-composition)
+says what each handler sees of the earlier ones.
 
 `provider_stream_event`'s `event["data"]` is the earliest structured value
 pidrei has (a parsed SSE payload or stream chunk), not the raw HTTP bytes. It
@@ -291,6 +333,21 @@ Tool calls from one assistant message can run in parallel, so a `tool_call` or
 `tool_result` handler must not assume a sibling call or its result exists yet.
 For nested work owned by the active turn use `ctx.signal`; commands and idle
 session events usually have none.
+
+### Handler composition
+
+| Pattern | Behaviour |
+|---------|-----------|
+| Notification | Return values are ignored; the event is for observation only. |
+| In-place mutation | Later handlers see changes made to `event["headers"]` in `before_provider_headers`, `event["systemPromptOptions"]` in `before_agent_start` and `event["input"]` in `tool_call`. |
+| Chained transformation | Later handlers receive what earlier `input`, `context`, `context_with_system`, `message_end`, `tool_result` and `before_provider_request` handlers returned. |
+| Gate | Handled input, a blocked tool call, a cancelled session action or a handled `user_bash` command stops that operation's normal path. |
+| Actionable boundary | Each `turn_end` or `agent_before_settle` handler sees the entries and continuation decision proposed so far. |
+| Last override | The last `cache_warming_decision` handler that returns an action wins. |
+
+Don't do slow work in a notification handler on a streaming event. A
+transforming handler should keep the fields it does not mean to own, and a
+gate handler should fail closed when it cannot make its safety decision.
 
 ### Changing the system prompt
 
@@ -994,13 +1051,27 @@ handlers work everywhere.
 
 ## Examples
 
-Working extensions live in [`examples/extensions/`](../examples/extensions/):
+Working extensions live in [`examples/extensions/`](../examples/extensions/)
+and are the implementation reference. Start with the smallest one matching
+the behaviour you need:
 
-| Example | Shows |
-|---------|-------|
-| `trigger_compact.py` | Triggering compaction from an event |
-| `input_transform_streaming.py` | Rewriting user input, streaming output |
-| `git_merge_and_resolve.py` | `pi.exec`, follow-up messages, blocking I/O off the loop |
-| `plan_mode/` | Flags, commands, shortcuts, tool gating, context filtering, widgets — the widest use of the API |
+| Goal | Start with | Why |
+|------|------------|-----|
+| Confirm or block tool calls | `permission_gate.py` | Combines `tool_call`, mode-aware UI and fail-closed behaviour |
+| Modify prompt sections for a run | `prompt_customizer.py` | Uses the structured prompt options instead of replacing the whole prompt |
+| Keep branch-aware tool state | `todo.py` | Rebuilds its state from persisted entries and renders it in the TUI |
+| Register tools after startup | `dynamic_tools.py` | Shares registration code between lifecycle and command handlers |
+| Run cancellable model work from a command | `qna.py` | Combines a nested model call, cancellation and custom UI |
+| Replace the main editor | `modal_editor.py` | Extends `CustomEditor` while keeping the application's controls |
+| Run finalization at shutdown | `auto_commit_on_exit.py` | Does its work in the `session_shutdown` handler |
+| Route built-in tools to another machine | `ssh.py` | Reuses the tools' operation interfaces instead of recreating their contracts |
+| Add OAuth and provider-specific streaming | `custom_provider_gitlab_duo/` | A complete provider that delegates to built-in wire implementations |
+| Trigger compaction from an event | `trigger_compact.py` | Calls compaction from an event handler |
+| Rewrite user input while streaming | `input_transform_streaming.py` | Transforms input and streams output |
+| Run git and send follow-up messages | `git_merge_and_resolve.py` | `pi.exec`, follow-up messages, blocking I/O off the loop |
+| See most of the API in one place | `plan_mode/` | Flags, commands, shortcuts, tool gating, context filtering, widgets |
 
-Run any of them with `pidrei -e <path>`.
+Run any of them with `pidrei -e <path>`. [Custom providers](custom-provider.md)
+covers model-service integrations, [TUI components](tui.md) custom
+components, and [packages.md](packages.md) installing or distributing
+extensions with other resources.

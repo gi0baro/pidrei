@@ -374,9 +374,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.04,
-        "output": 0.04,
-        "cacheRead": 0.004,
+        "input": 0.1,
+        "output": 0.1,
+        "cacheRead": 0.01,
         "cacheWrite": 0
       },
       "contextWindow": 131072,
@@ -436,9 +436,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.1,
-        "output": 0.1,
-        "cacheRead": 0.01,
+        "input": 0.15,
+        "output": 0.15,
+        "cacheRead": 0.015,
         "cacheWrite": 0
       },
       "contextWindow": 262144,
@@ -527,9 +527,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.68,
-        "output": 2.09,
-        "cacheRead": 0.07,
+        "input": 1.36,
+        "output": 4.18,
+        "cacheRead": 0.14,
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
@@ -890,26 +890,6 @@
       },
       "type": "chat"
     },
-    "chat:open-mistral-7b": {
-      "id": "open-mistral-7b",
-      "name": "Mistral 7B",
-      "api": "mistral-conversations",
-      "provider": "mistral",
-      "baseUrl": "https://api.mistral.ai",
-      "reasoning": false,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.25,
-        "output": 0.25,
-        "cacheRead": 0.025,
-        "cacheWrite": 0
-      },
-      "contextWindow": 8000,
-      "maxTokens": 8000,
-      "type": "chat"
-    },
     "chat:open-mistral-nemo": {
       "id": "open-mistral-nemo",
       "name": "Open Mistral Nemo",
@@ -928,46 +908,6 @@
       },
       "contextWindow": 128000,
       "maxTokens": 128000,
-      "type": "chat"
-    },
-    "chat:open-mixtral-8x22b": {
-      "id": "open-mixtral-8x22b",
-      "name": "Mixtral 8x22B",
-      "api": "mistral-conversations",
-      "provider": "mistral",
-      "baseUrl": "https://api.mistral.ai",
-      "reasoning": false,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 2,
-        "output": 6,
-        "cacheRead": 0.2,
-        "cacheWrite": 0
-      },
-      "contextWindow": 64000,
-      "maxTokens": 64000,
-      "type": "chat"
-    },
-    "chat:open-mixtral-8x7b": {
-      "id": "open-mixtral-8x7b",
-      "name": "Mixtral 8x7B",
-      "api": "mistral-conversations",
-      "provider": "mistral",
-      "baseUrl": "https://api.mistral.ai",
-      "reasoning": false,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.7,
-        "output": 0.7,
-        "cacheRead": 0.07,
-        "cacheWrite": 0
-      },
-      "contextWindow": 32000,
-      "maxTokens": 32000,
       "type": "chat"
     },
     "chat:pixtral-12b": {
@@ -1064,7 +1004,7 @@
       ],
       "cost": {
         "input": 0.1,
-        "output": 0.3,
+        "output": 0.4,
         "cacheRead": 0.01,
         "cacheWrite": 0
       },

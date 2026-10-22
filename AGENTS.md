@@ -93,8 +93,7 @@ Other places:
   last test name printed is the stuck one. In CI logs, where a line appears
   only once complete, it is the test after the last finished one.
   `-o faulthandler_timeout=N` (N well under 60) dumps stacks.
-- CI runs `make test PYTEST_ARGS=-s` on Linux and macOS, for 3.14t (3.15t
-  returns once `pydantic-monty` publishes cp315t wheels).
+- CI runs `make test PYTEST_ARGS=-s` on Linux and macOS, for 3.14t and 3.15t.
   Read failures with `gh run view <id> --log-failed`, and grep CI logs for
   `UNHANDLED`: a crashed detached coroutine never fails the run by itself,
   and its report goes to stdout, which capture swallows without `-s`.

@@ -22,6 +22,7 @@ from pidrei_ai.types import (
     ClassifierScoreQuestion,
     ImageContent,
     ModelCost,
+    SystemOneCompat,
 )
 from tests.system_one_helpers import json_response, respond_json, stub_system_one
 
@@ -132,19 +133,127 @@ async def test_rejects_models_for_other_classifier_apis():
     assert "Unsupported classifier API: cloudflare-workers-ai-system-one" in result.error_message
 
 
+def _lower_headers(headers: dict[str, str]) -> dict[str, str]:
+    """pi reads request headers through `new Headers(...)`, which folds case."""
+    return {name.lower(): value for name, value in headers.items()}
+
+
+PNG = ImageContent(data="cG5n", mime_type="image/png")
+OPEN_ROUTER_IMAGE_STATE = [{"type": "image_url", "image_url": {"url": "data:image/png;base64,cG5n"}}, CONTEXT.state]
+
+
 @pytest.mark.tonio
-async def test_rejects_image_input_before_sending():
+async def test_rejects_image_input_for_text_only_models_before_sending():
     image = ImageContent(data="aW1hZ2U=", mime_type="image/png")
+    with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
+        result = await classify(MODEL, replace(CONTEXT, images=[image]), ClassifierOptions(api_key="secret"))
+
+    assert requests == []
+    assert result.stop_reason == "error"
+    assert result.error_message == "System One API does not support image input for jev-latest"
+
+
+@pytest.mark.tonio
+async def test_sends_images_to_typesafe_as_assets_with_the_opt_in_header():
+    image_model = replace(MODEL, input=["text", "image"])
+    jpeg = ImageContent(data="anBlZw==", mime_type="image/jpeg")
+
+    with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
+        result = await classify(image_model, replace(CONTEXT, images=[PNG, jpeg]), ClassifierOptions(api_key="secret"))
+        without_images = await classify(image_model, CONTEXT, ClassifierOptions(api_key="secret"))
+
+    assert result.stop_reason == "stop"
+    assert requests[0].payload["state"] == ["<image-1>", "<image-2>", CONTEXT.state]
+    assert requests[0].payload["assets"] == {
+        "<image-1>": {"type": "image", "format": "png", "data_base64": "cG5n"},
+        "<image-2>": {"type": "image", "format": "jpeg", "data_base64": "anBlZw=="},
+    }
+    assert _lower_headers(requests[0].headers)["typesafe-danger-zone-images"] == "true"
+    # Requests without images keep the plain state and send no opt-in header.
+    assert without_images.stop_reason == "stop"
+    assert requests[1].payload["state"] == CONTEXT.state
+    assert "assets" not in requests[1].payload
+    assert "typesafe-danger-zone-images" not in _lower_headers(requests[1].headers)
+
+
+@pytest.mark.tonio
+async def test_rejects_image_formats_typesafe_does_not_accept_before_sending():
+    webp = ImageContent(data="d2VicA==", mime_type="image/webp")
     with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
         result = await classify(
             replace(MODEL, input=["text", "image"]),
-            replace(CONTEXT, images=[image]),
+            replace(CONTEXT, images=[webp]),
             ClassifierOptions(api_key="secret"),
         )
 
     assert requests == []
     assert result.stop_reason == "error"
-    assert result.error_message == "System One API does not support image input"
+    assert result.error_message == "System One API accepts PNG and JPEG images for jev-latest, got image/webp"
+
+
+@pytest.mark.tonio
+async def test_sends_images_to_openrouter_as_image_url_parts_in_the_state():
+    open_router_model = replace(
+        MODEL,
+        id="typesafe/jev-1.14",
+        provider="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        input=["text", "image"],
+    )
+
+    with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
+        result = await classify(open_router_model, replace(CONTEXT, images=[PNG]), ClassifierOptions(api_key="secret"))
+
+    assert result.stop_reason == "stop"
+    # OpenRouter answers 200 for `assets` but drops them, and rejects a top-level `images` list.
+    assert set(requests[0].payload) == {"model", "state", "questions"}
+    assert requests[0].payload["model"] == "typesafe/jev-1.14"
+    assert requests[0].payload["state"] == OPEN_ROUTER_IMAGE_STATE
+    assert "typesafe-danger-zone-images" not in _lower_headers(requests[0].headers)
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param(
+            {"provider": "openrouter", "base_url": "https://proxy.example.com/v1"}, id="OpenRouter behind a proxy"
+        ),
+        pytest.param(
+            {"provider": "custom", "base_url": "https://us.openrouter.ai/api/v1"}, id="a regional OpenRouter endpoint"
+        ),
+        pytest.param(
+            {
+                "provider": "custom",
+                "base_url": "https://proxy.example.com/v1",
+                "compat": SystemOneCompat(image_input="state-image-urls", send_image_opt_in_header=False),
+            },
+            id="a proxy declared through compat",
+        ),
+    ],
+)
+async def test_sends_openrouters_image_form(overrides):
+    model = replace(MODEL, id="typesafe/jev-1.14", input=["text", "image"], **overrides)
+
+    with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
+        result = await classify(model, replace(CONTEXT, images=[PNG]), ClassifierOptions(api_key="secret"))
+
+    assert result.stop_reason == "stop"
+    assert requests[0].payload["state"] == OPEN_ROUTER_IMAGE_STATE
+    assert "assets" not in requests[0].payload
+    assert "typesafe-danger-zone-images" not in _lower_headers(requests[0].headers)
+
+
+@pytest.mark.tonio
+async def test_lets_compat_override_detected_image_settings_per_field():
+    # Only the header is overridden; the detected `assets` form stays.
+    model = replace(MODEL, input=["text", "image"], compat=SystemOneCompat(send_image_opt_in_header=False))
+
+    with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
+        await classify(model, replace(CONTEXT, images=[PNG]), ClassifierOptions(api_key="secret"))
+
+    assert "assets" in requests[0].payload
+    assert "typesafe-danger-zone-images" not in _lower_headers(requests[0].headers)
 
 
 @pytest.mark.tonio

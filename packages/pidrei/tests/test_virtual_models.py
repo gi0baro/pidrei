@@ -901,14 +901,14 @@ async def test_does_not_route_compactions_that_an_extension_supplies(harnesses):
 
 
 @pytest.mark.tonio
-async def test_routes_compaction_summaries_before_sizing_them(harnesses):
+async def test_routes_compaction_summaries_to_the_resolved_model(harnesses):
     summaries: list[str] = []
     routed = await create_routed_harness(harnesses, settings={"compaction": {"keepRecentTokens": 1}})
     harness = routed.harness
 
     async def summary(_context, options, _state, model):
         reasoning = options.reasoning if options is not None and options.reasoning else "off"
-        summaries.append(f"{model.id}:{reasoning}:{options.max_tokens}")
+        summaries.append(f"{model.id}:{reasoning}")
         return faux_assistant_message("summary")
 
     # Compaction summarizes the history and the split turn prefix with one routed model.
@@ -922,5 +922,5 @@ async def test_routes_compaction_summaries_before_sizing_them(harnesses):
 
     assert "summary" in result.summary
     assert routed.reasons() == ["user", "user", "direct"]
-    # The router's thinking level applies, and the output budget respects the large model's 4000 tokens.
-    assert summaries == ["large:low:4000", "large:low:4000"]
+    # The router's model and thinking level apply. The provider layer sizes output from that model.
+    assert summaries == ["large:low", "large:low"]

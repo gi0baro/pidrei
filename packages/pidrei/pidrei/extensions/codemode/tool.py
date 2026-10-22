@@ -147,8 +147,8 @@ def _description_intro(type_check: bool) -> str:
             "Run Python that calls other tools. The input is raw Python (not JSON, no code fence), run in a "
             "sandboxed interpreter: top-level `await` works, and if the last line is an expression, its value is "
             "added to the output. No third-party packages, file system, network, environment, subprocesses, or "
-            "sleep. The interpreter supports a subset of Python: no `match`, `yield`, `del`, class inheritance (so "
-            "no custom exception classes), or `asyncio.create_task`."
+            "sleep. The interpreter supports a subset of Python: no `yield`, `del`, class inheritance (so no custom "
+            "exception classes), or `asyncio.create_task`."
         ),
         (
             "- `await tools.<name>(arg=value, ...)` takes keyword arguments only, returns a `str`, or a `dict` if "

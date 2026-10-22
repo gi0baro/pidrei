@@ -25,6 +25,7 @@ from tonio.colored.sync import channel
 
 from pidrei_ai.types import (
     AssistantMessage,
+    ClientIdentity,
     Context,
     NestedToolCalls,
     SystemMessage,
@@ -34,6 +35,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import EventStream
+from pidrei_ai.utils.identity import PIDREI_ATTRIBUTION, merge_client_identity
 from pidrei_ai.utils.transcript import (
     ToolStateChanges,
     get_current_tools,
@@ -80,6 +82,10 @@ from .types import (
 # this `Promise<void> | void`, but two shapes per slot is what let dropped
 # coroutines hide).
 type AgentEventSink = Callable[[AgentEvent], Awaitable[None]]
+
+# Request identity of agent loops: pidrei-ai's defaults with provider
+# attribution to pidrei. `AgentLoopConfig.identity` overrides it field by field.
+DEFAULT_AGENT_IDENTITY: ClientIdentity = {"attribution": PIDREI_ATTRIBUTION}
 
 
 def agent_loop(
@@ -452,7 +458,14 @@ async def _stream_assistant_response(
     # pi spreads the whole config into the stream options; the dataclass copy
     # carries the same fields (config extends SimpleStreamOptions).
     response = await stream_function(
-        config.model, llm_context, replace(config, api_key=resolved_api_key, cancel=cancel)
+        config.model,
+        llm_context,
+        replace(
+            config,
+            api_key=resolved_api_key,
+            identity=merge_client_identity(DEFAULT_AGENT_IDENTITY, config.identity),
+            cancel=cancel,
+        ),
     )
 
     async def result() -> AssistantMessage:

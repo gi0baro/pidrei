@@ -409,11 +409,11 @@ async def test_streams_sse_responses_and_forwards_raw_provider_events():
     assert request.headers["Authorization"] == f"Bearer {token}"
     assert request.headers["chatgpt-account-id"] == "acc_test"
     assert request.headers["OpenAI-Beta"] == "responses=experimental"
-    from pidrei_ai.utils.user_agent import ORIGINATOR, get_user_agent
+    from pidrei_ai.utils.identity import ORIGINATOR, format_user_agent
 
     assert request.headers["originator"] == ORIGINATOR
 
-    assert request.headers["User-Agent"] == get_user_agent()
+    assert request.headers["User-Agent"] == format_user_agent()
     assert request.headers["accept"] == "text/event-stream"
     assert "x-api-key" not in request.headers
 

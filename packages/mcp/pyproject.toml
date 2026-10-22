@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-mcp"
-version = "1.3.0.0"
+version = "1.4.0.0"
 description = "Standalone Model Context Protocol client: stdio and Streamable HTTP transports, OAuth (port of pi-mcp)"
 requires-python = ">=3.14"
 license = "MIT"
@@ -22,9 +22,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "pidrei-http==1.3.0.0",
-    "pidrei-utils==1.3.0.0",
-    "tonio~=0.10.4",
+    "pidrei-http==1.4.0.0",
+    "pidrei-utils==1.4.0.0",
+    "tonio~=0.10.5",
 ]
 
 [tool.uv.sources]

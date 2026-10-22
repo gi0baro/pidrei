@@ -249,6 +249,15 @@ class TestCreateExtensionUIContextSetTheme:
         assert request_render_calls == []
 
 
+# Inline custom components go through the extension dialog stack.
+def _with_extension_dialog_state(fake):
+    fake._extension_dialogs = []
+    fake._program_status = SimpleNamespace(set_blocked=lambda *_args: None)
+    for name in ("_push_extension_dialog", "_remove_extension_dialog", "_show_top_extension_dialog"):
+        setattr(fake, name, partial(getattr(InteractiveMode, name), fake))
+    return fake
+
+
 @pytest.mark.tonio
 async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_closes():
     await init_theme("dark")
@@ -269,6 +278,7 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         _extension_tui=ExtensionTui(ui),
         _dispose_active_selector=lambda: None,
     )
+    _with_extension_dialog_state(fake)
     fake._set_editor_text = partial(InteractiveMode._set_editor_text, fake)
 
     async def collect(key, handle) -> None:
@@ -338,6 +348,7 @@ async def test_closing_a_lower_overlay_custom_ui_removes_its_own_overlay_not_the
         _extension_tui=ExtensionTui(ui),
         _dispose_active_selector=lambda: None,
     )
+    _with_extension_dialog_state(fake)
 
     def lower_factory(_tui, _theme, _keybindings, done):
         closers["lower"] = done

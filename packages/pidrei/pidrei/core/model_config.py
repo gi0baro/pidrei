@@ -30,16 +30,34 @@ from ..utils.paths import normalize_path
 from ..utils.text import strip_bom
 
 
-_NON_EMPTY_STRING = {"type": "string", "minLength": 1}
-_STRING_RECORD = {"type": "object", "additionalProperties": {"type": "string"}}
+def _non_empty_string(description: str) -> dict[str, Any]:
+    return {"type": "string", "minLength": 1, "description": description}
+
 
 _SAMPLING_PARAMS = {"type": "object", "additionalProperties": {}}
 _SAMPLING_PARAMS_BY_THINKING_LEVEL = {
     "type": "object",
     "properties": dict.fromkeys(("off", "minimal", "low", "medium", "high", "xhigh", "max"), _SAMPLING_PARAMS),
+    "description": "samplingParams per thinking level, merged over samplingParams.",
 }
 
-_POSITIVE_TOKEN_COUNT = {"type": "number", "exclusiveMinimum": 0}
+_SAMPLING_PARAMS_FIELD = {
+    **_SAMPLING_PARAMS,
+    "description": "Fields merged into every request body. Applies only to OpenAI-compatible APIs.",
+}
+_HEADERS = {
+    "type": "object",
+    "additionalProperties": {"type": "string"},
+    "description": "Request headers. Values resolve like apiKey.",
+}
+
+# Model fields shared by models entries and modelOverrides entries. Defaults apply only to models entries.
+_MODEL_FIELD_DESCRIPTIONS = {
+    "name": "Display name, also matched by --model patterns.",
+    "reasoning": "Whether the model supports thinking.",
+    "contextWindow": "Context window in tokens.",
+    "maxTokens": "Maximum output tokens.",
+}
 
 _INPUT_MODALITIES = {"type": "array", "items": MODEL_INPUT_MODALITY_SCHEMA}
 
@@ -47,21 +65,31 @@ _MODEL_DEFINITION = {
     "type": "object",
     "required": ["id"],
     "properties": {
-        "id": _NON_EMPTY_STRING,
-        "name": _NON_EMPTY_STRING,
-        "api": _NON_EMPTY_STRING,
-        "baseUrl": _NON_EMPTY_STRING,
-        "reasoning": {"type": "boolean"},
+        "id": _non_empty_string("Model ID sent to the API."),
+        "name": _non_empty_string(_MODEL_FIELD_DESCRIPTIONS["name"]),
+        "api": _non_empty_string("Overrides the provider api."),
+        "baseUrl": _non_empty_string("Overrides the provider baseUrl."),
+        "reasoning": {"type": "boolean", "default": False, "description": _MODEL_FIELD_DESCRIPTIONS["reasoning"]},
         "thinkingLevelMap": THINKING_LEVEL_MAP_SCHEMA,
-        "input": _INPUT_MODALITIES,
+        "input": {**_INPUT_MODALITIES, "default": ["text"]},
         "inputLimits": MODEL_INPUT_LIMITS_SCHEMA,
         "cost": MODEL_COST_SCHEMA,
         "promptCache": MODEL_PROMPT_CACHE_SCHEMA,
-        "contextWindow": _POSITIVE_TOKEN_COUNT,
-        "maxTokens": _POSITIVE_TOKEN_COUNT,
-        "samplingParams": _SAMPLING_PARAMS,
+        "contextWindow": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 128000,
+            "description": _MODEL_FIELD_DESCRIPTIONS["contextWindow"],
+        },
+        "maxTokens": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 16384,
+            "description": _MODEL_FIELD_DESCRIPTIONS["maxTokens"],
+        },
+        "samplingParams": _SAMPLING_PARAMS_FIELD,
         "samplingParamsByThinkingLevel": _SAMPLING_PARAMS_BY_THINKING_LEVEL,
-        "headers": _STRING_RECORD,
+        "headers": _HEADERS,
         "compat": PROVIDER_COMPAT_SCHEMA,
     },
 }
@@ -72,18 +100,22 @@ _PARTIAL_MODEL_COST = {key: value for key, value in MODEL_COST_SCHEMA.items() if
 _MODEL_OVERRIDE = {
     "type": "object",
     "properties": {
-        "name": _NON_EMPTY_STRING,
-        "reasoning": {"type": "boolean"},
+        "name": _non_empty_string(_MODEL_FIELD_DESCRIPTIONS["name"]),
+        "reasoning": {"type": "boolean", "description": _MODEL_FIELD_DESCRIPTIONS["reasoning"]},
         "thinkingLevelMap": THINKING_LEVEL_MAP_SCHEMA,
         "input": _INPUT_MODALITIES,
         "inputLimits": MODEL_INPUT_LIMITS_SCHEMA,
         "cost": _PARTIAL_MODEL_COST,
         "promptCache": MODEL_PROMPT_CACHE_SCHEMA,
-        "contextWindow": _POSITIVE_TOKEN_COUNT,
-        "maxTokens": _POSITIVE_TOKEN_COUNT,
-        "samplingParams": _SAMPLING_PARAMS,
+        "contextWindow": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": _MODEL_FIELD_DESCRIPTIONS["contextWindow"],
+        },
+        "maxTokens": {"type": "number", "exclusiveMinimum": 0, "description": _MODEL_FIELD_DESCRIPTIONS["maxTokens"]},
+        "samplingParams": _SAMPLING_PARAMS_FIELD,
         "samplingParamsByThinkingLevel": _SAMPLING_PARAMS_BY_THINKING_LEVEL,
-        "headers": _STRING_RECORD,
+        "headers": _HEADERS,
         "compat": PROVIDER_COMPAT_SCHEMA,
     },
 }
@@ -91,13 +123,20 @@ _MODEL_OVERRIDE = {
 _PROVIDER_CONFIG = {
     "type": "object",
     "properties": {
-        "name": _NON_EMPTY_STRING,
-        "baseUrl": _NON_EMPTY_STRING,
-        "apiKey": _NON_EMPTY_STRING,
-        "api": _NON_EMPTY_STRING,
-        "headers": _STRING_RECORD,
+        "name": _non_empty_string("Display name."),
+        "baseUrl": _non_empty_string("API base URL. Also applies to the provider's built-in models."),
+        "apiKey": _non_empty_string('Literal key, "$NAME" environment interpolation, or "!command" output.'),
+        "api": _non_empty_string(
+            'API for the provider\'s models, such as "openai-completions", "openai-responses", '
+            '"anthropic-messages", or "google-generative-ai".'
+        ),
+        "headers": _HEADERS,
         "compat": PROVIDER_COMPAT_SCHEMA,
-        "authHeader": {"type": "boolean"},
+        "authHeader": {
+            "type": "boolean",
+            "default": False,
+            "description": "Whether to send the resolved API key as Authorization: Bearer.",
+        },
         "models": {"type": "array", "items": _MODEL_DEFINITION},
         "modelOverrides": {"type": "object", "additionalProperties": _MODEL_OVERRIDE},
     },
@@ -110,6 +149,13 @@ MODELS_CONFIG_SCHEMA: dict[str, Any] = {
         "$schema": {"type": "string"},
         "providers": {"type": "object", "additionalProperties": _PROVIDER_CONFIG},
     },
+}
+
+# Entry schemas rendered into docs/models-configuration.md.
+MODELS_JSON_SCHEMAS: dict[str, dict[str, Any]] = {
+    "provider": _PROVIDER_CONFIG,
+    "model": _MODEL_DEFINITION,
+    "modelOverride": _MODEL_OVERRIDE,
 }
 
 _VALIDATOR = jsonschema.Draft202012Validator(MODELS_CONFIG_SCHEMA)

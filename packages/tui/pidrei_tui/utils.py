@@ -499,16 +499,79 @@ def get_grapheme_cell_range(line: str, column: int) -> tuple[int, int] | None:
         if ansi:
             i += ansi["length"]
             continue
-        text_end = i
-        while text_end < len(line) and not extract_ansi_code(line, text_end):
-            text_end += 1
-        for segment in grapheme_lib.graphemes(line[i:text_end]):
-            width = _grapheme_width(segment)
-            if width > 0 and current_col <= column < current_col + width:
-                return (current_col, current_col + width)
-            current_col += width
+        text_end = _text_run_end(line, i)
+        text = line[i:text_end]
+        if _is_printable_ascii(text):
+            # One single-cell grapheme per character.
+            if current_col <= column < current_col + len(text):
+                return (column, column + 1)
+            current_col += len(text)
+        else:
+            for segment in grapheme_lib.graphemes(text):
+                width = _grapheme_width(segment)
+                if width > 0 and current_col <= column < current_col + width:
+                    return (current_col, current_col + width)
+                current_col += width
         i = text_end
     return None
+
+
+def _last_grapheme(text: str, end: int) -> str:
+    # `end` is a grapheme boundary, so the highest boundary below it starts the last grapheme.
+    return text[grapheme_lib.safe_split_index(text, end - 1) : end]
+
+
+def measure_line_end(line: str) -> dict:
+    """Measure a line from its end, in the columns the column walkers count.
+
+    ``slice_by_column`` and ``get_grapheme_cell_range`` split graphemes run by
+    run (the text between escape sequences), so the width here can differ from
+    ``visible_width`` when an escape sequence sits inside a grapheme cluster.
+
+    Returns ``{"width", "last"}``: the line's width and its last grapheme as
+    ``{"start", "beforeEnd", "prefix"}`` (its first column, where
+    ``slice_by_column(line, 0, start, True)`` ends, and the escape sequences
+    before it). ``last`` is None when finding it takes a walk: the line has no
+    text, starts with its last grapheme, or a zero-width grapheme ends it or
+    comes right before its last one.
+    """
+    codes = list(_ANSI_SEQUENCE_RE.finditer(line))
+    runs: list[tuple[int, int]] = []
+    position = 0
+    for code in codes:
+        if code.start() > position:
+            runs.append((position, code.start()))
+        position = code.end()
+    if position < len(line):
+        runs.append((position, len(line)))
+    widths = [visible_width(line[start:end]) for start, end in runs]
+    width = sum(widths)
+    result = {"width": width, "last": None}
+    if not runs or widths[-1] == 0:
+        return result
+
+    run_start, run_end = runs[-1]
+    run = line[run_start:run_end]
+    target = _last_grapheme(run, len(run))
+    target_width = _grapheme_width(target)
+    start = width - target_width
+    if target_width == 0 or start == 0:
+        return result
+    # The walk up to `start` stops right after the grapheme before the target.
+    index = run_end - len(target)
+    if index > run_start:
+        previous = _last_grapheme(run, index - run_start)
+        before_end = index
+    elif len(runs) > 1:
+        previous_start, before_end = runs[-2]
+        previous = _last_grapheme(line[previous_start:before_end], before_end - previous_start)
+    else:
+        return result
+    if _grapheme_width(previous) == 0:
+        return result
+    prefix = "".join(code.group() for code in codes if code.start() < index)
+    result["last"] = {"start": start, "beforeEnd": before_end, "prefix": prefix}
+    return result
 
 
 _OSC8_LINK_AT_COLUMN_RE = re.compile(r"^\x1b\]8;[^;]*;([^\x07\x1b]*)(?:\x07|\x1b\\)$")
@@ -527,14 +590,19 @@ def get_osc8_link_at_column(line: str, column: int) -> str | None:
                 active_url = hyperlink.group(1) or None
             i += ansi["length"]
             continue
-        text_end = i
-        while text_end < len(line) and not extract_ansi_code(line, text_end):
-            text_end += 1
-        for segment in grapheme_lib.graphemes(line[i:text_end]):
-            width = 3 if segment == "\t" else _grapheme_width(segment)
-            if current_col <= column < current_col + width:
+        text_end = _text_run_end(line, i)
+        text = line[i:text_end]
+        if _is_printable_ascii(text):
+            # One single-cell grapheme per character.
+            if current_col <= column < current_col + len(text):
                 return active_url
-            current_col += width
+            current_col += len(text)
+        else:
+            for segment in grapheme_lib.graphemes(text):
+                width = 3 if segment == "\t" else _grapheme_width(segment)
+                if current_col <= column < current_col + width:
+                    return active_url
+                current_col += width
         i = text_end
     return None
 
@@ -635,6 +703,15 @@ def _ansi_code_length(s: str, pos: int) -> int:
 
     match = pattern.match(s, pos)
     return match.end() - pos if match else 0
+
+
+def _text_run_end(s: str, start: int) -> int:
+    """End of the visible text run starting at `start` (not an escape sequence): the
+    next escape sequence, or the end of the string. A lone ESC stays text."""
+    end = s.find("\x1b", start + 1)
+    while end != -1 and _ansi_code_length(s, end) == 0:
+        end = s.find("\x1b", end + 1)
+    return len(s) if end == -1 else end
 
 
 # Sentinel: the code is not an OSC 8 hyperlink sequence at all
@@ -927,11 +1004,7 @@ def _split_into_tokens_with_ansi(text: str) -> list[str]:
             continue
 
         # Visible text runs up to the next escape sequence.
-        end = text.find("\x1b", i + 1)
-        while end != -1 and _ansi_code_length(text, end) == 0:
-            end = text.find("\x1b", end + 1)
-        if end == -1:
-            end = len(text)
+        end = _text_run_end(text, i)
 
         chunk = text[i:end]
         # Printable ASCII characters are single graphemes, so skip the segmenter for them.
@@ -1393,23 +1466,33 @@ def slice_with_width(line: str, start_col: int, length: int, strict: bool = Fals
             i += ansi["length"]
             continue
 
-        text_end = i
-        while text_end < len(line) and not extract_ansi_code(line, text_end):
-            text_end += 1
-
-        for segment in grapheme_lib.graphemes(line[i:text_end]):
-            w = _grapheme_width(segment)
-            in_range = start_col <= current_col < end_col
-            fits = not strict or current_col + w <= end_col
-            if in_range and fits:
+        text_end = _text_run_end(line, i)
+        text = line[i:text_end]
+        if _is_printable_ascii(text):
+            # One single-cell grapheme per character: take the columns in range as one slice.
+            first = max(start_col, current_col)
+            last = min(end_col, current_col + len(text))
+            if first < last:
                 if pending_ansi:
                     result += pending_ansi
                     pending_ansi = ""
-                result += segment
-                result_width += w
-            current_col += w
-            if current_col >= end_col:
-                break
+                result += text[first - current_col : last - current_col]
+                result_width += last - first
+            current_col = min(end_col, current_col + len(text))
+        else:
+            for segment in grapheme_lib.graphemes(text):
+                w = _grapheme_width(segment)
+                in_range = start_col <= current_col < end_col
+                fits = not strict or current_col + w <= end_col
+                if in_range and fits:
+                    if pending_ansi:
+                        result += pending_ansi
+                        pending_ansi = ""
+                    result += segment
+                    result_width += w
+                current_col += w
+                if current_col >= end_col:
+                    break
         i = text_end
         if current_col >= end_col:
             break
@@ -1458,33 +1541,52 @@ def extract_segments(
             i += ansi["length"]
             continue
 
-        text_end = i
-        while text_end < len(line) and not extract_ansi_code(line, text_end):
-            text_end += 1
-
-        for segment in grapheme_lib.graphemes(line[i:text_end]):
-            w = _grapheme_width(segment)
-
-            if current_col < before_end and current_col + w <= before_end:
+        text_end = _text_run_end(line, i)
+        text = line[i:text_end]
+        if _is_printable_ascii(text):
+            # One single-cell grapheme per character, up to the column where the walk stops.
+            limit = before_end if after_len <= 0 else after_end
+            run_end_col = current_col + min(len(text), max(0, limit - current_col))
+            before_last = min(run_end_col, before_end)
+            if current_col < before_last:
                 if pending_ansi_before:
                     before += pending_ansi_before
                     pending_ansi_before = ""
-                before += segment
-                before_width += w
-            elif after_start <= current_col < after_end:
-                fits = not strict_after or current_col + w <= after_end
-                if fits:
-                    # On first "after" grapheme, prepend inherited styling from before overlay
-                    if not after_started:
-                        after += tracker.get_active_codes()
-                        after_started = True
-                    after += segment
-                    after_width += w
+                before += text[: before_last - current_col]
+                before_width += before_last - current_col
+            after_first = max(current_col, before_end, after_start)
+            after_last = min(run_end_col, after_end)
+            if after_first < after_last:
+                if not after_started:
+                    after += tracker.get_active_codes()
+                    after_started = True
+                after += text[after_first - current_col : after_last - current_col]
+                after_width += after_last - after_first
+            current_col = run_end_col
+        else:
+            for segment in grapheme_lib.graphemes(text):
+                w = _grapheme_width(segment)
 
-            current_col += w
-            # Early exit: done with "before" only, or done with both segments
-            if (current_col >= before_end) if after_len <= 0 else (current_col >= after_end):
-                break
+                if current_col < before_end and current_col + w <= before_end:
+                    if pending_ansi_before:
+                        before += pending_ansi_before
+                        pending_ansi_before = ""
+                    before += segment
+                    before_width += w
+                elif after_start <= current_col < after_end:
+                    fits = not strict_after or current_col + w <= after_end
+                    if fits:
+                        # On first "after" grapheme, prepend inherited styling from before overlay
+                        if not after_started:
+                            after += tracker.get_active_codes()
+                            after_started = True
+                        after += segment
+                        after_width += w
+
+                current_col += w
+                # Early exit: done with "before" only, or done with both segments
+                if (current_col >= before_end) if after_len <= 0 else (current_col >= after_end):
+                    break
         i = text_end
         if (current_col >= before_end) if after_len <= 0 else (current_col >= after_end):
             break

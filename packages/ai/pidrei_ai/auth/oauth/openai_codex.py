@@ -36,8 +36,8 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
+from pidrei_ai.utils.identity import ORIGINATOR
 from pidrei_ai.utils.provider_env import get_provider_env_value
-from pidrei_ai.utils.user_agent import ORIGINATOR
 from pidrei_http.pkce import generate_pkce
 from pidrei_utils import clock
 from pidrei_utils.cancel import AbortError, CancelToken

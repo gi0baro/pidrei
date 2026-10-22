@@ -86,7 +86,6 @@ def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
 @pytest.mark.parametrize(
     "model_id",
     [
-        "gpt-5.5",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",

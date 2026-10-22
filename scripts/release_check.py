@@ -6,7 +6,8 @@ Each check here exists because something already went wrong, or would have:
   `.dev0`), which trades "remember to strip the marker" for "the machine checks
   the tag". Tags are `vX.Y.Z.N`; the `v` is stripped before comparing.
 - **the versions agree** — a skewed set ships a `pidrei` that depends on a
-  `pidrei-ai==<other version>` and cannot resolve.
+  `pidrei-ai==<other version>` and cannot resolve. pidrei-ai's
+  `PIDREI_AI_VERSION` constant (its User-Agent version) is part of the set.
 - **LICENSE copies** — PEP 639 forbids `..` in `license-files` and a symlink
   breaks the sdist unpack, so the file is duplicated into every package and
   nothing but this keeps them honest.
@@ -50,8 +51,19 @@ def read(path: str) -> str:
         return handle.read()
 
 
+def ai_version_constant() -> str:
+    """`PIDREI_AI_VERSION`, the version pidrei-ai reports in its User-Agent."""
+    match = re.search(
+        r'^PIDREI_AI_VERSION\s*=\s*"([^"]+)"',
+        read(os.path.join(ROOT, "packages", "ai", "pidrei_ai", "utils", "version.py")),
+        re.MULTILINE,
+    )
+    return match.group(1) if match is not None else "(unreadable)"
+
+
 def check_versions_agree() -> str:
     versions = {name: package_version(name) for name in PACKAGES}
+    versions["PIDREI_AI_VERSION"] = ai_version_constant()
     if len(set(versions.values())) != 1:
         fail(f"package versions disagree: {versions}")
     return versions["pidrei"]

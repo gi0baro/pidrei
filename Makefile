@@ -38,6 +38,10 @@ models-data:
 config-schemas:
 	uv run python packages/pidrei/scripts/generate_schemas.py
 
+.PHONY: references
+references:
+	uv run python packages/pidrei/scripts/generate_references.py
+
 # Where the pi checkout lives; override with `make upstream-diff PI_ROOT=...`.
 PI_ROOT ?= $(HOME)/Downloads/code/pi
 

@@ -158,9 +158,7 @@ def test_extension_state_registered_after_a_reset_survives_it():
         _create_base_autocomplete_provider=lambda: base,
         _clear_extension_terminal_input_listeners=noop,
         _footer_data_provider=SimpleNamespace(clear_extension_statuses=noop),
-        _extension_selector=None,
-        _extension_input=None,
-        _extension_editor=None,
+        _extension_dialogs=[],
         _set_extension_footer=noop,
         _set_extension_header=noop,
         _clear_extension_widgets=noop,
@@ -193,12 +191,18 @@ def _editor_slot_mode():
         ui=SimpleNamespace(state_lock=threading.RLock(), set_focus=_noop, request_render=_noop),
         editor=SimpleNamespace(name="editor"),
         _editor_container=Container(),
-        _extension_selector=None,
+        _extension_dialogs=[],
         _dispose_active_selector=_noop,
         _toggle_tool_output_expansion=_noop,
         _program_status=SimpleNamespace(set_blocked=_noop),
     )
-    fake._hide_extension_selector = lambda component: InteractiveMode._hide_extension_selector(fake, component)
+    for name in (
+        "_push_extension_dialog",
+        "_remove_extension_dialog",
+        "_show_top_extension_dialog",
+        "_close_extension_dialog",
+    ):
+        setattr(fake, name, partial(getattr(InteractiveMode, name), fake))
     return fake
 
 
@@ -224,14 +228,14 @@ async def test_an_aborted_dialog_is_hidden_before_the_next_one_opens(monkeypatch
 
     abort = CancelToken()
     first_wait = InteractiveMode._show_extension_selector(fake, "first", ["Yes", "No"], {"signal": abort})
-    first = fake._extension_selector
+    [first] = fake._editor_container.children
     abort.cancel()
     assert await first_wait is None
 
     close_second = CancelToken()
     second_wait = InteractiveMode._show_extension_selector(fake, "second", ["Yes", "No"], {"signal": close_second})
 
-    second = fake._extension_selector
+    [second] = fake._editor_container.children
     assert second is not first
     assert first.disposed and not second.disposed
     assert fake._editor_container.children == [second]

@@ -107,7 +107,7 @@ def make_output(model: Model) -> AssistantMessageBuilder:
 
 
 def test_generates_unique_fallback_message_ids_for_multiple_text_blocks():
-    model = make_model(provider="openai-codex", id="gpt-5.5")
+    model = make_model(provider="openai-codex", id="gpt-6.1-sol")
     assistant = AssistantMessage(
         content=[TextContent(text="first answer"), TextContent(text="visible answer")],
         api="anthropic-messages",
@@ -134,7 +134,7 @@ def test_generates_unique_fallback_message_ids_for_multiple_text_blocks():
 def test_hashes_foreign_copilot_tool_item_ids_into_bounded_fc_shape():
     import re
 
-    model = make_model(provider="openai-codex", id="gpt-5.5")
+    model = make_model(provider="openai-codex", id="gpt-6.1-sol")
     assistant = AssistantMessage(
         content=[ToolCall(id=COPILOT_RAW_TOOL_CALL_ID, name="edit", arguments={"path": "src/styles/app.css"})],
         api="openai-responses",
@@ -176,6 +176,28 @@ def test_empty_tool_result_gets_placeholder_output():
     converted = convert_responses_messages(model, context, ALLOWED)
     output_item = next(item for item in converted if item.get("type") == "function_call_output")
     assert output_item["output"] == "(no tool output)"
+
+
+# Whitespace-only cases: https://github.com/earendil-works/pi/issues/8720
+@pytest.mark.parametrize("text", ["", "\r\n", " \n\t"])
+def test_uses_no_tool_output_placeholder_for_tool_result_text_without_images(text):
+    model = make_model()
+    context = Context(
+        messages=[
+            UserMessage(content="Run the command", timestamp=1),
+            ToolResultMessage(
+                tool_call_id="tool-1",
+                tool_name="bash",
+                content=[TextContent(text=text)],
+                is_error=False,
+                timestamp=2,
+            ),
+        ]
+    )
+    converted = convert_responses_messages(model, context, ALLOWED)
+    output_item = next(item for item in converted if item.get("type") == "function_call_output")
+    assert output_item["output"] == "(no tool output)"
+    assert "see attached image" not in output_item["output"]
 
 
 def test_tool_result_images_for_vision_and_non_vision_models():

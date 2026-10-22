@@ -18,9 +18,9 @@ list-constructed messages), and user-owned dicts (`arguments`, `details`,
 place.
 """
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 from pidrei_http.http import FetchFunction
 from pidrei_utils.cancel import CancelToken
@@ -610,6 +610,22 @@ class MistralConversationsCompat:
     supports_mid_convo_system_messages: bool | None = None
 
 
+# How a System One service takes classifier images (see `api/system_one_shared.py`).
+type SystemOneImageInput = Literal["assets", "images", "state-image-urls"]
+
+
+@dataclass(slots=True)
+class SystemOneCompat:
+    """Compatibility settings for System One classifier APIs."""
+
+    # How the service takes classifier images. Default: auto-detected from the provider,
+    # base URL, and model id.
+    image_input: SystemOneImageInput | None = None
+    # Whether requests with images send TypeSafe's `TypeSafe-Danger-Zone-Images: true` opt-in
+    # header. Default: True for typesafe-system-one unless the model is detected as OpenRouter.
+    send_image_opt_in_header: bool | None = None
+
+
 type ModelCompat = (
     OpenAICompletionsCompat
     | OpenAIResponsesCompat
@@ -718,6 +734,44 @@ type OnResponse = Callable[[ProviderResponse, Model], Awaitable[Any]]
 type OnProviderStreamEvent = Callable[[Any, Model], Awaitable[Any]]
 
 
+class CustomUserAgent(TypedDict):
+    custom: str
+
+
+# The `User-Agent` sent to providers (see `utils/identity.py::format_user_agent`):
+# "detailed" (`pidrei/<version> (<platform>; python/<python version>; <machine>)`),
+# "short" (`pidrei`), or `{"custom": ...}` (the given value).
+type UserAgentMode = Literal["short", "detailed"] | CustomUserAgent
+
+
+class ClientAttribution(TypedDict):
+    """Who requests are attributed to. `get_attribution_headers()` maps the fields to each provider's headers."""
+
+    # App name: OpenRouter app title, NVIDIA invoke origin (first letter upper-cased), OpenCode client.
+    name: str
+    # App URL: OpenRouter `HTTP-Referer`, the app's identity in OpenRouter's rankings, grouped by origin.
+    url: str
+    # App categories, e.g. `["cli-agent"]`: OpenRouter `X-OpenRouter-Categories`, comma-separated.
+    categories: NotRequired[Sequence[str]]
+
+
+class ClientIdentity(TypedDict, total=False):
+    """How pidrei-ai identifies the calling app to providers.
+
+    Every field is optional; absent fields use pidrei-ai's defaults: a detailed
+    `User-Agent` with pidrei-ai's version and no attribution headers. Plain JSON,
+    so it can be persisted. An absent `attribution` and a None one differ: None
+    also turns off attribution set by a merged identity.
+    """
+
+    # Default: "detailed".
+    user_agent: UserAgentMode
+    # Provider attribution headers. Absent or None: none.
+    attribution: ClientAttribution | None
+    # Version in the detailed `User-Agent`. Default: the pidrei-ai version.
+    version: str
+
+
 @dataclass(slots=True)
 class ProviderRequestOptions:
     """Authentication, HTTP transport, and lifecycle callbacks shared by provider requests."""
@@ -732,6 +786,9 @@ class ProviderRequestOptions:
     on_response: OnResponse | None = None
     # Merged with provider defaults; caller values override; None suppresses a default header.
     headers: ProviderHeaders | None = None
+    # How the request identifies the calling app: `User-Agent` and provider attribution headers.
+    # Absent fields use pidrei-ai's defaults: a detailed `User-Agent` and no attribution.
+    identity: ClientIdentity | None = None
     # Transport for this request's HTTP exchanges (pi: `fetch`). Receives the
     # prepared request and returns the response; the adapter's error handling,
     # retries and parsing run on what it returns. `http.default_fetch` is the
@@ -1002,6 +1059,8 @@ class ClassifierModel:
     # Provider input limits and cache-safe preprocessing metadata.
     input_limits: ModelInputLimits | None = None
     headers: dict[str, str] | None = None
+    # Compatibility overrides for System One APIs. If not set, auto-detected from provider, base URL, and id.
+    compat: SystemOneCompat | None = None
     type: Literal["classifier"] = "classifier"
 
 

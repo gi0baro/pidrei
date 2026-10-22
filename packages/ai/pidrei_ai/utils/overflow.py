@@ -1,7 +1,7 @@
 """Port of pi's context-overflow detector (packages/ai/src/utils/overflow.ts).
 
-Detects context-window overflow from provider error messages (the pattern
-table below), from silent overflow (z.ai style: success but usage.input beyond
+Detects context-window or request byte-size overflow from provider error
+messages (the pattern table below), from silent overflow (z.ai style: success but usage.input beyond
 the window), and from length-stop overflow (Xiaomi MiMo style: input truncated
 to fill the window, zero output). See the pi source for the per-provider
 reliability notes.
@@ -41,6 +41,10 @@ _OVERFLOW_PATTERNS = [
         r"context[_ ]length[_ ]exceeded",  # Generic fallback
         r"too many tokens",  # Generic fallback
         r"token limit exceeded",  # Generic fallback
+        # HTTP 413 means request-size overflow regardless of provider or body text.
+        # Match raw SDK errors and format_provider_error's prefix, not a status mentioned in the body.
+        # (`[a-z0-9_ -]` is JS's ASCII `[\w -]`; Python's `\w` would also match non-ASCII letters.)
+        r"^(?:[a-z0-9_ -]+ API error \(413\):|413(?:\s|:|$))",  # GitHub Copilot and any provider
     )
 ]
 

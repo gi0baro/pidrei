@@ -88,15 +88,8 @@ TOGETHER_REASONING_EFFORT_COMPAT = {
     "thinkingFormat": "openai",
 }
 TOGETHER_TOGGLE_REASONING_EFFORT_COMPAT = {**TOGETHER_TOGGLE_REASONING_COMPAT, "supportsReasoningEffort": True}
-TOGETHER_REASONING_ONLY_MODELS = {"deepseek-ai/DeepSeek-R1", "MiniMaxAI/MiniMax-M2.7"}
 TOGETHER_REASONING_EFFORT_MODELS = {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
 TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = {"deepseek-ai/DeepSeek-V4-Pro-0813"}
-TOGETHER_FIXED_REASONING_LEVEL_MAP: dict[str, str | None] = {
-    "off": None,
-    "minimal": None,
-    "low": None,
-    "medium": None,
-}
 TOGETHER_REASONING_EFFORT_LEVEL_MAP: dict[str, str | None] = {"off": None, "minimal": None}
 TOGETHER_DEEPSEEK_V4_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "minimal": None,
@@ -351,16 +344,12 @@ OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = {
 # supporting the extended 1 million token context window.
 GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = {
     "claude-fable-5",
-    "claude-opus-4.6",
-    "claude-opus-4.7",
     "claude-opus-4.8",
     "claude-opus-5",
     "claude-opus-5.5",
     "claude-sonnet-4.6",
     "claude-sonnet-5",
     "gpt-5.3-codex",
-    "gpt-5.4",
-    "gpt-5.5",
     "gpt-6-astra",
     "gpt-6-luna",
     "gpt-6-sol",
@@ -369,7 +358,6 @@ GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = {
 # Checked manually against the authenticated GitHub Copilot /models endpoint on
 # 2026-06-15. Narrow corrections over models.dev metadata, not a snapshot.
 GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES: dict[str, dict[str, str | None]] = {
-    "claude-opus-4.7": {"minimal": "low"},
     "claude-opus-4.8": {"minimal": "low"},
     "claude-opus-5": {"minimal": "low"},
     "claude-sonnet-4.6": {"minimal": "low", "max": "max"},
@@ -462,8 +450,6 @@ def get_together_compat(model_id: str, reasoning: bool) -> dict[str, Any]:
         return TOGETHER_REASONING_EFFORT_COMPAT
     if model_id in TOGETHER_TOGGLE_REASONING_EFFORT_MODELS:
         return TOGETHER_TOGGLE_REASONING_EFFORT_COMPAT
-    if model_id in TOGETHER_REASONING_ONLY_MODELS:
-        return TOGETHER_BASE_COMPAT
     return TOGETHER_TOGGLE_REASONING_COMPAT
 
 
@@ -474,8 +460,6 @@ def get_together_thinking_level_map(model_id: str, reasoning: bool) -> dict[str,
         return dict(TOGETHER_REASONING_EFFORT_LEVEL_MAP)
     if model_id in TOGETHER_TOGGLE_REASONING_EFFORT_MODELS:
         return dict(TOGETHER_DEEPSEEK_V4_THINKING_LEVEL_MAP)
-    if model_id in TOGETHER_REASONING_ONLY_MODELS:
-        return dict(TOGETHER_FIXED_REASONING_LEVEL_MAP)
     return dict(TOGETHER_TOGGLE_REASONING_LEVEL_MAP)
 
 
@@ -629,7 +613,6 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
     is_nvidia = provider == "nvidia" or "integrate.api.nvidia.com" in base_url
     is_ant_ling = provider == "ant-ling" or "api.ant-ling.com" in base_url
     is_cerebras = provider == "cerebras" or "cerebras.ai" in base_url
-    is_together_reasoning_only = is_together and model_id in TOGETHER_REASONING_ONLY_MODELS
     is_deepseek = provider == "deepseek" or "deepseek.com" in base_url.lower()
 
     is_non_standard = (
@@ -671,7 +654,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
         thinking_format = "deepseek"
     elif is_zai:
         thinking_format = "zai"
-    elif is_together and not is_together_reasoning_only:
+    elif is_together:
         thinking_format = "together"
     elif is_ant_ling:
         thinking_format = "ant-ling"
@@ -1345,6 +1328,8 @@ def build_openrouter_catalog(
                 "input": model_input or ["text"],
                 "cost": openrouter_cost(model.get("pricing")),
                 "contextWindow": top_provider.get("context_length") or model.get("context_length") or 4096,
+                # OpenRouter answers TypeSafe `assets` with 200 but drops the images.
+                "compat": {"imageInput": "state-image-urls", "sendImageOptInHeader": False},
             }
         )
 
@@ -1512,13 +1497,15 @@ async def load_models_dev_classifier_models(client: Client) -> list[dict[str, An
             "api": "typesafe-system-one",
             "provider": "typesafe",
             "baseUrl": "https://api.typesafe.ai/v1/",
-            "input": ["text", "image"]
-            if "image" in ((metadata.get("modalities") or {}).get("input") or [])
-            else ["text"],
+            # models.dev lists text input only, but the API accepts image assets as an experimental
+            # feature behind an opt-in header, which the typesafe-system-one API sends.
+            # https://github.com/typesafe-ai/typesafe-sdk-js (v0.7.0 changelog)
+            "input": ["text", "image"],
             # The canonical models.dev entry has no direct-provider pricing. System One reports token usage,
             # so classify() results carry token counts but price them at zero.
             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
             "contextWindow": (metadata.get("limit") or {}).get("context") or 64000,
+            "compat": {"imageInput": "assets", "sendImageOptInHeader": True},
         }
     ]
 
@@ -1551,14 +1538,14 @@ OPENCODE_CLASSIFIER_MODELS: list[dict[str, Any]] = [
     },
 ]
 
-# Workers AI has no unauthenticated catalog and models.dev does not list its
-# System One models yet. Cloudflare publishes pricing only in the dashboard.
-# https://developers.cloudflare.com/ai/models/typesafe/jev/
+# Workers AI has no unauthenticated catalog, so its System One models are listed here from
+# Cloudflare's model pages.
 CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
-    # Cloudflare-hosted Clef decision models. They accept images, but classifier
-    # contexts carry text or JSON state only, so the catalog advertises text.
-    # Pricing: https://developers.cloudflare.com/workers-ai/models/clef/
-    # and https://developers.cloudflare.com/workers-ai/models/clef-flash/
+    # Cloudflare-hosted Clef decision models. They take up to four PNG, JPEG, or WebP images as data URLs.
+    # Clef Omni also takes audio and video, which classifier contexts do not carry.
+    # Pricing and context: https://developers.cloudflare.com/workers-ai/models/clef/,
+    # https://developers.cloudflare.com/workers-ai/models/clef-flash/,
+    # and https://developers.cloudflare.com/workers-ai/models/clef-omni/
     {
         "type": "classifier",
         "id": "@cf/cloudflare/clef",
@@ -1566,9 +1553,10 @@ CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
         "api": "cloudflare-workers-ai-system-one",
         "provider": "cloudflare-workers-ai",
         "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
-        "input": ["text"],
+        "input": ["text", "image"],
         "cost": {"input": 0.24, "output": 0, "cacheRead": 0, "cacheWrite": 0},
         "contextWindow": 65536,
+        "compat": {"imageInput": "images"},
     },
     {
         "type": "classifier",
@@ -1577,10 +1565,26 @@ CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
         "api": "cloudflare-workers-ai-system-one",
         "provider": "cloudflare-workers-ai",
         "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
-        "input": ["text"],
-        "cost": {"input": 0.09, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-        "contextWindow": 65536,
+        "input": ["text", "image"],
+        "cost": {"input": 0.038, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 24576,
+        "compat": {"imageInput": "images"},
     },
+    {
+        "type": "classifier",
+        "id": "@cf/cloudflare/clef-omni",
+        "name": "Clef Omni",
+        "api": "cloudflare-workers-ai-system-one",
+        "provider": "cloudflare-workers-ai",
+        "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+        "input": ["text", "image"],
+        "cost": {"input": 0.15, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 64000,
+        "compat": {"imageInput": "images"},
+    },
+    # TypeSafe's Jev models take PNG and JPEG images as System One assets.
+    # https://developers.cloudflare.com/ai/models/typesafe/jev/ (jev-latest)
+    # and https://developers.cloudflare.com/ai/models/typesafe/jev-1.14.0/
     {
         "type": "classifier",
         "id": "typesafe/jev",
@@ -1588,9 +1592,22 @@ CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
         "api": "cloudflare-workers-ai-system-one",
         "provider": "cloudflare-workers-ai",
         "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
-        "input": ["text"],
-        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "input": ["text", "image"],
+        "cost": {"input": 0.042, "output": 0, "cacheRead": 0, "cacheWrite": 0},
         "contextWindow": 32000,
+        "compat": {"imageInput": "assets"},
+    },
+    {
+        "type": "classifier",
+        "id": "typesafe/jev-1.14.0",
+        "name": "Jev 1.14",
+        "api": "cloudflare-workers-ai-system-one",
+        "provider": "cloudflare-workers-ai",
+        "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+        "input": ["text", "image"],
+        "cost": {"input": 0.042, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 32000,
+        "compat": {"imageInput": "assets"},
     },
 ]
 
@@ -2506,13 +2523,18 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
     models: list[dict[str, Any]] = []
 
     # MiniMax
+    # MiniMax asked to hide older models from its direct providers (#2596).
+    minimax_hidden_ids = {"MiniMax-M2", "MiniMax-M2.1", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"}
     for key, provider, base_url in (
         ("minimax", "minimax", "https://api.minimax.io/anthropic"),
         ("minimax-cn", "minimax-cn", "https://api.minimaxi.com/anthropic"),
     ):
         for model_id, source in _models_of(catalog, key).items():
-            if not _tool_capable(source):
+            if not _tool_capable(source) or model_id in minimax_hidden_ids:
                 continue
+            # Models with effort levels (e.g. MiniMax-M3.1-Flash) take adaptive thinking with
+            # output_config.effort and reject thinking.type="disabled" (no "none" effort, so off is None).
+            thinking_level_map = get_effort_thinking_level_map(source.get("reasoning_options") or [])
             models.append(
                 {
                     "id": model_id,
@@ -2526,9 +2548,13 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
                     "cost": get_models_dev_cost(source.get("cost")),
                     "contextWindow": _context(source),
                     "maxTokens": _max_tokens(source),
+                    **(
+                        {"thinkingLevelMap": thinking_level_map, "compat": {"forceAdaptiveThinking": True}}
+                        if thinking_level_map
+                        else {}
+                    ),
                 }
             )
-            record(provider, model_id, source)
 
     # Kimi For Coding
     models.extend(_create_kimi_coding_models(_models_of(catalog, "kimi-code-plan-global")))
@@ -2911,17 +2937,16 @@ ANT_LING_MODELS: list[dict[str, Any]] = [
     },
 ]
 
-MINIMAX_DIRECT_SUPPORTED_IDS = {"MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"}
-
 # OpenAI Codex (ChatGPT OAuth) models. Not fetched from models.dev; a small explicit
-# list avoids aliases. Older limits are based on observed server behavior; GPT-5.6
-# and GPT-6 use Codex's 272k default catalog limit.
+# list avoids aliases. Only list models the Codex backend accepts for ChatGPT accounts.
+# GPT-5.5 and GPT-5.3 Codex Spark are rejected with "not supported when using Codex
+# with a ChatGPT account".
+# GPT-5.6 and GPT-6 use Codex's 272k default catalog limit.
 # GPT-6.1 Sol uses the 500k default returned by /backend-api/codex/models.
 CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 CODEX_CONTEXT = 272000
 CODEX_GPT_61_SOL_CONTEXT = 500000
 CODEX_GPT_56_CONTEXT = 272000
-CODEX_SPARK_CONTEXT = 128000
 CODEX_MAX_TOKENS = 128000
 
 
@@ -2973,20 +2998,6 @@ CODEX_MODELS: list[dict[str, Any]] = [
         "gpt-6-luna",
         "GPT-6 Luna",
         with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-luna"]),
-        context_window=CODEX_CONTEXT,
-        model_input=["text", "image"],
-    ),
-    _codex_model(
-        "gpt-5.3-codex-spark",
-        "GPT-5.3 Codex Spark",
-        {"input": 1.75, "output": 14, "cacheRead": 0.175, "cacheWrite": 0},
-        context_window=CODEX_SPARK_CONTEXT,
-        model_input=["text"],
-    ),
-    _codex_model(
-        "gpt-5.5",
-        "GPT-5.5",
-        with_openai_long_context_pricing({"input": 5, "output": 30, "cacheRead": 0.5, "cacheWrite": 0}),
         context_window=CODEX_CONTEXT,
         model_input=["text", "image"],
     ),
@@ -3287,12 +3298,6 @@ async def main() -> None:
     all_models.extend(_clone(ANT_LING_MODELS))
 
     apply_deepseek_v4_compat(all_models)
-
-    all_models = [
-        model
-        for model in all_models
-        if not (model["provider"] in ("minimax", "minimax-cn") and model["id"] not in MINIMAX_DIRECT_SUPPORTED_IDS)
-    ]
 
     all_models.extend(_clone(CODEX_MODELS))
 

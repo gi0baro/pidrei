@@ -9,7 +9,7 @@ replay system messages into the current prompt and tool set.
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pidrei_ai.types import Context, Message, SystemMessage, Tool, ToolReference, TranscriptContext
 from pidrei_ai.utils.text import content_text, get_system_message_text
@@ -18,6 +18,7 @@ from pidrei_ai.utils.text import content_text, get_system_message_text
 __all__ = [
     "ToolStateChanges",
     "TranscriptContext",
+    "TranscriptToolSupport",
     "TranscriptTools",
     "collapse_system_messages",
     "create_initial_system_message",
@@ -250,39 +251,63 @@ def has_tool_redefinitions(messages: TranscriptMessages) -> bool:
 def has_non_additive_tool_changes(messages: TranscriptMessages) -> bool:
     """Whether tool history contains a removal or same-name redeclaration that an
     addition-only transport cannot replay."""
+    return _find_last_non_additive_tool_change([message for message in messages if _is_system_message(message)]) >= 0
+
+
+def _find_last_non_additive_tool_change(system_messages: Sequence[SystemMessage]) -> int:
+    """Index of the last system message with a removal or same-name redeclaration, or -1."""
+    # A name declared before counts as a redeclaration even after its removal: Kimi K3 ignores a
+    # removed tool that a later tool message declares again (verified October 2026).
     declared: set[str] = set()
-    for message in messages:
-        if not _is_system_message(message):
-            continue
+    last = -1
+    for index, message in enumerate(system_messages):
         if message.tools_removed:
-            return True
+            last = index
         for tool in message.tools_added or []:
             if tool.name in declared:
-                return True
+                last = index
             declared.add(tool.name)
-    return False
+    return last
+
+
+# How a transport can express tool changes after the first request.
+#
+# - "none": only the top-level tool list exists; it always holds the current tools.
+# - "additions": tools can be added at a later message, but not removed or redefined.
+# - "changes": every tool, including the initial ones, is declared in place, and a later
+#   declaration under the same name replaces the earlier one. Removals are not expressible on
+#   the wire, so the transport announces them as text and the removed tools stay declared.
+type TranscriptToolSupport = Literal["none", "additions", "changes"]
 
 
 @dataclass(slots=True)
 class TranscriptTools:
     # Tools sent in the top-level request field.
     request_tools: list[Tool]
-    # Whether later system messages carry their own `tools_added` as in-place additions.
-    # When False, `request_tools` already holds the complete current tool set.
-    anchors_additions: bool
+    # Number of leading system messages whose tool changes `request_tools` already holds. Every
+    # later system message carries its own tool changes in place.
+    folded_system_messages: int
 
 
-def resolve_transcript_tools(messages: TranscriptMessages, supports_tool_additions: bool) -> TranscriptTools:
-    """Split tool declarations between the top-level request field and in-place additions.
+def resolve_transcript_tools(messages: TranscriptMessages, support: TranscriptToolSupport) -> TranscriptTools:
+    """Split tool declarations between the top-level request field and in-place changes.
 
-    Transports that can anchor additions at a system message keep the initial tools at
-    the top and load later ones where they appear; that only works when no tool was
-    removed or redeclared, so everything else sends the current tool list.
+    With "changes", the top-level list stays empty and every system message, including the
+    leading one, declares its tools in place: an in-place declaration can replace an earlier
+    in-place one, but not a top-level one. With "additions", a removal or redefinition cannot be
+    expressed in place, so the top-level list becomes the tool state after the last such change;
+    later additions stay anchored, and the cached prefix is invalidated once per removal instead
+    of on every later addition. With "none", the top-level list is the current tool set.
     """
-    anchors_additions = supports_tool_additions and not has_non_additive_tool_changes(messages)
-    if anchors_additions:
-        initial = get_initial_system_message(messages)
-        request_tools = list(initial.tools_added or []) if initial is not None else []
-    else:
-        request_tools = get_current_tools(messages)
-    return TranscriptTools(request_tools=request_tools, anchors_additions=anchors_additions)
+    system_messages = [message for message in messages if _is_system_message(message)]
+    if support == "none":
+        return TranscriptTools(
+            request_tools=get_current_tools(system_messages), folded_system_messages=len(system_messages)
+        )
+    if support == "changes":
+        return TranscriptTools(request_tools=[], folded_system_messages=0)
+    folded = max(
+        1 if get_initial_system_message(messages) is not None else 0,
+        _find_last_non_additive_tool_change(system_messages) + 1,
+    )
+    return TranscriptTools(request_tools=get_current_tools(system_messages[:folded]), folded_system_messages=folded)

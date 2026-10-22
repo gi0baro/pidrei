@@ -68,6 +68,7 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.identity import get_opencode_session_headers
 from pidrei_ai.utils.model_operations import (
     assert_chat_model,
     assert_classifier_input_supported,
@@ -998,7 +999,12 @@ class ModelRuntime:
 
         provider_options = options if options is not None else default_options()
         transform_headers = provider_options.transform_headers
-        headers = merge_headers(resolution.auth.headers, provider_options.headers)
+        request_model = replace(model, base_url=resolution.auth.base_url) if resolution.auth.base_url else model
+        session_id = provider_options.session_id if isinstance(provider_options, StreamOptions) else None
+        headers = merge_headers(
+            merge_headers(get_opencode_session_headers(request_model, session_id), resolution.auth.headers),
+            provider_options.headers,
+        )
         if transform_headers is not None:
             headers = await transform_headers(headers if headers is not None else {})
         env = (
@@ -1006,7 +1012,6 @@ class ModelRuntime:
             if resolution.env or provider_options.env
             else None
         )
-        request_model = replace(model, base_url=resolution.auth.base_url) if resolution.auth.base_url else model
         request_options = replace(
             provider_options,
             api_key=provider_options.api_key if provider_options.api_key is not None else resolution.auth.api_key,

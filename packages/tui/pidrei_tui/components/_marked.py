@@ -21,7 +21,7 @@ block rule (before ``fence``) and inline rule (before ``escape``), which puts
 them at the same points in the scan: escaped delimiters and code spans are
 consumed by their own rules first, so neither becomes math.
 
-Deltas vs marked (documented, none observable in pi's test spec):
+Deltas vs marked (documented; only the last two are observable in pi's test spec):
 
 - ``space`` tokens are synthesized between sibling blocks whenever the line
   right before a block is blank (or ``>``-markers-only inside blockquotes).
@@ -35,11 +35,19 @@ Deltas vs marked (documented, none observable in pi's test spec):
   them). Only list-item marker sniffing, top-level fence trimming and the
   narrow-table fallback read ``raw``.
 - Entities are kept as their source text (marked leaves them undecoded).
+- A line opening display math ends the paragraph above it, as in marked, but only at the line's
+  start. marked looks from the paragraph's second character, so it splits a line starting with an
+  escaped ``\\\\[`` after the first backslash; here that stays an escaped bracket.
+- A table needs a ``|`` in its header row (markdown-it's table rule). marked also takes a header
+  without one when the delimiter row has one, which only adds single-column tables such as
+  "Value" over "| --- |"; here those stay paragraph text.
 """
 
 import re
 
 from markdown_it import MarkdownIt
+from markdown_it.common.utils import isMdAsciiPunct, isPunctChar
+from markdown_it.rules_inline.state_inline import Delimiter
 
 
 __all__ = ["lex", "trim_partial_closing_fences"]
@@ -64,6 +72,7 @@ _BLOCK_DOLLAR_RE = re.compile(r"^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*?)\$\$[ \t]*(?:\
 _BLOCK_BRACKET_RE = re.compile(r"^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*?)\\\][ \t]*(?:\n|$)")
 _PENDING_BLOCK_BRACKET_RE = re.compile(r"^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*)$")
 _PENDING_BLOCK_DOLLAR_RE = re.compile(r"^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*)$")
+_TABLE_DELIMITER_ROW_RE = re.compile(r"^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
 
 
 def _is_escaped(source: str, index: int) -> bool:
@@ -124,20 +133,39 @@ def _tokenize_inline_latex(source: str) -> dict | None:
     return {"raw": source[: closing_index + len(closing)], "text": text}
 
 
+# A GFM table starts with a header row followed by a delimiter row such as "|---|---|" or "| --- |".
+# The header needs a "|" only when the delimiter has none: a pipe-free delimiter without a pipe in the
+# header is a thematic break, not a table.
+def _contains_table_start(source: str) -> bool:
+    lines = source.split("\n")
+    for index in range(len(lines) - 1):
+        delimiter_row = lines[index + 1]
+        if ("|" in delimiter_row or "|" in lines[index]) and _TABLE_DELIMITER_ROW_RE.match(delimiter_row):
+            return True
+    return False
+
+
 def _tokenize_block_latex(source: str) -> dict | None:
+    # Display math never spans a table. Without this check, an unclosed "$$" or "\[" pairs with a later
+    # opener or stays pending, swallowing the table. See https://github.com/earendil-works/pi/issues/11159.
     dollar_match = _BLOCK_DOLLAR_RE.match(source)
-    if dollar_match and dollar_match.group(1):
+    if dollar_match and dollar_match.group(1) and not _contains_table_start(dollar_match.group(1)):
         return {"raw": dollar_match.group(0), "text": dollar_match.group(1).strip()}
 
     bracket_match = _BLOCK_BRACKET_RE.match(source)
-    if bracket_match and bracket_match.group(1):
+    if bracket_match and bracket_match.group(1) and not _contains_table_start(bracket_match.group(1)):
         return {"raw": bracket_match.group(0), "text": bracket_match.group(1).strip()}
 
     pending_bracket = _PENDING_BLOCK_BRACKET_RE.match(source)
-    if pending_bracket:
+    if pending_bracket and pending_bracket.group(1) and not _contains_table_start(pending_bracket.group(1)):
         return {"raw": pending_bracket.group(0), "text": pending_bracket.group(1), "pending": True}
     pending_dollar = _PENDING_BLOCK_DOLLAR_RE.match(source)
-    if pending_dollar and pending_dollar.group(1) and _looks_like_pending_dollar_math(pending_dollar.group(1)):
+    if (
+        pending_dollar
+        and pending_dollar.group(1)
+        and _looks_like_pending_dollar_math(pending_dollar.group(1))
+        and not _contains_table_start(pending_dollar.group(1))
+    ):
         return {"raw": pending_dollar.group(0), "text": pending_dollar.group(1), "pending": True}
     return None
 
@@ -148,7 +176,9 @@ def _latex_block_rule(state, start_line: int, end_line: int, silent: bool) -> bo
         return False
     start = state.bMarks[start_line] + state.tShift[start_line]
     indent = state.sCount[start_line]
-    if indent > 3:
+    # Every block form opens with "$$" or "\[" at the line's start. Checking first avoids copying the
+    # rest of the document for each paragraph line, where this rule runs as a terminator.
+    if indent > 3 or not state.src.startswith(("$$", "\\["), start):
         return False
     source = " " * indent + state.src[start:]
     token = _tokenize_block_latex(source)
@@ -186,8 +216,74 @@ def _latex_inline_rule(state, silent: bool) -> bool:
     return True
 
 
-_md.block.ruler.before("fence", "latex_block", _latex_block_rule)
+# marked cuts a paragraph where a line opens display math, so the block rule ends paragraphs too.
+_md.block.ruler.before("fence", "latex_block", _latex_block_rule, {"alt": ["paragraph"]})
 _md.inline.ruler.before("escape", "latex_inline", _latex_inline_rule)
+
+# --- CJK emphasis (pi uses marked-cjk-friendly 0.1.2's emStrong tokenizer) ---
+
+# marked-cjk-friendly's CJK set, verbatim.
+_CJK_RE = re.compile(
+    r"[ᄀ-ᇿ₩〈-〉☰-☷⚊-⚏⺀-⺙⺛-⻳⼀-⿕"
+    r"⿰-〾ぁ-ゖ゙-ヿㄅ-ㄯㄱ-ㆎ㆐-㇥㇯-㈞"
+    r"㈠-㉇㉐-ꒌ꒐-꓆ꥠ-ꥼ가-힣ힰ-ퟆퟋ-ퟻ"
+    r"豈-﫿︐-︙︰-﹒﹔-﹦﹨-﹫！-ﾾￂ-ￇ"
+    r"ￊ-ￏￒ-ￗￚ-ￜ￠-￦￨-￮\U00016fe0-\U00016fe4"
+    r"\U00016ff0-\U00016ff6\U00017000-\U00018cda\U00018cff-\U00018d20\U00018d80-\U00018df2"
+    r"\U00018e00-\U00019191\U000191a0-\U000191d2\U0001aff0-\U0001aff3\U0001aff5-\U0001affb"
+    r"\U0001affd-\U0001affe\U0001b000-\U0001b128\U0001b132\U0001b150-\U0001b152\U0001b155"
+    r"\U0001b164-\U0001b168\U0001b170-\U0001b2fb\U0001d300-\U0001d356\U0001d360-\U0001d376\U0001f1ae"
+    r"\U0001f200\U0001f202\U0001f210-\U0001f219\U0001f21b-\U0001f22e\U0001f230-\U0001f231\U0001f237"
+    r"\U0001f23b\U0001f240-\U0001f248\U0001f260-\U0001f265\U0001f7da\U00020000-\U0003fffd]"
+)
+
+
+def _opens_after_cjk(src: str, start: int) -> bool:
+    """Whether the character before an opening run is CJK, looking through a non-emoji variation
+    selector to its base; an Ideographic Variation Selector counts as CJK."""
+    index = start - 1
+    if "︀" <= src[index] <= "︎" and index >= 1:
+        index -= 1
+    return "\U000e0100" <= src[index] <= "\U000e01ef" or bool(_CJK_RE.match(src[index]))
+
+
+def _cjk_emphasis_rule(state, silent: bool) -> bool:
+    """markdown-it's emphasis tokenizer with marked-cjk-friendly's flanking rules.
+
+    The CommonMark scan stands, widened next to CJK characters: a run followed by punctuation also
+    opens when either neighbour is CJK, and any run next to a CJK character can close (so
+    ``**这是测试。**后面`` is bold). Without a CJK neighbour nothing changes, and strikethrough keeps
+    its own scan, as pi takes only marked-cjk-friendly's ``emStrong``.
+    """
+    start = state.pos
+    marker = state.src[start]
+    if silent or marker not in ("_", "*"):
+        return False
+    scanned = state.scanDelims(start, marker == "*")
+    end = start + scanned.length
+    next_char = state.src[end] if end < state.posMax else " "
+    next_cjk = bool(_CJK_RE.match(next_char))
+    next_punct = isMdAsciiPunct(ord(next_char)) or isPunctChar(next_char)
+    can_open = scanned.can_open or (next_punct and (next_cjk or (start > 0 and _opens_after_cjk(state.src, start))))
+    can_close = scanned.can_close or next_cjk or (start > 0 and bool(_CJK_RE.match(state.src[start - 1])))
+    for _ in range(scanned.length):
+        token = state.push("text", "", 0)
+        token.content = marker
+        state.delimiters.append(
+            Delimiter(
+                marker=ord(marker),
+                length=scanned.length,
+                token=len(state.tokens) - 1,
+                end=-1,
+                open=can_open,
+                close=can_close,
+            )
+        )
+    state.pos = end
+    return True
+
+
+_md.inline.ruler.at("emphasis", _cjk_emphasis_rule)
 
 
 def lex(text: str) -> list[dict]:

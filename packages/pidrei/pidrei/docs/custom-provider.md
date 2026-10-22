@@ -84,9 +84,68 @@ anything beyond static endpoint and model metadata; `models.json` overrides
 still compose on top of either form. A by-name registration with only
 `baseUrl` or `headers` keeps the provider's built-in models of every
 operation; one with `models` replaces the provider's models across chat,
-image and classifier operations. An omitted `type` means `"chat"`; image and
-classifier models need an explicit `type` and implementations keyed by their
-`api` in `images` and `classifiers`:
+image and classifier operations.
+
+### Redirect an existing provider
+
+Register only the fields that should change. This keeps the provider's
+built-in catalog, authentication, API implementation and compatibility
+settings:
+
+```python
+async def extension(pi):
+    pi.register_provider(
+        "anthropic",
+        {
+            "baseUrl": "https://gateway.example.com/anthropic",
+            "headers": {"X-Gateway-Key": "$GATEWAY_API_KEY"},
+        },
+    )
+```
+
+Use this form for a proxy or gateway that keeps the upstream protocol. Don't
+copy the built-in model list into the extension: that turns a small endpoint
+override into a catalog replacement that can drift.
+
+### Register a compatible endpoint
+
+When a service implements a supported protocol but has its own model catalog,
+register the endpoint and only the models the service actually exposes:
+
+```python
+async def extension(pi):
+    pi.register_provider(
+        "acme",
+        {
+            "name": "Acme AI",
+            "baseUrl": "https://api.acme.example/v1",
+            "apiKey": "$ACME_API_KEY",
+            "api": "openai-completions",
+            "models": [
+                {
+                    "type": "chat",
+                    "id": "acme-chat",
+                    "name": "Acme Chat",
+                    "reasoning": False,
+                    "input": ["text"],
+                    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                    "contextWindow": 128000,
+                    "maxTokens": 8192,
+                },
+            ],
+        },
+    )
+```
+
+Prefer `models.json` for this case when no extension code is needed. Use an
+extension when registration depends on runtime discovery, custom
+authentication, or code shared with other extension features.
+
+### Register mixed-operation models
+
+An omitted `type` means `"chat"`; image and classifier models need an
+explicit `type` and implementations keyed by their `api` in `images` and
+`classifiers`. A mixed-operation provider registers them together:
 
 ```python
 async def generate_images(model, context, options=None): ...

@@ -63,13 +63,6 @@ def test_models_together_reasoning_controls_from_the_together_api_surface():
     assert deepseek_v4.compat.supports_reasoning_effort is True
     assert deepseek_v4.compat.thinking_format == "together"
 
-    minimax = get_builtin_model("together", "MiniMaxAI/MiniMax-M2.7")
-    assert minimax is not None
-    assert minimax.thinking_level_map == {"off": None, "minimal": None, "low": None, "medium": None}
-    # Reasoning-only models keep Together's implicit format (pi: undefined).
-    assert minimax.compat.thinking_format is None
-    assert minimax.compat.supports_reasoning_effort is False
-
 
 @pytest.mark.tonio
 async def test_resolves_together_api_key_from_the_environment():

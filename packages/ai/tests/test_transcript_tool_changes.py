@@ -6,6 +6,7 @@ modules directly.
 """
 
 from dataclasses import replace
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -25,7 +26,7 @@ from pidrei_ai.types import (
     ToolReference,
     UserMessage,
 )
-from pidrei_ai.utils.transcript import normalize_context
+from pidrei_ai.utils.transcript import TranscriptTools, normalize_context, resolve_transcript_tools
 
 
 class PayloadCaptured(Exception):
@@ -77,6 +78,48 @@ def make_model(model_id: str, name: str, api: str, provider: str, compat: Any = 
 
 BASE_TOOL = tool("base_tool")
 LATE_TOOL = tool("late_tool")
+DROP_TOOL = tool("drop_tool")
+
+
+async def capture_tool_history(model: Model) -> list[dict[str, Any]]:
+    """Capture one request after each step: initial tools, removal of drop_tool, then two loads.
+    Returns the payloads after the removal and after each load, plus the one before the removal."""
+    steps = [
+        [UserMessage(content="first", timestamp=1)],
+        [
+            SystemMessage(content="", tools_removed=[ToolReference(name="drop_tool")], timestamp=2),
+            UserMessage(content="after removal", timestamp=3),
+        ],
+        [
+            SystemMessage(content="", tools_added=[LATE_TOOL], timestamp=4),
+            UserMessage(content="after first load", timestamp=5),
+        ],
+        [
+            SystemMessage(content="", tools_added=[tool("later_tool")], timestamp=6),
+            UserMessage(content="after second load", timestamp=7),
+        ],
+    ]
+    messages: list = [SystemMessage(content="base prompt", tools_added=[BASE_TOOL, DROP_TOOL], timestamp=0)]
+    payloads = []
+    for step in steps:
+        messages.extend(step)
+        payloads.append(await capture_payload(model, Context(messages=list(messages))))
+    return payloads
+
+
+def assert_growing_prefix(inputs: list[list]) -> None:
+    """Every request's message list starts with the previous request's message list."""
+    for previous, current in pairwise(inputs):
+        assert current[: len(previous)] == previous
+
+
+ADDITIONAL_TOOLS_MODEL = make_model(
+    "gpt-5.4",
+    "GPT-5.4",
+    "openai-responses",
+    "openai",
+    OpenAIResponsesCompat(supports_mid_convo_system_messages=True, supports_additional_tools=True),
+)
 CONTEXT = Context(
     messages=[
         SystemMessage(
@@ -236,23 +279,32 @@ async def test_requires_both_anthropic_capabilities_for_native_tool_changes():
     assert [message["role"] for message in payload["messages"]] == ["user"]
 
 
-@pytest.mark.tonio
-async def test_anchors_openai_additions_at_their_developer_message():
-    model = make_model(
-        "gpt-5.4",
-        "GPT-5.4",
-        "openai-responses",
-        "openai",
-        OpenAIResponsesCompat(supports_mid_convo_system_messages=True, supports_additional_tools=True),
-    )
-    payload = await capture_payload(model, ADDITION_CONTEXT)
+def _additional_tools_names(payload: dict[str, Any]) -> list[list[str]]:
+    return [
+        [value["name"] for value in item["tools"]]
+        for item in payload["input"]
+        if item.get("type") == "additional_tools"
+    ]
 
-    assert [value["name"] for value in payload["tools"]] == ["base_tool"]
-    additional = next(item for item in payload["input"] if item.get("type") == "additional_tools")
-    assert [value["name"] for value in additional["tools"]] == ["late_tool"]
-    assert [
-        item.get("content") for item in payload["input"] if item.get("role") == "developer" and item.get("type") is None
-    ] == ["base prompt", "updated guidance"]
+
+def _contents(payload: dict[str, Any], needle: str) -> list[str]:
+    return [item["content"] for item in payload["input"] if needle in (item.get("content") or "")]
+
+
+@pytest.mark.tonio
+async def test_declares_every_openai_tool_in_additional_tools_at_its_developer_message():
+    payload = await capture_payload(ADDITIONAL_TOOLS_MODEL, ADDITION_CONTEXT)
+
+    # A later additional_tools item cannot replace a top-level tool, so no tool is declared there.
+    assert "tools" not in payload
+    assert [names[0] for names in _additional_tools_names(payload)] == ["base_tool", "late_tool"]
+    # The incremental notice keeps models from reading a later item as the complete tool set.
+    shape = [item.get("type") or item.get("content") for item in payload["input"]]
+    assert len(shape) == 6
+    assert shape[:2] == ["additional_tools", "base prompt"]
+    assert isinstance(shape[2], list)
+    assert "incremental tools update" in shape[3]
+    assert shape[4:] == ["additional_tools", "updated guidance"]
 
 
 @pytest.mark.tonio
@@ -285,19 +337,157 @@ async def test_folds_openai_updates_into_the_leading_developer_message_without_n
 
 
 @pytest.mark.tonio
-async def test_falls_back_to_the_complete_current_tool_state_when_removals_are_unsupported():
-    model = make_model(
-        "gpt-5.4",
-        "GPT-5.4",
-        "openai-responses",
-        "openai",
-        OpenAIResponsesCompat(supports_mid_convo_system_messages=True, supports_additional_tools=True),
-    )
-    payload = await capture_payload(model, CONTEXT)
+async def test_announces_openai_removals_as_text():
+    payload = await capture_payload(ADDITIONAL_TOOLS_MODEL, CONTEXT)
 
-    assert [value["name"] for value in payload["tools"]] == ["late_tool"]
-    assert not any(item.get("type") == "additional_tools" for item in payload["input"])
-    assert len([item for item in payload["input"] if item.get("role") == "developer"]) == 2
+    assert "tools" not in payload
+    assert [names[0] for names in _additional_tools_names(payload)] == ["base_tool", "late_tool"]
+    update = payload["input"][-1]["content"]
+    assert "updated guidance" in update
+    assert "The following tools are no longer available. Do not call them:\n- base_tool" in update
+
+
+@pytest.mark.tonio
+async def test_redefines_an_openai_tool_with_additional_tools_instead_of_announcing_a_removal():
+    payload = await capture_payload(
+        ADDITIONAL_TOOLS_MODEL,
+        Context(
+            messages=[
+                SystemMessage(content="base prompt", tools_added=[BASE_TOOL], timestamp=0),
+                UserMessage(content="before", timestamp=1),
+                SystemMessage(
+                    content="",
+                    tools_removed=[ToolReference(name="base_tool")],
+                    tools_added=[replace(BASE_TOOL, description="changed")],
+                    timestamp=2,
+                ),
+            ]
+        ),
+    )
+
+    assert "tools" not in payload
+    items = payload["input"]
+    assert len(items) == 5
+    assert items[0]["type"] == "additional_tools"
+    assert [(value["name"], value["description"]) for value in items[0]["tools"]] == [("base_tool", "base_tool tool")]
+    assert (items[1]["role"], items[1]["content"]) == ("developer", "base prompt")
+    assert items[2]["role"] == "user"
+    assert items[3]["role"] == "developer"
+    assert "latest definition replaces the earlier one" in items[3]["content"]
+    assert items[4]["type"] == "additional_tools"
+    assert [(value["name"], value["description"]) for value in items[4]["tools"]] == [("base_tool", "changed")]
+
+
+# pi #10940: deferred loads after a removal must not rewrite the cached prefix.
+@pytest.mark.tonio
+async def test_keeps_the_openai_request_prefix_across_a_removal_and_later_loads():
+    payloads = await capture_tool_history(ADDITIONAL_TOOLS_MODEL)
+
+    for payload in payloads:
+        assert "tools" not in payload
+    assert_growing_prefix([payload["input"] for payload in payloads])
+    last = payloads[-1]
+    assert _additional_tools_names(last) == [["base_tool", "drop_tool"], ["late_tool"], ["later_tool"]]
+    assert _contents(last, "no longer available. Do not call them:\n- drop_tool")
+    # Each later load restates the tools that are still unavailable.
+    notices = _contents(last, "incremental tools update")
+    assert len(notices) == 2
+    assert all("\nStill unavailable: drop_tool." in notice for notice in notices)
+
+
+@pytest.mark.tonio
+async def test_stops_listing_a_tool_as_unavailable_once_it_is_declared_again():
+    payload = await capture_payload(
+        ADDITIONAL_TOOLS_MODEL,
+        Context(
+            messages=[
+                SystemMessage(content="base prompt", tools_added=[BASE_TOOL, DROP_TOOL], timestamp=0),
+                SystemMessage(content="", tools_removed=[ToolReference(name="drop_tool")], timestamp=1),
+                SystemMessage(content="", tools_added=[DROP_TOOL], timestamp=2),
+                UserMessage(content="go", timestamp=3),
+            ]
+        ),
+    )
+
+    notices = _contents(payload, "incremental tools update")
+    assert notices
+    assert "Still unavailable" not in notices[0]
+    assert payload["input"][-2]["type"] == "additional_tools"
+    assert [value["name"] for value in payload["input"][-2]["tools"]] == ["drop_tool"]
+
+
+@pytest.mark.tonio
+async def test_does_not_list_a_tool_as_still_unavailable_before_its_removal_is_announced():
+    payload = await capture_payload(
+        ADDITIONAL_TOOLS_MODEL,
+        Context(
+            messages=[
+                SystemMessage(content="base prompt", tools_added=[BASE_TOOL, DROP_TOOL], timestamp=0),
+                SystemMessage(
+                    content="",
+                    tools_added=[LATE_TOOL],
+                    tools_removed=[ToolReference(name="drop_tool")],
+                    timestamp=1,
+                ),
+                UserMessage(content="go", timestamp=2),
+            ]
+        ),
+    )
+
+    # Like Codex: notice, then the tools, then the removal notice.
+    notice, tools_item, removal, user = payload["input"][-4:]
+    assert "incremental tools update" in notice["content"]
+    assert "Still unavailable" not in notice["content"]
+    assert tools_item["type"] == "additional_tools"
+    assert [value["name"] for value in tools_item["tools"]] == ["late_tool"]
+    assert "no longer available. Do not call them:\n- drop_tool" in removal["content"]
+    assert user["role"] == "user"
+
+
+# pi #10940: synthetic tool search cannot remove tools, so a removal rewrites the prefix once.
+@pytest.mark.tonio
+async def test_keeps_the_openai_tool_search_prefix_across_loads_after_a_removal():
+    model = replace(
+        ADDITIONAL_TOOLS_MODEL,
+        compat=OpenAIResponsesCompat(supports_mid_convo_system_messages=True, supports_tool_search=True),
+    )
+    before_removal, *after_removal = await capture_tool_history(model)
+
+    assert [value["name"] for value in before_removal["tools"]] == ["base_tool", "drop_tool"]
+    for payload in after_removal:
+        assert [value["name"] for value in payload["tools"]] == ["base_tool"]
+    assert_growing_prefix([payload["input"] for payload in after_removal])
+    assert [
+        item["tools"][0]["name"] for item in after_removal[-1]["input"] if item.get("type") == "tool_search_output"
+    ] == ["late_tool", "later_tool"]
+
+
+# pi #10940: removals and redeclarations move the top-level boundary once; plain additions stay anchored.
+def test_resolves_the_top_level_tool_boundary_per_transport():
+    messages = [
+        SystemMessage(content="base prompt", tools_added=[BASE_TOOL, DROP_TOOL], timestamp=0),
+        SystemMessage(content="", tools_removed=[ToolReference(name="drop_tool")], timestamp=1),
+        SystemMessage(content="", tools_added=[DROP_TOOL], timestamp=2),
+        SystemMessage(content="", tools_added=[replace(LATE_TOOL, description="x")], timestamp=3),
+        SystemMessage(content="", tools_added=[replace(LATE_TOOL, description="y")], timestamp=4),
+    ]
+
+    assert resolve_transcript_tools(messages[:2], "additions") == TranscriptTools(
+        request_tools=[BASE_TOOL], folded_system_messages=2
+    )
+    # Kimi K3 ignores a removed tool that a later tool message declares again, so the re-added
+    # drop_tool moves the boundary; the new late_tool after it stays anchored.
+    assert resolve_transcript_tools(messages[:4], "additions") == TranscriptTools(
+        request_tools=[BASE_TOOL, DROP_TOOL], folded_system_messages=3
+    )
+    # The redefinition of late_tool moves the boundary to its message.
+    assert resolve_transcript_tools(messages, "additions") == TranscriptTools(
+        request_tools=[BASE_TOOL, DROP_TOOL, replace(LATE_TOOL, description="y")], folded_system_messages=5
+    )
+    assert resolve_transcript_tools(messages, "changes") == TranscriptTools(request_tools=[], folded_system_messages=0)
+    assert resolve_transcript_tools(messages, "none") == TranscriptTools(
+        request_tools=[BASE_TOOL, DROP_TOOL, replace(LATE_TOOL, description="y")], folded_system_messages=5
+    )
 
 
 @pytest.mark.tonio
@@ -319,6 +509,20 @@ async def test_anchors_kimi_additions_in_tool_bearing_system_messages():
         None,
         "updated guidance",
     ]
+
+
+# pi #10940: Kimi tool messages cannot remove tools, so a removal rewrites the prefix once.
+@pytest.mark.tonio
+async def test_keeps_the_kimi_prefix_across_loads_after_a_removal():
+    before_removal, *after_removal = await capture_tool_history(get_builtin_model("kimi-coding", "k3"))
+
+    assert [value["function"]["name"] for value in before_removal["tools"]] == ["base_tool", "drop_tool"]
+    for payload in after_removal:
+        assert [value["function"]["name"] for value in payload["tools"]] == ["base_tool"]
+    assert_growing_prefix([payload["messages"] for payload in after_removal])
+    assert [
+        message["tools"][0]["function"]["name"] for message in after_removal[-1]["messages"] if "tools" in message
+    ] == ["late_tool", "later_tool"]
 
 
 # pi #10720: Kimi Coding uses Chat Completions so K3-style models keep added tools out of the top-level list.

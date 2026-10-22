@@ -59,6 +59,7 @@ from pidrei_ai.types import (
     ModelImageResizeOptions,
     SystemMessage,
     TextContent,
+    ToolCall,
     Usage,
     UserMessage,
 )
@@ -67,7 +68,7 @@ from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assi
 from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
-from pidrei_ai.utils.transcript import get_current_system_message
+from pidrei_ai.utils.transcript import get_current_system_message, get_current_tools
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
@@ -616,7 +617,6 @@ class AgentSession:
         # pi's message_end replacement mutates the message in place, so the loop's own
         # reference sees it; pidrei swaps objects, so loop-held originals resolve here.
         self._message_replacements: dict[int, tuple[Any, Any]] = {}
-        self._last_assistant_tool_results: list[Any] = []
         self._last_activity_outcome: AgentActivityOutcome = "completed"
         self._is_before_settle = False
         self._abort_during_before_settle = False
@@ -1465,7 +1465,6 @@ class AgentSession:
         # extension and listener dispatch above also picks up messages that turn_end
         # handlers queued.
         if event.type == "turn_end":
-            self._last_assistant_tool_results = [self._current_message(result) for result in event.tool_results]
             await self._flush_pending_custom_messages()
 
     def _will_retry_after_agent_end(self, event: AgentEndEvent) -> bool:
@@ -1500,10 +1499,33 @@ class AgentSession:
                 projected_index += 1
         return None
 
-    async def _omit_recovery_attempt(self, message: AssistantMessage, tool_results: list[Any] | None = None) -> None:
-        targets = [message, *(tool_results or [])]
-        target_ids = [self._find_persisted_message_entry_id(target) for target in targets]
+    async def _omit_recovery_attempt(self, message: AssistantMessage) -> None:
+        """Persistently omit a failed attempt and its tool results from model context. Results are
+        found in the projected context, so the pair stays together whether the attempt comes from
+        the current run or a resumed session. An unpaired result fails the next request (#11227)."""
+        tool_call_ids = {block.id for block in message.content if isinstance(block, ToolCall)}
+        entry_id = self._find_persisted_message_entry_id(message)
         messages = self.agent.state.messages
+        index = next((index for index, candidate in enumerate(messages) if candidate is message), -1)
+        if index < 0 and entry_id is not None:
+            # A context edit replaces the projected copy, so match it by source entry as well. The copy
+            # is not in the run-scoped table or on the branch: it sits at its source entry's projected
+            # position, the positional match `_find_persisted_message_entry_id` relies on.
+            position = 0
+            for entry in self.session_manager.build_session_projection().entries:
+                if entry.source_entry["id"] == entry_id and entry.messages:
+                    index = position if position < len(messages) else -1
+                    break
+                position += len(entry.messages)
+        tool_results: list[Any] = []
+        for candidate in messages[index + 1 :] if index >= 0 else []:
+            role = getattr(candidate, "role", None)
+            if role == "assistant":
+                break
+            if role == "toolResult" and candidate.tool_call_id in tool_call_ids:
+                tool_results.append(candidate)
+        targets = [message, *tool_results]
+        target_ids = [self._find_persisted_message_entry_id(target) for target in targets]
         unresolved_projected_target = any(
             target_ids[index] is None and any(candidate is target for candidate in messages)
             for index, target in enumerate(targets)
@@ -2091,13 +2113,41 @@ class AgentSession:
         declared, but they do not depend on the active set, so the transcript's
         declarations are the whole loadout. `modifiers` are `+name`/`-name`
         entries applied to the restored loadout."""
-        current = get_current_system_message(self.session_manager.build_session_context().messages)
+        # All system messages on the branch, including those before a compaction. Compaction snapshots
+        # are derived from these, so replaying them gives the current loadout.
+        system_messages = [
+            entry["message"]
+            for entry in self.session_manager.get_branch()
+            if entry["type"] == "message" and entry["message"].role == "system"
+        ]
+        # Tools the branch ever added or removed. Removed tools stay inactive.
+        mentioned = {
+            tool.name
+            for message in system_messages
+            for tool in [*(message.tools_added or []), *(message.tools_removed or [])]
+        }
         with self._tool_loadout_guard:
             self._pending_tool_names.clear()
-            if current is None:
+            # No recorded loadout: keep the current tools.
+            if not system_messages:
                 return
-            names = apply_tool_modifiers([tool.name for tool in current.tools_added or []], modifiers)
+            # Extension tools the branch never mentioned were registered after it recorded its loadout, so
+            # they are activated like newly registered tools. Built-in tools follow `defaultTools` instead.
+            new_tools = [
+                name
+                for name in self._tool_registry
+                if name not in mentioned
+                and name not in self._base_tool_definitions
+                and self._is_activated_on_registration(name)
+            ]
+            # The recorded loadout plus the new tools, with `--tools +name`/`-name` applied.
+            names = apply_tool_modifiers(
+                [*(tool.name for tool in get_current_tools(system_messages)), *new_tools], modifiers
+            )
+            # Recorded tools that are not registered yet, such as MCP tools of servers still connecting, are
+            # activated when they register. Excluded tools never register, so they are not kept pending.
             self._pending_tool_names = dict.fromkeys(name for name in names if self._is_allowed_tool(name))
+            # Ignores names that are not registered.
             self._set_active_tools(names)
 
     # =========================================================================
@@ -2300,9 +2350,7 @@ class AgentSession:
 
     async def _handle_post_agent_run(self) -> bool:
         message = self._last_assistant_message
-        tool_results = self._last_assistant_tool_results
         self._last_assistant_message = None
-        self._last_assistant_tool_results = []
         if self._agent_run_abort_requested:
             self._finish_cancelled_retry()
             return False
@@ -2323,7 +2371,7 @@ class AgentSession:
             self._emit(AutoRetryEndEvent(success=False, attempt=self._retry_attempt, final_error=message.error_message))
             self._retry_attempt = 0
 
-        if await self._check_compaction(message, True, tool_results):
+        if await self._check_compaction(message):
             return not self._agent_run_abort_requested
 
         # The low-level loop drains both queues before agent_end. Messages queued by
@@ -3272,12 +3320,7 @@ class AgentSession:
         if self._branch_summary_cancel is not None:
             self._branch_summary_cancel.cancel()
 
-    async def _check_compaction(
-        self,
-        assistant_message: AssistantMessage,
-        skip_aborted_check: bool = True,
-        tool_results: list[Any] | None = None,
-    ) -> bool:
+    async def _check_compaction(self, assistant_message: AssistantMessage, skip_aborted_check: bool = True) -> bool:
         """Dispatch automatic compaction after `agent_end` or before prompt submission.
         Manual compaction does not call this method; it enters through `compact()`.
 
@@ -3407,7 +3450,7 @@ class AgentSession:
 
             # Persistently omit the selected final attempt before post-run recovery compaction.
             self._overflow_recovery_attempted = True
-            await self._omit_recovery_attempt(assistant_message, tool_results)
+            await self._omit_recovery_attempt(assistant_message)
             retry = await self._run_auto_compaction("overflow", will_retry, abort_generation)
             if retry:
                 with self._state_guard:
@@ -4345,16 +4388,19 @@ class AgentSession:
     # Tree Navigation
     # =========================================================================
 
-    async def navigate_tree(self, target_id: str, options: dict[str, Any] | None = None) -> NavigateTreeResult:
-        """Navigate to a different node in the session tree. Unlike fork() this
-        stays in the same file."""
-        options = options or {}
+    def _raise_if_tree_navigation_blocked(self) -> None:
         if self.is_streaming:
             raise RuntimeError("Wait for the current response to finish before navigating the session tree.")
         if self.is_compacting:
             raise RuntimeError(
                 "Wait for the current compaction or tree navigation to finish before navigating the session tree."
             )
+
+    async def navigate_tree(self, target_id: str, options: dict[str, Any] | None = None) -> NavigateTreeResult:
+        """Navigate to a different node in the session tree. Unlike fork() this
+        stays in the same file."""
+        options = options or {}
+        self._raise_if_tree_navigation_blocked()
 
         old_leaf_id = self.session_manager.get_leaf_id()
 
@@ -4390,8 +4436,12 @@ class AgentSession:
             "label": label,
         }
 
-        # Set up cancel token for summarization
-        self._branch_summary_cancel = CancelToken()
+        # Set up cancel token for summarization. The check above fails fast in pi's order; this one and
+        # the claim are one critical section, so two navigations cannot both pass it.
+        branch_summary_cancel = CancelToken()
+        with self._state_guard:
+            self._raise_if_tree_navigation_blocked()
+            self._branch_summary_cancel = branch_summary_cancel
 
         try:
             extension_summary: dict[str, Any] | None = None
@@ -4403,7 +4453,7 @@ class AgentSession:
                     {
                         "type": "session_before_tree",
                         "preparation": preparation,
-                        "signal": self._branch_summary_cancel,
+                        "signal": branch_summary_cancel,
                     }
                 )
 
@@ -4428,7 +4478,7 @@ class AgentSession:
             summary_details: Any = None
             summary_usage: Usage | None = None
             if options.get("summarize") and entries_to_summarize and extension_summary is None:
-                auth = await self._get_summarization_request_auth(self.model, self._branch_summary_cancel)
+                auth = await self._get_summarization_request_auth(self.model, branch_summary_cancel)
                 branch_summary_settings = self.settings_manager.get_branch_summary_settings()
                 result = await generate_branch_summary(
                     entries_to_summarize,
@@ -4436,7 +4486,7 @@ class AgentSession:
                     api_key=auth["api_key"],
                     headers=auth["headers"],
                     env=auth["env"],
-                    cancel=self._branch_summary_cancel,
+                    cancel=branch_summary_cancel,
                     custom_instructions=custom_instructions,
                     replace_instructions=replace_instructions,
                     reserve_tokens=branch_summary_settings["reserve_tokens"],

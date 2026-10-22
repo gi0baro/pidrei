@@ -8,6 +8,7 @@ dicts (pidrei parses the SSE itself); pi's per-block scratch (`partialJson`,
 
 import json
 import re
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,7 +53,7 @@ from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
-from pidrei_ai.utils.transcript import resolve_transcript, resolve_transcript_tools
+from pidrei_ai.utils.transcript import TranscriptToolSupport, resolve_transcript, resolve_transcript_tools
 
 
 # Python has one absent value where JavaScript has two; this stands in for
@@ -91,7 +92,7 @@ def parse_text_signature(signature: str | None) -> dict[str, Any] | None:
 def convert_tool_result_output(model: Model, content: list) -> str | list[dict]:
     text_result = "\n".join(block.text for block in content if block.type == "text")
     images = [block for block in content if block.type == "image"]
-    has_text = len(text_result) > 0
+    has_text = len(text_result.strip()) > 0
 
     if not images or "image" not in model.input:
         return sanitize_surrogates(
@@ -111,6 +112,43 @@ def convert_tool_result_output(model: Model, content: list) -> str | list[dict]:
 # =============================================================================
 # Message conversion
 # =============================================================================
+
+
+def get_responses_tool_support(
+    *,
+    supports_mid_convo_system_messages: bool = False,
+    supports_additional_tools: bool = False,
+    supports_tool_search: bool = False,
+) -> TranscriptToolSupport:
+    """How a Responses transport expresses tool changes.
+
+    `additional_tools` items accumulate: a later item adds tools and replaces same-name
+    definitions from earlier items, but it cannot replace a top-level tool and cannot remove any
+    tool (verified with strict schemas on the OpenAI, Codex, and Copilot backends, October 2026).
+    Like Codex, every tool is therefore declared in `additional_tools` items, starting with one
+    at the head of the input, and removals are announced as text. Synthetic tool search can
+    only add tools. Without mid-conversation system messages there is nothing to anchor.
+    """
+    if supports_mid_convo_system_messages and supports_additional_tools:
+        return "changes"
+    return "additions" if supports_tool_search else "none"
+
+
+def _render_incremental_tools_notice(unavailable: Collection[str]) -> str:
+    """Precedes every additional_tools item after the first. Without it, models read the latest item as
+    the complete tool set once a removal was announced; Codex precedes its incremental tool batches
+    with the same guidance. Restating the tools that are still unavailable keeps smaller models
+    (gpt-5.6-luna, gpt-6-luna) from calling them again after later loads (verified October 2026)."""
+    notice = (
+        "This is an incremental tools update. Previously declared tools remain available unless explicitly"
+        " marked unavailable. A tool declared again here is available again, and its latest definition"
+        " replaces the earlier one."
+    )
+    return f"{notice}\nStill unavailable: {', '.join(unavailable)}." if unavailable else notice
+
+
+def _render_tool_removal_notice(names: Sequence[str]) -> str:
+    return "The following tools are no longer available. Do not call them:\n" + "\n".join(f"- {name}" for name in names)
 
 
 def convert_responses_messages(
@@ -167,15 +205,29 @@ def convert_responses_messages(
         return f"{normalized_call_id}|{normalized_item_id}"
 
     transformed_messages = transform_messages(normalized_context.messages, model, normalize_tool_call_id)
-    transcript_tools = resolve_transcript_tools(
-        normalized_context.messages, supports_additional_tools or supports_tool_search
+    tool_support = get_responses_tool_support(
+        supports_mid_convo_system_messages=bool(supports_mid_convo_system_messages),
+        supports_additional_tools=supports_additional_tools,
+        supports_tool_search=supports_tool_search,
     )
+    transcript_tools = resolve_transcript_tools(normalized_context.messages, tool_support)
+    declared_additional_tools = False
+    # Tools announced as removed and not declared again since.
+    unavailable_tools: dict[str, None] = {}
 
     def append_system_tool_additions(message: SystemMessage, seed: str) -> None:
-        tools = (message.tools_added or []) if transcript_tools.anchors_additions else []
+        nonlocal declared_additional_tools
+        tools = message.tools_added or []
+        for tool in tools:
+            unavailable_tools.pop(tool.name, None)
         if not tools:
             return
-        if supports_additional_tools:
+        if tool_support == "changes":
+            if declared_additional_tools:
+                messages.append(
+                    {"role": instruction_role, "content": _render_incremental_tools_notice(unavailable_tools)}
+                )
+            declared_additional_tools = True
             messages.append(
                 {
                     "type": "additional_tools",
@@ -184,7 +236,7 @@ def convert_responses_messages(
                 }
             )
             return
-        if not supports_tool_search:
+        if tool_support != "additions":
             return
         names = [tool.name for tool in tools]
         call_id = f"pi_tool_load_{short_hash(f'{seed}:{",".join(names)}')}"
@@ -216,13 +268,29 @@ def convert_responses_messages(
     # pi's `continue`s (empty user content, empty assistant output) skip the trailing
     # `msgIndex++`; the loop below keeps that: the index only advances at the end.
     msg_index = 0
+    system_index = 0
     for source_index, msg in enumerate(transformed_messages):
         is_leading_system_message = source_index == 0 and msg.role == "system"
         if msg.role == "system":
-            if not is_leading_system_message:
+            # transform_messages keeps system messages in order, so their position matches the transcript.
+            anchors_tool_changes = system_index >= transcript_tools.folded_system_messages
+            system_index += 1
+            if anchors_tool_changes:
                 append_system_tool_additions(msg, f"system:{msg_index}")
             if not is_leading_system_message or include_system_prompt:
-                text = get_system_message_text(msg) if is_leading_system_message else render_system_message_update(msg)
+                parts = [
+                    get_system_message_text(msg) if is_leading_system_message else render_system_message_update(msg)
+                ]
+                if anchors_tool_changes:
+                    # A redefinition is a removal plus an addition of the same name; only true removals are announced.
+                    added = {tool.name for tool in msg.tools_added or []}
+                    removed = [tool.name for tool in msg.tools_removed or [] if tool.name not in added]
+                    if removed:
+                        parts.append(_render_tool_removal_notice(removed))
+                    # Recorded after this message's additions, whose notice precedes this removal notice.
+                    for name in removed:
+                        unavailable_tools[name] = None
+                text = "\n\n".join(part for part in parts if part)
                 if text:
                     messages.append({"role": instruction_role, "content": sanitize_surrogates(text)})
         elif msg.role == "user":

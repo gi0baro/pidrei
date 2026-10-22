@@ -22,13 +22,13 @@ from ..utils.paths import resolve_path
 from .agent_session import AgentSession, AgentSessionConfig, ScopedModel
 from .auth_guidance import format_no_models_available_message
 from .cache_warmer import CacheWarmer, CacheWarmRequest
+from .client_identity import get_client_identity
 from .defaults import DEFAULT_THINKING_LEVEL
 from .extensions import LoadExtensionsResult
 from .mcp_servers import create_tool_name_matcher
 from .messages import convert_to_llm
 from .model_resolver import find_initial_model
 from .model_runtime import ModelRuntime
-from .provider_attribution import merge_provider_attribution_headers
 from .resource_loader import DefaultResourceLoader
 from .session_manager import SessionManager, get_default_session_dir_blocking
 from .settings_manager import (
@@ -284,7 +284,11 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         return await runner.emit_cache_warming_decision(event) if runner is not None else event["action"]
 
     cache_warmer = CacheWarmer(
-        model_runtime, session_manager, settings_manager.get_cache_warming_mode, decide_cache_warming
+        model_runtime,
+        session_manager,
+        settings_manager.get_cache_warming_mode,
+        lambda: get_client_identity(settings_manager),
+        decide_cache_warming,
     )
 
     # Warm only requests for the selected model. Requests a virtual selection routed, or that an
@@ -327,16 +331,10 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         )
         header_runner = extension_runner_ref.current
 
-        async def transform_headers(request_headers):
-            headers = merge_provider_attribution_headers(
-                request_model,
-                settings_manager,
-                getattr(stream_options, "session_id", None),
-                request_headers,
-            )
+        async def transform_headers(headers):
             if header_runner is not None and header_runner.has_handlers("before_provider_headers"):
-                return await header_runner.emit_before_provider_headers(headers if headers is not None else {})
-            return headers if headers is not None else {}
+                return await header_runner.emit_before_provider_headers(headers)
+            return headers
 
         options_max_retries = getattr(stream_options, "max_retries", None)
         options_max_retry_delay = getattr(stream_options, "max_retry_delay_ms", None)
@@ -352,6 +350,8 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
                 if options_max_retry_delay is not None
                 else provider_retry_settings["max_retry_delay_ms"]
             ),
+            # Replaces the agent loop's default identity; read per request so setting changes apply at once.
+            identity=get_client_identity(settings_manager),
             transform_headers=transform_headers,
         )
         # Compaction and summaries use their own routing ids; only session requests

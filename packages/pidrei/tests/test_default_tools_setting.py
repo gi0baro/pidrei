@@ -316,19 +316,33 @@ async def resume_extension_tools(pi) -> None:
     pi.register_tool(_tool("active_tool", "Active Tool", "Extension tool registered active"))
 
 
-async def create_recorded_session(dirs, tool_names: list[str]) -> SessionManager:
-    """A session whose transcript records the loadout `tool_names`, as a run records it."""
-    session_manager = SessionManager.in_memory(dirs.root)
-    await session_manager.append_message(
+def _tool_references(names: list[str]) -> list[Tool]:
+    return [Tool(name=name, description=name, parameters={"type": "object", "properties": {}}) for name in names]
+
+
+async def record_loadout_change(session_manager: SessionManager, added: list[str], removed: list[str] = ()) -> str:
+    """Append a system message that adds and removes tools, as a run records loadout changes."""
+    return await session_manager.append_message(
         SystemMessage(
             content="",
-            tools_added=[
-                Tool(name=name, description=name, parameters={"type": "object", "properties": {}})
-                for name in tool_names
-            ],
+            tools_added=_tool_references(added) if added else None,
+            tools_removed=_tool_references(list(removed)) if removed else None,
             timestamp=clock.now_ms(),
         )
     )
+
+
+async def create_recorded_session(dirs, tool_names: list[str]) -> SessionManager:
+    """A session whose transcript records the loadout `tool_names`, as a run records it."""
+    session_manager = SessionManager.in_memory(dirs.root)
+    await record_loadout_change(session_manager, tool_names)
+    return session_manager
+
+
+async def create_changed_session(dirs) -> SessionManager:
+    """A session that recorded `read`, `grep`, and `inactive_tool`, and deactivated `active_tool`."""
+    session_manager = await create_recorded_session(dirs, ["read", "grep", "active_tool"])
+    await record_loadout_change(session_manager, ["inactive_tool"], ["active_tool"])
     return session_manager
 
 
@@ -356,10 +370,69 @@ async def resume(dirs, session_manager: SessionManager, options=None):
 
 @pytest.mark.tonio
 async def test_resume_restores_the_loadout_the_transcript_records(dirs):
-    # active_tool was deactivated during the session, inactive_tool activated.
-    session = await resume(dirs, await create_recorded_session(dirs, ["read", "grep", "inactive_tool"]))
+    session = await resume(dirs, await create_changed_session(dirs))
     try:
         assert sorted(session.get_active_tool_names()) == ["grep", "inactive_tool", "read"]
+    finally:
+        session.dispose()
+
+
+# pi #11062
+@pytest.mark.tonio
+async def test_resume_activates_extension_tools_the_transcript_never_added_or_removed(dirs):
+    # Built-in tools and tools registered inactive stay inactive.
+    session = await resume(dirs, await create_recorded_session(dirs, ["read", "grep"]))
+    try:
+        assert sorted(session.get_active_tool_names()) == ["active_tool", "grep", "read"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_resume_keeps_tools_removed_before_a_compaction_inactive(dirs):
+    session_manager = await create_changed_session(dirs)
+    kept = await session_manager.append_message(UserMessage(content="hi", timestamp=clock.now_ms()))
+    await session_manager.append_compaction("summary", kept, 1000)
+    session = await resume(dirs, session_manager)
+    try:
+        assert sorted(session.get_active_tool_names()) == ["grep", "inactive_tool", "read"]
+    finally:
+        session.dispose()
+
+
+# pi #11075
+@pytest.mark.tonio
+async def test_restores_the_target_branchs_loadout_on_tree_navigation(dirs):
+    # The target branch never mentions active_tool, so it is active there. It removed grep.
+    session_manager = await create_recorded_session(dirs, ["read", "grep"])
+    await record_loadout_change(session_manager, [], ["grep"])
+    target = await session_manager.append_message(UserMessage(content="first", timestamp=clock.now_ms()))
+    await record_loadout_change(session_manager, ["grep"], ["active_tool"])
+    session = await resume(dirs, session_manager)
+    try:
+        assert sorted(session.get_active_tool_names()) == ["grep", "read"]
+
+        await session.navigate_tree(target, {"summarize": False})
+        assert sorted(session.get_active_tool_names()) == ["active_tool", "read"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_keeps_registered_tools_outside_the_tools_allowlist_inactive_on_tree_navigation(dirs):
+    # An allowlist without mcp__ entries keeps MCP tools registered but inactive.
+    session_manager = await create_recorded_session(dirs, ["read"])
+    target = await session_manager.append_message(UserMessage(content="first", timestamp=clock.now_ms()))
+    session = await resume(
+        dirs,
+        session_manager,
+        {"tools": ["read"], "custom_tools": [_tool("mcp__server__lookup", "Lookup", "MCP tool")]},
+    )
+    try:
+        assert session.get_active_tool_names() == ["read"]
+
+        await session.navigate_tree(target, {"summarize": False})
+        assert session.get_active_tool_names() == ["read"]
     finally:
         session.dispose()
 
@@ -368,7 +441,7 @@ async def test_resume_restores_the_loadout_the_transcript_records(dirs):
 async def test_resume_does_not_restore_excluded_tools(dirs):
     session = await resume(
         dirs,
-        await create_recorded_session(dirs, ["read", "grep", "inactive_tool"]),
+        await create_changed_session(dirs),
         {"exclude_tools": ["inactive_tool"]},
     )
     try:
@@ -379,15 +452,13 @@ async def test_resume_does_not_restore_excluded_tools(dirs):
 
 @pytest.mark.tonio
 async def test_resume_uses_explicit_tool_options_instead_of_the_recorded_loadout(dirs):
-    recorded = ["read", "grep", "inactive_tool"]
-
-    allowlisted = await resume(dirs, await create_recorded_session(dirs, recorded), {"tools": ["read", "write"]})
+    allowlisted = await resume(dirs, await create_changed_session(dirs), {"tools": ["read", "write"]})
     try:
         assert allowlisted.get_active_tool_names() == ["read", "write"]
     finally:
         allowlisted.dispose()
 
-    builtinless = await resume(dirs, await create_recorded_session(dirs, recorded), {"no_tools": "builtin"})
+    builtinless = await resume(dirs, await create_changed_session(dirs), {"no_tools": "builtin"})
     try:
         assert builtinless.get_active_tool_names() == ["active_tool"]
     finally:
@@ -398,7 +469,7 @@ async def test_resume_uses_explicit_tool_options_instead_of_the_recorded_loadout
 async def test_resume_applies_plus_name_and_minus_name_tool_options_to_the_recorded_loadout(dirs):
     session = await resume(
         dirs,
-        await create_recorded_session(dirs, ["read", "grep", "inactive_tool"]),
+        await create_changed_session(dirs),
         {"tools": ["-grep", "+write"]},
     )
     try:

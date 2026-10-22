@@ -56,6 +56,7 @@ from ...core.mcp_servers import (
     validate_mcp_server_config,
 )
 from ...utils.lockfile import FileLock
+from ...utils.text import strip_bom
 
 
 __all__ = [
@@ -134,7 +135,7 @@ async def _read_config_file(path: str, scope: Literal["global", "project"], stat
         errors.append(f"{path}: {error}")
         return
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_bom(text))
     except ValueError as error:
         errors.append(f"{path}: {error}")
         return
@@ -290,7 +291,7 @@ async def _edit_mcp_servers(path: str, edit: Callable[[dict[str, Any] | None, di
     await file.parent.mkdir(parents=True, exist_ok=True)
     async with FileLock(path):
         try:
-            text: str | None = await file.read_text(encoding="utf-8")
+            text: str | None = strip_bom(await file.read_text(encoding="utf-8"))
         except FileNotFoundError:
             text = None
         parsed = {} if text is None else json.loads(text)

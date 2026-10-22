@@ -107,6 +107,7 @@ class FakeRuntime:
         self.appended: list[tuple] = []
         self.appended_entries: list[dict] = []
         self.mode = mode
+        self.identity: dict = {}
         self.branch = branch if branch is not None else branch_with_prompt(100_000)
         self.stream_called = tonio.Event()
         usage_manager = SessionManager.in_memory()
@@ -137,7 +138,7 @@ class FakeRuntime:
             override = decide(event) if decide is not None else None
             return override if override is not None else event["action"]
 
-        self.warmer = CacheWarmer(_Models(), _Sessions(), lambda: runtime.mode, decide_event)
+        self.warmer = CacheWarmer(_Models(), _Sessions(), lambda: runtime.mode, lambda: runtime.identity, decide_event)
         self.warmer.on_warmed = self.warmed_entries.append
 
 
@@ -232,6 +233,25 @@ async def test_replays_profitable_requests_and_preserves_options_across_repeated
 
         await advance_timers(fake, runtime.warmer, 270_000)
         assert len(runtime.calls) == 2
+        runtime.warmer.cancel()
+
+
+@pytest.mark.tonio
+async def test_refreshes_send_the_current_client_identity():
+    """pidrei divergence: pi replays the identity the warmed request was sent
+    with, so turning provider attribution off kept it on warm requests."""
+    with fake_timers() as fake:
+        runtime = FakeRuntime()
+        attributed = {"user_agent": "detailed", "attribution": {"name": "pidrei"}}
+        unattributed = {"user_agent": "detailed", "attribution": None}
+        runtime.identity = attributed
+        runtime.warmer.start(request(ADAPTIVE_MODEL, SimpleStreamOptions(identity=attributed)), current)
+        await advance_timers(fake, runtime.warmer, 270_000)
+
+        runtime.identity = unattributed
+        await advance_timers(fake, runtime.warmer, 270_000)
+
+        assert [options.identity for _model, options in runtime.calls] == [attributed, unattributed]
         runtime.warmer.cancel()
 
 

@@ -27,6 +27,7 @@ from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     convert_responses_tools,
+    get_responses_tool_support,
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options
@@ -58,6 +59,7 @@ from pidrei_ai.utils.diagnostics import (
 )
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import ORIGINATOR, get_identity_headers
 from pidrei_ai.utils.session_resources import register_session_resource_cleanup
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text
@@ -68,7 +70,6 @@ from pidrei_ai.utils.transcript import (
     resolve_transcript,
     resolve_transcript_tools,
 )
-from pidrei_ai.utils.user_agent import ORIGINATOR, get_user_agent
 from pidrei_ai.utils.uuid import uuidv7
 from pidrei_http import http
 from pidrei_utils import clock
@@ -509,9 +510,13 @@ def stream(
             if next_body is not None:
                 body = next_body
             websocket_request_id = codex_session_id or uuidv7()
-            sse_headers = _build_sse_headers(model.headers, opts.headers, account_id, api_key, codex_session_id)
+            # Codex expects an originator on every request; it is not attribution.
+            identity_headers = {"originator": ORIGINATOR, **get_identity_headers(model, opts.identity)}
+            sse_headers = _build_sse_headers(
+                identity_headers, model.headers, opts.headers, account_id, api_key, codex_session_id
+            )
             websocket_headers = _build_websocket_headers(
-                model.headers, opts.headers, account_id, api_key, websocket_request_id
+                identity_headers, model.headers, opts.headers, account_id, api_key, websocket_request_id
             )
             body_json = json.dumps(body, separators=(",", ":"))
             http_timeout_ms = _normalize_timeout_ms(opts.timeout_ms)
@@ -766,7 +771,12 @@ def build_request_body(
         )
 
     transcript_tools = resolve_transcript_tools(
-        context.messages, compat.supports_additional_tools or compat.supports_tool_search
+        context.messages,
+        get_responses_tool_support(
+            supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
+            supports_additional_tools=compat.supports_additional_tools,
+            supports_tool_search=compat.supports_tool_search,
+        ),
     )
     messages = convert_responses_messages(
         model,
@@ -1519,13 +1529,14 @@ def _extract_account_id(token: str) -> str:
 
 
 def _build_base_codex_headers(
+    default_headers: dict[str, str],
     init_headers: dict[str, str] | None,
     additional_headers: ProviderHeaders | None,
     account_id: str,
     token: str,
 ) -> dict[str, str]:
     # Defaults first so model and caller headers can override them, matching the other providers.
-    headers = {"originator": ORIGINATOR, "User-Agent": get_user_agent()}
+    headers = dict(default_headers)
     for key, value in (init_headers or {}).items():
         _set_header(headers, key, value)
     for key, value in (additional_headers or {}).items():
@@ -1551,13 +1562,14 @@ def _delete_header(headers: dict[str, str], name: str) -> None:
 
 
 def _build_sse_headers(
+    default_headers: dict[str, str],
     init_headers: dict[str, str] | None,
     additional_headers: ProviderHeaders | None,
     account_id: str,
     token: str,
     session_id: str | None = None,
 ) -> dict[str, str]:
-    headers = _build_base_codex_headers(init_headers, additional_headers, account_id, token)
+    headers = _build_base_codex_headers(default_headers, init_headers, additional_headers, account_id, token)
     _set_header(headers, "OpenAI-Beta", "responses=experimental")
     _set_header(headers, "accept", "text/event-stream")
     _set_header(headers, "content-type", "application/json")
@@ -1570,13 +1582,14 @@ def _build_sse_headers(
 
 
 def _build_websocket_headers(
+    default_headers: dict[str, str],
     init_headers: dict[str, str] | None,
     additional_headers: ProviderHeaders | None,
     account_id: str,
     token: str,
     request_id: str,
 ) -> dict[str, str]:
-    headers = _build_base_codex_headers(init_headers, additional_headers, account_id, token)
+    headers = _build_base_codex_headers(default_headers, init_headers, additional_headers, account_id, token)
     _delete_header(headers, "accept")
     _delete_header(headers, "content-type")
     _delete_header(headers, "OpenAI-Beta")

@@ -30,6 +30,7 @@ from pidrei_ai.types import (
     ModelInputLimits,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
+    SystemOneCompat,
 )
 
 
@@ -54,6 +55,8 @@ _COMPAT_CLASSES: dict[str, type] = {
     "anthropic-messages": AnthropicMessagesCompat,
     "bedrock-converse-stream": BedrockCompat,
     "mistral-conversations": MistralConversationsCompat,
+    "typesafe-system-one": SystemOneCompat,
+    "cloudflare-workers-ai-system-one": SystemOneCompat,
 }
 
 # Keys whose acronyms defeat generic conversion, in both directions.
@@ -277,6 +280,8 @@ def model_to_dict(model: AnyModel) -> dict[str, Any]:
         raw["output"] = list(model.output)
     else:
         raw["contextWindow"] = model.context_window
+        if model.compat is not None:
+            raw["compat"] = compat_to_dict(model.compat)
     if model.input_limits is not None:
         raw["inputLimits"] = input_limits_to_dict(model.input_limits)
     if model.headers is not None:

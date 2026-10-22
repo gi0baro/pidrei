@@ -35,6 +35,7 @@ from pidrei_ai.types import (
     ImageContent,
     Model,
     ModelCost,
+    SystemOneCompat,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_utils import clock
@@ -260,5 +261,7 @@ def test_routes_openrouter_classifier_models_through_the_system_one_api():
     models = builtin_models()
     for model in get_builtin_classifier_models("openrouter"):
         assert (model.api, model.base_url) == ("typesafe-system-one", "https://openrouter.ai/api/v1")
+        # Explicit, so images keep OpenRouter's form when the base URL is overridden.
+        assert model.compat == SystemOneCompat(image_input="state-image-urls", send_image_opt_in_header=False)
         assert models.get_model("openrouter", model.id) is None
         assert models.get_model_of_type("classifier", "openrouter", model.id) == model

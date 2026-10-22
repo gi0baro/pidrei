@@ -10,7 +10,7 @@ pi keeps its own `createServer` here rather than the shared callback server
 own handler on `callback_server`'s lower layer for the same reason.
 
 The agent name hint is PiDrei's, not pi's "Pi": OpenAI shows it to the user as
-the connected app (see `utils/user_agent.py`).
+the connected app (see `utils/identity.py`).
 """
 
 import errno

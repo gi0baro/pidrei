@@ -198,6 +198,79 @@ focus through the handle if something else should receive keys. Finish with
 `done()` — never `handle.hide()` an overlay `custom()` created — and create a
 fresh component for each interaction rather than reusing one.
 
+### A minimal custom screen
+
+This complete extension shows the custom-component lifecycle: render within
+the given width, match keys through the injected keybindings, drop cached
+output after a state change, request a render, and finish through `done()`.
+The class itself is the factory:
+
+```python
+from pidrei_tui import truncate_to_width
+
+
+CHOICES = ["development", "staging", "production"]
+
+
+class TargetPicker:
+    def __init__(self, tui, theme, keybindings, done):
+        self._tui = tui
+        self._theme = theme
+        self._keybindings = keybindings
+        self._done = done
+        self._selected = 0
+        self._cached_width = None
+        self._cached_lines = None
+
+    def render(self, width):
+        if self._cached_lines is not None and self._cached_width == width:
+            return self._cached_lines
+        lines = [
+            self._theme.fg("accent", "Choose a deployment target"),
+            *(f"{'> ' if index == self._selected else '  '}{choice}" for index, choice in enumerate(CHOICES)),
+            self._theme.fg("dim", "up/down move, enter selects, escape cancels"),
+        ]
+        self._cached_width = width
+        self._cached_lines = [truncate_to_width(line, width) for line in lines]
+        return self._cached_lines
+
+    def handle_input(self, data):
+        if self._keybindings.matches(data, "tui.select.up"):
+            self._selected = (self._selected - 1) % len(CHOICES)
+        elif self._keybindings.matches(data, "tui.select.down"):
+            self._selected = (self._selected + 1) % len(CHOICES)
+        elif self._keybindings.matches(data, "tui.select.confirm"):
+            self._done(CHOICES[self._selected])
+            return
+        elif self._keybindings.matches(data, "tui.select.cancel"):
+            self._done(None)
+            return
+        else:
+            return
+        self.invalidate()
+        self._tui.request_render()
+
+    def invalidate(self):
+        self._cached_width = None
+        self._cached_lines = None
+
+
+async def extension(pi):
+    async def pick_target(_args, ctx):
+        if ctx.mode != "tui":
+            ctx.ui.notify("pick-target requires interactive mode", "error")
+            return
+        selected = await ctx.ui.custom(TargetPicker)
+        if selected:
+            ctx.ui.notify(f"Selected {selected}", "info")
+
+    pi.register_command("pick-target", handler=pick_target, description="Pick a deployment target")
+```
+
+The picker shows no text cursor, so it needs no `focused` attribute; a
+component containing an `Input` or `Editor` does (see
+[Keyboard and focus](#keyboard-and-focus)).
+
 ## Keyboard and focus
 
 Match input with `matches_key(data, ...)` and `Key`, which understand the

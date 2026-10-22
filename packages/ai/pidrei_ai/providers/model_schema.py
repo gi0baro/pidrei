@@ -23,14 +23,18 @@ _THINKING_LEVEL_MAP_VALUE_SCHEMA = {"anyOf": [{"type": "string"}, {"type": "null
 THINKING_LEVEL_MAP_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": dict.fromkeys(MODEL_THINKING_LEVELS, _THINKING_LEVEL_MAP_VALUE_SCHEMA),
+    "description": (
+        "Provider value sent for each thinking level. null marks a level unsupported. Levels the model does "
+        "not map use the provider's default value through high; xhigh and max are unsupported."
+    ),
 }
 
 MODEL_PROMPT_CACHE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {retention: {"type": "number", "exclusiveMinimum": 0} for retention in MODEL_PROMPT_CACHE_RETENTIONS},
     "description": (
-        "Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the "
-        "lifetime is unknown, so PiDrei does not warm it."
+        "Best-effort prompt cache lifetime in seconds for the short and long retention tiers. PiDrei warms "
+        "only tiers with a known lifetime."
     ),
 }
 

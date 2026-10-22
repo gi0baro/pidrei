@@ -61,12 +61,12 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
+from pidrei_ai.utils.identity import get_identity_headers
 from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import get_current_tools, resolve_transcript
-from pidrei_ai.utils.user_agent import get_user_agent
 from pidrei_http import http
 from pidrei_utils import clock, timers
 from pidrei_utils.cancel import CancelToken, combine_cancel_tokens, run_cancellable
@@ -160,8 +160,9 @@ async def request_mistral_stream(model: Model, payload: dict[str, Any], api_key:
 
 def build_mistral_headers(model: Model, api_key: str, options: MistralOptions | None = None) -> dict[str, str]:
     """pi builds a case-insensitive `Headers`; lowercase keys stand in for that."""
+    identity_headers = get_identity_headers(model, options.identity if options is not None else None)
     headers = {
-        "user-agent": get_user_agent(),
+        **{name.lower(): value for name, value in identity_headers.items()},
         "accept": "text/event-stream",
         "authorization": f"Bearer {api_key}",
         "content-type": "application/json",

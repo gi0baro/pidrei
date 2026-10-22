@@ -120,12 +120,13 @@ def _read_template_file_blocking(*parts: str) -> str:
 
 
 def _read_all_templates_blocking() -> dict[str, str]:
-    """All five template files in one pool hop, rather than five."""
+    """All six template files in one pool hop, rather than six."""
     return {
         "template": _read_template_file_blocking("template.html"),
         "css": _read_template_file_blocking("template.css"),
         "js": _read_template_file_blocking("template.js"),
         "marked": _read_template_file_blocking("vendor", "marked.min.js"),
+        "marked_cjk_friendly": _read_template_file_blocking("vendor", "marked_cjk_friendly.min.js"),
         "hljs": _read_template_file_blocking("vendor", "highlight.min.js"),
     }
 
@@ -137,6 +138,7 @@ async def _generate_html(session_data: dict, theme_name: str | None = None) -> s
     template_css = templates["css"]
     template_js = templates["js"]
     marked_js = templates["marked"]
+    marked_cjk_friendly_js = templates["marked_cjk_friendly"]
     hljs_js = templates["hljs"]
 
     theme_vars = await _generate_theme_vars(theme_name)
@@ -168,6 +170,7 @@ async def _generate_html(session_data: dict, theme_name: str | None = None) -> s
         .replace("{{JS}}", template_js, 1)
         .replace("{{SESSION_DATA}}", session_data_base64, 1)
         .replace("{{MARKED_JS}}", marked_js, 1)
+        .replace("{{MARKED_CJK_FRIENDLY_JS}}", marked_cjk_friendly_js, 1)
         .replace("{{HIGHLIGHT_JS}}", hljs_js, 1)
     )
 

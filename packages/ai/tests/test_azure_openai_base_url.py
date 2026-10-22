@@ -24,8 +24,8 @@ from pidrei_ai.types import (
     Tool,
     UserMessage,
 )
+from pidrei_ai.utils.identity import format_user_agent
 from pidrei_ai.utils.transcript import normalize_context
-from pidrei_ai.utils.user_agent import get_user_agent
 
 
 CONTEXT = normalize_context(Context(messages=[UserMessage(content="hello", timestamp=1)]))
@@ -299,7 +299,7 @@ async def capture_client_headers(headers: dict | None = None) -> dict:
 
 @pytest.mark.tonio
 async def test_uses_the_runtime_user_agent_by_default():
-    assert (await capture_client_headers())["User-Agent"] == get_user_agent()
+    assert (await capture_client_headers())["User-Agent"] == format_user_agent()
 
 
 @pytest.mark.tonio

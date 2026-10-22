@@ -7,6 +7,7 @@ factories run under the lock, and component code gets a guarded `tui`.
 
 import sys
 import threading
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,14 +62,20 @@ def _custom_mode(ui) -> SimpleNamespace:
     editor.set_text = lambda _text: None
     container = Container()
     container.add_child(editor)
-    return SimpleNamespace(
+    mode = SimpleNamespace(
         editor=editor,
         _editor_container=container,
         _keybindings={},
         ui=ui,
         _extension_tui=ExtensionTui(ui),
         _dispose_active_selector=lambda: None,
+        # Inline custom components go through the extension dialog stack.
+        _extension_dialogs=[],
+        _program_status=SimpleNamespace(set_blocked=lambda *_args: None),
     )
+    for name in ("_push_extension_dialog", "_remove_extension_dialog", "_show_top_extension_dialog"):
+        setattr(mode, name, partial(getattr(InteractiveMode, name), mode))
+    return mode
 
 
 @pytest.mark.tonio

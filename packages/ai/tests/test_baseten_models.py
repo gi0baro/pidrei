@@ -10,7 +10,6 @@ import pytest
 from pidrei_ai.api.openai_completions import stream_simple as stream_simple_completions
 from pidrei_ai.env_api_keys import find_env_keys, get_env_api_key
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import (
     Context,
     Model,
@@ -30,16 +29,6 @@ GLM52_THINKING_LEVEL_MAP = {
     "high": "high",
     "xhigh": None,
     "max": "max",
-}
-
-TOGGLE_THINKING_LEVEL_MAP = {
-    "off": "off",
-    "minimal": None,
-    "low": None,
-    "medium": None,
-    "high": "high",
-    "xhigh": None,
-    "max": None,
 }
 
 
@@ -89,21 +78,6 @@ async def capture_payload(model: Model, reasoning: str | None = None) -> dict:
 def test_keeps_both_glm_52_endpoints_text_only():
     assert get_builtin_model("baseten", "zai-org/GLM-5.2").input == ["text"]
     assert get_builtin_model("baseten", "zai-org/GLM-5.2-Fast").input == ["text"]
-
-
-@pytest.mark.tonio
-async def test_models_kimi_k26_reasoning_as_an_explicit_off_on_toggle():
-    model = baseten_model(
-        "moonshotai/Kimi-K2.6",
-        supports_reasoning_effort=False,
-        thinking_level_map=TOGGLE_THINKING_LEVEL_MAP,
-    )
-
-    assert get_supported_thinking_levels(model) == ["off", "high"]
-
-    payload = await capture_payload(model, reasoning="high")
-    assert payload["chat_template_args"] == {"enable_thinking": True}
-    assert payload.get("reasoning_effort") is None
 
 
 @pytest.mark.tonio

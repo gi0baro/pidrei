@@ -46,6 +46,7 @@ from pidrei_ai.builders import (
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
     CacheRetention,
+    ClientIdentity,
     DoneEvent,
     ErrorEvent,
     Message,
@@ -75,6 +76,7 @@ from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
+from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
@@ -82,7 +84,6 @@ from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -643,6 +644,7 @@ def _create_client(
     compat: _ResolvedCompat,
     env: ProviderEnv | None = None,
     fetch: http.FetchFunction | None = None,
+    identity: ClientIdentity | None = None,
 ) -> OpenAICompletionsClient:
     headers: dict[str, Any] = dict(model.headers or {})
     if model.provider == "github-copilot":
@@ -661,7 +663,7 @@ def _create_client(
     if options_headers:
         headers.update(options_headers)
 
-    set_default_user_agent(headers)
+    set_default_identity_headers(headers, model, identity)
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
     return _PunkreqOpenAIClient(model.base_url, final_headers, env, fetch=fetch)
@@ -834,11 +836,14 @@ def convert_messages(
     )
     transcript_tools = resolve_transcript_tools(
         normalized_context.messages,
-        compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True,
+        "additions"
+        if compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True
+        else "none",
     )
     instruction_role = "developer" if model.reasoning and compat.supports_developer_role else "system"
 
     last_role: str | None = None
+    system_index = 0
 
     i = 0
     while i < len(transformed_messages):
@@ -849,7 +854,9 @@ def convert_messages(
             params.append({"role": "assistant", "content": "I have processed the tool results."})
 
         if msg.role == "system":
-            added_tools = (msg.tools_added or []) if i > 0 and transcript_tools.anchors_additions else []
+            # transform_messages keeps system messages in order, so their position matches the transcript.
+            added_tools = (msg.tools_added or []) if system_index >= transcript_tools.folded_system_messages else []
+            system_index += 1
             if added_tools:
                 # Kimi accepts a system message with tools but omits the standard content field.
                 params.append({"role": "system", "tools": convert_tools(added_tools, compat)})
@@ -984,8 +991,10 @@ def convert_messages(
                 text_result = "\n".join(block.text for block in tool_msg.content if block.type == "text")
                 has_images = any(block.type == "image" for block in tool_msg.content)
 
+                # Always send tool result with text (or placeholder if only images)
+                has_text = len(text_result.strip()) > 0
                 tool_result_text = (
-                    text_result if text_result else "(see attached image)" if has_images else "(no tool output)"
+                    text_result if has_text else "(see attached image)" if has_images else "(no tool output)"
                 )
                 tool_result_msg: dict[str, Any] = {
                     "role": "tool",
@@ -1052,7 +1061,9 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
 
     transcript_tools = resolve_transcript_tools(
         context.messages,
-        compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True,
+        "additions"
+        if compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True
+        else "none",
     )
     messages = convert_messages(model, context, compat, grammar_tool_input_properties)
     cache_control = _get_compat_cache_control(compat, cache_retention)
@@ -1264,7 +1275,15 @@ def stream(  # noqa: C901
                 cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
                 cache_session_id = None if cache_retention == "none" else opts.session_id
                 client = _create_client(
-                    model, normalized_context, api_key, opts.headers, cache_session_id, compat, opts.env, opts.fetch
+                    model,
+                    normalized_context,
+                    api_key,
+                    opts.headers,
+                    cache_session_id,
+                    compat,
+                    opts.env,
+                    opts.fetch,
+                    opts.identity,
                 )
 
             params = build_params(model, normalized_context, opts, compat, None, grammar_tool_input_properties)

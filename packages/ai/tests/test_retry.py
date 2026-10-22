@@ -90,6 +90,30 @@ class TestProviderRetryClassification:
     def test_matches_service_unavailable_wording(self, text):
         assert is_retryable_assistant_error(error_message(text)) is True
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Regression for #10996: node-fetch errors from the google-vertex OAuth token refresh.
+            "request to https://oauth2.googleapis.com/token failed, reason:",
+            "request to https://oauth2.googleapis.com/token failed, reason: connect ECONNREFUSED 127.0.0.1:9",
+        ],
+    )
+    def test_matches_node_fetch_request_failure_wording(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Regression for #10920: gateway upstream failures sent as `response.failed` error codes.
+            "unknown: Unable to forward upstream stream",
+            "upstream_error: Upstream request failed",
+            "upstream_stream_read_error: Upstream response stream was interrupted",
+            "Upstream HTTP/2 stream failed",
+        ],
+    )
+    def test_matches_gateway_upstream_failure_wording(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):
         assert is_retryable_assistant_error(error_message(OPENAI_RESPONSES_EARLY_EOF_MESSAGE)) is True
 
@@ -102,6 +126,13 @@ class TestProviderRetryClassification:
 
     def test_keeps_the_chatgpt_subscription_usage_limit_non_retryable(self):
         message = 'OpenAI API error (429): {"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached."}'
+        assert is_retryable_assistant_error(error_message(message)) is False
+
+    def test_keeps_the_chatgpt_business_workspace_usage_limit_non_retryable(self):
+        message = (
+            'OpenAI API error (429): {"code":"subscription_sharing_workplace_individual_usage_limit_exceeded",'
+            '"message":"Usage limit reached."}'
+        )
         assert is_retryable_assistant_error(error_message(message)) is False
 
     @pytest.mark.parametrize(
@@ -120,6 +151,20 @@ class TestProviderRetryClassification:
         assert is_retryable_assistant_error(error_message("520 status code (no body)")) is True
         assert is_retryable_assistant_error(error_message("524 status code (no body)")) is True
         assert is_retryable_assistant_error(faux_assistant_message("not an error")) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Regression for #11057: status codes inside ids or other numbers are not status codes.
+            (
+                '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},'
+                '"request_id":"req_011CU503xyz"}'
+            ),
+            "400 image exceeds 5 MB maximum: 5316784 bytes > 5242880 bytes",
+        ],
+    )
+    def test_does_not_match_status_codes_inside_ids_or_longer_numbers(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is False
 
 
 def test_caps_agent_retry_delay():

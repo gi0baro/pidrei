@@ -31,6 +31,7 @@ from pidrei_ai.api.openai_responses import (
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     convert_responses_tools,
+    get_responses_tool_support,
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
@@ -49,9 +50,9 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -246,7 +247,7 @@ def create_client(model: Model, api_key: str, options: AzureOpenAIResponsesOptio
     headers = dict(model.headers or {})
     if options is not None and options.headers:
         headers.update(options.headers)
-    set_default_user_agent(headers)
+    set_default_identity_headers(headers, model, options.identity if options is not None else None)
 
     base_url, api_version = resolve_azure_config(model, options)
 
@@ -280,13 +281,21 @@ def build_params(
 
     supports_additional_tools = bool(getattr(compat, "supports_additional_tools", None))
     supports_tool_search = bool(getattr(compat, "supports_tool_search", None))
-    transcript_tools = resolve_transcript_tools(context.messages, supports_additional_tools or supports_tool_search)
+    supports_mid_convo_system_messages = bool(getattr(compat, "supports_mid_convo_system_messages", None))
+    transcript_tools = resolve_transcript_tools(
+        context.messages,
+        get_responses_tool_support(
+            supports_mid_convo_system_messages=supports_mid_convo_system_messages,
+            supports_additional_tools=supports_additional_tools,
+            supports_tool_search=supports_tool_search,
+        ),
+    )
     messages = convert_responses_messages(
         model,
         context,
         AZURE_TOOL_CALL_PROVIDERS,
         grammar_tool_input_properties=grammar_tool_input_properties,
-        supports_mid_convo_system_messages=bool(getattr(compat, "supports_mid_convo_system_messages", None)),
+        supports_mid_convo_system_messages=supports_mid_convo_system_messages,
         supports_additional_tools=supports_additional_tools,
         supports_tool_search=supports_tool_search,
         tool_options={

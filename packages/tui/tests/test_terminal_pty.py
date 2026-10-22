@@ -94,8 +94,11 @@ class _ManualClock:
         self.read = tonio.Event()
 
     def monotonic(self) -> float:
+        # Take the reading before announcing it: a waiter woken by `read` may
+        # advance the clock at once, on another thread.
+        now = self.now
         self.read.set()
-        return self.now
+        return now
 
     def advance(self, seconds: float) -> None:
         self.now += seconds

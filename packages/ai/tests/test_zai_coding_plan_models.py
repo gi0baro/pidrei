@@ -16,7 +16,7 @@ def test_exposes_glm_4_6v_on_the_china_coding_plan_catalog():
     assert model.base_url == "https://open.bigmodel.cn/api/coding/paas/v4"
     assert model.reasoning is True
     assert model.input == ["text", "image"]
-    assert (model.cost.input, model.cost.output, model.cost.cache_read, model.cost.cache_write) == (0.3, 0.9, 0, 0)
+    assert (model.cost.input, model.cost.output, model.cost.cache_read, model.cost.cache_write) == (0.3, 0.9, 0.05, 0)
     assert model.context_window == 128000
     assert model.max_tokens == 32768
     assert model.compat.max_tokens_field == "max_tokens"

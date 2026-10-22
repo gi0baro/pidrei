@@ -100,7 +100,7 @@ async def test_uses_the_provided_thinking_level_for_reasoning_capable_models():
     stream_fn, calls = recording_stream_fn()
 
     result = await generate_summary_with_usage(
-        messages(), create_model(True), 2000, "test-key", None, None, None, None, "medium", stream_fn
+        messages(), create_model(True), None, "test-key", None, None, None, None, "medium", stream_fn
     )
 
     assert result.text == "## Goal\nTest summary"
@@ -115,7 +115,7 @@ async def test_uses_the_provided_thinking_level_for_reasoning_capable_models():
 async def test_preserves_the_string_result_from_generate_summary():
     stream_fn, _calls = recording_stream_fn()
 
-    summary = await generate_summary(messages(), create_model(False), 2000, "test-key", stream_fn=stream_fn)
+    summary = await generate_summary(messages(), create_model(False), None, "test-key", stream_fn=stream_fn)
 
     assert summary == "## Goal\nTest summary"
 
@@ -124,8 +124,8 @@ async def test_preserves_the_string_result_from_generate_summary():
 async def test_uses_fresh_routing_sessions_without_prompt_caching():
     stream_fn, calls = recording_stream_fn()
 
-    await generate_summary(messages(), create_model(False), 2000, "test-key", stream_fn=stream_fn)
-    await generate_summary(messages(), create_model(False), 2000, "test-key", stream_fn=stream_fn)
+    await generate_summary(messages(), create_model(False), None, "test-key", stream_fn=stream_fn)
+    await generate_summary(messages(), create_model(False), None, "test-key", stream_fn=stream_fn)
 
     assert len(calls) == 2
     assert all(options.cache_retention == "none" for options in calls)
@@ -184,12 +184,44 @@ async def test_preserves_the_previous_summary_without_an_empty_history_request_f
 
 
 @pytest.mark.tonio
+async def test_applies_custom_instructions_to_the_turn_prefix_summary_of_a_split_turn():
+    # Regression test for #11058
+    contexts: list = []
+
+    async def stream_fn(model, context, options=None):
+        contexts.append(context)
+        stream = AssistantMessageEventStream()
+        stream.push(DoneEvent(reason="stop", message=mock_summary_response()))
+        return stream
+
+    preparation = CompactionPreparation(
+        first_kept_entry_id="entry-keep",
+        messages_to_summarize=[],
+        turn_prefix_messages=messages(),
+        is_split_turn=True,
+        tokens_before=100,
+        previous_summary="previous checkpoint",
+        file_ops=FileOperations(),
+        settings=CompactionSettings(enabled=True, reserve_tokens=2000, keep_recent_tokens=20),
+    )
+
+    await compact(preparation, create_model(False), "test-key", None, "keep migration decisions", stream_fn=stream_fn)
+
+    assert len(contexts) == 1
+    # pi stringifies the request messages; the port reads the user text blocks directly.
+    prompt = "".join(
+        block.text for message in contexts[0].messages if message.role == "user" for block in message.content
+    )
+    assert "Additional focus: keep migration decisions" in prompt
+
+
+@pytest.mark.tonio
 async def test_rejects_tool_calls_from_conversation_summaries():
     stream_fn, _calls = recording_stream_fn(mock_tool_call_response())
 
     with pytest.raises(Exception, match="Summarization attempted to call a tool"):
         await generate_summary_with_usage(
-            messages(), create_model(False), 2000, "test-key", None, None, None, None, None, stream_fn
+            messages(), create_model(False), None, "test-key", None, None, None, None, None, stream_fn
         )
 
 
@@ -217,7 +249,7 @@ async def test_rejects_a_length_limited_history_summary():
 
     with pytest.raises(Exception, match="generation hit the token cap"):
         await generate_summary_with_usage(
-            messages(), create_model(False), 2000, "test-key", None, None, None, None, None, stream_fn
+            messages(), create_model(False), None, "test-key", None, None, None, None, None, stream_fn
         )
 
 
@@ -243,7 +275,7 @@ async def test_rejects_a_length_limited_split_turn_summary():
 async def test_does_not_set_reasoning_when_thinking_is_off():
     stream_fn, calls = recording_stream_fn()
 
-    await generate_summary(messages(), create_model(True), 2000, "test-key", None, None, None, None, "off", stream_fn)
+    await generate_summary(messages(), create_model(True), None, "test-key", None, None, None, None, "off", stream_fn)
 
     assert len(calls) == 1
     assert calls[0].api_key == "test-key"
@@ -255,7 +287,7 @@ async def test_does_not_set_reasoning_for_non_reasoning_models():
     stream_fn, calls = recording_stream_fn()
 
     await generate_summary(
-        messages(), create_model(False), 2000, "test-key", None, None, None, None, "medium", stream_fn
+        messages(), create_model(False), None, "test-key", None, None, None, None, "medium", stream_fn
     )
 
     assert len(calls) == 1
@@ -272,8 +304,8 @@ async def test_does_not_set_reasoning_for_non_reasoning_models():
 
 
 @pytest.mark.tonio
-async def test_clamps_compaction_summary_max_tokens_to_the_model_output_cap():
-    stream_fn, calls = recording_stream_fn()
+async def test_combines_usage_from_split_turn_summaries():
+    stream_fn, _calls = recording_stream_fn()
     preparation = CompactionPreparation(
         first_kept_entry_id="entry-keep",
         messages_to_summarize=messages(),
@@ -281,10 +313,9 @@ async def test_clamps_compaction_summary_max_tokens_to_the_model_output_cap():
         is_split_turn=True,
         tokens_before=600000,
         file_ops=FileOperations(),
-        settings=CompactionSettings(enabled=True, reserve_tokens=500000, keep_recent_tokens=20000),
+        settings=CompactionSettings(enabled=True, reserve_tokens=16384, keep_recent_tokens=20000),
     )
 
-    result = await compact(preparation, create_model(False, 128000), "test-key", stream_fn=stream_fn)
+    result = await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
 
     assert result.usage == Usage(input=20, output=20, total_tokens=40, cost=UsageCost())
-    assert [options.max_tokens for options in calls] == [128000, 128000]

@@ -73,6 +73,7 @@ async def create_harness(
     resource_loader: Any = None,
     extension_factories: list | None = None,
     with_configured_auth: bool = True,
+    provider: str | None = None,
     models: list[dict] | None = None,
     session_manager: SessionManager | None = None,
     extension_bindings: ExtensionBindings | None = None,
@@ -85,7 +86,9 @@ async def create_harness(
     `bindExtensions({ uiContext })` themselves, and a reload emits
     `session_start` again only to a session bound with a UI context)."""
     temp_dir = tempfile.mkdtemp(prefix="pidrei-suite-")
-    faux = faux_provider(models=[FauxModelDefinition(**model) for model in models]) if models else faux_provider()
+    faux = faux_provider(
+        provider=provider, models=[FauxModelDefinition(**model) for model in models] if models else None
+    )
     faux.set_responses([])
     model = faux.get_model()
 

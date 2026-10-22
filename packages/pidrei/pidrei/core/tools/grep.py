@@ -181,7 +181,9 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
                 file_cache[file_path] = lines
             return lines
 
-        args: list[str] = [rg_path, "--json", "--line-number", "--color=never", "--hidden"]
+        # --no-config: the tool contract (literal, glob, limit, ...) must not depend on
+        # ambient user config like RIPGREP_CONFIG_PATH. Users can customize via bash or extensions.
+        args: list[str] = [rg_path, "--no-config", "--json", "--line-number", "--color=never", "--hidden"]
         if ignore_case:
             args.append("--ignore-case")
         if literal:

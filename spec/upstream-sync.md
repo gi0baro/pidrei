@@ -336,9 +336,11 @@ Each has entries in the classifier's dropped tables, with the reason.
 
 ## 7. Diverged regions
 
-Regions where PiDrei deliberately differs from Pi's shape, so that it is
-sound on a multi-threaded runtime; `spec/concurrency.md` explains the design
-behind them. The `DIVERGED` table flags the upstream
+Regions where PiDrei deliberately differs from Pi's shape. Most exist so
+that it is sound on a multi-threaded runtime (`spec/concurrency.md` explains
+that design); others because Python lacks something Pi relies on (an SDK, a
+native grapheme segmenter, JavaScript in codemode) or because PiDrei chose a
+different behaviour. The `DIVERGED` table flags the upstream
 files that contain them. When a flagged hunk lands *inside* the region,
 apply the recipe instead of porting side by side, and extend the recipe here
 if the diff exposed a case it doesn't cover. Hunks elsewhere in the same
@@ -718,6 +720,13 @@ untouched: component diffs port 1:1. What diverges:
     `ctx.ui.apply(fn)` groups changes.
   - Dialogs mount at call time and return a `tonio.spawn` handle for the
     answer.
+  - Dialogs in the editor slot (select, confirm, input, editor, inline
+    custom) form one stack, `_extension_dialogs`, guarded by `state_lock`
+    (Pi 1.4.0's `extensionDialogs`). Push, remove and show-top are
+    synchronous under the lock; a dialog removes itself when it settles, and
+    removing the visible one shows the previous dialog or the editor. Where
+    Pi's per-kind fields had first-settle claims, a dialog's settle is its
+    removal from the stack.
   - Component factories are synchronous and run under the lock.
   - Factories receive `ExtensionTui` (`modes/interactive/extension_tui.py`),
     a guarded wrapper, not the TUI. A new `TUI` member that Pi extensions use
@@ -740,8 +749,14 @@ untouched: component diffs port 1:1. What diverges:
     order of state changes. Lock order: UI state lock, then the reporter's
     lock, then the terminal's protocol lock. The reader never calls the
     reporter.
-  - A dialog hide clears its blocked status only when the dialog is still
-    the mounted component, the check that already guards the hide itself.
+  - The blocked status follows the dialog stack: showing the top dialog sets
+    its blocked status (none when the editor is back), in the same hold, so
+    removing a dialog that is not visible leaves the status alone.
+- **Exit**: Pi 1.4.0's restore of terminal modes when the process exits
+  without `stop()` (`9df819de`, a `process.on("exit")` handler in
+  `terminal.ts`, `tui.ts`, `tui-alt-screen.ts`) is not ported. Every PiDrei
+  exit with a TUI up runs `ui.stop()` or returns through `main()`; a hard
+  kill leaves the terminal as it is. Hunks to that handler are dropped.
 
 ### `terminal-colors-loop` (`tui/src/tui.ts`, `terminal.ts`, `theme/theme-controller.ts`, `theme/theme.ts`)
 
@@ -838,7 +853,22 @@ old key. Upstream hunks to the analytics keys are skipped; one to
 `enableInstallTelemetry` lands on `enableProviderAttribution` only if it
 concerns attribution.
 
-### `config-schemas` (`coding-agent/src/core/settings-schema.ts`, `settings-defaults.ts`, `key-id-schema.ts`, `scripts/generate-schemas.ts`, `schemas/*.schema.json`)
+**Client identity** (Pi 1.4.0, `adc5fa9f`/`04a93bad`). The mechanism ports:
+`pidrei_ai/utils/identity.py` (`ClientIdentity`, the merge, the User-Agent
+and attribution headers each adapter applies below provider, model and
+request headers), `Agent.identity`, and `core/client_identity.py`, which
+builds the session's identity with `PIDREI_ATTRIBUTION` when
+`enableProviderAttribution` (and `PIDREI_PROVIDER_ATTRIBUTION`) allow it,
+where Pi gates on install telemetry. The values stay PiDrei's: attribution
+name `pidrei`, URL `https://github.com/gi0baro/pidrei`, categories
+`["cli-agent"]`, NVIDIA billing origin `PiDrei` (the project's casing rule;
+Pi's upper-case-first rule applies to any other name), User-Agent
+`pidrei/<version> (<platform>; python/<version>; <arch>)`, short form
+`pidrei`. The Codex originator and the xAI OAuth referrer are not
+attribution and stay `pidrei`. Upstream hunks to the mechanism port 1:1;
+hunks to Pi's own values do not.
+
+### `config-schemas` (`coding-agent/src/core/settings-schema.ts`, `settings-defaults.ts`, `key-id-schema.ts`, `scripts/generate-schemas.ts`, `scripts/generate-references.ts`, `schemas/*.schema.json`, `docs/models-configuration.md`)
 
 Pi generates JSON Schemas for `models.json`, `settings.json`,
 `keybindings.json` and themes from its TypeBox schemas. PiDrei keeps the
@@ -852,6 +882,12 @@ into `packages/pidrei/pidrei/schemas/` with `make config-schemas`
 - **Generated, never hand-edited**: an upstream hunk to a schema module or
   to `schemas/*.json` lands in the Python module, then the artifacts are
   regenerated; a test checks they match the committed files.
+- **The `models.json` reference page** (ruled for 1.4.0):
+  `docs/models-configuration.md` is rendered from the same schemas by
+  `packages/pidrei/scripts/generate_references.py` (`make references`;
+  `test_references.py` checks the committed page is current). Hunks to Pi's
+  generator port to it; hunks to Pi's page come from the schema modules and
+  a regeneration, never a hand edit.
 - **URLs are PiDrei's** (ruled for 1.2.0): `$id` and the `$schema` values in
   docs and built-in themes point at
   `https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/<name>.schema.json`
@@ -940,7 +976,9 @@ machinery and the text that shows JavaScript do not.
     non-blocking `terminate()`. PiDrei's `stop()` SIGKILLs the Monty worker,
     so none outlives its script, and Monty's pool already bounds checkouts by
     queueing them; a cap that rejects would fail a parallel codemode call
-    that waits today.
+    that waits today. Pi 1.4.0's queueing in front of it (`885a564b`: the
+    wait queue, its 60 s cap, `PI_CODEMODE_MAX_WORKERS` and their docs) is
+    dropped with it.
 - **PiDrei-only, kept on every port**: the type check before the script runs
   (`codemode.typeCheck`, the factory's `type_check`); `all_settled`,
   `has_tool` and `call_tool`; `store(key, None)` deleting; a final expression
@@ -1178,3 +1216,48 @@ async and `Image` owns it through its TUI.
   conversion ends, where pi draws the PNG in the same frame.
 - **Tests**: pi's transcoder cases run with an async converter on a fake TUI;
   each waits for the conversion's render request (an Event), never on time.
+
+### `scrollbar-cell-shortcuts` (`tui/src/layout.ts`)
+
+Pi's `replaceScrollbarCell` finds the bar's cell by walking the row from
+column 0, four times (one cell range, three slices). That is cheap with a
+native grapheme segmenter and cost a full core while scrolling here. PiDrei
+keeps the walk and puts two shortcuts in front of it, both giving its exact
+output:
+
+- **A row narrower than the bar's column** keeps all its text: the row,
+  padding, then the bar.
+- **A row filling the screen, with the bar in the last column**, has the bar
+  on its last grapheme. `measure_line_end` (`pidrei_tui/utils.py`) finds it
+  from the end of the string: where the walk's `before` slice ends, and the
+  escape sequences before it (for the background under the bar). It returns
+  no grapheme, so the walk runs, when the row has no text, starts with its
+  last grapheme, or a zero-width grapheme ends it or comes right before its
+  last one.
+
+Widths are counted run by run, as the column walkers do, which can differ
+from `visible_width` when an escape sequence sits inside a grapheme cluster.
+
+- **Upstream diffs**: a change to `replaceScrollbarCell`'s output (padding,
+  style, background, the cell range) lands in the walk *and* in both
+  shortcuts. A change to how the walk slices lands in the walk only, then
+  check the shortcuts still match it.
+- **Tests**: every shortcut branch fails an existing or added `test_layout.py`
+  case when broken. After a change, compare the shortcuts with the walk on
+  real and fuzzed rows, byte for byte.
+
+### `warm-identity` (`coding-agent/src/core/cache-warmer.ts`)
+
+Pi resolves the client identity when a session request is built
+(`getClientIdentity` in `sdk.ts`) and the cache warmer replays that request's
+options, identity included. Turning provider attribution off then keeps it on
+warm requests until the next real request, or for up to an hour. PiDrei honours
+the opt-out at once:
+
+- `CacheWarmer` takes `get_identity` (after `get_mode`); `sdk.py` passes
+  `get_client_identity(settings_manager)`. Each warm request replaces the
+  replayed options' `identity` with its result.
+- **Upstream diffs**: hunks that change what the warmer replays port normally;
+  the identity is still re-resolved on top of them.
+- **Tests**: `test_refreshes_send_the_current_client_identity` changes the
+  identity between two refreshes.
