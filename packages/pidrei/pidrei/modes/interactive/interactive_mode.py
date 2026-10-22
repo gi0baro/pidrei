@@ -782,9 +782,10 @@ class InteractiveMode:
         )
 
         # Extension UI state
-        self._extension_selector = None
-        self._extension_input = None
-        self._extension_editor = None
+        # Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom), as
+        # (component, blocked status) under the UI state lock. The last entry is visible; see
+        # `_push_extension_dialog`.
+        self._extension_dialogs: list = []
         self._extension_terminal_input_subscriptions: set = set()
 
         # Extension widgets (components rendered above/below the editor)
@@ -2534,12 +2535,13 @@ class InteractiveMode:
             self._default_editor.on_extension_shortcut = None
             self._working_message = None
             self._working_visible = True
-            if self._extension_selector is not None:
-                self._hide_extension_selector(self._extension_selector)
-            if self._extension_input is not None:
-                self._hide_extension_input(self._extension_input)
-            if self._extension_editor is not None:
-                self._hide_extension_editor(self._extension_editor)
+            if self._extension_dialogs:
+                for component, _blocked in self._extension_dialogs:
+                    dispose = getattr(component, "dispose", None)
+                    if dispose is not None:
+                        dispose()
+                self._extension_dialogs = []
+                self._show_top_extension_dialog()
             self.ui.hide_overlay()
             self._set_extension_footer(None)
             self._set_extension_header(None)
@@ -2680,6 +2682,37 @@ class InteractiveMode:
         """Create the ExtensionUIContext object for extensions."""
         return ExtensionUIContext(self)
 
+    def _push_extension_dialog(self, component, blocked: BlockedStatus | None = None) -> None:
+        """Show an extension dialog in the editor slot.
+
+        Dialogs form a stack: a new dialog hides the visible one, and closing the visible dialog shows
+        the previous one again. Every dialog stays answerable, so no dialog wait is left pending, and
+        dialogs opened from inside another dialog (for example a confirm from a custom component) work.
+        """
+        with self.ui.state_lock:
+            self._dispose_active_selector()
+            self._extension_dialogs.append((component, blocked))
+            self._show_top_extension_dialog()
+
+    def _remove_extension_dialog(self, component) -> None:
+        """Remove an extension dialog. If it was visible, show the previous dialog or the editor."""
+        with self.ui.state_lock:
+            index = next((i for i, (entry, _) in enumerate(self._extension_dialogs) if entry is component), -1)
+            if index < 0:
+                return
+            del self._extension_dialogs[index]
+            if index == len(self._extension_dialogs):
+                self._show_top_extension_dialog()
+
+    def _show_top_extension_dialog(self) -> None:
+        with self.ui.state_lock:
+            component, blocked = self._extension_dialogs[-1] if self._extension_dialogs else (self.editor, None)
+            self._editor_container.clear()
+            self._editor_container.add_child(component)
+            self.ui.set_focus(component)
+            self._program_status.set_blocked("extension-dialog", blocked)
+            self.ui.request_render()
+
     def _show_extension_selector(
         self, title: str, options: list, opts: dict | None = None, blocked: BlockedStatus | None = None
     ):
@@ -2701,7 +2734,7 @@ class InteractiveMode:
         if signal is not None and signal.cancelled:
             return tonio.spawn(_answer(None))
 
-        def settle(value, hide) -> None:
+        def settle(value) -> None:
             with settle_guard:
                 if outcome["settled"]:
                     return
@@ -2709,14 +2742,14 @@ class InteractiveMode:
             outcome["value"] = value
             if remove_abort is not None:
                 remove_abort()
-            hide(component)
+            self._close_extension_dialog(component)
             done.set()
 
         component = ExtensionSelectorComponent(
             title,
             options,
-            lambda option: settle(option, self._hide_extension_selector),
-            lambda: settle(None, self._hide_extension_selector),
+            lambda option: settle(option),
+            lambda: settle(None),
             {
                 "tui": self.ui,
                 "timeout": opts.get("timeout"),
@@ -2724,34 +2757,21 @@ class InteractiveMode:
             },
         )
         if signal is not None:
-            remove_abort = signal.on_cancel(lambda _reason: settle(None, self._hide_extension_selector))
+            remove_abort = signal.on_cancel(lambda _reason: settle(None))
 
-        # The field is claimed at mount: a hide for the previous dialog must
-        # find that dialog there, not this one.
+        # The check and the push are one hold: a settle racing the mount removes the dialog after it
+        # is pushed, or finds nothing to remove and the dialog is never pushed.
         with self.ui.state_lock:
             if not outcome["settled"]:  # else aborted before it was shown
-                self._dispose_active_selector()
-                self._extension_selector = component
-                self._editor_container.clear()
-                self._editor_container.add_child(component)
-                self.ui.set_focus(component)
-                # Extension dialogs share the editor slot: opening one replaces the status of a displaced one.
-                self._program_status.set_blocked("extension-dialog", blocked_status)
-                self.ui.request_render()
+                self._push_extension_dialog(component, blocked_status)
 
         return tonio.spawn(_wait_for_answer(done, outcome))
 
-    def _hide_extension_selector(self, component) -> None:
+    def _close_extension_dialog(self, component) -> None:
+        """Dispose a settled select/confirm/input dialog and take it off the stack."""
         with self.ui.state_lock:
             component.dispose()
-            if self._extension_selector is not component:
-                return  # never mounted, or already replaced
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
-            self._extension_selector = None
-            self._program_status.set_blocked("extension-dialog", None)
-            self.ui.set_focus(self.editor)
-            self.ui.request_render()
+            self._remove_extension_dialog(component)
 
     def _show_extension_confirm(self, title: str, message: str, opts: dict | None = None) -> Awaitable[bool]:
         """Show a confirmation dialog for extensions (see `_show_extension_selector`)."""
@@ -2782,7 +2802,7 @@ class InteractiveMode:
         if signal is not None and signal.cancelled:
             return tonio.spawn(_answer(None))
 
-        def settle(value, hide) -> None:
+        def settle(value) -> None:
             with settle_guard:
                 if outcome["settled"]:
                     return
@@ -2790,7 +2810,7 @@ class InteractiveMode:
             outcome["value"] = value
             if remove_abort is not None:
                 remove_abort()
-            hide(component)
+            self._close_extension_dialog(component)
             done.set()
 
         # Submit, cancel and the countdown come from the component; an abort
@@ -2798,37 +2818,19 @@ class InteractiveMode:
         component = ExtensionInputComponent(
             title,
             placeholder,
-            lambda value: settle(value, self._hide_extension_input),
-            lambda: settle(None, self._hide_extension_input),
+            lambda value: settle(value),
+            lambda: settle(None),
             {"tui": self.ui, "timeout": opts.get("timeout")},
         )
         if signal is not None:
-            remove_abort = signal.on_cancel(lambda _reason: settle(None, self._hide_extension_input))
+            remove_abort = signal.on_cancel(lambda _reason: settle(None))
 
-        # Field claimed at mount: see `_show_extension_selector`.
+        # Check and push in one hold: see `_show_extension_selector`.
         with self.ui.state_lock:
             if not outcome["settled"]:  # else aborted before it was shown
-                self._dispose_active_selector()
-                self._extension_input = component
-                self._editor_container.clear()
-                self._editor_container.add_child(component)
-                self.ui.set_focus(component)
-                self._program_status.set_blocked("extension-dialog", BlockedStatus("question", title))
-                self.ui.request_render()
+                self._push_extension_dialog(component, BlockedStatus("question", title))
 
         return tonio.spawn(_wait_for_answer(done, outcome))
-
-    def _hide_extension_input(self, component) -> None:
-        with self.ui.state_lock:
-            component.dispose()
-            if self._extension_input is not component:
-                return  # never mounted, or already replaced
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
-            self._extension_input = None
-            self._program_status.set_blocked("extension-dialog", None)
-            self.ui.set_focus(self.editor)
-            self.ui.request_render()
 
     def _show_extension_editor(self, title: str, prefill=None):
         """Show a multi-line editor for extensions (with Ctrl+G support)."""
@@ -2843,7 +2845,7 @@ class InteractiveMode:
                     return
                 outcome["settled"] = True
             outcome["value"] = value
-            self._hide_extension_editor(component)
+            self._remove_extension_dialog(component)
             done.set()
 
         component = ExtensionEditorComponent(
@@ -2857,29 +2859,9 @@ class InteractiveMode:
             self.settings_manager.get_external_editor_command(),
         )
 
-        # Field claimed at mount: see `_show_extension_selector`.
-        with self.ui.state_lock:
-            self._dispose_active_selector()
-            self._extension_editor = component
-            self._editor_container.clear()
-            self._editor_container.add_child(component)
-            self.ui.set_focus(component)
-            self._program_status.set_blocked("extension-dialog", BlockedStatus("question", title))
-            self.ui.request_render()
+        self._push_extension_dialog(component, BlockedStatus("question", title))
 
         return tonio.spawn(_wait_for_answer(done, outcome))
-
-    def _hide_extension_editor(self, component) -> None:
-        """Put the editor back in place of the extension editor dialog."""
-        with self.ui.state_lock:
-            if self._extension_editor is not component:
-                return  # already replaced
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
-            self._extension_editor = None
-            self._program_status.set_blocked("extension-dialog", None)
-            self.ui.set_focus(self.editor)
-            self.ui.request_render()
 
     def _set_custom_editor_component(self, factory) -> None:
         """Set a custom editor component from an extension.
@@ -2999,10 +2981,9 @@ class InteractiveMode:
         state: dict = {"component": None, "overlay_handle": None, "closed": False, "value": None, "editor_text": ""}
 
         def restore_editor() -> None:
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
+            if state["component"] is not None:
+                self._remove_extension_dialog(state["component"])
             self.editor.set_text(state["editor_text"])
-            self.ui.set_focus(self.editor)
             self.ui.request_render()
 
         def close(result=None) -> None:
@@ -3039,11 +3020,7 @@ class InteractiveMode:
                 if on_handle is not None:
                     on_handle(guard_overlay_handle(self.ui, state["overlay_handle"]))
             else:
-                self._dispose_active_selector()
-                self._editor_container.clear()
-                self._editor_container.add_child(component)
-                self.ui.set_focus(component)
-                self.ui.request_render()
+                self._push_extension_dialog(component)
 
         with self.ui.state_lock:
             state["editor_text"] = self.editor.get_text()

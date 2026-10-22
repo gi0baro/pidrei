@@ -1232,6 +1232,30 @@ def test_should_keep_single_tilde_as_plain_text():
     assert "\x1b[9m" not in joined_output, "Single-tilde text should not use strikethrough styling"
 
 
+# CJK emphasis (#10154)
+
+
+def _render_tagged(text: str) -> list[str]:
+    tag_theme = {
+        **default_markdown_theme,
+        "bold": lambda text: f"<b>{text}</b>",
+        "italic": lambda text: f"<i>{text}</i>",
+    }
+    return [line.rstrip() for line in Markdown(text, 0, 0, tag_theme).render(80)]
+
+
+def test_renders_emphasis_delimited_next_to_cjk_punctuation():
+    assert _render_tagged("**这是测试。**后面") == ["<b>这是测试。</b>后面"]
+    assert _render_tagged("**一句话说清：**一台机器") == ["<b>一句话说清：</b>一台机器"]
+    assert _render_tagged("**要点到此为止。**20 小时") == ["<b>要点到此为止。</b>20 小时"]
+    assert _render_tagged("字**「引用」**字") == ["字<b>「引用」</b>字"]
+    assert _render_tagged("*斜体。*后面") == ["<i>斜体。</i>后面"]
+
+
+def test_keeps_commonmark_flanking_rules_for_non_cjk_text():
+    assert _render_tagged("**end.**Then next") == ["**end.**Then next"]
+
+
 # Links
 
 
@@ -1545,6 +1569,69 @@ def test_allows_latex_rendering_to_be_disabled():
         "",
         r"Inline \(A_{sf}\)",
     ]
+
+
+# Unclosed display math before tables (#11159)
+
+_TABLE = ["| A | B |", "|---|---|", "| 1 | 2 |"]
+_RENDERED_TABLE = ["┌───┬───┐", "│ A │ B │", "├───┼───┤", "│ 1 │ 2 │", "└───┴───┘"]
+
+
+def _render_plain(source: str) -> list[str]:
+    return [strip_ansi(line).rstrip() for line in Markdown(source, 0, 0, default_markdown_theme).render(80)]
+
+
+def test_renders_a_table_after_an_orphan_dollar_opener():
+    source = "\n".join(["Intro", "", "$$", "", *_TABLE, "", "After"])
+    assert _render_plain(source) == ["Intro", "", "$$", "", *_RENDERED_TABLE, "", "After"]
+
+
+def test_renders_a_table_after_an_orphan_dollar_opener_with_math_like_content():
+    source = "\n".join(["$$", "x = 1", "", *_TABLE])
+    assert _render_plain(source) == ["$$", "x = 1", "", *_RENDERED_TABLE]
+
+
+def test_does_not_pair_an_unclosed_dollar_with_a_later_dollar_across_a_table():
+    source = "\n".join(["Intro", "", "$$", "x = 1", "", *_TABLE, "", "$$", "y^2", "$$"])
+    assert _render_plain(source) == ["Intro", "", "$$", "x = 1", "", *_RENDERED_TABLE, "", "y²"]
+
+
+def test_renders_a_single_column_table_with_a_pipe_free_aligned_delimiter_after_an_orphan_dollar():
+    source = "$$\n\n| A |\n:---:\n| 1 |"
+    assert _render_plain(source) == ["$$", "", "┌───┐", "│ A │", "├───┤", "│ 1 │", "└───┘"]
+
+
+# Expected output deliberately differs from pi in the next two tests. marked looks for display math from a
+# paragraph's second character, so it splits a line starting with an escaped "\\[" after the first
+# backslash: pi shows a stray blank line, and turns the second test's escaped opener into display math.
+# Here "\\[" stays an escaped bracket.
+
+
+def test_renders_a_table_after_an_orphan_bracket_opener():
+    source = "\n".join(["\\\\[", "x^2", "", *_TABLE])
+    assert _render_plain(source) == ["\\[", "x^2", "", *_RENDERED_TABLE]
+
+
+def test_does_not_pair_an_unclosed_bracket_with_a_later_bracket_across_a_table():
+    source = "\n".join(["\\\\[", "x = 1", "", *_TABLE, "", "\\\\[", "y^2", "\\\\]"])
+    assert _render_plain(source) == ["\\[", "x = 1", "", *_RENDERED_TABLE, "", "\\[", "y^2", "\\]"]
+
+
+# pi's "renders a table with a pipe-free header after an orphan $$" is not mirrored: markdown-it needs a
+# "|" in a table's header row (see `_marked.py`), so there is no table, and the output is the same raw
+# text whether or not the orphan "$$" is held back.
+
+
+def test_still_renders_closed_multi_line_display_math_followed_by_a_table():
+    source = "\n".join(["$$", "a", "+ b", "$$", "", *_TABLE])
+    assert _render_plain(source) == ["a + b", "", *_RENDERED_TABLE]
+
+
+# marked ends a paragraph where a line opens display math.
+def test_renders_display_math_that_directly_follows_a_paragraph_line():
+    assert _render_plain("Intro\n$$\nx^2\n$$\nAfter") == ["Intro", "", "x²", "", "After"]
+    assert _render_plain("Intro\n\\[\nx^2\n\\]") == ["Intro", "", "x²"]
+    assert _render_plain("Intro\n$$ not math") == ["Intro", "$$ not math"]
 
 
 def test_switches_from_raw_to_rendered_math_when_a_streamed_delimiter_closes():

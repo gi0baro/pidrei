@@ -210,6 +210,25 @@ async def test_matches_file_with_extension_in_query(fd_dirs):
     assert "@file.txt" in values
 
 
+# #10972
+@requires_fd
+@pytest.mark.tonio
+async def test_matches_regex_metacharacters_in_queries_literally(fd_dirs):
+    _setup_folder(
+        fd_dirs["base"],
+        files={"pages/[id].tsx": "x", "pages/index.tsx": "x", "pages/(group).ts": "x"},
+    )
+
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    for line, expected in [
+        ("@pages/[", "@pages/[id].tsx"),
+        ("@pages/(", "@pages/(group).ts"),
+        ("@[id", "@pages/[id].tsx"),
+    ]:
+        result = await get_suggestions(provider, [line], 0, len(line))
+        assert [item["value"] for item in result["items"]] == [expected], line
+
+
 @requires_fd
 @pytest.mark.tonio
 async def test_filters_are_case_insensitive(fd_dirs):

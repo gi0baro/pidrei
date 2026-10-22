@@ -45,7 +45,7 @@ def _escape_regex(value: str) -> str:
 def _build_fd_path_query(query: str) -> str:
     normalized = _to_display_path(query)
     if "/" not in normalized:
-        return normalized
+        return _escape_regex(normalized)
 
     has_trailing_separator = normalized.endswith("/")
     trimmed = re.sub(r"^/+|/+$", "", normalized)
@@ -54,8 +54,6 @@ def _build_fd_path_query(query: str) -> str:
 
     separator_pattern = "[\\\\/]"
     segments = [_escape_regex(segment) for segment in trimmed.split("/") if segment]
-    if not segments:
-        return normalized
 
     pattern = separator_pattern.join(segments)
     if has_trailing_separator:
