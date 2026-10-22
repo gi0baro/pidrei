@@ -53,7 +53,7 @@ Tracks [Pi 1.4.0](https://github.com/earendil-works/pi/releases/tag/v1.4.0).
 - Compaction and branch summaries use the model's output limit instead of a
   fixed cap; `compaction.reserveTokens` only decides when compaction starts.
   `generate_summary()` and `generate_summary_with_usage()` ignore their
-  reserve-tokens argument, now named `_reserve_tokens`.
+  `reserve_tokens` argument.
 - The default GitHub Copilot model is `gpt-6.1-sol` (Copilot retired
   `gpt-5.4`), and the default NVIDIA model is
   `nvidia/nemotron-3.5-super-vl-120b-a12b`.

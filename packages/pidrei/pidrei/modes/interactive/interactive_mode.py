@@ -2536,7 +2536,8 @@ class InteractiveMode:
             self._working_message = None
             self._working_visible = True
             if self._extension_dialogs:
-                for component, _blocked in self._extension_dialogs:
+                # A copy: a custom component's dispose() may close it, which takes it off the stack.
+                for component, _blocked in list(self._extension_dialogs):
                     dispose = getattr(component, "dispose", None)
                     if dispose is not None:
                         dispose()

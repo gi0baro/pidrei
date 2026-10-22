@@ -1430,6 +1430,20 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "by interactive mode; ensurePngTranscoder/loadPngTranscoder have no counterpart",
         ),
     ),
+    "packages/tui/src/layout.ts": (
+        (
+            "scrollbar-cell-shortcuts",
+            "_replace_scrollbar_cell measures common rows from their end (utils.measure_line_end) before pi's "
+            "walk; the shortcuts must give replaceScrollbarCell's exact output",
+        ),
+    ),
+    "packages/coding-agent/src/core/cache-warmer.ts": (
+        (
+            "warm-identity",
+            "warm requests resolve the client identity when sent (CacheWarmer's get_identity); pi replays the "
+            "warmed request's identity",
+        ),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests

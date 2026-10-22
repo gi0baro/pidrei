@@ -605,8 +605,9 @@ class SummaryWithUsage:
 async def generate_summary(
     current_messages: list[Any],
     model: Model,
-    # Unused. Kept for existing callers; summaries use the model's output limit (#9512).
-    _reserve_tokens: int | None,
+    # Unused. Kept for existing callers, keyword ones included (pi's rename to
+    # `_reserveTokens` only marks it unused); summaries use the model's output limit (#9512).
+    reserve_tokens: int | None,
     api_key: str | None,
     headers: dict[str, str] | None = None,
     cancel=None,
@@ -624,7 +625,7 @@ async def generate_summary(
     result = await generate_summary_with_usage(
         current_messages,
         model,
-        _reserve_tokens,
+        reserve_tokens,
         api_key,
         headers,
         cancel,
@@ -643,8 +644,8 @@ async def generate_summary(
 async def generate_summary_with_usage(
     current_messages: list[Any],
     model: Model,
-    # Unused. Kept for existing callers; summaries use the model's output limit (#9512).
-    _reserve_tokens: int | None,
+    # Unused: see `generate_summary`.
+    reserve_tokens: int | None,
     api_key: str | None,
     headers: dict[str, str] | None = None,
     cancel=None,

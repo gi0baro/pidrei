@@ -27,7 +27,7 @@ import tonio.colored as tonio
 
 from pidrei_ai.builders import UsageBuilder
 from pidrei_ai.registry import calculate_cost
-from pidrei_ai.types import Model, SimpleStreamOptions, TranscriptContext
+from pidrei_ai.types import ClientIdentity, Model, SimpleStreamOptions, TranscriptContext
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -172,12 +172,16 @@ class CacheWarmer:
         models: Any,
         session_manager: Any,
         get_mode: Callable[[], CacheWarmingMode],
+        get_identity: Callable[[], ClientIdentity],
         decide: Callable[[dict[str, Any]], Awaitable[CacheWarmingAction]] = _default_decide,
     ) -> None:
         # `models` needs `stream_simple`; `session_manager` needs `append_usage` and `get_branch`.
         self._models = models
         self._session_manager = session_manager
         self._get_mode = get_mode
+        # Read when each warm request is sent, so an attribution opt-out applies to warming at once.
+        # pi replays the identity the warmed request was sent with.
+        self._get_identity = get_identity
         # Lets extensions override `event["action"]`; failures fall back to the warmer's decision.
         self._decide = decide
         # Called with the persisted usage entry after each successful refresh.
@@ -350,7 +354,13 @@ class CacheWarmer:
             message = await self._models.stream_simple(
                 request.model,
                 request.context,
-                dataclasses.replace(request.options, max_tokens=1, max_retries=0, cancel=run.cancel),
+                dataclasses.replace(
+                    request.options,
+                    identity=self._get_identity(),
+                    max_tokens=1,
+                    max_retries=0,
+                    cancel=run.cancel,
+                ),
             ).result()
             with self._lock:
                 valid = self._validate_run_locked(run)

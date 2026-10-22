@@ -176,7 +176,9 @@ def _latex_block_rule(state, start_line: int, end_line: int, silent: bool) -> bo
         return False
     start = state.bMarks[start_line] + state.tShift[start_line]
     indent = state.sCount[start_line]
-    if indent > 3:
+    # Every block form opens with "$$" or "\[" at the line's start. Checking first avoids copying the
+    # rest of the document for each paragraph line, where this rule runs as a terminator.
+    if indent > 3 or not state.src.startswith(("$$", "\\["), start):
         return False
     source = " " * indent + state.src[start:]
     token = _tokenize_block_latex(source)

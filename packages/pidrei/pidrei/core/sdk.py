@@ -284,7 +284,11 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         return await runner.emit_cache_warming_decision(event) if runner is not None else event["action"]
 
     cache_warmer = CacheWarmer(
-        model_runtime, session_manager, settings_manager.get_cache_warming_mode, decide_cache_warming
+        model_runtime,
+        session_manager,
+        settings_manager.get_cache_warming_mode,
+        lambda: get_client_identity(settings_manager),
+        decide_cache_warming,
     )
 
     # Warm only requests for the selected model. Requests a virtual selection routed, or that an

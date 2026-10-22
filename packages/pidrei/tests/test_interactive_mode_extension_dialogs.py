@@ -161,3 +161,51 @@ async def test_shows_a_confirm_opened_from_an_inline_custom_component_and_then_r
     opened["done"]("kept")
     assert await custom == "kept"
     assert context.focused is context.editor
+
+
+@pytest.mark.tonio
+async def test_reset_disposes_every_dialog_when_one_closes_itself_from_dispose(dialog_setup):
+    context = _create_context()
+    noop = lambda *_args: None
+    context.ui.hide_overlay = noop
+    for name in (
+        "_clear_extension_terminal_input_listeners",
+        "_set_custom_editor_component",
+        "_set_extension_footer",
+        "_set_extension_header",
+        "_clear_extension_widgets",
+        "_setup_autocomplete_provider",
+        "_update_terminal_title",
+        "_set_working_indicator",
+        "_set_hidden_thinking_label",
+    ):
+        setattr(context, name, noop)
+    context._footer_data_provider = SimpleNamespace(clear_extension_statuses=noop)
+    context._extension_registry_guard = threading.Lock()
+    context._default_editor = context.editor
+    context._footer = SimpleNamespace(invalidate=noop)
+    context._active_status_indicator = None
+    disposed: set = set()
+
+    def open_custom(label: str):
+        class ClosesOnDispose(Text):
+            def dispose(self) -> None:
+                disposed.add(label)
+                self.done(None)
+
+        def factory(_tui, _theme, _keybindings, done):
+            component = ClosesOnDispose(label)
+            component.done = done
+            return component
+
+        return context._show_extension_custom(factory)
+
+    first = open_custom("custom one")
+    second = open_custom("custom two")
+
+    context._reset_extension_ui()
+
+    assert disposed == {"custom one", "custom two"}
+    assert await first is None
+    assert await second is None
+    assert context.focused is context.editor
