@@ -61,7 +61,12 @@ Tracks [Pi 1.4.0](https://github.com/earendil-works/pi/releases/tag/v1.4.0).
   level.
 - Sign in with ChatGPT: ChatGPT Business workspace usage-limit errors are not
   retried and tell the user to ask their workspace admin to raise the limit.
+- Codemode scripts can use `match` statements, dataclass `field()` with
+  `default_factory` and `__post_init__`, slice assignment on lists, and
+  `os.path`, and can import `bisect`, `csv`, `hashlib` and `tomllib`.
 - Model catalog regenerated from models.dev.
+- Bumped the tonio dependency to 0.10.5.
+- Bumped the pydantic-monty dependency to 1.2.0.
 
 ### Fixed
 

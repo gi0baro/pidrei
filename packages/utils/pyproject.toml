@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "tonio~=0.10.4",
+    "tonio~=0.10.5",
 ]
 
 [tool.uv.sources]

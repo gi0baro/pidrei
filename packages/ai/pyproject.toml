@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "pidrei-http==1.4.0.0",
     "pidrei-utils==1.4.0.0",
-    "tonio~=0.10.4",
+    "tonio~=0.10.5",
     # Sans-io WebSocket frame codec only (no client, no asyncio): the Codex
     # responses transport drives it over httpunk's H1Upgraded, which the seam
     # hands back (utils/websocket.py).

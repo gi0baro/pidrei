@@ -23,8 +23,8 @@ classifiers = [
 
 dependencies = [
     "pidrei-utils==1.4.0.0",
-    "pydantic-monty~=1.1.0",
-    "tonio~=0.10.4",
+    "pydantic-monty~=1.2.0",
+    "tonio~=0.10.5",
 ]
 
 [tool.uv.sources]

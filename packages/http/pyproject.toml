@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "tonio~=0.10.4",
+    "tonio~=0.10.5",
     "punkreq~=0.2.4",
     # punkreq's own transport, declared directly because the callback server
     # uses its server-side HTTP/1 connection and the WebSocket handshake its

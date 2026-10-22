@@ -832,6 +832,65 @@ results"""
     assert result.value[4:] == ["ModuleNotFoundError", "ModuleNotFoundError"]
 
 
+@pytest.fixture
+def host_dir(tmp_path):
+    """A host directory holding one file, for scripts to try to reach."""
+    (tmp_path / "secret.json").write_text('{"secret": 1}')
+    return tmp_path
+
+
+_FILESYSTEM_ATTEMPTS = """import csv
+import json
+import os
+import tomllib
+from pathlib import Path
+results = {}
+
+def attempt(name, fn):
+    try:
+        results[name] = ['returned', fn()]
+    except Exception as e:
+        results[name] = ['raised', type(e).__name__]
+
+attempt('getcwd', lambda: os.getcwd())
+attempt('environ', lambda: dict(os.environ))
+attempt('getenv', lambda: os.getenv('HOME'))
+attempt('listdir', lambda: os.listdir(DIR))
+attempt('scandir', lambda: [e.name for e in os.scandir(DIR)])
+attempt('walk', lambda: list(os.walk(DIR)))
+attempt('path.exists', lambda: os.path.exists(SECRET))
+attempt('path.abspath', lambda: os.path.abspath('.'))
+attempt('Path.cwd', lambda: str(Path.cwd()))
+attempt('iterdir', lambda: [str(p) for p in Path(DIR).iterdir()])
+attempt('glob', lambda: [str(p) for p in Path(DIR).glob('*')])
+attempt('rglob', lambda: [str(p) for p in Path(DIR).rglob('*')])
+attempt('read_text', lambda: Path(SECRET).read_text())
+attempt('write_text', lambda: Path(WRITTEN).write_text('x'))
+attempt('unlink', lambda: Path(SECRET).unlink(missing_ok=True))
+attempt('open', lambda: open(SECRET).read())
+attempt('json.load', lambda: json.load(open(SECRET)))
+attempt('csv.reader', lambda: list(csv.reader(open(SECRET))))
+attempt('tomllib.load', lambda: tomllib.load(open(SECRET, 'rb')))
+results"""
+
+
+@pytest.mark.tonio
+async def test_has_no_host_filesystem_or_environment_access(make_sandbox, host_dir):
+    # On Monty 1.2.0 the environment raises RuntimeError and every file
+    # operation PermissionError; the walks and globs swallow it, as CPython's do.
+    secret, written = host_dir / "secret.json", host_dir / "written.txt"
+    result = await make_sandbox(type_check=False).execute(
+        f"DIR = {str(host_dir)!r}\nSECRET = {str(secret)!r}\nWRITTEN = {str(written)!r}\n" + _FILESYSTEM_ATTEMPTS
+    )
+    assert result.ok, result.error
+    # What returns answers from the sandbox's own empty filesystem, rooted at "/".
+    returned = {name: value for name, (outcome, value) in result.value.items() if outcome == "returned"}
+    assert returned == {"getcwd": "/", "walk": [], "path.abspath": "/", "Path.cwd": "/", "glob": [], "rglob": []}
+    assert len(result.value) == 19
+    assert secret.read_text() == '{"secret": 1}'
+    assert not written.exists()
+
+
 @pytest.mark.tonio
 async def test_keeps_eval_and_exec_inside_the_sandbox(make_sandbox):
     result = await make_sandbox(type_check=False).execute(
@@ -842,11 +901,17 @@ try:
     reached = 'opened'
 except Exception as e:
     reached = type(e).__name__
-[x, y, reached]"""
+try:
+    eval("__import__('os').listdir('/')")
+    imported = 'listed'
+except Exception as e:
+    imported = type(e).__name__
+[x, y, reached, imported]"""
     )
     assert result.ok, result.error
     assert result.value[:2] == [2, 2]
     assert result.value[2] != "opened"
+    assert result.value[3] != "listed"
 
 
 @pytest.mark.tonio
@@ -855,6 +920,14 @@ async def test_rejects_imports_of_modules_that_are_not_present(make_sandbox):
         "try:\n    import json5\n    found = 'imported'\nexcept ImportError as e:\n    found = type(e).__name__\nfound"
     )
     assert result.ok and result.value == "ModuleNotFoundError"
+    dotted = await make_sandbox(type_check=False).execute("import a.b")
+    assert not dotted.ok
+    assert "ModuleNotFoundError" in dotted.error.stack
+    # The type check asks the host for the module's stubs first, and gets none.
+    checked = await make_sandbox().execute("import socket")
+    assert not checked.ok
+    assert checked.error.stack.startswith(TYPE_CHECK_FAILED)
+    assert "socket" in checked.error.stack
 
 
 @pytest.mark.tonio

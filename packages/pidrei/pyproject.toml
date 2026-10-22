@@ -29,7 +29,7 @@ dependencies = [
     "pidrei-mcp==1.4.0.0",
     "pidrei-tui==1.4.0.0",
     "pidrei-utils==1.4.0.0",
-    "tonio~=0.10.4",
+    "tonio~=0.10.5",
     "pyyaml~=6.0",
     "jsonschema~=4.26",
     "pathspec~=1.1",
