@@ -8,7 +8,7 @@ import pytest
 from pidrei_ai.api import google_generative_ai, google_vertex
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
-from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_ai.utils.identity import format_user_agent
 
 from .test_google_stream import ADAPTER_IDS, ADAPTERS, _chunk, _model, _part, _run
 
@@ -138,7 +138,7 @@ async def _capture_google_headers(headers: dict | None = None) -> dict:
 
 @pytest.mark.tonio
 async def test_uses_the_runtime_user_agent_by_default():
-    assert (await _capture_google_headers())["User-Agent"] == get_user_agent()
+    assert (await _capture_google_headers())["User-Agent"] == format_user_agent()
 
 
 @pytest.mark.tonio

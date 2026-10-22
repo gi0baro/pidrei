@@ -59,6 +59,7 @@ from pidrei_ai.types import (
     ClassifierModel,
     ClassifierOptions,
     ClassifierResult,
+    ClientIdentity,
     Context,
     DeferredCancelOptions,
     DeferredFetchOptions,
@@ -78,6 +79,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.identity import get_opencode_session_headers, merge_client_identity
 from pidrei_ai.utils.model_operations import (
     assert_chat_model,
     assert_classifier_input_supported,
@@ -441,6 +443,7 @@ class Models:
         credentials: CredentialStore | None = None,
         models_store: ModelsStore | None = None,
         auth_context: AuthContext | None = None,
+        identity: ClientIdentity | None = None,
     ):
         # Immutable snapshot swapped on write (never mutated in place):
         # readers pin one attribute read and take no lock — get_provider sits
@@ -450,6 +453,8 @@ class Models:
         self._credentials = credentials if credentials is not None else InMemoryCredentialStore()
         self._models_store = models_store if models_store is not None else InMemoryModelsStore()
         self._auth_context = auth_context if auth_context is not None else default_provider_auth_context()
+        # Default identity of every request; a request's `identity` overrides it field by field.
+        self._identity = identity
         self._refresh_state_guard = threading.Lock()
         self._refresh_generations: dict[str, int] = {}
         self._refresh_controllers: dict[str, CancelToken] = {}
@@ -977,18 +982,23 @@ class Models:
 
         # Explicit request options win per-field; the Models-only transform runs last.
         api_key = options.api_key if options is not None and options.api_key is not None else auth.api_key
-        headers = merge_headers(auth.headers, options.headers if options is not None else None)
+        request_model = replace(model, base_url=auth.base_url) if auth.base_url else model
+        session_id = options.session_id if isinstance(options, StreamOptions) else None
+        headers = merge_headers(
+            merge_headers(get_opencode_session_headers(request_model, session_id), auth.headers),
+            options.headers if options is not None else None,
+        )
         if options is not None and options.transform_headers is not None:
             headers = await options.transform_headers(headers if headers is not None else {})
         options_env = options.env if options is not None else None
         env = {**(resolution.env or {}), **(options_env or {})} if resolution.env or options_env else None
 
-        request_model = replace(model, base_url=auth.base_url) if auth.base_url else model
         request_options = replace(
             options if options is not None else StreamOptions(),
             api_key=api_key,
             headers=headers,
             env=env,
+            identity=merge_client_identity(self._identity, options.identity if options is not None else None),
             transform_headers=None,
         )
         return request_model, request_options
@@ -1120,8 +1130,9 @@ def create_models(
     credentials: CredentialStore | None = None,
     models_store: ModelsStore | None = None,
     auth_context: AuthContext | None = None,
+    identity: ClientIdentity | None = None,
 ) -> Models:
-    return Models(credentials=credentials, models_store=models_store, auth_context=auth_context)
+    return Models(credentials=credentials, models_store=models_store, auth_context=auth_context, identity=identity)
 
 
 # -- model helpers -------------------------------------------------------------

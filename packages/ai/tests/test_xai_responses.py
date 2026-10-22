@@ -26,8 +26,8 @@ from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
 from pidrei_ai.providers.xai import xai_provider
 from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import Context, Model, ModelCost, ModelCostTier, UserMessage
+from pidrei_ai.utils.identity import format_user_agent
 from pidrei_ai.utils.transcript import normalize_context
-from pidrei_ai.utils.user_agent import get_user_agent
 from tests.test_openai_responses import FakeClient, make_model
 
 
@@ -125,7 +125,7 @@ async def test_uses_responses_with_bearer_auth_and_xai_compatible_request_fields
     client = create_responses_client(model, context, "xai-test-token", None, "pi-session-123")
     assert client._url == "https://api.x.ai/v1/responses"
     assert client._headers["authorization"] == "Bearer xai-test-token"
-    assert client._headers["User-Agent"] == get_user_agent()
+    assert client._headers["User-Agent"] == format_user_agent()
     assert client._headers["session_id"] == "pi-session-123"
 
     assert params["model"] == "grok-4.5"
@@ -231,7 +231,7 @@ def responses_user_agent(headers: dict | None = None) -> str:
 
 
 def test_uses_the_runtime_user_agent_by_default_for_responses_requests():
-    assert responses_user_agent() == get_user_agent()
+    assert responses_user_agent() == format_user_agent()
 
 
 def test_lets_explicit_headers_override_the_default_responses_user_agent():
@@ -239,7 +239,7 @@ def test_lets_explicit_headers_override_the_default_responses_user_agent():
 
 
 def test_uses_the_runtime_user_agent_by_default_for_completions_requests():
-    assert completions_user_agent() == get_user_agent()
+    assert completions_user_agent() == format_user_agent()
 
 
 def test_lets_explicit_headers_override_the_default_completions_user_agent():

@@ -20,6 +20,7 @@ from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     ClassifierModel,
     ClassifierOptions,
+    ClientIdentity,
     ProviderEnv,
     ProviderHeaders,
     ProviderResponse,
@@ -27,6 +28,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.headers import provider_headers_to_record
+from pidrei_ai.utils.identity import get_identity_headers
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_http import http
 from pidrei_utils import clock
@@ -69,9 +71,15 @@ def required_number(label: str, value: Any, field: str) -> float:
     return value
 
 
-def _request_headers(model: ClassifierModel, api_key: str, options_headers: ProviderHeaders | None) -> dict[str, str]:
+def _request_headers(
+    model: ClassifierModel,
+    api_key: str,
+    options_headers: ProviderHeaders | None,
+    identity: ClientIdentity | None = None,
+) -> dict[str, str]:
     return (
         provider_headers_to_record(
+            get_identity_headers(model, identity),
             {"authorization": f"Bearer {api_key}", "content-type": "application/json"},
             model.headers,
             options_headers,
@@ -131,7 +139,7 @@ async def post_classifier_request(
     if transformed is not None:
         payload = transformed
     client = _ClassifierClient(options.env, options.fetch)
-    headers = _request_headers(model, options.api_key, options.headers)
+    headers = _request_headers(model, options.api_key, options.headers, options.identity)
 
     async def attempt() -> tuple[ProviderResponse, Any]:
         # A fresh timeout for every attempt (pi: `AbortSignal.timeout` per request).

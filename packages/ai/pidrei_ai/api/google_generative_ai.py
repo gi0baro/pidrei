@@ -38,6 +38,7 @@ from pidrei_ai.builders import (
 )
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
+    ClientIdentity,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -61,10 +62,10 @@ from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
+from pidrei_ai.utils.identity import get_identity_headers
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import collapse_system_messages, get_current_tools, get_initial_system_message
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 
@@ -127,7 +128,7 @@ def stream(
             api_key = opts.api_key
             if not api_key:
                 raise RuntimeError(f"No API key for provider: {model.provider}")
-            client = create_client(model, api_key, opts.headers)
+            client = create_client(model, api_key, opts.headers, opts.identity)
             params = build_params(model, normalized_context, opts)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
@@ -368,14 +369,17 @@ def _with_thinking(base: StreamOptions, thinking: GoogleThinking, tool_choice: s
     return opts
 
 
-def create_client(model: Model, api_key: str | None = None, options_headers: ProviderHeaders | None = None):
+def create_client(
+    model: Model,
+    api_key: str | None = None,
+    options_headers: ProviderHeaders | None = None,
+    identity: ClientIdentity | None = None,
+):
     http_options: dict[str, Any] = {}
     if model.base_url:
         http_options["baseUrl"] = model.base_url
         http_options["apiVersion"] = ""  # baseUrl already includes version path, don't append
-    merged_headers: dict[str, Any] = {**(model.headers or {}), **(options_headers or {})}
-    set_default_user_agent(merged_headers)
-    headers = provider_headers_to_record(merged_headers)
+    headers = provider_headers_to_record(get_identity_headers(model, identity), model.headers, options_headers)
     if headers:
         http_options["headers"] = headers
 

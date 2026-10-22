@@ -36,6 +36,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import PIDREI_ATTRIBUTION
 from pidrei_ai.utils.transcript import get_current_system_message, to_tool_declaration
 from pidrei_utils.cancel import CancelToken
 
@@ -1211,6 +1212,30 @@ async def test_forwards_session_id_to_stream_function_options():
 
     await agent.prompt("hello again")
     assert received_session_id == "session-def"
+
+
+@pytest.mark.tonio
+async def test_attributes_requests_to_pidrei_by_default_and_merges_a_configured_identity_over_it():
+    received: list = []
+
+    async def stream_fn(_model, _context, options):
+        received.append(options.identity)
+        return done_stream(create_assistant_message("ok"))
+
+    agent = Agent(stream_fn=stream_fn)
+
+    await agent.prompt("hello")
+    acme = {"name": "acme", "url": "https://acme.example"}
+    agent.identity = {"user_agent": "short", "attribution": acme}
+    await agent.prompt("hello again")
+    agent.identity = {"user_agent": "short"}
+    await agent.prompt("and again")
+
+    assert received == [
+        {"attribution": PIDREI_ATTRIBUTION},
+        {"attribution": acme, "user_agent": "short"},
+        {"attribution": PIDREI_ATTRIBUTION, "user_agent": "short"},
+    ]
 
 
 # ---------------------------------------------------------------------------

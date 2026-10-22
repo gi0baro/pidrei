@@ -44,6 +44,7 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     CacheRetention,
+    ClientIdentity,
     DiagnosticErrorInfo,
     DoneEvent,
     ErrorEvent,
@@ -75,6 +76,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
@@ -86,7 +88,6 @@ from pidrei_ai.utils.transcript import (
     get_initial_system_message,
     resolve_transcript,
 )
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -436,9 +437,11 @@ def _merge_headers(*header_sources: ProviderHeaders | None) -> dict[str, str | N
     return merged
 
 
-def _merge_client_headers(*header_sources: ProviderHeaders | None) -> dict[str, str | None]:
+def _merge_client_headers(
+    model: Model, identity: ClientIdentity | None, *header_sources: ProviderHeaders | None
+) -> dict[str, str | None]:
     merged = _merge_headers(*header_sources)
-    set_default_user_agent(merged)
+    set_default_identity_headers(merged, model, identity)
     return merged
 
 
@@ -507,6 +510,7 @@ def _create_client(
     env: ProviderEnv | None = None,
     federation: AnthropicFederationConfig | None = None,
     fetch: http.FetchFunction | None = None,
+    identity: ClientIdentity | None = None,
 ) -> tuple[AnthropicClient, bool]:
     """Build the default transport with pi's exact header assembly.
 
@@ -521,6 +525,8 @@ def _create_client(
     # Copilot: Bearer auth.
     if model.provider == "github-copilot":
         merged = _merge_client_headers(
+            model,
+            identity,
             base,
             {"authorization": f"Bearer {api_key}"} if api_key else None,
             model.headers,
@@ -530,9 +536,9 @@ def _create_client(
         headers = {key: value for key, value in merged.items() if value is not None}
         return _PunkreqAnthropicClient(model.base_url, headers, env, fetch=fetch), False
 
-    # OAuth: Bearer auth, Claude Code identity headers.
+    # OAuth: Bearer auth, Claude Code identity headers instead of the client identity.
     if api_key and _is_oauth_token(api_key):
-        merged = _merge_client_headers(
+        merged = _merge_headers(
             {
                 **base,
                 "user-agent": f"claude-cli/{CLAUDE_CODE_VERSION}",
@@ -552,6 +558,8 @@ def _create_client(
         header = "x-session-id" if compat.session_affinity_format == "openrouter" else "x-session-affinity"
         session_affinity[header] = session_id
     merged = _merge_client_headers(
+        model,
+        identity,
         base,
         {"x-api-key": api_key} if api_key else None,
         session_affinity,
@@ -711,6 +719,7 @@ def stream(
                     opts.env,
                     federation,
                     opts.fetch,
+                    opts.identity,
                 )
 
             disable_preferred_strict_tools = False

@@ -22,7 +22,7 @@ from pidrei_ai.api import google_vertex
 from pidrei_ai.api.google_vertex import stream as stream_google_vertex
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, UserMessage
-from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_ai.utils.identity import format_user_agent
 
 
 MODEL = get_builtin_model("google-vertex", "gemini-3-flash-preview")
@@ -144,7 +144,7 @@ async def test_still_uses_the_api_key_client_for_real_api_keys():
 async def test_does_not_forward_generated_vertex_base_url_placeholders():
     await _run(project="test-project", location="us-central1")
 
-    assert _only_call().get("httpOptions") == {"headers": {"User-Agent": get_user_agent()}}
+    assert _only_call().get("httpOptions") == {"headers": {"User-Agent": format_user_agent()}}
 
 
 @pytest.mark.tonio
@@ -170,7 +170,7 @@ async def test_forwards_custom_base_url_to_the_adc_client():
             "httpOptions": {
                 "baseUrl": "https://proxy.example.com",
                 "baseUrlResourceScope": "COLLECTION",
-                "headers": {"User-Agent": get_user_agent()},
+                "headers": {"User-Agent": format_user_agent()},
             },
         },
     )
@@ -191,7 +191,7 @@ async def test_forwards_custom_base_url_to_the_api_key_client():
             "httpOptions": {
                 "baseUrl": "https://proxy.example.com",
                 "baseUrlResourceScope": "COLLECTION",
-                "headers": {"User-Agent": get_user_agent()},
+                "headers": {"User-Agent": format_user_agent()},
             },
         },
     )
@@ -209,7 +209,7 @@ async def test_does_not_append_api_version_when_custom_base_url_already_includes
                 "baseUrl": "https://proxy.example.com/v1/projects/test-project/locations/global",
                 "baseUrlResourceScope": "COLLECTION",
                 "apiVersion": "",
-                "headers": {"User-Agent": get_user_agent()},
+                "headers": {"User-Agent": format_user_agent()},
             }
         },
     )

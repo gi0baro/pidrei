@@ -45,6 +45,7 @@ from pidrei_ai.builders import (
 )
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
+    ClientIdentity,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -69,11 +70,11 @@ from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
+from pidrei_ai.utils.identity import get_identity_headers
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import collapse_system_messages, get_current_tools, get_initial_system_message
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 
@@ -146,9 +147,11 @@ def stream(
             # Create the client using either a Vertex API key, if provided, or ADC
             # with project and location
             client = (
-                create_client_with_api_key(model, api_key, opts.headers)
+                create_client_with_api_key(model, api_key, opts.headers, opts.identity)
                 if api_key
-                else create_client(model, resolve_project(opts), resolve_location(opts), opts.headers, opts.env)
+                else create_client(
+                    model, resolve_project(opts), resolve_location(opts), opts.headers, opts.env, opts.identity
+                )
             )
             params = build_params(model, normalized_context, opts)
             next_params = await maybe_call(opts.on_payload, params, model)
@@ -397,6 +400,7 @@ def create_client(
     location: str,
     options_headers: ProviderHeaders | None = None,
     env: ProviderEnv | None = None,
+    identity: ClientIdentity | None = None,
 ) -> GoogleGenAI:
     google_auth_options = build_google_auth_options(env)
     return GoogleGenAI(
@@ -406,25 +410,32 @@ def create_client(
             "location": location,
             "apiVersion": API_VERSION,
             **({"googleAuthOptions": google_auth_options} if google_auth_options else {}),
-            "httpOptions": build_http_options(model, options_headers),
+            "httpOptions": build_http_options(model, options_headers, identity),
         }
     )
 
 
 def create_client_with_api_key(
-    model: Model, api_key: str, options_headers: ProviderHeaders | None = None
+    model: Model,
+    api_key: str,
+    options_headers: ProviderHeaders | None = None,
+    identity: ClientIdentity | None = None,
 ) -> GoogleGenAI:
     return GoogleGenAI(
         {
             "vertexai": True,
             "apiKey": api_key,
             "apiVersion": API_VERSION,
-            "httpOptions": build_http_options(model, options_headers),
+            "httpOptions": build_http_options(model, options_headers, identity),
         }
     )
 
 
-def build_http_options(model: Model, options_headers: ProviderHeaders | None = None) -> dict[str, Any] | None:
+def build_http_options(
+    model: Model,
+    options_headers: ProviderHeaders | None = None,
+    identity: ClientIdentity | None = None,
+) -> dict[str, Any] | None:
     http_options: dict[str, Any] = {}
     base_url = resolve_custom_base_url(model.base_url)
     if base_url:
@@ -433,9 +444,7 @@ def build_http_options(model: Model, options_headers: ProviderHeaders | None = N
         if base_url_includes_api_version(base_url):
             http_options["apiVersion"] = ""
 
-    merged_headers: dict[str, Any] = {**(model.headers or {}), **(options_headers or {})}
-    set_default_user_agent(merged_headers)
-    headers = provider_headers_to_record(merged_headers)
+    headers = provider_headers_to_record(get_identity_headers(model, identity), model.headers, options_headers)
     if headers:
         http_options["headers"] = headers
 

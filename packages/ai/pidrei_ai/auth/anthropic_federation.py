@@ -39,7 +39,7 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_ai.auth.oauth import http as oauth_http
-from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_ai.utils.identity import format_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 
@@ -237,7 +237,7 @@ async def _exchange(
             headers={
                 "Content-Type": "application/json",
                 "anthropic-beta": f"{OAUTH_API_BETA_HEADER},{FEDERATION_BETA_HEADER}",
-                "User-Agent": get_user_agent(),
+                "User-Agent": format_user_agent(),
             },
             json_body=body,
             timeout_ms=TOKEN_EXCHANGE_TIMEOUT_MS,

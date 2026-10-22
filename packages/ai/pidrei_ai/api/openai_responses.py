@@ -19,6 +19,7 @@ from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
     CacheRetention,
+    ClientIdentity,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -34,11 +35,11 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -310,6 +311,7 @@ def _create_client(
     session_id: str | None,
     env: ProviderEnv | None = None,
     fetch: http.FetchFunction | None = None,
+    identity: ClientIdentity | None = None,
 ) -> OpenAIResponsesClient:
     compat = get_compat(model)
     headers: dict[str, Any] = dict(model.headers or {})
@@ -327,7 +329,7 @@ def _create_client(
     if options_headers:
         headers.update(options_headers)
 
-    set_default_user_agent(headers)
+    set_default_identity_headers(headers, model, identity)
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
     return _PunkreqResponsesClient(model.base_url, final_headers, env, fetch=fetch)
@@ -491,7 +493,14 @@ def stream(
                 opts.client
                 if opts.client is not None
                 else _create_client(
-                    model, normalized_context, api_key, opts.headers, cache_session_id, opts.env, opts.fetch
+                    model,
+                    normalized_context,
+                    api_key,
+                    opts.headers,
+                    cache_session_id,
+                    opts.env,
+                    opts.fetch,
+                    opts.identity,
                 )
             )
             params = build_params(

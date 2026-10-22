@@ -16,7 +16,7 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils.user_agent import CLIENT_NAME
+from pidrei_ai.utils.identity import CLIENT_NAME
 from pidrei_utils import clock
 from pidrei_utils.cancel import AbortError, CancelToken
 

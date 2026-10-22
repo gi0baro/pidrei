@@ -36,6 +36,7 @@ from tonio.colored.sync import channel
 
 from pidrei_ai.types import (
     AssistantMessage,
+    ClientIdentity,
     ImageContent,
     Message,
     Model,
@@ -458,6 +459,7 @@ class Agent:
         transport: Transport | None = None,
         max_retry_delay_ms: float | None = None,
         tool_execution: ToolExecutionMode | None = None,
+        identity: ClientIdentity | None = None,
     ):
         initial = initial_state if initial_state is not None else AgentInitialState()
         self._state = AgentState(
@@ -500,6 +502,10 @@ class Agent:
         self.max_retry_delay_ms = max_retry_delay_ms
         # Tool execution strategy for assistant messages containing multiple tool calls.
         self.tool_execution: ToolExecutionMode = tool_execution if tool_execution is not None else "parallel"
+        # How requests identify the app to providers, merged field by field over
+        # `DEFAULT_AGENT_IDENTITY` (`{"attribution": PIDREI_ATTRIBUTION}`). Pass
+        # `{"attribution": None}` to send no attribution headers.
+        self.identity = identity
 
     def subscribe(self, listener: Callable[[AgentEvent, CancelToken], Awaitable[None]]) -> Callable[[], None]:
         """Subscribe to agent lifecycle events.
@@ -757,6 +763,7 @@ class Agent:
             transport=self.transport,
             thinking_budgets=self.thinking_budgets,
             max_retry_delay_ms=self.max_retry_delay_ms,
+            identity=self.identity,
             tool_execution=self.tool_execution,
             before_tool_call=self.before_tool_call,
             after_tool_call=self.after_tool_call,

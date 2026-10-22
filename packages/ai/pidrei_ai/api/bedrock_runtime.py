@@ -188,7 +188,8 @@ class BedrockRuntimeClient:
     """`new BedrockRuntimeClient(config)` for the one command pi sends.
 
     The config keys are the SDK's own (`region`, `endpoint`, `credentials`,
-    `profile`, `token`, `authSchemePreference`, `requestHandler`), because that
+    `profile`, `token`, `authSchemePreference`, `requestHandler`,
+    `customUserAgent`), because that
     record is the surface pi's endpoint-resolution spec asserts on.
     """
 
@@ -309,6 +310,11 @@ class BedrockRuntimeClient:
         # headers are covered by the signature — the SDK's ordering.
         args = await self.middleware_stack.apply_build(MiddlewareArgs(request=request))
         request = args.request
+        # The SDK appends `customUserAgent` to its own User-Agent. There is no SDK
+        # here, so it is the whole value, below any User-Agent the caller set.
+        custom_user_agent = self.config.get("customUserAgent")
+        if custom_user_agent and not any(name.lower() == "user-agent" for name in request.headers):
+            request.headers["user-agent"] = custom_user_agent
 
         bearer_token = self._bearer_token()
         if bearer_token:

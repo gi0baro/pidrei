@@ -90,6 +90,7 @@ from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
+from pidrei_ai.utils.identity import format_user_agent
 from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
@@ -191,6 +192,7 @@ def stream(
         options_profile = opts.profile or (opts.env or {}).get("AWS_PROFILE")
         config: dict[str, Any] = {
             "profile": options_profile or get_provider_env_value("AWS_PROFILE", opts.env),
+            "customUserAgent": format_user_agent(opts.identity),
         }
         configured_region = _get_configured_bedrock_region(opts)
         has_ambient_configured_profile = bool(get_provider_env_value("AWS_PROFILE"))

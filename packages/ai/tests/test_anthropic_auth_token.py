@@ -16,7 +16,7 @@ from pidrei_ai.env_api_keys import ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOK
 from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
-from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_ai.utils.identity import format_user_agent
 from pidrei_utils.cancel import CancelToken
 from tests.anthropic_helpers import (
     PayloadCaptured,
@@ -188,7 +188,7 @@ def _kimi_coding_model() -> Model:
 async def test_uses_the_runtime_user_agent_by_default_for_anthropic_messages_requests():
     headers, _payload = await capture_request(make_model(), AnthropicOptions(api_key="anthropic-key"))
 
-    assert headers["User-Agent"] == get_user_agent()
+    assert headers["User-Agent"] == format_user_agent()
 
 
 @pytest.mark.tonio

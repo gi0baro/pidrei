@@ -50,9 +50,9 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
-from pidrei_ai.utils.user_agent import set_default_user_agent
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -247,7 +247,7 @@ def create_client(model: Model, api_key: str, options: AzureOpenAIResponsesOptio
     headers = dict(model.headers or {})
     if options is not None and options.headers:
         headers.update(options.headers)
-    set_default_user_agent(headers)
+    set_default_identity_headers(headers, model, options.identity if options is not None else None)
 
     base_url, api_version = resolve_azure_config(model, options)
 
