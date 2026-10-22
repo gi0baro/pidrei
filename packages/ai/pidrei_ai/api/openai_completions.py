@@ -984,8 +984,10 @@ def convert_messages(
                 text_result = "\n".join(block.text for block in tool_msg.content if block.type == "text")
                 has_images = any(block.type == "image" for block in tool_msg.content)
 
+                # Always send tool result with text (or placeholder if only images)
+                has_text = len(text_result.strip()) > 0
                 tool_result_text = (
-                    text_result if text_result else "(see attached image)" if has_images else "(no tool output)"
+                    text_result if has_text else "(see attached image)" if has_images else "(no tool output)"
                 )
                 tool_result_msg: dict[str, Any] = {
                     "role": "tool",

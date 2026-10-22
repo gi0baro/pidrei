@@ -1,5 +1,7 @@
 """Mirror of pi's google-shared-image-tool-result-routing.test.ts."""
 
+import dataclasses
+
 from pidrei_ai.api.google_shared import convert_messages
 from pidrei_ai.types import (
     AssistantMessage,
@@ -95,3 +97,24 @@ def test_nests_image_tool_results_for_gemini_3_google_api_models():
     assert image_response
     assert len(image_response["parts"]) == 1
     assert image_response["parts"][0]["inlineData"]
+
+
+# https://github.com/earendil-works/pi/issues/8720
+def test_treats_whitespace_only_tool_result_text_as_no_text():
+    model = make_model("google-generative-ai", "google", "gemini-3-pro-preview")
+    context = make_context(model)
+    # pi mutates the tool results' content in place; messages are frozen here
+    # (recipe freeze-at-seam), so the context is rebuilt with replacements.
+    messages = []
+    for message in context.messages:
+        if isinstance(message, ToolResultMessage) and message.tool_call_id == "call_a":
+            message = dataclasses.replace(message, content=[TextContent(text="\r\n")])
+        elif isinstance(message, ToolResultMessage) and message.tool_call_id == "call_img":
+            message = dataclasses.replace(message, content=[TextContent(text=" \n"), *message.content])
+        messages.append(message)
+    contents = convert_messages(model, dataclasses.replace(context, messages=messages))
+
+    responses = [part["functionResponse"]["response"] for part in contents[2]["parts"]]
+    assert responses[0] == {"output": ""}
+    assert responses[1] == {"output": "(see attached image)"}
+    assert responses[2] == {"output": "beta text"}

@@ -91,7 +91,7 @@ def parse_text_signature(signature: str | None) -> dict[str, Any] | None:
 def convert_tool_result_output(model: Model, content: list) -> str | list[dict]:
     text_result = "\n".join(block.text for block in content if block.type == "text")
     images = [block for block in content if block.type == "image"]
-    has_text = len(text_result) > 0
+    has_text = len(text_result.strip()) > 0
 
     if not images or "image" not in model.input:
         return sanitize_surrogates(

@@ -47,6 +47,10 @@ OPENAI_TOOL_CALL_PROVIDERS = frozenset(("openai", "openai-codex", "opencode"))
 # OpenAI Responses rejects max_output_tokens below 16.
 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16
 CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage"
+CHATGPT_WORKSPACE_LIMIT_HINT = (
+    "You've reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at "
+    "admin.openai.com → Workspace → Usage limits."
+)
 # Fixed reasoning.effort while configuration_update items carry the thinking level.
 CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium"
 
@@ -538,11 +542,13 @@ def stream(
                 f"{'OpenAI' if model.provider == 'openai' else model.provider} API error",
             )
             # Sign in with ChatGPT shares the subscription's usage limit with other apps.
-            output.error_message = (
-                f"{error_message}\nCheck your ChatGPT usage: {CHATGPT_USAGE_URL}"
-                if "subscription_sharing_usage_limit_exceeded" in error_message
-                else error_message
-            )
+            # On ChatGPT Business plans, the workspace admin also sets a per-user limit.
+            if "subscription_sharing_usage_limit_exceeded" in error_message:
+                output.error_message = f"{error_message}\nCheck your ChatGPT usage: {CHATGPT_USAGE_URL}"
+            elif "subscription_sharing_workplace_individual_usage_limit_exceeded" in error_message:
+                output.error_message = f"{error_message}\n{CHATGPT_WORKSPACE_LIMIT_HINT}"
+            else:
+                output.error_message = error_message
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

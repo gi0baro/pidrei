@@ -718,6 +718,13 @@ untouched: component diffs port 1:1. What diverges:
     `ctx.ui.apply(fn)` groups changes.
   - Dialogs mount at call time and return a `tonio.spawn` handle for the
     answer.
+  - Dialogs in the editor slot (select, confirm, input, editor, inline
+    custom) form one stack, `_extension_dialogs`, guarded by `state_lock`
+    (Pi 1.4.0's `extensionDialogs`). Push, remove and show-top are
+    synchronous under the lock; a dialog removes itself when it settles, and
+    removing the visible one shows the previous dialog or the editor. Where
+    Pi's per-kind fields had first-settle claims, a dialog's settle is its
+    removal from the stack.
   - Component factories are synchronous and run under the lock.
   - Factories receive `ExtensionTui` (`modes/interactive/extension_tui.py`),
     a guarded wrapper, not the TUI. A new `TUI` member that Pi extensions use
@@ -740,8 +747,14 @@ untouched: component diffs port 1:1. What diverges:
     order of state changes. Lock order: UI state lock, then the reporter's
     lock, then the terminal's protocol lock. The reader never calls the
     reporter.
-  - A dialog hide clears its blocked status only when the dialog is still
-    the mounted component, the check that already guards the hide itself.
+  - The blocked status follows the dialog stack: showing the top dialog sets
+    its blocked status (none when the editor is back), in the same hold, so
+    removing a dialog that is not visible leaves the status alone.
+- **Exit**: Pi 1.4.0's restore of terminal modes when the process exits
+  without `stop()` (`9df819de`, a `process.on("exit")` handler in
+  `terminal.ts`, `tui.ts`, `tui-alt-screen.ts`) is not ported. Every PiDrei
+  exit with a TUI up runs `ui.stop()` or returns through `main()`; a hard
+  kill leaves the terminal as it is. Hunks to that handler are dropped.
 
 ### `terminal-colors-loop` (`tui/src/tui.ts`, `terminal.ts`, `theme/theme-controller.ts`, `theme/theme.ts`)
 
@@ -837,6 +850,21 @@ to providers that credit the calling app; the settings manager migrates the
 old key. Upstream hunks to the analytics keys are skipped; one to
 `enableInstallTelemetry` lands on `enableProviderAttribution` only if it
 concerns attribution.
+
+**Client identity** (Pi 1.4.0, `adc5fa9f`/`04a93bad`). The mechanism ports:
+`pidrei_ai/utils/identity.py` (`ClientIdentity`, the merge, the User-Agent
+and attribution headers each adapter applies below provider, model and
+request headers), `Agent.identity`, and `core/client_identity.py`, which
+builds the session's identity with `PIDREI_ATTRIBUTION` when
+`enableProviderAttribution` (and `PIDREI_PROVIDER_ATTRIBUTION`) allow it,
+where Pi gates on install telemetry. The values stay PiDrei's: attribution
+name `pidrei`, URL `https://github.com/gi0baro/pidrei`, categories
+`["cli-agent"]`, NVIDIA billing origin `PiDrei` (the project's casing rule;
+Pi's upper-case-first rule applies to any other name), User-Agent
+`pidrei/<version> (<platform>; python/<version>; <arch>)`, short form
+`pidrei`. The Codex originator and the xAI OAuth referrer are not
+attribution and stay `pidrei`. Upstream hunks to the mechanism port 1:1;
+hunks to Pi's own values do not.
 
 ### `config-schemas` (`coding-agent/src/core/settings-schema.ts`, `settings-defaults.ts`, `key-id-schema.ts`, `scripts/generate-schemas.ts`, `schemas/*.schema.json`)
 
@@ -940,7 +968,9 @@ machinery and the text that shows JavaScript do not.
     non-blocking `terminate()`. PiDrei's `stop()` SIGKILLs the Monty worker,
     so none outlives its script, and Monty's pool already bounds checkouts by
     queueing them; a cap that rejects would fail a parallel codemode call
-    that waits today.
+    that waits today. Pi 1.4.0's queueing in front of it (`885a564b`: the
+    wait queue, its 60 s cap, `PI_CODEMODE_MAX_WORKERS` and their docs) is
+    dropped with it.
 - **PiDrei-only, kept on every port**: the type check before the script runs
   (`codemode.typeCheck`, the factory's `type_check`); `all_settled`,
   `has_tool` and `call_tool`; `store(key, None)` deleting; a final expression

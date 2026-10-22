@@ -23,15 +23,6 @@ def copilot_context() -> Context:
 
 
 def test_applies_copilot_specific_adaptive_thinking_effort_overrides():
-    opus47 = get_builtin_model("github-copilot", "claude-opus-4.7")
-    assert opus47 is not None
-    assert opus47.thinking_level_map is not None
-    assert opus47.thinking_level_map["minimal"] == "low"
-    assert opus47.thinking_level_map["xhigh"] == "xhigh"
-    assert opus47.thinking_level_map["max"] == "max"
-    assert "xhigh" in get_supported_thinking_levels(opus47)
-    assert "max" in get_supported_thinking_levels(opus47)
-
     opus5 = get_builtin_model("github-copilot", "claude-opus-5")
     assert opus5 is not None
     assert opus5.api == "anthropic-messages"

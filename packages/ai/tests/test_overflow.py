@@ -1,6 +1,9 @@
 """Mirror of pi's overflow.test.ts."""
 
+import dataclasses
 import time
+
+import pytest
 
 from pidrei_ai.types import AssistantMessage, Usage
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
@@ -44,6 +47,44 @@ def create_length_stop_message(
         stop_reason="length",
         timestamp=int(time.time() * 1000),
     )
+
+
+# The 413 pattern is provider-agnostic, so a single Copilot-prefixed string and a single
+# non-Copilot string cover both branches of the regex; the bare forms cover the raw SDK output.
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        'github-copilot API error (413): {"message":"failed to parse request","code":""}',  # format_provider_error prefix
+        "custom-provider API error (413): Payload Too Large",  # any provider, not just Copilot
+        '413 {"error":{"message":"failed to parse request","code":""}}',  # raw SDK error
+        "413",  # bare status at end of string
+    ],
+)
+def test_detects_provider_independent_request_size_overflow(error_message):
+    # The request can exceed the byte limit even with zero usage and a large token window.
+    assert is_context_overflow(create_error_message(error_message), 1_000_000) is True
+    assert is_context_overflow(create_error_message(error_message)) is True
+
+
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        'github-copilot API error (400): {"message":"failed to parse request","code":""}',  # other status, same body
+        "custom-provider API error (429): Too many requests",
+        'github-copilot API error (400): {"message":"failed to parse request: invalid value 413"}',  # 413 in the body only
+        "custom-provider API error (400): upstream mentioned OpenAI API error (413): invalid input",  # 413 not at start
+        "custom-provider API error (4130): invalid input",  # 413 is a prefix, not the status
+        "4130 failed to parse request",  # bare 4130 is not 413
+    ],
+)
+def test_does_not_mistake_unrelated_errors_for_request_size_overflow(error_message):
+    assert is_context_overflow(create_error_message(error_message)) is False
+
+
+def test_limits_http_status_matching_to_failed_responses():
+    message = create_error_message('OpenAI API error (413): {"message":"failed to parse request"}')
+    assert is_context_overflow(dataclasses.replace(message, stop_reason="aborted")) is False
+    assert is_context_overflow(dataclasses.replace(message, stop_reason="stop")) is False
 
 
 def test_detects_explicit_ollama_prompt_too_long_errors():
@@ -106,11 +147,12 @@ def test_does_not_treat_generic_non_overflow_ollama_errors_as_overflow():
     assert is_context_overflow(message, 32768) is False
 
 
-def test_only_treats_bodyless_400_and_413_errors_as_overflow_for_cerebras():
-    # Regression for #9482.
-    for error_message in ("400 status code (no body)", "413 status code (no body)"):
-        assert is_context_overflow(create_error_message(error_message, "cerebras"), 131072) is True
-        assert is_context_overflow(create_error_message(error_message, "opencode-go"), 1000000) is False
+def test_only_treats_bodyless_400_errors_as_overflow_for_cerebras():
+    # Regression for #9482. HTTP 413 is a request-size error for every provider,
+    # but a bodyless HTTP 400 is only known to indicate overflow for Cerebras.
+    error_message = "400 status code (no body)"
+    assert is_context_overflow(create_error_message(error_message, "cerebras"), 131072) is True
+    assert is_context_overflow(create_error_message(error_message, "opencode-go"), 1000000) is False
 
 
 def test_does_not_treat_bedrock_throttling_too_many_tokens_as_overflow():

@@ -19,6 +19,8 @@ EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
     "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
     "fireworks/accounts/fireworks/models/gpt-oss-120b",
     "fireworks/accounts/fireworks/models/qwen3p8-max",
+    "minimax-cn/MiniMax-M3.1-Flash",
+    "minimax/MiniMax-M3.1-Flash",
 ]
 
 _ADAPTIVE_ID_PATTERN = re.compile(r"(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5)")
@@ -43,5 +45,6 @@ def test_marks_builtin_anthropic_messages_models_that_use_adaptive_thinking():
         for model_id in flagged_models
         # Regression for #9323: Fireworks uses catalog effort metadata and
         # verified fallbacks, not a fixed set of adaptive model names.
-        if model_id.startswith("fireworks/") or _ADAPTIVE_ID_PATTERN.search(model_id)
+        # #11121: MiniMax models with catalog effort levels require adaptive thinking.
+        if model_id.startswith(("fireworks/", "minimax/", "minimax-cn/")) or _ADAPTIVE_ID_PATTERN.search(model_id)
     ]

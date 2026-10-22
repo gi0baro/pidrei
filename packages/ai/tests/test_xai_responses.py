@@ -82,10 +82,10 @@ def test_excludes_retired_and_redundant_models_from_the_builtin_catalog():
 def test_routes_every_builtin_xai_model_through_responses():
     for model in get_builtin_models("xai"):
         assert model.api == "openai-responses", model.id
-    assert get_supported_thinking_levels(xai_model("grok-4.5")) == ["low", "medium", "high"]
+    assert get_supported_thinking_levels(xai_model("grok-4.5")) == ["low", "medium", "high", "xhigh"]
     assert get_supported_thinking_levels(xai_model("grok-4.6")) == ["low", "medium", "high", "xhigh"]
     assert get_supported_thinking_levels(xai_model("grok-4.7")) == ["low", "medium", "high", "xhigh"]
-    assert get_supported_thinking_levels(xai_model("grok-4.3")) == ["off", "low", "medium", "high"]
+    assert get_supported_thinking_levels(xai_model("grok-4.3")) == ["off", "low", "medium", "high", "xhigh"]
 
 
 def test_includes_grok_47_capabilities_and_long_context_pricing():

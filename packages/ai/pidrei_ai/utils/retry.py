@@ -40,6 +40,9 @@ _NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = _build_provider_error_pattern(
         # Sign in with ChatGPT: the subscription's shared usage limit, which resets
         # after hours rather than seconds.
         "subscription_sharing_usage_limit_exceeded",
+        # Sign in with ChatGPT on a ChatGPT Business plan: a usage limit set by the
+        # workspace admin. Only the admin can raise it.
+        "subscription_sharing_workplace_individual_usage_limit_exceeded",
     ]
 )
 
@@ -53,13 +56,8 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         "model is at capacity",
         "rate.?limit",
         "too many requests",
-        "429",
-        "500",
-        "502",
-        "503",
-        "504",
-        "520",
-        "524",
+        # Status codes must not be part of a longer word or number, e.g. a request id or byte count (#11057).
+        "(?<![a-z0-9])(?:429|500|502|503|504|520|524)(?![a-z0-9])",
         # Also matches "The service is temporarily unavailable" (#10965).
         "service.?(?:is.?)?(?:temporarily.?)?unavailable",
         "server.?error",
@@ -72,6 +70,11 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         # Gateway failure relaying the upstream response stream, sent as an OpenAI
         # Responses `response.failed` event without an error code (#10920).
         "unable to forward upstream",
+        # Other gateway upstream failures relayed as `response.failed` error codes (#10920).
+        "upstream.?request.?failed",
+        "upstream_stream_read_error",
+        "stream was interrupted",
+        "http/?2 stream failed",
         # Network, proxy, and transport failures.
         "network.?error",
         "connection.?error",
@@ -79,6 +82,9 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         "connection.?lost",
         "other side closed",
         "fetch failed",
+        # node-fetch system errors, e.g. the Google ADC OAuth token refresh used by
+        # google-vertex. The reason is often empty (#10996).
+        r"request to \S+ failed, reason:",
         "getaddrinfo",
         "ENOTFOUND",
         "EAI_AGAIN",
@@ -97,6 +103,9 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         "stream ended before message_stop",
         "stream ended before a terminal response event",
         "http2 request did not get a response",
+        # Codex CLI mid-stream disconnect, relayed by proxies that wrap the Codex CLI,
+        # e.g. "stream disconnected before completion: stream closed before response.completed" (#11057).
+        "stream disconnected before completion",
         # Node ERR_HTTP2_STREAM_CANCEL: the HTTP/2 session died before the request was
         # sent, e.g. after the Bedrock SDK's 5-minute session timeout (#10379).
         "pending stream has been canceled",

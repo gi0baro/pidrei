@@ -31,10 +31,12 @@ def transport_headers(model, session_id: str | None = "session-123", options_hea
     return client._headers
 
 
+# #2567: Copilot rejected reasoning.effort "none". gpt-6-sol has off: "none", so this exercises the Copilot exception.
 def test_omits_reasoning_when_no_reasoning_is_requested():
-    # pi uses a github-copilot catalog model: the provider guard skips the
-    # reasoning-off effort payload entirely.
-    model = make_model(provider="github-copilot")
+    # pi uses the github-copilot gpt-6-sol catalog model; the synthetic model
+    # carries the part of it that matters (off: "none"): the provider guard
+    # skips the reasoning-off effort payload entirely.
+    model = make_model(provider="github-copilot", id="gpt-6-sol", thinking_level_map={"off": "none"})
     params = build_request_params(model, make_context(), OpenAIResponsesOptions())
     assert "reasoning" not in params
 

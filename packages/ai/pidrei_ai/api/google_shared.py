@@ -267,7 +267,7 @@ def convert_messages(model: Model, context: TranscriptContext) -> list[dict[str,
             text_result = "\n".join(c.text for c in text_content)
             image_content = [c for c in msg.content if isinstance(c, ImageContent)] if "image" in model.input else []
 
-            has_text = len(text_result) > 0
+            has_text = len(text_result.strip()) > 0
             has_images = len(image_content) > 0
 
             # Gemini 3+ models support multimodal function responses with images nested inside
