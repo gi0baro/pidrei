@@ -4,6 +4,8 @@ pi injects `options.fetch`; here the one POST is stubbed at
 `classifier_shared._ClassifierClient` (tests/system_one_helpers.py).
 """
 
+from dataclasses import replace
+
 import pytest
 
 from pidrei_ai.providers.all import get_builtin_classifier_model
@@ -15,6 +17,8 @@ from pidrei_ai.types import (
     ClassifierChoiceQuestion,
     ClassifierContext,
     ClassifierOptions,
+    ImageContent,
+    SystemOneCompat,
 )
 from tests.system_one_helpers import respond_json, stub_system_one
 
@@ -118,7 +122,8 @@ async def test_runs_jev_through_the_account_scoped_ai_run_endpoint():
 
 @pytest.mark.tonio
 @pytest.mark.parametrize(
-    ("model_id", "input_price"), [("@cf/cloudflare/clef", 0.24), ("@cf/cloudflare/clef-flash", 0.09)]
+    ("model_id", "input_price"),
+    [("@cf/cloudflare/clef", 0.24), ("@cf/cloudflare/clef-flash", 0.038), ("@cf/cloudflare/clef-omni", 0.15)],
 )
 async def test_runs_clef_through_ai_run_and_parses_its_direct_output(model_id, input_price):
     models, _jev = setup()
@@ -140,6 +145,85 @@ async def test_runs_clef_through_ai_run_and_parses_its_direct_output(model_id, i
     assert (department.type, department.choice, department.confidence) == ("choice", "technical", 0.4538)
     assert (result.usage.input, result.usage.output, result.usage.total_tokens) == (222, 0, 222)
     assert result.usage.cost.input == pytest.approx((222 * input_price) / 1_000_000)
+
+
+def _lower_headers(headers: dict[str, str]) -> dict[str, str]:
+    """pi reads request headers through `new Headers(...)`, which folds case."""
+    return {name.lower(): value for name, value in headers.items()}
+
+
+PNG = ImageContent(data="cG5n", mime_type="image/png")
+CLEF_ENVELOPE = {"result": CLEF_OUTPUT, "success": True, "errors": [], "messages": []}
+
+
+@pytest.mark.tonio
+async def test_sends_images_to_clef_as_data_urls():
+    models, _jev = setup()
+    clef = models.get_model_of_type("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef")
+    assert clef is not None, "missing Cloudflare Clef model"
+    webp = ImageContent(data="d2VicA==", mime_type="image/webp")
+
+    with stub_system_one(respond_json(CLEF_ENVELOPE)) as requests:
+        result = await models.classify(clef, replace(CONTEXT, images=[PNG, webp]), auth())
+
+    assert result.stop_reason == "stop"
+    # Clef rejects `assets` with a 422, so the state stays as is.
+    payload_input = requests[0].payload["input"]
+    assert set(payload_input) == {"state", "questions", "images"}
+    assert payload_input["state"] == CONTEXT.state
+    assert payload_input["images"] == ["data:image/png;base64,cG5n", "data:image/webp;base64,d2VicA=="]
+    assert "typesafe-danger-zone-images" not in _lower_headers(requests[0].headers)
+
+
+@pytest.mark.tonio
+async def test_reads_the_image_form_from_compat_before_the_model_id():
+    models, jev = setup()
+    clef = models.get_model_of_type("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef")
+    assert clef.compat == SystemOneCompat(image_input="images")
+    assert jev.compat == SystemOneCompat(image_input="assets")
+
+    # A Clef deployment under an id the prefix check does not recognize.
+    finetune = replace(
+        jev, id="@cf/acme/clef-finetune", input=["text", "image"], compat=SystemOneCompat(image_input="images")
+    )
+    with stub_system_one(respond_json(CLEF_ENVELOPE)) as requests:
+        await models.classify(finetune, replace(CONTEXT, images=[PNG]), auth())
+
+    assert requests[0].payload["input"]["images"] == ["data:image/png;base64,cG5n"]
+    assert "assets" not in requests[0].payload["input"]
+
+
+@pytest.mark.tonio
+async def test_rejects_more_than_four_images_for_clef_before_sending():
+    models, _jev = setup()
+    clef = models.get_model_of_type("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef-flash")
+    assert clef is not None, "missing Cloudflare Clef Flash model"
+
+    with stub_system_one(respond_json(CLEF_ENVELOPE)) as requests:
+        result = await models.classify(clef, replace(CONTEXT, images=[PNG] * 5), auth())
+
+    assert requests == []
+    assert result.stop_reason == "error"
+    assert result.error_message == "Cloudflare Workers AI accepts at most 4 images for @cf/cloudflare/clef-flash, got 5"
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("model_id", ["typesafe/jev", "typesafe/jev-1.14.0"])
+async def test_sends_images_to_jev_as_system_one_assets(model_id):
+    models, _jev = setup()
+    jev = models.get_model_of_type("classifier", "cloudflare-workers-ai", model_id)
+    assert jev is not None, f"missing Cloudflare {model_id} model"
+
+    with stub_system_one(respond_json(rest_response("Completed"))) as requests:
+        result = await models.classify(jev, replace(CONTEXT, images=[PNG]), auth())
+
+    assert result.stop_reason == "stop"
+    payload = requests[0].payload
+    assert payload["model"] == model_id
+    assert payload["input"]["state"] == ["<image-1>", CONTEXT.state]
+    assert payload["input"]["assets"] == {"<image-1>": {"type": "image", "format": "png", "data_base64": "cG5n"}}
+    # Workers AI needs no TypeSafe opt-in header.
+    assert "typesafe-danger-zone-images" not in _lower_headers(requests[0].headers)
 
 
 @pytest.mark.tonio

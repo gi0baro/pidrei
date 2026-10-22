@@ -558,6 +558,34 @@ MISTRAL_CONVERSATIONS_COMPAT_SCHEMA: dict[str, Any] = {
     "additionalProperties": True,
 }
 
+SYSTEM_ONE_COMPAT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "imageInput": _literals(
+            "assets",
+            "images",
+            "state-image-urls",
+            description=(
+                'How the service takes classifier images. "assets" sends TypeSafe\'s assets map (PNG and JPEG) and '
+                'references the images from the state, as TypeSafe and Jev on Workers AI expect. "images" sends '
+                "Clef's images list of data URLs (PNG, JPEG, and WebP, at most four), as Clef on Workers AI expects. "
+                '"state-image-urls" places image_url parts before the state, as OpenRouter expects; OpenRouter drops '
+                "assets without an error. Auto-detected from the provider, baseUrl, and model ID. Classifier models "
+                "read it from the provider-level compat; models and modelOverrides entries apply to chat models only."
+            ),
+        ),
+        "sendImageOptInHeader": _boolean(
+            description=(
+                "Whether requests with images send the TypeSafe-Danger-Zone-Images: true header, which TypeSafe's "
+                "own API requires for its experimental image input. Defaults to true for the typesafe-system-one API "
+                "unless the model is detected as OpenRouter."
+            )
+        ),
+    },
+    "description": "Compatibility settings for System One classifier APIs.",
+    "additionalProperties": True,
+}
+
 _PROVIDER_COMPAT_PROPERTY_OVERRIDES: dict[str, Any] = {
     "supportsDeveloperRole": _boolean(
         description="Whether the provider supports the developer role instead of system. Defaults are API-specific."
@@ -622,18 +650,25 @@ def _merge_compat_properties(
     return {**merged, **overrides}
 
 
-_COMPAT_SCHEMAS_BY_API = {
+# Compatibility schema for each API whose models accept compat. Mirrors the compat type of Model.
+COMPAT_SCHEMAS_BY_API: dict[str, dict[str, Any]] = {
     "openai-completions": OPENAI_COMPLETIONS_COMPAT_SCHEMA,
     "openai-responses": OPENAI_RESPONSES_COMPAT_SCHEMA,
+    "azure-openai-responses": OPENAI_RESPONSES_COMPAT_SCHEMA,
+    "openai-codex-responses": OPENAI_RESPONSES_COMPAT_SCHEMA,
     "anthropic-messages": ANTHROPIC_MESSAGES_COMPAT_SCHEMA,
     "bedrock-converse-stream": BEDROCK_COMPAT_SCHEMA,
     "mistral-conversations": MISTRAL_CONVERSATIONS_COMPAT_SCHEMA,
+    "typesafe-system-one": SYSTEM_ONE_COMPAT_SCHEMA,
+    "cloudflare-workers-ai-system-one": SYSTEM_ONE_COMPAT_SCHEMA,
 }
 
 PROVIDER_COMPAT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": _merge_compat_properties(
-        [schema["properties"] for schema in _COMPAT_SCHEMAS_BY_API.values()], _PROVIDER_COMPAT_PROPERTY_OVERRIDES
+        # Each schema once: the aliases share one (pi: `new Set(...)`, by identity).
+        [schema["properties"] for schema in {id(schema): schema for schema in COMPAT_SCHEMAS_BY_API.values()}.values()],
+        _PROVIDER_COMPAT_PROPERTY_OVERRIDES,
     ),
     "description": "Provider and model compatibility overrides.",
     "additionalProperties": True,

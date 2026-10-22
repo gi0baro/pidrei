@@ -610,6 +610,22 @@ class MistralConversationsCompat:
     supports_mid_convo_system_messages: bool | None = None
 
 
+# How a System One service takes classifier images (see `api/system_one_shared.py`).
+type SystemOneImageInput = Literal["assets", "images", "state-image-urls"]
+
+
+@dataclass(slots=True)
+class SystemOneCompat:
+    """Compatibility settings for System One classifier APIs."""
+
+    # How the service takes classifier images. Default: auto-detected from the provider,
+    # base URL, and model id.
+    image_input: SystemOneImageInput | None = None
+    # Whether requests with images send TypeSafe's `TypeSafe-Danger-Zone-Images: true` opt-in
+    # header. Default: True for typesafe-system-one unless the model is detected as OpenRouter.
+    send_image_opt_in_header: bool | None = None
+
+
 type ModelCompat = (
     OpenAICompletionsCompat
     | OpenAIResponsesCompat
@@ -1002,6 +1018,8 @@ class ClassifierModel:
     # Provider input limits and cache-safe preprocessing metadata.
     input_limits: ModelInputLimits | None = None
     headers: dict[str, str] | None = None
+    # Compatibility overrides for System One APIs. If not set, auto-detected from provider, base URL, and id.
+    compat: SystemOneCompat | None = None
     type: Literal["classifier"] = "classifier"
 
 

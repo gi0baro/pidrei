@@ -10,6 +10,11 @@ https://developers.cloudflare.com/ai/models/typesafe/jev/
 Cloudflare-hosted models such as `@cf/cloudflare/clef` return the output directly:
 `{success, result: {model, answers, usage}}`.
 https://developers.cloudflare.com/workers-ai/models/clef/
+
+Clef models take images as an `images` list of data URLs. TypeSafe's models
+take them as System One `assets`, without TypeSafe's opt-in header. The
+catalog sets `compat.image_input`; the model id check only covers models
+without it.
 """
 
 import json
@@ -17,7 +22,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from pidrei_ai.api.classifier_shared import is_record
-from pidrei_ai.api.system_one_shared import SystemOneTransport, classify_system_one
+from pidrei_ai.api.system_one_shared import ResolvedSystemOneCompat, SystemOneTransport, classify_system_one
 from pidrei_ai.types import ClassifierContext, ClassifierModel, ClassifierOptions, ClassifierResult
 
 
@@ -64,6 +69,10 @@ def _js_string(record: dict[str, Any], key: str) -> str:
 _TRANSPORT = SystemOneTransport(
     api="cloudflare-workers-ai-system-one",
     label=_LABEL,
+    detect_compat=lambda model: ResolvedSystemOneCompat(
+        image_input="images" if model.id.startswith("@cf/cloudflare/clef") else "assets",
+        send_image_opt_in_header=False,
+    ),
     url=lambda model: f"{model.base_url.rstrip('/')}/run",
     payload=lambda model, request: {"model": model.id, "input": request},
     output=_output,

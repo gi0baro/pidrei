@@ -32,6 +32,7 @@ from pidrei_ai.types import (
     ModelType,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
+    SystemOneCompat,
 )
 from pidrei_ai.utils.model_operations import is_model_type
 
@@ -52,6 +53,8 @@ _COMPAT_CLASSES: dict[str, type] = {
     "anthropic-messages": AnthropicMessagesCompat,
     "bedrock-converse-stream": BedrockCompat,
     "mistral-conversations": MistralConversationsCompat,
+    "typesafe-system-one": SystemOneCompat,
+    "cloudflare-workers-ai-system-one": SystemOneCompat,
 }
 
 
@@ -199,6 +202,7 @@ def _parse_classifier_model(raw: dict[str, Any]) -> ClassifierModel:
         context_window=raw["contextWindow"],
         input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
         headers=dict(raw["headers"]) if "headers" in raw else None,
+        compat=_parse_compat(raw["api"], raw["compat"]) if "compat" in raw else None,
     )
 
 

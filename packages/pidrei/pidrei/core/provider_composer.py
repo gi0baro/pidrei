@@ -299,13 +299,14 @@ def apply_models_json(
             f'Provider {provider_id}: must specify "baseUrl", "headers", "compat", "modelOverrides", or "models".'
         )
 
+    # Classifier APIs read their own compat fields, such as how a System One service takes images.
     models = [
         replace(
             model,
             base_url=_nn(config.get("baseUrl"), model.base_url),
             compat=merge_compat(model.api, model.compat, config.get("compat")),
         )
-        if is_model_type(model, "chat")
+        if is_model_type(model, "chat") or is_model_type(model, "classifier")
         else replace(model, base_url=_nn(config.get("baseUrl"), model.base_url))
         for model in base_models
     ]
@@ -403,6 +404,7 @@ def _extension_model_from_definition(
             context_window=_nn(definition.get("contextWindow"), 128000),
             input_limits=input_limits,
             headers=None,
+            compat=_model_compat(api, definition.get("compat")),
         )
     return Model(
         id=definition["id"],

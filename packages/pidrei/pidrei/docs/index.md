@@ -16,6 +16,7 @@ where this documentation says otherwise.
 - [Slash commands](slash-commands.md) — the built-in interactive commands.
 - [Configuration](configuration.md) — user and project directories, settings files, context files, and project trust.
 - [Custom models](models.md) — add model entries in `models.json`.
+- [Models configuration](models-configuration.md) — every `models.json` field, generated from its schema.
 - [Environment variables](environment-variables.md) — process configuration, and what bash tools see.
 - [Keybindings](keybindings.md) — default shortcuts and how to rebind them.
 
