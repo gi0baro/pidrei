@@ -37,7 +37,7 @@
         "low": "low",
         "medium": "medium",
         "high": "high",
-        "xhigh": null,
+        "xhigh": "xhigh",
         "max": null
       },
       "inputLimits": {
@@ -89,7 +89,7 @@
         "low": "low",
         "medium": "medium",
         "high": "high",
-        "xhigh": null,
+        "xhigh": "xhigh",
         "max": null
       },
       "inputLimits": {

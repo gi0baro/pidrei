@@ -6,6 +6,124 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.4.0.0] - 2026-10-22
+
+Tracks [Pi 1.4.0](https://github.com/earendil-works/pi/releases/tag/v1.4.0).
+
+### Added
+
+- Image input for classifiers: codemode's `models.classify()` accepts
+  `images` for TypeSafe's Jev and Cloudflare's Clef models on `typesafe`,
+  `cloudflare-workers-ai` and OpenRouter. Each service gets its own request
+  format, chosen by the model's new `compat.imageInput`; `models.json`
+  provider-level `compat` now applies to classifier models too, with
+  `imageInput` and `sendImageOptInHeader` for proxies that serve another
+  service's classifiers, and extension classifier models accept `compat`.
+  See the models page.
+- Clef Omni and Jev 1.14 classifier models on Cloudflare Workers AI.
+- A Models Configuration reference page listing every provider, model, model
+  override and compatibility field of `models.json`, generated from its
+  schema; `models.schema.json` now describes provider and model fields, so
+  editors show hints for them.
+- `MiniMax-M3.1-Flash` on the `minimax` and `minimax-cn` providers, with
+  thinking levels low through max. New MiniMax models from models.dev appear
+  without a manual allowlist entry.
+- Rex terminal support: OSC 8 hyperlinks, truecolor and inline images.
+- Client identity in `pidrei_ai`: an `identity` request option and a
+  `create_models(identity=...)` default choose the `User-Agent` (detailed
+  with a version, short, or custom) and the provider attribution headers for
+  OpenRouter, NVIDIA NIM and OpenCode. `with_client_identity()` applies an
+  identity to a `Models` a library receives from its host.
+  `pidrei_agent.Agent` takes `identity` too.
+
+### Changed
+
+- The default `User-Agent` is `pidrei/<version> (<platform>;
+  python/<version>; <arch>)`, the format pidrei already used for its own
+  requests. Bedrock, OpenRouter image generation and classifier requests
+  send it too.
+- Provider attribution headers come from the client identity, below the
+  provider, model and request headers. `before_provider_headers` handlers no
+  longer see the OpenRouter, NVIDIA NIM and OpenCode attribution headers;
+  returning `None` for one still removes it. Cloudflare requests send the
+  detailed `User-Agent` instead of `pidrei-coding-agent`, and OpenCode
+  requests send `x-opencode-client` whenever attribution is enabled, not only
+  with a session. Requests with a session id to custom providers pointing at
+  OpenCode send `x-opencode-session` too.
+- Compaction and branch summaries use the model's output limit instead of a
+  fixed cap; `compaction.reserveTokens` only decides when compaction starts.
+  `generate_summary()` and `generate_summary_with_usage()` ignore their
+  reserve-tokens argument, now named `_reserve_tokens`.
+- The default GitHub Copilot model is `gpt-6.1-sol` (Copilot retired
+  `gpt-5.4`), and the default NVIDIA model is
+  `nvidia/nemotron-3.5-super-vl-120b-a12b`.
+- Grok 4.3 and Grok 4.5 on the `xai` provider offer the `xhigh` thinking
+  level.
+- Sign in with ChatGPT: ChatGPT Business workspace usage-limit errors are not
+  retried and tell the user to ask their workspace admin to raise the limit.
+- Model catalog regenerated from models.dev.
+
+### Fixed
+
+- An unclosed `$$` display-math block swallowed or corrupted every Markdown
+  table after it.
+- Markdown bold and italic did not render next to CJK punctuation, in the TUI
+  and in HTML exports.
+- Concurrent extension `select`/`confirm`/`input`/`editor` dialogs and inline
+  `custom()` components in interactive mode: a second dialog replaced the
+  first, whose call never returned. Closing the visible dialog now shows the
+  previous one again.
+- Pasting in the shell hung after copying text in pidrei and suspending it
+  with Ctrl+Z on Linux: the background `wl-copy`/`xclip`/`xsel` process that
+  serves the clipboard was suspended with pidrei.
+- `mcp.json` files starting with a UTF-8 BOM failed to parse, which skipped
+  all their MCP servers and made `pidrei mcp add`/`pidrei mcp remove` fail.
+- `/compact <instructions>` ignored the instructions when summarizing the
+  start of a turn that compaction splits, and ignored them entirely when that
+  turn was the only new content since the last compaction.
+- Resumed sessions and `/tree` navigation left extension tools inactive when
+  the branch recorded its tools before they were registered, such as tools
+  from extensions installed after the session started. Extension tools the
+  branch never added or removed are now active unless registered with
+  `default_active=False`.
+- Sessions broke after recovery from a response cut off at the output limit:
+  the truncated tool call was omitted but its tool results were kept, so
+  providers rejected every later request.
+- The `grep` tool followed `RIPGREP_CONFIG_PATH`, where options such as
+  `--fixed-strings` silently turned regex searches into literal ones. It now
+  runs `rg --no-config`.
+- `@` file autocomplete returned no results for queries containing regex
+  metacharacters such as `[` or `(`.
+- GitHub Copilot sessions with large request bodies, such as many images,
+  failed with HTTP 413 instead of compacting and retrying: any HTTP 413 now
+  counts as context overflow.
+- The `openai-codex` provider offered `gpt-5.5` and `gpt-5.3-codex-spark`,
+  which always fail for ChatGPT accounts.
+- Whitespace-only tool output, such as a bare `\r\n` from bash, made OpenAI
+  Completions, OpenAI Responses and Google requests fail with a 400.
+- Automatic retry did not trigger for more gateway upstream failures,
+  `stream disconnected before completion` errors relayed by Codex CLI
+  proxies, and transient Google Vertex OAuth token refresh failures, and
+  retried errors because of digits inside request ids or byte counts.
+- OpenAI Responses models lost the prompt cache on every deferred tool load
+  after a tool was removed.
+- Cloudflare Workers AI classifier pricing: Clef Flash costs $0.038 and Jev
+  $0.042 per million input tokens, instead of Jev being listed as free.
+
+### Not ported
+
+- Pi's opt-in request tracing (`pi.ai.request` spans and metrics). pidrei
+  ships no telemetry.
+- Pi's codemode worker queue and `PI_CODEMODE_MAX_WORKERS`: they bound Pi's
+  two live codemode workers, a limit pidrei never had; scripts beyond the
+  worker pool's size already wait for a worker.
+- Pi's terminal restore from a process exit handler when it exits without
+  stopping the TUI: every pidrei exit with the TUI up stops it first.
+- Windows shell detection fixes and the `managed-install.json` BOM fix:
+  pidrei is POSIX-only and has no self-update machinery.
+- Pi's `@earendil-works/pi-ai/models` extension import alias: pidrei
+  extensions import `pidrei_ai` modules directly.
+
 ## [1.3.0.0] - 2026-10-16
 
 Tracks [Pi 1.3.0](https://github.com/earendil-works/pi/releases/tag/v1.3.0).

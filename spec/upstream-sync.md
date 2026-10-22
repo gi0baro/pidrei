@@ -866,7 +866,7 @@ Pi's upper-case-first rule applies to any other name), User-Agent
 attribution and stay `pidrei`. Upstream hunks to the mechanism port 1:1;
 hunks to Pi's own values do not.
 
-### `config-schemas` (`coding-agent/src/core/settings-schema.ts`, `settings-defaults.ts`, `key-id-schema.ts`, `scripts/generate-schemas.ts`, `schemas/*.schema.json`)
+### `config-schemas` (`coding-agent/src/core/settings-schema.ts`, `settings-defaults.ts`, `key-id-schema.ts`, `scripts/generate-schemas.ts`, `scripts/generate-references.ts`, `schemas/*.schema.json`, `docs/models-configuration.md`)
 
 Pi generates JSON Schemas for `models.json`, `settings.json`,
 `keybindings.json` and themes from its TypeBox schemas. PiDrei keeps the
@@ -880,6 +880,12 @@ into `packages/pidrei/pidrei/schemas/` with `make config-schemas`
 - **Generated, never hand-edited**: an upstream hunk to a schema module or
   to `schemas/*.json` lands in the Python module, then the artifacts are
   regenerated; a test checks they match the committed files.
+- **The `models.json` reference page** (ruled for 1.4.0):
+  `docs/models-configuration.md` is rendered from the same schemas by
+  `packages/pidrei/scripts/generate_references.py` (`make references`;
+  `test_references.py` checks the committed page is current). Hunks to Pi's
+  generator port to it; hunks to Pi's page come from the schema modules and
+  a regeneration, never a hand edit.
 - **URLs are PiDrei's** (ruled for 1.2.0): `$id` and the `$schema` values in
   docs and built-in themes point at
   `https://raw.githubusercontent.com/gi0baro/pidrei/master/packages/pidrei/pidrei/schemas/<name>.schema.json`

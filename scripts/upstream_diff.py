@@ -1224,6 +1224,13 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/test/first-time-setup.test.ts": (
         ("no-telemetry", "analytics-settings cases are not mirrored"),
     ),
+    # Client identity (1.4.0.0): the mechanism ports, the identity values are PiDrei's.
+    "packages/ai/src/utils/identity.ts": (
+        ("no-telemetry", "PIDREI_ATTRIBUTION and the pidrei User-Agent; NVIDIA origin is PiDrei by the casing rule"),
+    ),
+    "packages/coding-agent/src/core/client-identity.ts": (
+        ("no-telemetry", "gated by enableProviderAttribution / PIDREI_PROVIDER_ATTRIBUTION, not install telemetry"),
+    ),
     # Configuration schemas (1.2.0.0): PiDrei's settings set, schema URLs and the
     # runtime key-id anchor (recipe `config-schemas`).
     "packages/coding-agent/src/core/settings-schema.ts": (
@@ -1239,6 +1246,14 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "packages/coding-agent/scripts/generate-schemas.ts": (
         ("config-schemas", "SCHEMA_BASE_URL is PiDrei's GitHub raw URL; regenerate with make config-schemas"),
+    ),
+    # The models.json reference page (1.4.0.0), rendered from the same schemas.
+    "packages/coding-agent/scripts/generate-references.ts": (
+        (
+            "config-schemas",
+            "renders docs/models-configuration.md from PiDrei's schema dicts; SCHEMA_BASE_URL is PiDrei's; "
+            "regenerate with make references",
+        ),
     ),
     # Codemode scripts are Python on Monty (1.0.0.0): behaviour ports, the
     # JavaScript-shaped text and machinery are translated or dropped.

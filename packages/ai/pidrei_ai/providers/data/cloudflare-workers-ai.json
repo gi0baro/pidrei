@@ -8,7 +8,8 @@
       "provider": "cloudflare-workers-ai",
       "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.24,
@@ -16,7 +17,10 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 65536
+      "contextWindow": 65536,
+      "compat": {
+        "imageInput": "images"
+      }
     },
     "classifier:@cf/cloudflare/clef-flash": {
       "type": "classifier",
@@ -26,15 +30,41 @@
       "provider": "cloudflare-workers-ai",
       "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
-        "input": 0.09,
+        "input": 0.038,
         "output": 0,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 65536
+      "contextWindow": 24576,
+      "compat": {
+        "imageInput": "images"
+      }
+    },
+    "classifier:@cf/cloudflare/clef-omni": {
+      "type": "classifier",
+      "id": "@cf/cloudflare/clef-omni",
+      "name": "Clef Omni",
+      "api": "cloudflare-workers-ai-system-one",
+      "provider": "cloudflare-workers-ai",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.15,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 64000,
+      "compat": {
+        "imageInput": "images"
+      }
     },
     "classifier:typesafe/jev": {
       "type": "classifier",
@@ -44,15 +74,41 @@
       "provider": "cloudflare-workers-ai",
       "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
-        "input": 0,
+        "input": 0.042,
         "output": 0,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 32000
+      "contextWindow": 32000,
+      "compat": {
+        "imageInput": "assets"
+      }
+    },
+    "classifier:typesafe/jev-1.14.0": {
+      "type": "classifier",
+      "id": "typesafe/jev-1.14.0",
+      "name": "Jev 1.14",
+      "api": "cloudflare-workers-ai-system-one",
+      "provider": "cloudflare-workers-ai",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32000,
+      "compat": {
+        "imageInput": "assets"
+      }
     }
   },
   "openai-completions": {
@@ -128,6 +184,53 @@
       },
       "type": "chat"
     },
+    "chat:@cf/deepseek-ai/deepseek-v4.1-flash-1017": {
+      "id": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "name": "Deepseek V4.1 Flash 1017",
+      "api": "openai-completions",
+      "provider": "cloudflare-workers-ai",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true,
+        "requiresReasoningContentOnAssistantMessages": true,
+        "thinkingFormat": "deepseek"
+      },
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:@cf/google/gemma-4-26b-a4b-it": {
       "id": "@cf/google/gemma-4-26b-a4b-it",
       "name": "Gemma 4 26B A4B IT",
@@ -153,15 +256,6 @@
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
-      },
-      "thinkingLevelMap": {
-        "off": "none",
-        "minimal": null,
-        "low": null,
-        "medium": null,
-        "high": "high",
-        "xhigh": null,
-        "max": null
       },
       "inputLimits": {
         "images": {
@@ -419,7 +513,7 @@
         "off": null,
         "minimal": null,
         "low": "low",
-        "medium": "medium",
+        "medium": null,
         "high": "high",
         "xhigh": null,
         "max": null
