@@ -457,6 +457,27 @@ def test_updates_reserved_scrollbar_layout_at_runtime():
     assert scroll_view.is_scrollbar_visible is False
 
 
+def test_renders_an_always_visible_scrollbar_over_empty_content():
+    scroll_view = ScrollView(RenderComponent([]), {"scrollbar": "always"})
+
+    frame = render_layout_frame(scroll_view, 6, 2, _noop)
+
+    assert visible_lines(frame.lines) == ["     ┃", "     ┃"]
+
+
+def test_scrollbar_glyph_drops_zero_width_text_before_the_last_cell(fake_scrollbar_hide_timers):
+    scroll_view = ScrollView(
+        RenderComponent(["ab\u200bc", "ab\u200bc"]),
+        {"scrollbar": "auto", "scrollbarTrackStyle": lambda text: text, "scrollbarThumbStyle": lambda text: text},
+    )
+    render_layout_frame(scroll_view, 3, 1, _noop)
+    scroll_view.scroll_by(1)
+
+    frame = render_layout_frame(scroll_view, 3, 1, _noop)
+
+    assert visible_lines(frame.lines) == ["ab┃"]
+
+
 def test_measures_nested_scroll_content_from_constrained_child_geometry():
     inner = ScrollView(Text("1\n2\n3\n4\n5\n6", 0, 0))
     outer = ScrollView(VStack([{"component": inner, "basis": 2}, Text("tail", 0, 0)]))

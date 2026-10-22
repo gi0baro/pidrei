@@ -114,6 +114,10 @@ Tracks [Pi 1.4.0](https://github.com/earendil-works/pi/releases/tag/v1.4.0).
   after a tool was removed.
 - Cloudflare Workers AI classifier pricing: Clef Flash costs $0.038 and Jev
   $0.042 per million input tokens, instead of Jev being listed as free.
+- Fullscreen mode crashed on startup with `fullscreenScrollbar` set to
+  `always`.
+- Scrolling the fullscreen transcript lagged and kept a CPU core busy while
+  the scrollbar was shown.
 
 ### Not ported
 

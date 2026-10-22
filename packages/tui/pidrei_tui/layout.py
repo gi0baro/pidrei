@@ -21,6 +21,7 @@ from .utils import (
     get_active_background_ansi,
     get_grapheme_cell_range,
     js_round,
+    measure_line_end,
     slice_by_column,
     visible_width,
 )
@@ -251,6 +252,23 @@ def _replace_scrollbar_cell(
     if is_image_line(line):
         return line
 
+    # The walk below is pi's, and costs a grapheme segmentation of the row per
+    # slice. The two common rows are measured from their end instead, and give
+    # the walk's exact output: a row narrower than the column keeps all its
+    # text, and a row filling the screen has the bar on its last grapheme.
+    line_end = measure_line_end(line)
+    if line_end["width"] < column:
+        return f"{line}{' ' * max(0, column - visible_width(line))}\x1b[0m\x1b]8;;\x07{replacement}"
+    last = line_end["last"]
+    if last is not None and column == total_width - 1 and line_end["width"] == total_width:
+        before = line[: last["beforeEnd"]]
+        before_padding = " " * max(0, last["start"] - visible_width(before))
+        cell_padding_before = " " * (column - last["start"])
+        target_style = "\x1b[0m\x1b]8;;\x07" + (
+            get_active_background_ansi(last["prefix"]) if preserve_target_background else ""
+        )
+        return f"{before}{before_padding}{target_style}{cell_padding_before}{replacement}"
+
     grapheme_range = get_grapheme_cell_range(line, column)
     start = grapheme_range[0] if grapheme_range else column
     end = grapheme_range[1] if grapheme_range else column + 1
@@ -296,7 +314,12 @@ def get_scrollbar_geometry(box: LayoutBox, include_hidden_auto: bool = False) ->
         return None
 
     min_thumb_height = min(2, track_height)
-    thumb_height = max(min_thumb_height, min(track_height, js_round(track_height * track_height / content_height)))
+    # Empty content fills the track (pi's division yields Infinity, clamped to the track).
+    thumb_height = (
+        max(min_thumb_height, min(track_height, js_round(track_height * track_height / content_height)))
+        if content_height > 0
+        else track_height
+    )
     max_scroll_top = max(0, content_height - track_height)
     max_thumb_top = track_height - thumb_height
     thumb_offset = 0 if max_scroll_top == 0 else js_round(box.scroll_view.scroll_top / max_scroll_top * max_thumb_top)
