@@ -834,11 +834,14 @@ def convert_messages(
     )
     transcript_tools = resolve_transcript_tools(
         normalized_context.messages,
-        compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True,
+        "additions"
+        if compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True
+        else "none",
     )
     instruction_role = "developer" if model.reasoning and compat.supports_developer_role else "system"
 
     last_role: str | None = None
+    system_index = 0
 
     i = 0
     while i < len(transformed_messages):
@@ -849,7 +852,9 @@ def convert_messages(
             params.append({"role": "assistant", "content": "I have processed the tool results."})
 
         if msg.role == "system":
-            added_tools = (msg.tools_added or []) if i > 0 and transcript_tools.anchors_additions else []
+            # transform_messages keeps system messages in order, so their position matches the transcript.
+            added_tools = (msg.tools_added or []) if system_index >= transcript_tools.folded_system_messages else []
+            system_index += 1
             if added_tools:
                 # Kimi accepts a system message with tools but omits the standard content field.
                 params.append({"role": "system", "tools": convert_tools(added_tools, compat)})
@@ -1054,7 +1059,9 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
 
     transcript_tools = resolve_transcript_tools(
         context.messages,
-        compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True,
+        "additions"
+        if compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True
+        else "none",
     )
     messages = convert_messages(model, context, compat, grammar_tool_input_properties)
     cache_control = _get_compat_cache_control(compat, cache_retention)

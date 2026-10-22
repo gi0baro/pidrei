@@ -15,7 +15,7 @@ from pidrei_ai.api.openai_responses import (
     stream as stream_responses,
 )
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, OpenAIResponsesCompat, TranscriptContext, UserMessage
+from pidrei_ai.types import Context, OpenAIResponsesCompat, Tool, TranscriptContext, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
 from tests.test_openai_responses import FakeClient, build_request_params, make_model
 
@@ -53,8 +53,32 @@ def test_omits_max_output_tokens_when_supports_max_output_tokens_is_false():
 
 
 def test_forwards_required_tool_choice():
-    params = build_request_params(make_model(), make_context(), OpenAIResponsesOptions(tool_choice="required"))
+    context = normalize_context(
+        Context(
+            messages=[
+                UserMessage(content="Do not call ping. Respond with text instead.", timestamp=int(time.time() * 1000))
+            ],
+            tools=[
+                Tool(
+                    name="ping",
+                    description="Ping",
+                    parameters={
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                )
+            ],
+        )
+    )
+    params = build_request_params(
+        get_builtin_model("openai", "gpt-5.4"), context, OpenAIResponsesOptions(tool_choice="required")
+    )
     assert params["tool_choice"] == "required"
+    # gpt-5.4 declares its tools in additional_tools items; tool_choice applies to them.
+    assert len(params["input"]) == 2
+    assert params["input"][0]["type"] == "additional_tools"
+    assert [tool["name"] for tool in params["input"][0]["tools"]] == ["ping"]
 
 
 def test_clamps_prompt_cache_key_to_64_characters():

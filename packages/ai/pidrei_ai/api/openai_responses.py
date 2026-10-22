@@ -11,6 +11,7 @@ from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     convert_responses_tools,
+    get_responses_tool_support,
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
@@ -341,7 +342,12 @@ def build_params(
     configuration_update_effort: str | None,
 ) -> dict:
     transcript_tools = resolve_transcript_tools(
-        context.messages, compat.supports_additional_tools or compat.supports_tool_search
+        context.messages,
+        get_responses_tool_support(
+            supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
+            supports_additional_tools=compat.supports_additional_tools,
+            supports_tool_search=compat.supports_tool_search,
+        ),
     )
     messages = convert_responses_messages(
         model,

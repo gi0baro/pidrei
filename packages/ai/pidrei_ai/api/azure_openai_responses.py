@@ -31,6 +31,7 @@ from pidrei_ai.api.openai_responses import (
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     convert_responses_tools,
+    get_responses_tool_support,
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
@@ -280,13 +281,21 @@ def build_params(
 
     supports_additional_tools = bool(getattr(compat, "supports_additional_tools", None))
     supports_tool_search = bool(getattr(compat, "supports_tool_search", None))
-    transcript_tools = resolve_transcript_tools(context.messages, supports_additional_tools or supports_tool_search)
+    supports_mid_convo_system_messages = bool(getattr(compat, "supports_mid_convo_system_messages", None))
+    transcript_tools = resolve_transcript_tools(
+        context.messages,
+        get_responses_tool_support(
+            supports_mid_convo_system_messages=supports_mid_convo_system_messages,
+            supports_additional_tools=supports_additional_tools,
+            supports_tool_search=supports_tool_search,
+        ),
+    )
     messages = convert_responses_messages(
         model,
         context,
         AZURE_TOOL_CALL_PROVIDERS,
         grammar_tool_input_properties=grammar_tool_input_properties,
-        supports_mid_convo_system_messages=bool(getattr(compat, "supports_mid_convo_system_messages", None)),
+        supports_mid_convo_system_messages=supports_mid_convo_system_messages,
         supports_additional_tools=supports_additional_tools,
         supports_tool_search=supports_tool_search,
         tool_options={
