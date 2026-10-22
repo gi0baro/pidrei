@@ -547,7 +547,6 @@ def _build_summarization_context(prompt_text: str) -> TranscriptContext:
 
 def _create_summarization_options(
     model: Model,
-    max_tokens: float,
     api_key: str | None,
     headers: dict[str, str] | None,
     env: dict[str, str] | None,
@@ -556,7 +555,6 @@ def _create_summarization_options(
     session_id: str | None,
 ) -> SimpleStreamOptions:
     options = SimpleStreamOptions(
-        max_tokens=int(max_tokens) if max_tokens != math.inf else None,
         cancel=cancel,
         api_key=api_key,
         headers=headers,
@@ -607,7 +605,8 @@ class SummaryWithUsage:
 async def generate_summary(
     current_messages: list[Any],
     model: Model,
-    reserve_tokens: int,
+    # Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+    _reserve_tokens: int | None,
     api_key: str | None,
     headers: dict[str, str] | None = None,
     cancel=None,
@@ -625,7 +624,7 @@ async def generate_summary(
     result = await generate_summary_with_usage(
         current_messages,
         model,
-        reserve_tokens,
+        _reserve_tokens,
         api_key,
         headers,
         cancel,
@@ -644,7 +643,8 @@ async def generate_summary(
 async def generate_summary_with_usage(
     current_messages: list[Any],
     model: Model,
-    reserve_tokens: int,
+    # Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+    _reserve_tokens: int | None,
     api_key: str | None,
     headers: dict[str, str] | None = None,
     cancel=None,
@@ -658,8 +658,6 @@ async def generate_summary_with_usage(
     session_id: str | None = None,
 ) -> SummaryWithUsage:
     """Generate or update a conversation summary and return its provider usage."""
-    max_tokens = min(math.floor(0.8 * reserve_tokens), model.max_tokens if model.max_tokens > 0 else math.inf)
-
     # Use update prompt if we have a previous summary, otherwise initial prompt
     base_prompt = UPDATE_SUMMARIZATION_PROMPT if previous_summary else SUMMARIZATION_PROMPT
     if custom_instructions:
@@ -676,9 +674,7 @@ async def generate_summary_with_usage(
         prompt_text += f"<previous-summary>\n{previous_summary}\n</previous-summary>\n\n"
     prompt_text += base_prompt
 
-    completion_options = _create_summarization_options(
-        model, max_tokens, api_key, headers, env, cancel, thinking_level, session_id
-    )
+    completion_options = _create_summarization_options(model, api_key, headers, env, cancel, thinking_level, session_id)
 
     response = await complete_summarization(
         model,
@@ -931,8 +927,6 @@ async def compact(
     `session_id` is an optional routing session ID forwarded without enabling
     prompt caching.
     Returns CompactionResult - SessionManager adds id/parentId when saving."""
-    settings = preparation.settings
-
     # Generate summaries and merge into one
     if preparation.is_split_turn and preparation.turn_prefix_messages:
         # The history and turn-prefix summaries are independent LLM calls;
@@ -942,7 +936,6 @@ async def compact(
         turn_prefix_call = _generate_turn_prefix_summary(
             preparation.turn_prefix_messages,
             model,
-            settings.reserve_tokens,
             api_key,
             headers,
             env,
@@ -952,13 +945,14 @@ async def compact(
             retry,
             callbacks,
             session_id,
+            custom_instructions,
         )
         if preparation.messages_to_summarize:
             history_result, turn_prefix_result = await gather(
                 generate_summary_with_usage(
                     preparation.messages_to_summarize,
                     model,
-                    settings.reserve_tokens,
+                    None,
                     api_key,
                     headers,
                     cancel,
@@ -989,7 +983,7 @@ async def compact(
         result = await generate_summary_with_usage(
             preparation.messages_to_summarize,
             model,
-            settings.reserve_tokens,
+            None,
             api_key,
             headers,
             cancel,
@@ -1024,7 +1018,6 @@ async def compact(
 async def _generate_turn_prefix_summary(
     messages: list[Any],
     model: Model,
-    reserve_tokens: int,
     api_key: str | None,
     headers: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
@@ -1034,18 +1027,19 @@ async def _generate_turn_prefix_summary(
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
     session_id: str | None = None,
+    custom_instructions: str | None = None,
 ) -> SummaryWithUsage:
     """Generate a summary for a turn prefix (when splitting a turn)."""
-    # Smaller budget for turn prefix
-    max_tokens = min(math.floor(0.5 * reserve_tokens), model.max_tokens if model.max_tokens > 0 else math.inf)
     llm_messages = convert_to_llm(messages)
     conversation_text = serialize_conversation(llm_messages)
     prompt_text = f"# Conversation\n{conversation_text}\n\n# Instructions\n{TURN_PREFIX_SUMMARIZATION_PROMPT}"
+    if custom_instructions:
+        prompt_text = f"{prompt_text}\n\nAdditional focus: {custom_instructions}"
 
     response = await complete_summarization(
         model,
         _build_summarization_context(prompt_text),
-        _create_summarization_options(model, max_tokens, api_key, headers, env, cancel, thinking_level, session_id),
+        _create_summarization_options(model, api_key, headers, env, cancel, thinking_level, session_id),
         stream_fn,
         retry,
         callbacks,

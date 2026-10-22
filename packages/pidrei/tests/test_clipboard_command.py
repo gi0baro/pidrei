@@ -4,6 +4,7 @@ pi drives `process.execPath` (node) with `-e` scripts; these drive the Python
 interpreter with `-c` scripts the same way.
 """
 
+import os
 import sys
 
 import pytest
@@ -41,6 +42,16 @@ async def test_times_out_without_blocking_the_runtime():
     )
     assert completed
     assert result is None
+
+
+# pi #11179: clipboard daemons must not share PiDrei's process group, or Ctrl+Z suspend stops them.
+@pytest.mark.tonio
+async def test_runs_commands_outside_pidreis_process_group():
+    child_pgid = (await run_clipboard_command("sh", ["-c", "ps -o pgid= -p $$"])).decode("utf-8").strip()
+    own_pgid = (await run_clipboard_command("ps", ["-o", "pgid=", "-p", str(os.getpid())])).decode("utf-8").strip()
+    assert child_pgid.isdigit()
+    assert own_pgid.isdigit()
+    assert child_pgid != own_pgid
 
 
 @pytest.mark.tonio

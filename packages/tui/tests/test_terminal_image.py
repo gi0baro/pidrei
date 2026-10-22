@@ -414,6 +414,17 @@ def test_enables_hyperlinks_and_kitty_images_for_herdr():
         assert detect_capabilities()["hyperlinks"] is False
 
 
+# pi #11131
+def test_enables_hyperlinks_and_kitty_images_for_rex():
+    with clean_env({"TERM_PROGRAM": "rex", "TERM": "xterm-256color", "KITTY_WINDOW_ID": "1"}):
+        caps = detect_capabilities()
+        assert caps["hyperlinks"] is True
+        assert caps["images"] == "kitty"
+        assert caps["trueColor"] is True
+    with clean_env({"TERM_PROGRAM": "rex", "PIDREI_HYPERLINKS": "0"}):
+        assert detect_capabilities()["hyperlinks"] is False
+
+
 def test_enables_hyperlinks_for_ghostty():
     with clean_env({"TERM_PROGRAM": "ghostty"}):
         assert detect_capabilities()["hyperlinks"] is True

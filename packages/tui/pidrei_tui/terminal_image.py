@@ -109,6 +109,11 @@ def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     if term_program == "herdr":
         return {"images": "kitty", "trueColor": has_true_color_hint, "hyperlinks": True}
 
+    # Rex supports OSC 8 hyperlinks and only partially implements the Kitty graphics protocol
+    # (no Unicode placeholders), but enough to support PiDrei.
+    if term_program == "rex":
+        return {"images": "kitty", "trueColor": True, "hyperlinks": True}
+
     if os.environ.get("KITTY_WINDOW_ID") or term_program == "kitty":
         return {"images": "kitty", "trueColor": True, "hyperlinks": True}
 

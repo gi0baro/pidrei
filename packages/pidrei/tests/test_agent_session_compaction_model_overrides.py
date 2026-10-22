@@ -113,40 +113,6 @@ async def test_uses_model_token_settings_for_compaction_and_extension_preparatio
 
 
 @pytest.mark.tonio
-@pytest.mark.parametrize("path", ["manual", "automatic"])
-async def test_passes_resolved_budgets_to_built_in_summarization(harnesses, path):
-    harness = await create_harness(
-        models=[{"id": "faux-1", "context_window": 4000, "max_tokens": 3000}],
-        tools=[],
-        settings={
-            "compaction": {
-                "reserveTokens": 10,
-                "modelOverrides": {"faux/faux-1": {"reserveTokens": 2000, "keepRecentTokens": 150}},
-            }
-        },
-    )
-    harnesses.append(harness)
-    recent_user_id = await _seed_history(harness, 2500)
-    budgets: list = []
-
-    async def summarize(_context, options, *_rest):
-        budgets.append(options.max_tokens if options is not None else None)
-        return faux_assistant_message("built-in summary")
-
-    harness.set_responses([summarize, *([faux_assistant_message("done")] if path == "automatic" else [])])
-    if path == "manual":
-        await harness.session.compact()
-    else:
-        await harness.session.prompt("continue")
-
-    assert budgets == [1600]
-    compaction = next(entry for entry in harness.session_manager.get_entries() if entry["type"] == "compaction")
-    assert compaction["firstKeptEntryId"] == recent_user_id
-    assert compaction["summary"] == "built-in summary"
-    assert harness.get_pending_response_count() == 0
-
-
-@pytest.mark.tonio
 async def test_uses_the_newly_selected_model_without_changing_ordinary_settings(harnesses):
     harness = await create_harness(
         models=[{"id": "small", "context_window": 4000}, {"id": "big", "context_window": 10000}],
@@ -202,11 +168,11 @@ async def test_captures_model_identity_before_awaiting_summarization_auth(harnes
     runtime.get_auth = switching_get_auth
     requests: list = []
 
-    async def summarize(_context, options, _state, model):
-        requests.append({"id": model.id, "max_tokens": options.max_tokens if options is not None else None})
+    async def summarize(_context, _options, _state, model):
+        requests.append(model.id)
         return faux_assistant_message("summary")
 
     harness.set_responses([summarize])
     await harness.session.compact()
 
-    assert requests == [{"id": "first", "max_tokens": 1600}]
+    assert requests == ["first"]

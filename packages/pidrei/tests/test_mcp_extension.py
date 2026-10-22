@@ -30,6 +30,7 @@ from pidrei.extensions.mcp import MAX_SERVERS_SECTION_CHARS, McpServerListing, r
 from pidrei.extensions.mcp.config import (
     McpServerConfigPatch,
     McpServerEntry,
+    add_mcp_server_config,
     get_mcp_tool_exposure,
     load_mcp_config,
     update_mcp_server_config,
@@ -137,6 +138,29 @@ async def test_lets_project_entries_override_enabled_and_exposure_of_global_serv
     await update_mcp_server_config(project, "tools", McpServerConfigPatch(enabled=True))
     with open(project) as file:
         assert json.load(file)["mcpServers"]["tools"] == {"enabled": True}
+
+
+@pytest.mark.tonio
+async def test_reads_and_edits_mcp_json_files_that_start_with_a_utf8_bom(tmp_path):
+    # Regression: #11191.
+    paths = _setup(tmp_path, {}, {})
+    global_path = os.path.join(paths["agent_dir"], "mcp.json")
+    project = os.path.join(paths["cwd"], ".pidrei", "mcp.json")
+    with open(global_path, "w", encoding="utf-8") as file:
+        file.write('﻿{"mcpServers":{"demo":{"command":"echo","enabled":false}}}\n')
+    with open(project, "w", encoding="utf-8") as file:
+        file.write('﻿{"mcpServers":{"local":{"command":"local-cmd"}}}\n')
+
+    loaded = await load_mcp_config(**paths, project_trusted=True)
+    assert loaded.errors == []
+    assert [(server.name, server.scope) for server in loaded.servers] == [("demo", "global"), ("local", "project")]
+
+    assert await add_mcp_server_config(global_path, "other", {"command": "other-cmd"}) is False
+    with open(global_path, encoding="utf-8") as file:
+        assert json.load(file)["mcpServers"] == {
+            "demo": {"command": "echo", "enabled": False},
+            "other": {"command": "other-cmd"},
+        }
 
 
 @pytest.mark.tonio

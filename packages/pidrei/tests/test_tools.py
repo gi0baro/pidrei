@@ -923,6 +923,24 @@ class TestGrepTool:
         assert "[1 matches limit reached. Use limit=2 for more, or refine pattern]" in output
         assert "match two" not in output
 
+    # https://github.com/earendil-works/pi/issues/11203
+    @pytest.mark.tonio
+    async def test_ignores_ripgrep_config_path(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "rg-config"
+        test_file = tmp_path / "fixture.txt"
+        config_file.write_text("--fixed-strings\n")
+        test_file.write_text("aXb\na.b\n")
+        monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(config_file))
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-rg-config", {"pattern": "a.b", "path": str(test_file), "literal": False}
+        )
+
+        output = get_text_output(result)
+        assert "fixture.txt:1: aXb" in output
+        assert "fixture.txt:2: a.b" in output
+
     @pytest.mark.tonio
     async def test_treats_flag_like_patterns_as_search_text(self, tmp_path):
         marker = tmp_path / "grep-injection-marker"

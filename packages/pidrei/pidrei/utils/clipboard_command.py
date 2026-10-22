@@ -34,6 +34,9 @@ async def run_clipboard_command(
             # Clipboard writers can daemonize. Do not give them output pipes to retain.
             stdout=subprocess.PIPE if input is None else subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # Detach so the daemon leaves PiDrei's process group and Ctrl+Z suspend
+            # (SIGTSTP to the group) does not stop the clipboard owner (pi #11179).
+            start_new_session=True,
             timeout=(timeout_ms if timeout_ms is not None else _DEFAULT_TIMEOUT_MS) / 1000,
             kill_signal=signal.SIGKILL,
             max_output_bytes=max_buffer_bytes if max_buffer_bytes is not None else _DEFAULT_MAX_BUFFER_BYTES,
