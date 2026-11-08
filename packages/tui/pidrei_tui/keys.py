@@ -791,7 +791,7 @@ def _parse_key_id(key_id: str) -> dict | None:
     }
 
 
-def matches_key(data: str, key_id: str) -> bool:  # noqa: C901
+def matches_key(data: str, key_id: str) -> bool:
     """Match input data against a key identifier string.
 
     Supported key identifiers:

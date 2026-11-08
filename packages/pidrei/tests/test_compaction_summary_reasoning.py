@@ -318,4 +318,4 @@ async def test_combines_usage_from_split_turn_summaries():
 
     result = await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
 
-    assert result.usage == Usage(input=20, output=20, total_tokens=40, cost=UsageCost())
+    assert result.usage == Usage(input=20, output=20, total_tokens=40, cost=UsageCost(total_from_provider=False))

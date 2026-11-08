@@ -42,7 +42,12 @@ from pidrei_ai.api.bedrock_runtime import (
     BedrockRuntimeServiceException,
     ConverseStreamCommand,
 )
-from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import (
+    get_json_schema_tool_parameters,
+    is_strict_tool_limit_error_message,
+    prefers_json_schema_strict_sampling,
+    resolve_json_schema_strict_sampling,
+)
 from pidrei_ai.api.simple_options import (
     adjust_max_tokens_for_thinking,
     build_base_options,
@@ -62,6 +67,7 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     CacheRetention,
+    DiagnosticErrorInfo,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -268,28 +274,53 @@ def stream(
             initial_system_prompt = (
                 get_system_message_text(initial_system_message) if initial_system_message is not None else None
             )
-            command_input: dict[str, Any] = {
-                "modelId": model.id,
-                "messages": convert_messages(normalized_context, model, cache_retention, opts.env),
-                "system": build_system_prompt(initial_system_prompt, model, cache_retention, opts.env),
-                "inferenceConfig": {
-                    **({"maxTokens": inference_max_tokens} if inference_max_tokens is not None else {}),
-                    **({"temperature": opts.temperature} if opts.temperature is not None else {}),
-                },
-                "toolConfig": convert_tool_config(
+            disable_preferred_strict_tools = False
+            while True:
+                tool_config, has_preferred_strict_tools = convert_tool_config(
                     get_current_tools(normalized_context.messages),
                     opts.tool_choice,
                     bool(getattr(model.compat, "supports_strict_mode", None)),
-                ),
-                "additionalModelRequestFields": build_additional_model_request_fields(model, opts),
-                **({"requestMetadata": opts.request_metadata} if opts.request_metadata is not None else {}),
-            }
-            next_command_input = await maybe_call(opts.on_payload, command_input, model)
-            if next_command_input is not None:
-                command_input = next_command_input
-            command = ConverseStreamCommand(command_input)
-
-            response = await client.send(command, cancel=opts.cancel)
+                    disable_preferred_strict_tools,
+                )
+                command_input: dict[str, Any] = {
+                    "modelId": model.id,
+                    "messages": convert_messages(normalized_context, model, cache_retention, opts.env),
+                    "system": build_system_prompt(initial_system_prompt, model, cache_retention, opts.env),
+                    "inferenceConfig": {
+                        **({"maxTokens": inference_max_tokens} if inference_max_tokens is not None else {}),
+                        **({"temperature": opts.temperature} if opts.temperature is not None else {}),
+                    },
+                    "toolConfig": tool_config,
+                    "additionalModelRequestFields": build_additional_model_request_fields(model, opts),
+                    **({"requestMetadata": opts.request_metadata} if opts.request_metadata is not None else {}),
+                }
+                next_command_input = await maybe_call(opts.on_payload, command_input, model)
+                if next_command_input is not None:
+                    command_input = next_command_input
+                try:
+                    response = await client.send(ConverseStreamCommand(command_input), cancel=opts.cancel)
+                    break
+                except BedrockRuntimeServiceException as error:
+                    # Bedrock checks the tool schemas before it starts the stream, so a retry never repeats
+                    # streamed output.
+                    if (
+                        (opts.cancel is not None and opts.cancel.cancelled)
+                        or disable_preferred_strict_tools
+                        or not has_preferred_strict_tools
+                        or error.name != "ValidationException"
+                        or not is_strict_tool_limit_error_message(str(error))
+                    ):
+                        raise
+                    disable_preferred_strict_tools = True
+                    append_assistant_message_diagnostic(
+                        output,
+                        AssistantMessageDiagnostic(
+                            type="bedrock_strict_tools_fallback",
+                            timestamp=clock.now_ms(),
+                            error=DiagnosticErrorInfo(message=str(error)),
+                            details={"reason": "strict_tool_limits_exceeded"},
+                        ),
+                    )
             response_request_id = _normalize_diagnostic_value(response.metadata.request_id)
             if not observed_raw_response and response.metadata.http_status_code is not None:
                 response_headers: dict[str, str] = {}
@@ -1045,16 +1076,23 @@ def convert_messages(
 
 
 def convert_tool_config(
-    tools: list[Tool] | None, tool_choice: Any, supports_strict_mode: bool
-) -> dict[str, Any] | None:
-    if not tools:
-        return None
-    if tool_choice == "none":
-        return None
+    tools: list[Tool] | None, tool_choice: Any, supports_strict_mode: bool, disable_preferred_strict_tools: bool
+) -> tuple[dict[str, Any] | None, bool]:
+    """`(tool_config, has_preferred_strict_tools)`: whether a `strict: "prefer"` tool went out strict."""
+    if not tools or tool_choice == "none":
+        return None, False
 
+    has_preferred_strict_tools = False
     bedrock_tools: list[dict[str, Any]] = []
     for tool in tools:
-        strict = resolve_json_schema_strict_sampling(tool, supports_strict_mode)
+        preferred = prefers_json_schema_strict_sampling(tool)
+        strict = (
+            None
+            if disable_preferred_strict_tools and preferred
+            else resolve_json_schema_strict_sampling(tool, supports_strict_mode)
+        )
+        if strict is True and preferred:
+            has_preferred_strict_tools = True
         bedrock_tools.append(
             {
                 "toolSpec": {
@@ -1074,7 +1112,7 @@ def convert_tool_config(
     elif isinstance(tool_choice, BedrockToolChoiceTool):
         bedrock_tool_choice = {"tool": {"name": tool_choice.name}}
 
-    return {"tools": bedrock_tools, "toolChoice": bedrock_tool_choice}
+    return {"tools": bedrock_tools, "toolChoice": bedrock_tool_choice}, has_preferred_strict_tools
 
 
 def map_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:

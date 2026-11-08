@@ -120,6 +120,17 @@ def test_detects_litellm_wrapped_openai_maximum_context_length_errors():
     assert is_context_overflow(message, 131072) is True
 
 
+def test_detects_litellm_pre_call_context_window_exceeded_error():
+    # Regression for #11492.
+    message = create_error_message(
+        '400: {"message":"litellm.ContextWindowExceededError: litellm.BadRequestError: litellm._pre_call_checks: '
+        "Context Window exceeded for given call. No models have context window large enough for this call.\n"
+        "Model=Qwen3.8-Flash-Next, Max Input Tokens=262144, Got=265262\nmodel=Qwen3.8-Flash-Next. "
+        'context_window_fallbacks=None. fallbacks=[]."}'
+    )
+    assert is_context_overflow(message, 262144) is True
+
+
 def test_detects_openai_compatible_parenthesized_maximum_context_length_errors():
     message = create_error_message("Error: 400 Input length (265330) exceeds model's maximum context length (262144).")
     assert is_context_overflow(message, 262144) is True

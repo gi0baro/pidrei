@@ -147,8 +147,9 @@ class AssistantMessage:
     role: Literal["assistant"] = "assistant"
 ```
 
-`response_model` records the concrete model the provider reports when it
-differs from the requested one. `response_id`, `provider_thinking_level`,
+`response_model` records the concrete model reported by the provider, when
+the provider reports one. It may equal the requested model. `response_id`,
+`provider_thinking_level`,
 `thinking_level`, `diagnostics`, and `raw_stop_reason` preserve provider or
 runtime details.
 

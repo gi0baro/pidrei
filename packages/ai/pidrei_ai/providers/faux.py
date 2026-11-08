@@ -441,10 +441,11 @@ class FauxCore:
                 if previous_prompt:
                     cached_chars = _common_prompt_prefix_length(previous_prompt, prompt)
                     cache_read = math.ceil(cached_chars / 4)
-                    cache_write = math.ceil((prompt_length - cached_chars) / 4)
-                    input_tokens = max(0, prompt_tokens - cache_read)
+                    cache_write = max(0, prompt_tokens - cache_read)
                 else:
                     cache_write = prompt_tokens
+                # Every prompt token is either read from or written to the simulated cache.
+                input_tokens = 0
                 self._prompt_cache[session_id] = prompt
 
         return replace(

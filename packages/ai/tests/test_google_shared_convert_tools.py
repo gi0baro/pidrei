@@ -1,5 +1,8 @@
 """Mirror of pi's google-shared-convert-tools.test.ts."""
 
+import copy
+import json
+
 import pytest
 
 from pidrei_ai.api.google_shared import (
@@ -157,3 +160,120 @@ def test_uses_validated_function_calling_for_strict_tools_on_gemini_3():
 def test_returns_none_for_empty_tool_list():
     assert convert_tools([]) is None
     assert convert_tools([], True) is None
+
+
+# --- const handling (regression coverage for #11308) ---------------------------
+
+
+def _json_schema(parameters: dict) -> dict:
+    return convert_tools([make_tool(parameters)])[0]["functionDeclarations"][0]["parametersJsonSchema"]
+
+
+@pytest.mark.parametrize("key", ["default", "examples", "enum", "const", "x-custom"])
+def test_preserves_literal_data_under(key):
+    literal = {"const": "literal-data", "properties": {"nested": {"const": 1}}}
+    parameters = {
+        "type": "object",
+        "properties": {"value": {"type": "object", key: [literal] if key in ("enum", "examples") else literal}},
+    }
+    original = copy.deepcopy(parameters)
+
+    assert _json_schema(parameters) == original
+    assert parameters == original
+
+
+@pytest.mark.parametrize(
+    "key", ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"]
+)
+def test_preserves_names_while_rewriting_schemas_in(key):
+    parameters = {
+        "type": "object",
+        key: {
+            "__proto__": {"const": "x"},
+            "const": {"const": "y"},
+            "properties": {"const": "z"},
+        },
+    }
+    original = copy.deepcopy(parameters)
+    expected = {
+        "type": "object",
+        key: {
+            "__proto__": {"enum": ["x"]},
+            "const": {"enum": ["y"]},
+            "properties": {"enum": ["z"]},
+        },
+    }
+
+    result = _json_schema(parameters)
+    assert result == expected
+    assert json.dumps(result) == json.dumps(expected)
+    assert parameters == original
+
+
+def test_rewrites_only_schema_bearing_keywords():
+    parameters = {
+        "type": "object",
+        "additionalProperties": {"const": "x"},
+        "unevaluatedProperties": False,
+        "propertyNames": {"const": "name"},
+        "allOf": [{"if": {"const": "x"}, "then": {"const": "y"}, "else": {"not": {"const": "z"}}}],
+        "properties": {
+            "list": {
+                "type": "array",
+                "items": [{"const": 1}],
+                "prefixItems": [{"const": 2}],
+                "additionalItems": {"const": 3},
+                "contains": {"const": 4},
+                "unevaluatedItems": {"const": 5},
+            },
+        },
+        "dependencies": {"list": ["other"]},
+    }
+
+    assert _json_schema(parameters) == {
+        "type": "object",
+        "additionalProperties": {"enum": ["x"]},
+        "unevaluatedProperties": False,
+        "propertyNames": {"enum": ["name"]},
+        "allOf": [{"if": {"enum": ["x"]}, "then": {"enum": ["y"]}, "else": {"not": {"enum": ["z"]}}}],
+        "properties": {
+            "list": {
+                "type": "array",
+                "items": [{"enum": [1]}],
+                "prefixItems": [{"enum": [2]}],
+                "additionalItems": {"enum": [3]},
+                "contains": {"enum": [4]},
+                "unevaluatedItems": {"enum": [5]},
+            },
+        },
+        "dependencies": {"list": ["other"]},
+    }
+
+
+def test_rewrites_string_and_number_const_values_to_single_value_enums_in_parameters_json_schema():
+    parameters = {
+        "type": "object",
+        "properties": {
+            "origin": {"type": "string", "const": "zq-src-7"},
+            "mode": {"anyOf": [{"type": "string", "const": "a"}, {"type": "string", "const": "b"}]},
+            "level": {"oneOf": [{"const": 1}, {"const": 2}]},
+            "flag": {"type": "boolean", "const": True},
+            "list": {"type": "array", "items": {"const": "x"}},
+            "const": {"type": "string"},
+        },
+        "required": ["origin"],
+    }
+
+    assert _json_schema(parameters) == {
+        "type": "object",
+        "properties": {
+            "origin": {"type": "string", "enum": ["zq-src-7"]},
+            "mode": {"anyOf": [{"type": "string", "enum": ["a"]}, {"type": "string", "enum": ["b"]}]},
+            "level": {"oneOf": [{"enum": [1]}, {"enum": [2]}]},
+            "flag": {"type": "boolean", "const": True},
+            "list": {"type": "array", "items": {"enum": ["x"]}},
+            "const": {"type": "string"},
+        },
+        "required": ["origin"],
+    }
+    assert parameters["properties"]["origin"] == {"type": "string", "const": "zq-src-7"}

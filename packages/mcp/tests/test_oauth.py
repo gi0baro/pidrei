@@ -27,6 +27,7 @@ from pidrei_mcp.oauth import (
     authorize_mcp,
     discover_authorization_server_metadata,
     register_client,
+    start_authorization,
 )
 from pidrei_mcp.url import parse_url
 from pidrei_utils import clock
@@ -476,6 +477,44 @@ async def test_rejects_authorization_metadata_whose_issuer_does_not_match_discov
         origin = await http_servers.listen(handler)
         with pytest.raises(OAuthIssuerMismatchError):
             await discover_authorization_server_metadata(origin)
+
+
+@pytest.mark.tonio
+async def test_rejects_non_http_authorization_endpoints_which_the_platform_url_handler_would_launch(monkeypatch):
+    endpoints = ["file://attacker.example/share/x.exe", "search-ms:query=x", "ms-msdt:/id"]
+    endpoint = ""
+    async with loopback_servers(monkeypatch) as http_servers:
+
+        async def handler(request, origin):
+            await _respond_json(
+                request,
+                {
+                    "issuer": origin,
+                    "authorization_endpoint": endpoint,
+                    "token_endpoint": f"{origin}/token",
+                    "response_types_supported": ["code"],
+                },
+            )
+
+        origin = await http_servers.listen(handler)
+        for value in endpoints:
+            endpoint = value
+            with pytest.raises(Exception, match="Invalid authorization endpoint"):
+                await discover_authorization_server_metadata(origin)
+            metadata = {
+                "issuer": origin,
+                "authorization_endpoint": value,
+                "token_endpoint": f"{origin}/token",
+                "response_types_supported": ["code"],
+            }
+            # start_authorization is synchronous here (pi awaits its PKCE generation).
+            with pytest.raises(Exception, match="Invalid authorization endpoint"):
+                start_authorization(
+                    origin,
+                    metadata=metadata,
+                    client_information={"client_id": "client"},
+                    redirect_url="http://127.0.0.1/callback",
+                )
 
 
 @pytest.mark.tonio

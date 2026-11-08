@@ -189,11 +189,19 @@ type ToolResultContent = TextContent | ImageContent
 
 @dataclass(slots=True, frozen=True)
 class UsageCost:
+    # Catalog-derived input cost.
     input: float = 0.0
+    # Catalog-derived output cost.
     output: float = 0.0
+    # Catalog-derived cache-read cost.
     cache_read: float = 0.0
+    # Catalog-derived cache-write cost.
     cache_write: float = 0.0
+    # Best available total: provider-reported billed cost when supported, otherwise the catalog estimate.
     total: float = 0.0
+    # True when `total` is the billed cost reported by the provider. False when it is a catalog estimate;
+    # absent (None) also means false.
+    total_from_provider: bool | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -294,7 +302,7 @@ class AssistantMessage:
     stop_reason: StopReason
     # Unix timestamp in milliseconds when the request started.
     timestamp: int
-    # Concrete model reported by the provider when different from the requested `model`.
+    # Concrete model reported by the provider, when reported. May equal the requested `model`.
     response_model: str | None = None
     response_id: str | None = None  # Provider-specific response/message identifier
     # Exact provider-native effort level used for this response. None for legacy or unmanaged responses.

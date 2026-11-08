@@ -9,7 +9,7 @@ import math
 from typing import Any, NotRequired, TypedDict
 
 from ..protocol.jsonrpc import is_number, is_object
-from ..url import parse_url
+from ..url import Url, parse_url
 
 
 # Both metadata documents keep the fields they do not declare (pi's index signature).
@@ -146,14 +146,21 @@ def _optional_strings(value: Any, name: str) -> Any:
 
 
 def _safe_url(value: Any, name: str) -> str:
+    """Accepts only `http:` and `https:` URLs. Servers supply these URLs, and the authorization endpoint is
+    opened with the platform URL handler, so a `file:` or custom protocol URL would launch local programs.
+    """
     text = _required_string(value, name)
     try:
         url = parse_url(text)
     except ValueError:
         raise ValueError(f"Invalid {name}") from None
-    if url.protocol in ("javascript:", "data:", "vbscript:"):
+    if not is_http_url(url):
         raise ValueError(f"Invalid {name}")
     return text
+
+
+def is_http_url(url: Url) -> bool:
+    return url.protocol in ("http:", "https:")
 
 
 def _optional_url(value: Any, name: str) -> Any:

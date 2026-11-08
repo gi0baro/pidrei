@@ -647,7 +647,7 @@ class Editor:
             self._update_autocomplete()
         return TuiMouseEventResult(handled=True, focus=True)
 
-    def handle_input(self, data: str) -> None:  # noqa: C901
+    def handle_input(self, data: str) -> None:
         kb = get_keybindings()
 
         # Handle character jump mode (awaiting next character to jump to)

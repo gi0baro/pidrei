@@ -341,13 +341,68 @@ def _sanitize_for_open_api(schema: Any) -> Any:
     return result
 
 
+# Schema keywords whose values map names to subschemas, so their keys are not schema keywords.
+_JSON_SCHEMA_NAME_MAPS = frozenset(
+    ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"]
+)
+
+# Keywords containing a subschema or an array of subschemas, not literal data.
+_JSON_SCHEMA_SUBSCHEMAS = frozenset(
+    [
+        "additionalProperties",
+        "unevaluatedProperties",
+        "propertyNames",
+        "items",
+        "prefixItems",
+        "additionalItems",
+        "unevaluatedItems",
+        "contains",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "contentSchema",
+    ]
+)
+
+
+def _rewrite_const_as_enum(schema: Any, is_name_map: bool = False) -> Any:
+    """Rewrite string and number `const` values to single-value `enum`s.
+    Gemini ignores `const` in `parametersJsonSchema` but honors `enum`."""
+    if isinstance(schema, list):
+        return [_rewrite_const_as_enum(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    result: dict[str, Any] = {}
+    for key, value in schema.items():
+        if is_name_map or key in _JSON_SCHEMA_SUBSCHEMAS:
+            result[key] = _rewrite_const_as_enum(value)
+        elif key in _JSON_SCHEMA_NAME_MAPS:
+            result[key] = _rewrite_const_as_enum(value, True)
+        else:
+            result[key] = value
+    # pi's `result.enum === undefined`: a JSON `null` enum is present and keeps the const.
+    if not is_name_map and "const" in result and "enum" not in result:
+        value = result["const"]
+        # JS `typeof value === "string" || "number"`: a bool is neither.
+        if isinstance(value, str) or (isinstance(value, (int, float)) and not isinstance(value, bool)):
+            del result["const"]
+            result["enum"] = [value]
+    return result
+
+
 def convert_tools(
     tools: list[Tool], use_parameters: bool = False, supports_strict_mode: bool = True
 ) -> list[dict[str, Any]] | None:
     """Convert tools to Gemini function declarations format.
 
     By default uses `parametersJsonSchema` which supports full JSON Schema (including
-    anyOf, oneOf, const, etc.). Set `use_parameters` to True to use the legacy `parameters`
+    anyOf, oneOf, etc.). Gemini ignores `const` there, so string and number `const`
+    values are sent as single-value `enum`s. Set `use_parameters` to True to use the legacy `parameters`
     field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
     models, where the API translates `parameters` into Anthropic's `input_schema`.
     """
@@ -361,7 +416,7 @@ def convert_tools(
             **(
                 {"parameters": _sanitize_for_open_api(parameters)}
                 if use_parameters
-                else {"parametersJsonSchema": parameters}
+                else {"parametersJsonSchema": _rewrite_const_as_enum(parameters)}
             ),
         }
 

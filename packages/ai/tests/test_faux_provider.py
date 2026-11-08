@@ -328,13 +328,14 @@ async def test_counts_cached_characters_up_to_the_first_difference_in_the_joined
         return UserMessage(content=content, timestamp=1)
 
     # Prompt texts: "user:hello world" (16 characters), then 16 + 2 + "user:next" (9) = 27.
-    await complete(faux, faux.get_model(), Context(messages=[user("hello world")]), options)
+    first = await complete(faux, faux.get_model(), Context(messages=[user("hello world")]), options)
+    assert (first.usage.input, first.usage.cache_read, first.usage.cache_write) == (0, 0, 4)
     extended = await complete(faux, faux.get_model(), Context(messages=[user("hello world"), user("next")]), options)
-    assert (extended.usage.input, extended.usage.cache_read, extended.usage.cache_write) == (3, 4, 3)
+    assert (extended.usage.input, extended.usage.cache_read, extended.usage.cache_write) == (0, 4, 3)
 
     # The first message now differs after "user:hello w" (12 characters): "user:hello wide" + 2 + 9 = 26.
     edited = await complete(faux, faux.get_model(), Context(messages=[user("hello wide"), user("next")]), options)
-    assert (edited.usage.input, edited.usage.cache_read, edited.usage.cache_write) == (4, 3, 4)
+    assert (edited.usage.input, edited.usage.cache_read, edited.usage.cache_write) == (0, 3, 4)
 
 
 @pytest.mark.tonio

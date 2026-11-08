@@ -80,7 +80,7 @@ class Args:
     diagnostics: list[dict[str, str]] = field(default_factory=list)
 
 
-def parse_args(args: list[str]) -> Args:  # noqa: C901
+def parse_args(args: list[str]) -> Args:
     result = Args()
 
     i = 0

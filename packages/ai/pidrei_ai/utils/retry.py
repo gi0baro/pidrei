@@ -43,6 +43,9 @@ _NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = _build_provider_error_pattern(
         # Sign in with ChatGPT on a ChatGPT Business plan: a usage limit set by the
         # workspace admin. Only the admin can raise it.
         "subscription_sharing_workplace_individual_usage_limit_exceeded",
+        # Zhipu/Z.ai (open.bigmodel.cn) error code 1308: the plan's usage limit is
+        # reached, sent as HTTP 429. It resets after hours, not seconds (#11537).
+        r'"code"\s*:\s*"?1308(?![0-9])',
     ]
 )
 

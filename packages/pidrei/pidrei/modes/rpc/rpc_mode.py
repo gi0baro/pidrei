@@ -256,7 +256,7 @@ class _RpcExtensionUIContext:
         """Tool expansion not supported in RPC mode - no TUI."""
 
 
-async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
+async def run_rpc_mode(runtime_host) -> None:
     """Run in RPC mode.
 
     Listens for JSON commands on stdin, outputs events and responses on
@@ -442,7 +442,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     register_signal_handlers()
 
     # Handle a single command
-    async def handle_command(command: dict[str, Any]) -> dict[str, Any] | None:  # noqa: C901
+    async def handle_command(command: dict[str, Any]) -> dict[str, Any] | None:
         id = command.get("id")
         command_type = command.get("type")
 

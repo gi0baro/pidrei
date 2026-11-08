@@ -22,6 +22,7 @@ _OVERFLOW_PATTERNS = [
         r"exceeds the context window",  # OpenAI (Completions & Responses API)
         # OpenAI-compatible proxies (LiteLLM)
         r"exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\d,]+ tokens?|\s*\([\d,]+\))",
+        r"context window exceeded",  # LiteLLM pre-call check (ContextWindowExceededError)
         r"input token count.*exceeds the maximum",  # Google (Gemini)
         r"maximum prompt length is \d+",  # xAI (Grok)
         r"reduce the length of the messages",  # Groq

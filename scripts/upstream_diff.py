@@ -57,6 +57,10 @@ UPSTREAM_PY = os.path.join(ROOT, "packages", "pidrei", "pidrei", "upstream.py")
 PREFIX_MAP = (
     ("packages/ai/src/", "packages/ai/pidrei_ai/", "src"),
     ("packages/ai/scripts/", "packages/ai/scripts/", "src"),
+    # 1.5.0 (`2e0f175b`): pi moved its catalog generator out of
+    # scripts/generate-models.ts into a package beside src/; pidrei's stays
+    # under scripts/, as the generator it replaces did.
+    ("packages/ai/catalog/", "packages/ai/scripts/catalog/", "src"),
     ("packages/ai/test/", "packages/ai/tests/", "test"),
     ("packages/agent/src/", "packages/agent/pidrei_agent/", "src"),
     ("packages/agent/test/", "packages/agent/tests/", "test"),
@@ -654,6 +658,8 @@ LIVE_API_AI_TESTS = (
     "classifier-images-live",
     "openai-codex-cache-affinity-e2e",
     "xiaomi-token-plan-ams-anthropic-empty-signature-smoke",
+    # 1.5.0 additions (1.5.0 delta port).
+    "interleaved-thinking",
 )
 DROPPED_PREFIXES += tuple(
     (f"packages/ai/test/{name}.test.ts", "live-API test, not ported") for name in LIVE_API_AI_TESTS
@@ -725,6 +731,65 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/test/suite/regressions/11156-pi-ai-models-virtual-module.test.ts",
         _VIRTUAL_MODULES_REASON,
     ),
+)
+#: 1.5.0: pi-schema (`fab2c535`, `6536f801`) replaces TypeBox for tool
+#: argument validation. pidrei ports its model-visible rules (explain, coerce,
+#: validator, types and the helper half of checks.ts, into
+#: pidrei_ai/utils/schema/) over `jsonschema`, which is the engine; the
+#: compiler, resolver, formats, builders and TypeBox typing are not ported
+#: (recipe schema-on-jsonschema).
+_SCHEMA_ENGINE_REASON = (
+    "pi-schema engine (compiler, resolver, formats, builders, TypeBox typing) not ported: "
+    "jsonschema is the engine under pidrei_ai/utils/schema (recipe schema-on-jsonschema)"
+)
+_EXTENSION_CHANGELOG_REASON = "extension changelogs not ported (recipe no-extension-changelog; 1.5.0 delta port)"
+DROPPED_PREFIXES += tuple(
+    (path, _SCHEMA_ENGINE_REASON)
+    for path in (
+        "packages/schema/src/compiler.ts",
+        "packages/schema/src/resolver.ts",
+        "packages/schema/src/annotations.ts",
+        "packages/schema/src/shared.ts",
+        "packages/schema/src/builders.ts",
+        "packages/schema/src/index.ts",
+        "packages/schema/src/typebox-static.ts",
+        "packages/schema/src/formats/",
+        "packages/schema/test/bench/",
+        "packages/schema/test/fixtures/",
+        "packages/schema/test/conformance.test.ts",
+        "packages/schema/test/suite.ts",
+        "packages/schema/test/builders.test.ts",
+        "packages/schema/test/typebox-static.test.ts",
+        "packages/schema/LICENSES/",
+        "packages/agent/test/agent-tool-typebox.test.ts",
+        # pi-ai's typed builders over pi-schema; pidrei's schemas stay plain dicts
+        "packages/ai/src/providers/schema-builders.ts",
+    )
+)
+DROPPED_PREFIXES += (
+    # `6536f801`: the module the loader aliases `@earendil-works/pi-ai` to,
+    # adding TypeBox's Type/Static/TSchema and a TypeBox StringEnum
+    (
+        "packages/coding-agent/src/core/extensions/pi-ai-extension-view.ts",
+        (
+            "TypeBox typing view of pi-ai for extension imports; pidrei extensions import pidrei_ai's modules "
+            "directly and schemas are plain dicts (see pidrei/core/extensions/loader.py docstring)"
+        ),
+    ),
+)
+DROPPED_PREFIXES += (
+    (
+        "packages/ai/test/memory-helpers.ts",
+        "V8 heap and GC measurement helpers (node:v8); no Python counterpart (1.5.0 delta port)",
+    ),
+    (
+        "packages/coding-agent/test/exec-runtime-limit.test.ts",
+        "V8's maximum string length bounds pi's exec maxBuffer; no Python counterpart (1.5.0 delta port)",
+    ),
+    ("packages/coding-agent/test/interactive-mode-extension-changelog.test.ts", _EXTENSION_CHANGELOG_REASON),
+    # `531340f1` deletes them; pidrei never had npm root shims
+    ("packages/ai/bedrock-provider.js", "npm root entry shim, not ported (1.5.0 delta port)"),
+    ("packages/ai/bedrock-provider.d.ts", "npm root entry shim, not ported (1.5.0 delta port)"),
 )
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
@@ -814,6 +879,30 @@ RENAMES = {
     # 1.4.0: coding-agent's own User-Agent helper; pidrei's has always been
     # utils/user_agent.py (like pi-ai's above).
     "packages/coding-agent/src/utils/pi-user-agent.ts": "packages/pidrei/pidrei/utils/user_agent.py",
+    # 1.5.0: pi-schema's model-visible rules, ported over jsonschema into
+    # pidrei-ai (recipe schema-on-jsonschema). checks.ts maps for its helper
+    # half only (typeName, listValues, the enum/const/contains/unique checks,
+    # isMultiple, codePoints, isObject); its closure compilers are the engine.
+    "packages/schema/src/explain.ts": "packages/ai/pidrei_ai/utils/schema/explain.py",
+    "packages/schema/src/coerce.ts": "packages/ai/pidrei_ai/utils/schema/coerce.py",
+    "packages/schema/src/validator.ts": "packages/ai/pidrei_ai/utils/schema/validator.py",
+    "packages/schema/src/types.ts": "packages/ai/pidrei_ai/utils/schema/types.py",
+    "packages/schema/src/checks.ts": "packages/ai/pidrei_ai/utils/schema/checks.py",
+    "packages/schema/test/coerce.test.ts": "packages/ai/tests/test_schema_coerce.py",
+    "packages/schema/test/coerce-typebox.test.ts": "packages/ai/tests/test_schema_coerce_typebox.py",
+    "packages/schema/test/validator.test.ts": "packages/ai/tests/test_schema_validator.py",
+    "packages/schema/test/shared.test.ts": "packages/ai/tests/test_schema_shared.py",
+    # 1.5.0: pi's legacy extension OAuth types; pidrei's OAuthLoginCallbacks
+    # lives with the provider composer (the device-code info fields land in
+    # pidrei_ai/auth/types.py).
+    "packages/ai/src/compat/extension-oauth-types.ts": "packages/pidrei/pidrei/core/provider_composer.py",
+    # 1.5.0: pi-ai's schemas re-typed for TypeBox's Static; pidrei's are the
+    # same dicts, imported by model_config.py, which also holds the
+    # without-`required` cost schema (_PARTIAL_MODEL_COST).
+    "packages/coding-agent/src/core/pi-ai-schemas.ts": "packages/pidrei/pidrei/core/model_config.py",
+    # 1.5.0 (`89c921d8`): pi consolidated its flows' copies of the http(s)
+    # check into trustedHttpUrl; pidrei had already consolidated them there.
+    "packages/ai/src/auth/oauth/trusted-url.ts": "packages/ai/pidrei_ai/auth/oauth/urls.py",
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
@@ -1095,6 +1184,10 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "dataclasses.replace copies"
             ),
         ),
+        (
+            "no-extension-changelog",
+            'no "Extension Updates" block at startup; the collapseChangelog setting keeps its current meaning',
+        ),
     ),
     "packages/coding-agent/src/modes/interactive/program-status-reporter.ts": (
         (
@@ -1143,6 +1236,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
         ("no-telemetry", "no enableAnalytics/trackingId accessors"),
+        ("no-extension-changelog", "no extensionChangelogVersions accessors"),
     ),
     "packages/coding-agent/src/core/auth-storage.ts": (
         (
@@ -1236,6 +1330,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/src/core/settings-schema.ts": (
         ("no-telemetry", "no enableAnalytics/trackingId; enableInstallTelemetry is enableProviderAttribution"),
         ("config-schemas", "PiDrei's settings: no npmCommand, no markdown.mermaid; codemode.typeCheck"),
+        ("no-extension-changelog", "no extensionChangelogVersions setting"),
     ),
     "packages/coding-agent/src/core/settings-defaults.ts": (
         ("no-telemetry", "no enableAnalytics; enableInstallTelemetry is enableProviderAttribution"),
@@ -1326,6 +1421,14 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             (
                 "getActiveTools()+setActiveTools() is one update_active_tools(update): candidates, "
                 "ranking and the new list are computed inside the update"
+            ),
+        ),
+        (
+            "tool-search-unigrams",
+            (
+                "non-ASCII text is tokenised by hand (NFC, Unicode categories L/M/N): Han, Hiragana, Katakana, "
+                "Thai, Lao, Khmer, Myanmar and Tibetan give one token per character, where pi's Intl.Segmenter "
+                "gives dictionary words"
             ),
         ),
     ),
@@ -1444,6 +1547,54 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "warmed request's identity",
         ),
     ),
+    # pi-schema's rules over jsonschema (1.5.0.0): the walk, coercion and
+    # validator port 1:1; the engine calls go to jsonschema.
+    **dict.fromkeys(
+        (
+            "packages/schema/src/explain.ts",
+            "packages/schema/src/coerce.ts",
+            "packages/schema/src/validator.ts",
+            "packages/schema/src/types.ts",
+        ),
+        (
+            (
+                "schema-on-jsonschema",
+                (
+                    "jsonschema is the engine: subschema checks are root_validator.evolve(schema=...).is_valid, "
+                    "$ref resolution is the validator's referencing resolver; the explainer and coercer are built "
+                    "at compile()"
+                ),
+            ),
+        ),
+    ),
+    "packages/schema/src/checks.ts": (
+        (
+            "schema-on-jsonschema",
+            (
+                "only the helpers explain and coerce call port (typeName, listValues, enum/const/contains/unique "
+                "checks, isMultiple, codePoints, isObject); the closure compilers are jsonschema's"
+            ),
+        ),
+    ),
+    "packages/ai/src/utils/validation.ts": (
+        (
+            "schema-on-jsonschema",
+            (
+                "one compiled validator per schema through the identity/JSON-key cache under its lock; "
+                "parse(deepcopy(arguments))"
+            ),
+        ),
+    ),
+    # Extension changelogs (1.5.0.0) are not ported; these files otherwise port normally.
+    "packages/coding-agent/src/core/package-manager.ts": (
+        ("no-extension-changelog", "no changelog path or version resolution for installed packages"),
+    ),
+    "packages/coding-agent/src/core/source-info.ts": (("no-extension-changelog", "no changelogPath on source info"),),
+    "packages/coding-agent/src/core/pi-manifest.ts": (("no-extension-changelog", "no changelogPath manifest key"),),
+    "packages/coding-agent/test/package-manager.test.ts": (
+        ("no-extension-changelog", "the extension changelog cases are not mirrored"),
+    ),
+    "packages/coding-agent/docs/packages.md": (("no-extension-changelog", 'no "Show a changelog" section'),),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -1677,6 +1828,21 @@ TEST_HOMES = {
         "partial mirror: packages/pidrei/tests/test_export_html_cjk.py checks the export embeds "
         "marked-cjk-friendly and hooks emStrong; running the viewer script (pi's node:vm cases) is a "
         "PARITY GAP, the tests have no JS runtime"
+    ),
+    # 1.5.0 additions (1.5.0 delta port).
+    "packages/coding-agent/test/session-manager/custom-session-id.test.ts": (
+        "covered by packages/pidrei/tests/test_session_manager.py (TestCustomSessionId)"
+    ),
+    "packages/ai/test/reasoning-options.test.ts": (
+        "PARITY GAP: get_effort_thinking_level_map (the catalog generator's models.dev reasoning options) "
+        "has no mirrored cases; port behaviour deltas into a new mirror"
+    ),
+    "packages/agent/test/utils/get-current-time.ts": (
+        "not mirrored: no pi test imports this tool; pidrei's agent tests define their tools inline"
+    ),
+    "packages/coding-agent/test/export-html-cost.test.ts": (
+        "PARITY GAP: pi runs the viewer's computeStats in node:vm; the tests have no JS runtime "
+        "(template.js is a byte copy of pi's)"
     ),
 }
 

@@ -78,6 +78,7 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
+from pidrei_ai.utils.openrouter_cost import apply_openrouter_reported_cost, is_openrouter_model
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
@@ -606,6 +607,10 @@ def _parse_chunk_usage(raw_usage: dict, model: Model) -> UsageBuilder:
         total_tokens=input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
     )
     calculate_cost(model, usage)
+    if is_openrouter_model(model):
+        # OpenRouter adds billing fields to streamed usage at runtime,
+        # although the OpenAI SDK does not type those fields.
+        apply_openrouter_reported_cost(usage, raw_usage)
     return usage
 
 
@@ -1040,7 +1045,7 @@ def convert_messages(
     return params
 
 
-def build_params(  # noqa: C901 (mirrors pi's compat ladder)
+def build_params(
     model: Model,
     context: TranscriptContext,
     options: OpenAICompletionsOptions,
@@ -1231,7 +1236,7 @@ def _openai_options(options: StreamOptions | None) -> OpenAICompletionsOptions:
     return OpenAICompletionsOptions(**values)
 
 
-def stream(  # noqa: C901
+def stream(
     model: Model,
     context: TranscriptContext,
     options: StreamOptions | None = None,
@@ -1261,7 +1266,7 @@ def stream(  # noqa: C901
         if streamed_reasoning_details is not None:
             block.thinking_signature = json.dumps(streamed_reasoning_details)
 
-    async def _run() -> None:  # noqa: C901
+    async def _run() -> None:
         nonlocal streamed_reasoning_details
         try:
             compat = get_compat(model)

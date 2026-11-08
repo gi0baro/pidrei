@@ -1243,6 +1243,16 @@ def test_calculate_cost_1h_cache_writes_cost_double_input_rate():
     assert cost.cache_write == pytest.approx(expected)
 
 
+def test_calculate_cost_marks_catalog_derived_totals_as_not_provider_reported():
+    model = make_model(cost=ModelCost(input=3.0, output=15.0, cache_read=0.3, cache_write=3.75))
+    usage = UsageBuilder(input=1_000_000, total_tokens=1_000_000)
+    usage.cost.total = 9
+    usage.cost.total_from_provider = True
+
+    calculate_cost(model, usage)
+    assert usage.cost.total_from_provider is False
+
+
 def test_thinking_levels_non_reasoning_model():
     assert get_supported_thinking_levels(make_model(reasoning=False)) == ["off"]
 

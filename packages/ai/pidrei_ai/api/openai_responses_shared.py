@@ -497,7 +497,7 @@ def _map_stop_reason(status: str | None, incomplete_reason: str | None = None) -
     raise RuntimeError(f"Unhandled stop reason: {status}")
 
 
-async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
+async def process_responses_stream(
     events,
     output: AssistantMessageBuilder,
     stream: AssistantMessageEventStream,

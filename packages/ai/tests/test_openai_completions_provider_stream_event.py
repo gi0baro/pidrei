@@ -12,7 +12,7 @@ import json
 import pytest
 
 from pidrei_ai.api import openai_completions
-from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, TextContent, UserMessage
+from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, TextContent, UsageCost, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
 
 
@@ -40,12 +40,12 @@ def _streaming(chunks: list[dict]):
         openai_completions._create_client = original
 
 
-def open_router_model() -> Model:
+def open_router_model(provider: str = "openrouter") -> Model:
     return Model(
         id="openrouter/auto",
         name="OpenRouter Auto",
         api="openai-completions",
-        provider="openrouter",
+        provider=provider,
         base_url="https://openrouter.ai/api/v1",
         reasoning=False,
         input=["text"],
@@ -90,3 +90,63 @@ async def test_exposes_provider_chunks_including_openrouter_metadata():
 
     assert message.content == [TextContent(text="hello")]
     assert events == [first_chunk, final_chunk]
+
+
+# Regression test for #9980.
+@pytest.mark.tonio
+async def test_uses_openrouters_reported_total_without_double_counting_non_byok_upstream_cost():
+    chunks = [
+        {
+            "id": "chatcmpl-cost",
+            "model": "openrouter/auto",
+            "choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": "stop"}],
+            # These billing fields were captured from a production OpenRouter stream
+            # even though the OpenAI SDK omits them from CompletionUsage.
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost": 0.004,
+                "is_byok": False,
+                "cost_details": {"upstream_inference_cost": 0.003},
+            },
+        }
+    ]
+
+    with _streaming(chunks):
+        message = await openai_completions.stream_simple(
+            open_router_model("openrouter-work"),
+            normalize_context(Context(messages=[UserMessage(content="hi", timestamp=1)])),
+            SimpleStreamOptions(api_key="test"),
+        ).result()
+
+    assert message.usage.cost == UsageCost(
+        input=0, output=0, cache_read=0, cache_write=0, total=0.004, total_from_provider=True
+    )
+
+
+@pytest.mark.tonio
+async def test_includes_upstream_inference_cost_for_openrouter_byok_requests():
+    chunks = [
+        {
+            "id": "chatcmpl-byok",
+            "model": "openrouter/auto",
+            "choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost": 0.0002,
+                "is_byok": True,
+                "cost_details": {"upstream_inference_cost": 0.003},
+            },
+        }
+    ]
+
+    with _streaming(chunks):
+        message = await openai_completions.stream_simple(
+            open_router_model(),
+            normalize_context(Context(messages=[UserMessage(content="hi", timestamp=1)])),
+            SimpleStreamOptions(api_key="test"),
+        ).result()
+
+    assert message.usage.cost.total == pytest.approx(0.0032, abs=1e-10)
+    assert message.usage.cost.total_from_provider is True

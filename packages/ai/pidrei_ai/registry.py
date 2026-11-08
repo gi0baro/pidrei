@@ -1171,6 +1171,7 @@ def calculate_cost(model: AnyModel, usage: UsageBuilder) -> UsageCostBuilder:
     usage.cost.cache_read = (rates_cache_read / 1_000_000) * usage.cache_read
     usage.cost.cache_write = (rates_cache_write * short_write + rates_input * 2 * long_write) / 1_000_000
     usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cache_read + usage.cost.cache_write
+    usage.cost.total_from_provider = False
     return usage.cost
 
 

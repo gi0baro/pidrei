@@ -202,6 +202,7 @@ def parse_usage(raw_usage: dict[str, Any], model: ImageModel) -> Usage:
         cache_read=cost_cache_read,
         cache_write=cost_cache_write,
         total=cost_input + cost_output + cost_cache_read + cost_cache_write,
+        total_from_provider=False,
     )
 
     return Usage(

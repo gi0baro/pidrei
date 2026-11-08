@@ -3446,7 +3446,7 @@ class InteractiveMode:
 
         self._unsubscribe = session.subscribe(apply_event)
 
-    def _handle_event(self, event) -> None:  # noqa: C901
+    def _handle_event(self, event) -> None:
         # pi lazily awaits init() here; pidrei always subscribes after init.
         if not self._is_initialized:
             return
