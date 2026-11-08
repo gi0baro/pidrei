@@ -100,6 +100,9 @@ class ToolsExtension:
             container.add_child(settings_list)
 
             class ToolsDialog:
+                # Let PageUp/PageDown page the list instead of scrolling the fullscreen transcript.
+                captures_viewport_input = settings_list.captures_viewport_input
+
                 def render(self, width: int) -> list[str]:
                     return container.render(width)
 

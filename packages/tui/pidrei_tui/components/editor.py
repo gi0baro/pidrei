@@ -277,6 +277,11 @@ def _is_finite_number(value) -> bool:
 class Editor:
     """Multi-line editor with history, kill ring, undo and autocomplete."""
 
+    @property
+    def captures_viewport_input(self) -> bool:
+        """The open autocomplete menu receives fullscreen viewport keys, such as PageUp/PageDown."""
+        return self._autocomplete_state is not None
+
     def __init__(self, tui, theme: dict, options: dict | None = None) -> None:
         options = options or {}
         self._state = {"lines": [""], "cursorLine": 0, "cursorCol": 0}
@@ -706,7 +711,12 @@ class Editor:
                 self._cancel_autocomplete()
                 return
 
-            if kb.matches(data, "tui.select.up") or kb.matches(data, "tui.select.down"):
+            if (
+                kb.matches(data, "tui.select.up")
+                or kb.matches(data, "tui.select.down")
+                or kb.matches(data, "tui.select.pageUp")
+                or kb.matches(data, "tui.select.pageDown")
+            ):
                 self._autocomplete_list.handle_input(data)
                 return
 

@@ -14,7 +14,7 @@ import re
 
 from .components.stack import allocate_stack_sizes, visible_stack_entries
 from .layout_node import get_layout_node
-from .terminal_image import crop_kitty_image_line, get_kitty_image_metadata, is_image_line
+from .terminal_image import crop_kitty_image_line, get_kitty_image_metadata, get_max_kitty_image_rows, is_image_line
 from .tui import CURSOR_MARKER, composite_tui_line
 from .utils import (
     extract_ansi_code,
@@ -387,19 +387,25 @@ def _paint_box(box: LayoutBox, screen: list[str], total_width: int) -> None:
         _paint_box(child, screen, total_width)
 
     if box.scroll_view and box.scroll_content_lines and box.scroll_view.scroll_top > 0 and box.rect.height > 0:
-        for image_row in range(box.scroll_view.scroll_top - 1, -1, -1):
+        # Find the nearest image line above the viewport. Placeholder rows below an
+        # image line may contain padding, borders, or side-by-side text, so the search
+        # is bounded by the tallest registered image instead of by row content.
+        scroll_top = box.scroll_view.scroll_top
+        min_row = max(0, scroll_top - get_max_kitty_image_rows())
+        for image_row in range(scroll_top - 1, min_row - 1, -1):
             image_line = box.scroll_content_lines[image_row] if image_row < len(box.scroll_content_lines) else ""
+            if not is_image_line(image_line):
+                continue
             metadata = get_kitty_image_metadata(image_line)
-            if metadata:
-                hidden_rows = box.scroll_view.scroll_top - image_row
-                if hidden_rows < metadata["rows"]:
-                    visible_rows = min(box.rect.height, metadata["rows"] - hidden_rows)
-                    cropped = crop_kitty_image_line(image_line, hidden_rows, visible_rows)
-                    if box.rect.x == 0 and box.rect.width >= total_width:
-                        screen[box.rect.y] = cropped
-                break
-            if image_line != "":
-                break
+            if not metadata:
+                continue
+            hidden_rows = scroll_top - image_row
+            if hidden_rows < metadata["rows"]:
+                visible_rows = min(box.rect.height, metadata["rows"] - hidden_rows)
+                cropped = crop_kitty_image_line(image_line, hidden_rows, visible_rows)
+                if box.rect.x == 0 and box.rect.width >= total_width:
+                    screen[box.rect.y] = cropped
+            break
 
     _paint_scrollbar(box, screen, total_width)
 

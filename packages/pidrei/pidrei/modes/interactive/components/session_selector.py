@@ -20,7 +20,7 @@ from ....utils.process import run_command
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, key_text
-from .session_selector_search import filter_and_sort_sessions, has_session_name
+from .session_selector_search import MessageTextCache, filter_and_sort_sessions, has_session_name
 
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -318,6 +318,8 @@ class SessionList:
         # await, and `build_session_tree` falls back to resolving inline.
         self._canonical_by_path: dict[str, str] = {}
         self._filtered_sessions: list = []
+        # Lowercased message text for the search, reused across keystrokes.
+        self._message_text = MessageTextCache()
         self._selected_index = 0
         self._selection_touched = False
         self._set_sessions_guard = threading.Lock()
@@ -435,7 +437,7 @@ class SessionList:
             self._filtered_sessions = flatten_session_tree(roots)
         else:
             # Other modes or with search: flat list
-            filtered = filter_and_sort_sessions(name_filtered, query, self._sort_mode, "all")
+            filtered = filter_and_sort_sessions(name_filtered, query, self._sort_mode, "all", self._message_text)
             self._filtered_sessions = [
                 {"session": session, "depth": 0, "isLast": True, "ancestorContinues": []} for session in filtered
             ]
@@ -874,6 +876,10 @@ class SessionSelectorComponent(Container):
         self._rename_input.focused = value
         if value and self._mode == "rename":
             self._rename_input.focused = True
+
+    @property
+    def captures_viewport_input(self) -> bool:
+        return self._mode != "rename"
 
     def handle_input(self, data: str) -> None:
         if self._mode == "rename":

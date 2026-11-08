@@ -54,7 +54,7 @@ class UserMessageComponent(Container):
                     "preserveOrderedListMarkers": True,
                     "preserveBackslashEscapes": True,
                     "transform": create_markdown_transform(
-                        "user", False, self._markdown_transformers, self._message_id, self._timestamp
+                        "user", lambda: False, self._markdown_transformers, self._message_id, self._timestamp
                     ),
                 },
             )

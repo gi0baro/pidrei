@@ -17,7 +17,7 @@ import math
 from dataclasses import replace
 
 from ..fuzzy import fuzzy_filter
-from ..keybindings import get_keybindings
+from ..keybindings import get_keybindings, get_select_page_index
 from ..tui import TuiMouseEvent, TuiMouseEventResult
 from ..utils import truncate_to_width, visible_width, wrap_text_with_ansi
 from .input import Input
@@ -27,6 +27,8 @@ __all__ = ["SettingsList"]
 
 
 class SettingsList:
+    captures_viewport_input = True
+
     def __init__(
         self,
         items: list[dict],
@@ -198,6 +200,7 @@ class SettingsList:
         # Main list input handling
         kb = get_keybindings()
         display_items = self._get_display_items()
+        page_index = get_select_page_index(kb, data, self._selected_index, len(display_items), self._max_visible)
         if kb.matches(data, "tui.select.up"):
             if not display_items:
                 return
@@ -206,6 +209,10 @@ class SettingsList:
             if not display_items:
                 return
             self._selected_index = 0 if self._selected_index == len(display_items) - 1 else self._selected_index + 1
+        elif page_index is not None:
+            if not display_items:
+                return
+            self._selected_index = page_index
         elif kb.matches(data, "tui.select.confirm") or (
             data == " " and (not self._search_enabled or len(self._search_input.get_value()) == 0)
         ):

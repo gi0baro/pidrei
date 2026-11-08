@@ -1,5 +1,6 @@
 from .system_theme import SYSTEM_THEME_NAME
 from .theme import (
+    CodeHighlighter,
     Theme,
     _load_theme_from_path_blocking,
     detect_color_fg_bg_theme,
@@ -39,6 +40,7 @@ from .theme_schema import validate_theme_json
 
 __all__ = [
     "SYSTEM_THEME_NAME",
+    "CodeHighlighter",
     "InteractiveThemeController",
     "Theme",
     "_load_theme_from_path_blocking",

@@ -8,7 +8,9 @@ renderer over it.
 (``heading``, ``link``, ``linkUrl``, ``code``, ``codeBlock``,
 ``codeBlockBorder``, ``quote``, ``quoteBorder``, ``hr``, ``listBullet``,
 ``bold``, ``italic``, ``strikethrough``, ``underline``, optional
-``highlightCode`` and ``codeBlockIndent``); ``default_text_style`` mirrors
+``highlightCode`` and ``codeBlockIndent``; a Markdown component reuses
+``highlightCode``'s lines for the same code until ``invalidate()``);
+``default_text_style`` mirrors
 ``DefaultTextStyle`` (``{"color", "bgColor", "bold", "italic",
 "strikethrough", "underline"}``); ``options`` mirrors ``MarkdownOptions``
 (``{"preserveOrderedListMarkers", "preserveBackslashEscapes", "transform"}``).
@@ -19,6 +21,7 @@ render, including width changes and every streaming update.
 """
 
 import re
+from dataclasses import dataclass, field
 
 from ..latex import render_latex
 from ..terminal_image import get_capabilities, hyperlink, is_image_line
@@ -33,6 +36,21 @@ _UNORDERED_MARKER_RE = re.compile(r"^(?: {0,3})([-+*])(?:[ \t]+|(?=\r?\n|$))")
 _FULL_RESET_RE = re.compile(r"\x1b\[0m")
 _SENTINEL = "\u0000"
 _MAX_UNBROKEN_WORD_WIDTH = 30
+
+
+@dataclass(slots=True)
+class _RenderedBlock:
+    """A top-level block of the last render, keyed by its lexed token, reused by the next render.
+
+    Render-private: created, read and updated only by `Markdown.render`, under the UI state lock.
+    """
+
+    # Width and type of the following block (which decides the spacing) that the lines were rendered for.
+    width: int = -1
+    next_token_type: str | None = None
+    lines: list[str] = field(default_factory=list)
+    # Highlighted lines of the block's code, keyed by language and source; they survive a resize or new spacing.
+    highlighted_code: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
 
 class Markdown:
@@ -59,32 +77,40 @@ class Markdown:
         # hygiene — one publication a probe can never observe half-cleared —
         # not correctness.
         self._cache: tuple[str, int, list[str]] | None = None
-        # Per-block cache, keyed on the lexed token itself (plus the width and
-        # the following block's type, the only other render inputs). While a
-        # message streams the whole text is re-lexed every frame — the tail
-        # can still change what came before it (lazy continuation, reference
-        # definitions, an unclosed fence) — but every block that lexes the
-        # same renders from here instead of going through pygments and the
-        # inline styler again. Rebuilt from the blocks present on each render,
-        # so it never outgrows the current text. `set_text` keeps it;
-        # `invalidate` (theme change) drops it.
+        # The last render's top-level blocks, keyed on the lexed token itself.
+        # While a message streams the whole text is re-lexed every frame — the
+        # tail can still change what came before it (lazy continuation,
+        # reference definitions, an unclosed fence) — but every block that
+        # lexes the same reuses its lines, or re-renders only its wrapping and
+        # spacing (keeping its highlighted code) after a resize or a new
+        # following block. Each render keeps only the blocks it used, so it
+        # never outgrows the current text. `set_text` keeps them; `invalidate`
+        # (theme change) drops them.
         #
-        # The lexed tokens are not kept after a render (pi holds them in a
-        # WeakRef, which CPython would free as soon as the render returns): a
-        # token tree is many times the size of its source, and every message
-        # of a transcript keeps a Markdown component. A width or theme
-        # re-render lexes again.
-        self._block_cache: dict[tuple[str, int, str | None], list[str]] = {}
+        # pi keys blocks on their source and renders texts with reference-link
+        # definitions without reuse, since a definition anywhere changes a
+        # link; the lexed token here already carries the resolved destination,
+        # so those texts reuse blocks too. pi holds the blocks and the lexed
+        # tokens in WeakRefs, which CPython would free as soon as the render
+        # returns: the blocks are held strongly and dropped on `invalidate`,
+        # and the tokens are not kept (a token tree is many times the size of
+        # its source, and every message of a transcript keeps a Markdown
+        # component), so a width or theme re-render lexes again.
+        self._blocks: dict[str, _RenderedBlock] = {}
+        # Highlighted code of the block being rendered, only set while `_render_block` runs.
+        self._block_highlighted_code: dict[tuple[str, str], list[str]] | None = None
 
     def set_text(self, text: str) -> None:
-        if text == self._text:
-            return
+        # Always re-render: a transform can depend on more than the text (an
+        # assistant message's transformers see whether it is still streaming).
         self._text = text
         self._cache = None
 
     def invalidate(self) -> None:
         self._cache = None
-        self._block_cache = {}
+        # The theme may have changed, which changes every styled line and the default style's prefix.
+        self._blocks = {}
+        self._default_style_prefix = None
 
     def render(self, width: int) -> list[str]:
         source_text = self._text
@@ -100,6 +126,7 @@ class Markdown:
 
         # Don't render anything if there's no actual text
         if not text or text.strip() == "":
+            self._blocks = {}
             result: list[str] = []
             self._cache = (source_text, width, result)
             return result
@@ -115,20 +142,18 @@ class Markdown:
         # block, so an unchanged block costs one dict lookup.
         bg_fn = self._default_text_style.get("bgColor") if self._default_text_style else None
         content_lines: list[str] = []
-        previous_blocks = self._block_cache
-        blocks: dict[tuple[str, int, str | None], list[str]] = {}
+        previous_blocks = self._blocks
+        blocks: dict[str, _RenderedBlock] = {}
+        self._blocks = blocks
 
         for i, token in enumerate(tokens):
             next_token_type = tokens[i + 1]["type"] if i + 1 < len(tokens) else None
-            key = (repr(token), content_width, next_token_type)
-            block_lines = previous_blocks.get(key)
-            if block_lines is None:
-                block_lines = self._finish_lines(
-                    self._render_token(token, content_width, next_token_type), width, content_width, bg_fn
-                )
-            blocks[key] = block_lines
-            content_lines.extend(block_lines)
-        self._block_cache = blocks
+            key = repr(token)
+            block = blocks.get(key) or previous_blocks.get(key) or _RenderedBlock()
+            if block.width != width or block.next_token_type != next_token_type:
+                self._render_block(block, token, next_token_type, width, content_width, bg_fn)
+            blocks[key] = block
+            content_lines.extend(block.lines)
 
         # Add top/bottom padding (empty lines)
         empty_line = " " * width
@@ -144,6 +169,19 @@ class Markdown:
         self._cache = (source_text, width, result)
 
         return result if result else [""]
+
+    def _render_block(
+        self, block: _RenderedBlock, token: dict, next_token_type: str | None, width: int, content_width: int, bg_fn
+    ) -> None:
+        """Render one top-level block to output lines: wrapped, with margins, and padded or backgrounded to the width."""
+        self._block_highlighted_code = block.highlighted_code
+        try:
+            rendered_lines = self._render_token(token, content_width, next_token_type)
+        finally:
+            self._block_highlighted_code = None
+        block.lines = self._finish_lines(rendered_lines, width, content_width, bg_fn)
+        block.width = width
+        block.next_token_type = next_token_type
 
     def _finish_lines(self, rendered_lines: list[str], width: int, content_width: int, bg_fn) -> list[str]:
         """Wrap one block's lines to the content width, then add margins and background."""
@@ -279,9 +317,13 @@ class Markdown:
             lines.append(self._render_inline_tokens([token], style_context))
 
         elif token_type == "latexBlock":
-            if not token.get("pending") and self._options.get("renderLatex") is not False:
-                rendered = render_latex(token["text"], {"display": True}) or token["raw"].strip()
-            else:
+            rendered = (
+                render_latex(token["text"], {"display": True})
+                if not token.get("pending") and self._options.get("renderLatex") is not False
+                else None
+            )
+            # A 2D layout cannot be wrapped row by row; fall back to the raw source when it does not fit.
+            if rendered is None or any(visible_width(line) > width for line in rendered.split("\n")):
                 rendered = token["raw"].strip()
             for line in rendered.split("\n"):
                 lines.append(self._apply_default_style(line))
@@ -293,7 +335,13 @@ class Markdown:
             lines.append(self._theme["codeBlockBorder"](f"```{token.get('lang') or ''}"))
             highlight_code = self._theme.get("highlightCode")
             if highlight_code is not None:
-                highlighted_lines = highlight_code(token["text"], token.get("lang"))
+                key = (token.get("lang") or "", token["text"])
+                highlighted_code = self._block_highlighted_code
+                highlighted_lines = highlighted_code.get(key) if highlighted_code is not None else None
+                if highlighted_lines is None:
+                    highlighted_lines = highlight_code(token["text"], token.get("lang"))
+                    if highlighted_code is not None:
+                        highlighted_code[key] = highlighted_lines
                 for hl_line in highlighted_lines:
                     lines.append(f"{indent}{hl_line}")
             else:
@@ -312,6 +360,19 @@ class Markdown:
         elif token_type == "table":
             lines.extend(self._render_table(token, width, next_token_type, style_context))
 
+        elif token_type == "blockquote" and width < 3:
+            # With no room for another border ("│ " plus at least one content column), render the
+            # nested content without one. Otherwise each extra level re-wraps every child line at
+            # width 1 and the output grows exponentially with nesting depth.
+            quote_tokens = token.get("tokens") or []
+            for i, quote_token in enumerate(quote_tokens):
+                next_quote_token = quote_tokens[i + 1] if i + 1 < len(quote_tokens) else None
+                lines.extend(
+                    self._render_token(
+                        quote_token, width, next_quote_token["type"] if next_quote_token else None, style_context
+                    )
+                )
+
         elif token_type == "blockquote":
 
             def quote_style(text: str) -> str:
@@ -326,7 +387,7 @@ class Markdown:
                 return quote_style(line_with_reapplied_style)
 
             # Calculate available width for quote content (subtract border "│ " = 2 chars)
-            quote_content_width = max(1, width - 2)
+            quote_content_width = width - 2
 
             # Blockquotes contain block-level tokens (paragraph, list, code, etc.), so
             # render children with _render_token() instead of _render_inline_tokens().

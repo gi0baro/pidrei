@@ -44,6 +44,7 @@ from .keybindings import (
     TUI_KEYBINDINGS,
     KeybindingsManager,
     get_keybindings,
+    get_select_page_index,
     set_keybindings,
 )
 from .keys import (
@@ -197,6 +198,7 @@ __all__ = [
     "get_keybindings",
     "get_osc8_link_at_column",
     "get_png_dimensions",
+    "get_select_page_index",
     "get_terminal_color_mode",
     "get_webp_dimensions",
     "hyperlink",

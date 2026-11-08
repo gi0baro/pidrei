@@ -6,7 +6,7 @@ slice reuses this module.
 """
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,57 +23,72 @@ class FuzzyMatch:
     score: float
 
 
+def _score_positions(text_lower: str, positions: Iterable[int]) -> float:
+    score = 0.0
+    last_match_index = -1
+    consecutive_matches = 0
+
+    for i in positions:
+        # Reward consecutive matches
+        if last_match_index == i - 1:
+            consecutive_matches += 1
+            score -= consecutive_matches * 5
+        else:
+            consecutive_matches = 0
+            # Penalize gaps
+            if last_match_index >= 0:
+                score += (i - last_match_index - 1) * 2
+
+        # Reward word boundary matches
+        if i == 0 or _WORD_BOUNDARY_RE.match(text_lower[i - 1]) is not None:
+            score -= 10
+
+        # Slight penalty for later matches
+        score += i * 0.1
+
+        last_match_index = i
+
+    return score
+
+
+def _match_query(normalized_query: str, text_lower: str) -> FuzzyMatch:
+    if len(normalized_query) == 0:
+        return FuzzyMatch(matches=True, score=0)
+
+    if len(normalized_query) > len(text_lower):
+        return FuzzyMatch(matches=False, score=0)
+
+    # Greedy alignment: each query character at its first occurrence after the previous one.
+    positions: list[int] = []
+    last_match_index = -1
+    for char in normalized_query:
+        i = text_lower.find(char, last_match_index + 1)
+        if i == -1:
+            return FuzzyMatch(matches=False, score=0)
+        positions.append(i)
+        last_match_index = i
+
+    score = _score_positions(text_lower, positions)
+
+    # The greedy alignment can scatter the query over an earlier, unrelated part of the text,
+    # e.g. "opus" in "openrouter openrouter/anthropic/claude-opus" takes o, p, u from "openrouter".
+    # Also score every contiguous occurrence and keep the best alignment.
+    start = text_lower.find(normalized_query)
+    while start != -1:
+        score = min(score, _score_positions(text_lower, range(start, start + len(normalized_query))))
+        start = text_lower.find(normalized_query, start + 1)
+
+    if normalized_query == text_lower:
+        score -= 100
+
+    return FuzzyMatch(matches=True, score=score)
+
+
 def fuzzy_match(query: str, text: str) -> FuzzyMatch:
     query_lower = query.lower()
     text_lower = text.lower()
 
-    def match_query(normalized_query: str) -> FuzzyMatch:
-        if len(normalized_query) == 0:
-            return FuzzyMatch(matches=True, score=0)
-
-        if len(normalized_query) > len(text_lower):
-            return FuzzyMatch(matches=False, score=0)
-
-        query_index = 0
-        score = 0.0
-        last_match_index = -1
-        consecutive_matches = 0
-
-        for i, char in enumerate(text_lower):
-            if query_index >= len(normalized_query):
-                break
-            if char == normalized_query[query_index]:
-                is_word_boundary = i == 0 or _WORD_BOUNDARY_RE.match(text_lower[i - 1]) is not None
-
-                # Reward consecutive matches
-                if last_match_index == i - 1:
-                    consecutive_matches += 1
-                    score -= consecutive_matches * 5
-                else:
-                    consecutive_matches = 0
-                    # Penalize gaps
-                    if last_match_index >= 0:
-                        score += (i - last_match_index - 1) * 2
-
-                # Reward word boundary matches
-                if is_word_boundary:
-                    score -= 10
-
-                # Slight penalty for later matches
-                score += i * 0.1
-
-                last_match_index = i
-                query_index += 1
-
-        if query_index < len(normalized_query):
-            return FuzzyMatch(matches=False, score=0)
-
-        if normalized_query == text_lower:
-            score -= 100
-
-        return FuzzyMatch(matches=True, score=score)
-
-    primary_match = match_query(query_lower)
+    primary_match = _match_query(query_lower, text_lower)
     if primary_match.matches:
         return primary_match
 
@@ -89,7 +104,7 @@ def fuzzy_match(query: str, text: str) -> FuzzyMatch:
     if not swapped_query:
         return primary_match
 
-    swapped_match = match_query(swapped_query)
+    swapped_match = _match_query(swapped_query, text_lower)
     if not swapped_match.matches:
         return primary_match
 

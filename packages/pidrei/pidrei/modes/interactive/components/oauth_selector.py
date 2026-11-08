@@ -10,7 +10,15 @@ by a subscription: ``False`` labels it as an account, unset keeps the
 
 import re
 
-from pidrei_tui import Container, Input, Spacer, TruncatedText, fuzzy_filter, get_keybindings
+from pidrei_tui import (
+    Container,
+    Input,
+    Spacer,
+    TruncatedText,
+    fuzzy_filter,
+    get_keybindings,
+    get_select_page_index,
+)
 
 from ..theme import theme
 from .dynamic_border import DynamicBorder
@@ -47,8 +55,13 @@ def format_auth_selector_provider_status(provider: dict) -> str:
     return theme.fg("success", f" ✓ {display_source}")
 
 
+_MAX_VISIBLE = 8
+
+
 class OAuthSelectorComponent(Container):
     """Component that renders an auth provider selector."""
+
+    captures_viewport_input = True
 
     def __init__(self, mode: str, providers: list, on_select, on_cancel, initial_search_input: str | None = None):
         super().__init__()
@@ -125,12 +138,11 @@ class OAuthSelectorComponent(Container):
     def _update_list(self) -> None:
         self._list_container.clear()
 
-        max_visible = 8
         start_index = max(
             0,
-            min(self._selected_index - max_visible // 2, len(self._filtered_providers) - max_visible),
+            min(self._selected_index - _MAX_VISIBLE // 2, len(self._filtered_providers) - _MAX_VISIBLE),
         )
-        end_index = min(start_index + max_visible, len(self._filtered_providers))
+        end_index = min(start_index + _MAX_VISIBLE, len(self._filtered_providers))
 
         for i in range(start_index, end_index):
             provider = self._filtered_providers[i]
@@ -172,6 +184,9 @@ class OAuthSelectorComponent(Container):
 
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
+        page_index = get_select_page_index(
+            kb, key_data, self._selected_index, len(self._filtered_providers), _MAX_VISIBLE
+        )
         # Up arrow
         if kb.matches(key_data, "tui.select.up"):
             if not self._filtered_providers:
@@ -183,6 +198,12 @@ class OAuthSelectorComponent(Container):
             if not self._filtered_providers:
                 return
             self._selected_index = min(len(self._filtered_providers) - 1, self._selected_index + 1)
+            self._update_list()
+        # Page up/down
+        elif page_index is not None:
+            if not self._filtered_providers:
+                return
+            self._selected_index = page_index
             self._update_list()
         # Enter
         elif kb.matches(key_data, "tui.select.confirm"):

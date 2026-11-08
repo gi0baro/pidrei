@@ -3,7 +3,7 @@
 Message items are ``{"id", "text", "timestamp"?}`` records.
 """
 
-from pidrei_tui import Container, Spacer, Text, get_keybindings, truncate_to_width
+from pidrei_tui import Container, Spacer, Text, get_keybindings, get_select_page_index, truncate_to_width
 from pidrei_utils.timers import Timeout
 
 from ..theme import theme
@@ -12,6 +12,8 @@ from .dynamic_border import DynamicBorder
 
 class UserMessageList:
     """Custom user message list component with selection."""
+
+    captures_viewport_input = True
 
     def __init__(self, messages: list, initial_selected_id: str | None = None) -> None:
         # Store messages in chronological order (oldest to newest)
@@ -75,12 +77,18 @@ class UserMessageList:
 
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
+        page_index = get_select_page_index(kb, key_data, self._selected_index, len(self._messages), self._max_visible)
         # Up arrow - go to previous (older) message, wrap to bottom when at top
         if kb.matches(key_data, "tui.select.up"):
             self._selected_index = len(self._messages) - 1 if self._selected_index == 0 else self._selected_index - 1
         # Down arrow - go to next (newer) message, wrap to top when at bottom
         elif kb.matches(key_data, "tui.select.down"):
             self._selected_index = 0 if self._selected_index == len(self._messages) - 1 else self._selected_index + 1
+        # Page up/down
+        elif page_index is not None:
+            if not self._messages:
+                return
+            self._selected_index = page_index
         # Enter - select message and branch
         elif kb.matches(key_data, "tui.select.confirm"):
             if 0 <= self._selected_index < len(self._messages) and self.on_select is not None:

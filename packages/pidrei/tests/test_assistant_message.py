@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent test/assistant-message.test.ts."""
 
+import importlib
 import re
 import time
 
@@ -30,6 +31,47 @@ def create_assistant_message(content, stop_reason: str = "stop") -> AssistantMes
 
 
 class TestAssistantMessageComponent:
+    @pytest.mark.tonio
+    async def test_reuses_its_markdown_across_streaming_and_its_end_and_renders_like_a_new_component_after_a_theme_change(
+        self, monkeypatch
+    ):
+        await init_theme("dark")
+        # pi spies on syntax-highlight's `highlight`; theme.py imports it by name.
+        theme_module = importlib.import_module("pidrei.modes.interactive.theme.theme")
+        highlight_calls: list[str] = []
+        real_highlight = theme_module.highlight
+
+        def counting_highlight(code, *args, **kwargs):
+            highlight_calls.append(code)
+            return real_highlight(code, *args, **kwargs)
+
+        monkeypatch.setattr(theme_module, "highlight", counting_highlight)
+        streaming: list[bool] = []
+        code = "```ts\nconst a = 1;\n```"
+
+        def content(text: str) -> list:
+            return [ThinkingContent(thinking="Thinking with **bold** text"), TextContent(text=text)]
+
+        def transformer(markdown: str, context: dict) -> str:
+            streaming.append(context["isStreaming"])
+            return markdown
+
+        component = AssistantMessageComponent(None, False, None, "Thinking...", 1, (transformer,))
+        component.update_content(create_assistant_message(content(code)), True)
+        component.render(80)
+        message = create_assistant_message(content(f"{code}\n\nThe end."))
+        component.update_content(message, False)
+        component.render(80)
+        assert len(highlight_calls) == 1
+        assert streaming[-1] is False
+
+        try:
+            await init_theme("light")
+            component.invalidate()
+            assert component.render(80) == AssistantMessageComponent(message).render(80)
+        finally:
+            await init_theme("dark")
+
     @pytest.mark.tonio
     async def test_adds_osc_133_zone_markers_to_assistant_messages_without_tool_calls(self):
         await init_theme("dark")

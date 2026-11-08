@@ -11,6 +11,7 @@ import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.settings_selector import SettingsSelectorComponent
+from pidrei.modes.interactive.components.settings_submenu import SelectSubmenu
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
@@ -196,3 +197,24 @@ async def test_keeps_the_configured_per_model_thinking_level_marked_while_browsi
         assert "→   high" in output
     finally:
         harness.cleanup()
+
+
+# #7629
+@pytest.mark.tonio
+async def test_pages_a_searchable_submenu_with_selection_page_keys():
+    selected: list[str] = []
+    submenu = SelectSubmenu(
+        "Theme",
+        "",
+        [{"value": f"theme-{index}", "label": f"theme-{index}"} for index in range(20)],
+        "theme-0",
+        selected.append,
+        lambda: None,
+        None,
+        {"searchable": True},
+    )
+
+    submenu.handle_input("\x1b[6~")  # PageDown
+    submenu.handle_input("\r")
+
+    assert selected == ["theme-10"]

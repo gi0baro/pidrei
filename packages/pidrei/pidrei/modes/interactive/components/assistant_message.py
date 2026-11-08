@@ -39,11 +39,13 @@ class AssistantMessageComponent(Container):
         self._is_streaming = False
         self._thinking_visibility_overrides: dict[int, bool] = {}
         # The Markdown children of the last build, in order, each with the
-        # settings it was built for. pi builds fresh ones per update, which is
-        # free there (its render is a pure function of the text); here a
-        # Markdown carries a per-block render cache that only pays off if the
-        # same instance sees the next streaming update, so a slot whose
-        # settings still match is reused via `set_text`.
+        # settings it was built for (pi's MarkdownSlot). The next update reuses
+        # a slot at the same position whose settings still match via
+        # `set_text`, so a streamed answer keeps the blocks it already
+        # rendered, also once the stream ends: the transform reads the
+        # streaming state per render. pi keys a slot on its kind and clears
+        # the slots when the padding changes; the padding, theme and
+        # transformers are part of the key here.
         self._markdown_slots: list[tuple[tuple, Markdown]] = []
 
         # Container for text/thinking content
@@ -96,7 +98,7 @@ class AssistantMessageComponent(Container):
         new_slots: list[tuple[tuple, Markdown]] = []
 
         def markdown(text: str, kind: str, default_text_style: dict | None) -> Markdown:
-            key = (kind, self._output_pad, self._is_streaming, id(self._markdown_theme), self._markdown_transformers)
+            key = (kind, self._output_pad, id(self._markdown_theme), self._markdown_transformers)
             index = len(new_slots)
             if index < len(slots) and slots[index][0] == key:
                 component = slots[index][1]
@@ -110,7 +112,11 @@ class AssistantMessageComponent(Container):
                     default_text_style,
                     {
                         "transform": create_markdown_transform(
-                            kind, self._is_streaming, self._markdown_transformers, self._message_id, self._timestamp
+                            kind,
+                            lambda: self._is_streaming,
+                            self._markdown_transformers,
+                            self._message_id,
+                            self._timestamp,
                         )
                     },
                 )

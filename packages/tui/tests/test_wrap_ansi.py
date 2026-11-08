@@ -50,6 +50,49 @@ def test_does_not_bleed_underline_to_padding():
             assert line.endswith("\x1b[0m") is False
 
 
+# styled words at the wrap boundary (#10925)
+
+
+def test_keeps_the_closing_code_on_the_wrapped_line_and_drops_the_following_space():
+    assert wrap_text_with_ansi("aaaa \x1b[1mbold\x1b[22m next word", 9) == ["aaaa \x1b[1mbold\x1b[22m", "next word"]
+
+
+def test_does_not_re_open_a_style_closed_by_the_dropped_space():
+    assert wrap_text_with_ansi("aaaa \x1b[31mred\x1b[39m  next", 8) == ["aaaa \x1b[31mred\x1b[39m", "next"]
+
+
+def test_does_not_exceed_width_for_styled_whitespace_wider_than_the_line():
+    for text in [
+        f"\x1b[41m{' ' * 20}\x1b[0m",
+        f"ab\x1b[41m{' ' * 20}\x1b[49mcd",
+        f"\x1b[33m{' ' * 20}x\x1b[39m",
+    ]:
+        for line in wrap_text_with_ansi(text, 10):
+            assert visible_width(line) <= 10, repr(line)
+
+
+def test_trims_trailing_spaces_before_the_line_end_reset_when_a_long_word_follows():
+    assert wrap_text_with_ansi("aaa\x1b[9m    abcdefghij\x1b[29m", 9) == [
+        "aaa\x1b[9m\x1b[29m",
+        "\x1b[9mabcdefghi\x1b[29m",
+        "\x1b[9mj\x1b[29m",
+    ]
+
+
+def test_resets_strikethrough_at_line_end_and_restores_it_on_the_next_line():
+    assert wrap_text_with_ansi("aaaa \x1b[9mstrike me\x1b[29m next", 12) == [
+        "aaaa \x1b[9mstrike\x1b[29m",
+        "\x1b[9mme\x1b[29m next",
+    ]
+
+
+def test_preserves_background_when_resetting_strikethrough_at_line_end():
+    assert wrap_text_with_ansi("\x1b[41;9mstrike me\x1b[0m", 6) == [
+        "\x1b[41;9mstrike\x1b[29m",
+        "\x1b[9;41mme\x1b[0m",
+    ]
+
+
 # background color preservation
 
 

@@ -50,6 +50,48 @@ def test_caches_transformed_markdown_by_source_and_available_width():
     assert len(calls) == 4
 
 
+# Block reuse
+#
+# pi's "holds rendered blocks weakly, so a full garbage collection releases
+# them" has no counterpart: the blocks are held strongly and dropped on
+# `invalidate` (see the comment on `Markdown._blocks`).
+
+
+def _counting_theme(calls: list[str]) -> dict:
+    def highlight_code(code: str, lang: str | None = None) -> list[str]:
+        calls.append(f"{lang}:{code}")
+        return [chalk.green(line) for line in code.split("\n")]
+
+    return {**default_markdown_theme, "highlightCode": highlight_code}
+
+
+def test_highlights_a_code_block_once_across_streamed_text_and_resizes_and_again_after_invalidate():
+    calls: list[str] = []
+    markdown = Markdown("```ts\nx\n```", 0, 0, _counting_theme(calls))
+    markdown.render(80)
+    markdown.set_text("```ts\nx\n```\n\nafter")
+    markdown.render(40)
+    assert calls == ["ts:x"]
+    markdown.invalidate()
+    markdown.render(40)
+    assert calls == ["ts:x", "ts:x"]
+
+
+def test_renders_a_block_again_when_the_block_after_it_changes_its_spacing():
+    markdown = Markdown("# Title", 0, 0, default_markdown_theme)
+    markdown.render(80)
+    markdown.set_text("# Title\nfoo")
+    assert [strip_ansi(line).strip() for line in markdown.render(80)] == ["Title", "", "foo"]
+
+
+def test_follows_changed_reference_link_definitions(capabilities_reset):
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": False})
+    markdown = Markdown("[a][x]\n\n[x]: https://one.example", 0, 0, default_markdown_theme)
+    markdown.render(80)
+    markdown.set_text("[a][x]\n\n[x]: https://two.example")
+    assert "https://two.example" in strip_ansi("\n".join(markdown.render(80)))
+
+
 # Lists
 
 
@@ -966,6 +1008,22 @@ def test_should_not_add_a_trailing_blank_line_when_blockquote_is_the_last_render
     assert plain_lines[-1] != "", f"Expected blockquote to end without a blank line: {plain_lines!r}"
 
 
+# Deeply nested blockquotes
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/11272
+def test_should_render_quotes_nested_deeper_than_the_width_allows_without_exploding():
+    # pi nests 60 quotes at width 80. markdown-it's commonmark preset stops nesting at 20 levels
+    # (deeper content is dropped), so the width is narrowed instead: borders fill it after 13
+    # levels, and the 6 levels past that would triple the output each without the fix.
+    markdown = Markdown(f"{'>' * 19}x", 1, 0, default_markdown_theme)
+    lines = markdown.render(30)
+    plain_lines = [strip_ansi(line).rstrip() for line in lines]
+
+    assert len(plain_lines) == 1, f"Expected a single line: {plain_lines!r}"
+    assert plain_lines[0].endswith("x"), f"Expected content to be kept: {plain_lines!r}"
+
+
 # Blockquotes with multiline content
 
 
@@ -1232,6 +1290,26 @@ def test_should_keep_single_tilde_as_plain_text():
     assert "\x1b[9m" not in joined_output, "Single-tilde text should not use strikethrough styling"
 
 
+# styled words at the wrap boundary (#10925)
+
+
+def test_should_not_start_the_next_line_with_a_space_or_carry_styles_into_padding():
+    markdown = Markdown(
+        "aaaa **bold** next ~~strk~~ more words",
+        1,
+        0,
+        default_markdown_theme,
+        {"bgColor": lambda text: f"\x1b[44m{text}\x1b[49m"},
+    )
+
+    assert markdown.render(11) == [
+        "\x1b[44m aaaa \x1b[1mbold\x1b[22m \x1b[49m",
+        "\x1b[44m next \x1b[9mstrk\x1b[29m \x1b[49m",
+        "\x1b[44m more      \x1b[49m",
+        "\x1b[44m words     \x1b[49m",
+    ]
+
+
 # CJK emphasis (#10154)
 
 
@@ -1263,6 +1341,48 @@ def test_keeps_commonmark_flanking_rules_for_non_cjk_text():
 def capabilities_reset():
     yield
     reset_capabilities_cache()
+
+
+_OSC8_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\")
+
+
+def test_should_stop_bare_urls_at_cjk_punctuation_and_preserve_the_following_text(capabilities_reset):
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    for punctuation in "。，；：！？、“”‘’（）【】《》「」『』…—·・〈〉［］｛｝．｡｢｣､･":
+        for url in ["https://example.com", "https://example.com/中文?q=搜索#片段", "www.example.com"]:
+            source = f"{url}{punctuation}后面的中文"
+            output = "".join(Markdown(source, 0, 0, default_markdown_theme).render(160))
+            href = f"http://{url}" if url.startswith("www.") else url
+            assert f"\x1b]8;;{href}\x1b\\" in output, source
+            assert f"\x1b]8;;\x1b\\{punctuation}后面的中文" in strip_ansi(output), source
+            assert strip_ansi(_OSC8_RE.sub("", output)).rstrip() == source
+
+
+def test_should_preserve_chinese_characters_without_punctuation_in_bare_urls(capabilities_reset):
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    for url in [
+        "https://example.com紧接着中文",
+        "https://example.com/中文?q=搜索#片段",
+        "https://example.com/テストー한글",
+    ]:
+        output = "".join(Markdown(url, 0, 0, default_markdown_theme).render(160))
+        assert f"\x1b]8;;{url}\x1b\\" in output, url
+
+
+def test_should_preserve_cjk_punctuation_in_explicit_links_and_angle_autolinks(capabilities_reset):
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    url = "https://example.com/中文，路径·テスト・한글…—。"
+    for source in [f"[文档]({url})", f"<{url}>"]:
+        output = "".join(Markdown(source, 0, 0, default_markdown_theme).render(160))
+        assert f"\x1b]8;;{url}\x1b\\" in output, source
+
+
+def test_should_preserve_english_punctuation_trimming_before_chinese_punctuation(capabilities_reset):
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    source = "https://example.com.，后面的中文"
+    output = "".join(Markdown(source, 0, 0, default_markdown_theme).render(160))
+    assert "\x1b]8;;https://example.com\x1b\\" in output
+    assert "\x1b]8;;\x1b\\.，后面的中文" in strip_ansi(output)
 
 
 def test_should_not_duplicate_url_for_autolinked_emails(capabilities_reset):
@@ -1569,6 +1689,30 @@ def test_allows_latex_rendering_to_be_disabled():
         "",
         r"Inline \(A_{sf}\)",
     ]
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/11483
+def test_falls_back_to_raw_source_when_display_math_is_wider_than_the_content_width():
+    equation = (
+        r"\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = \sum_{i=1}^{n} \frac{1}{i^2}"
+        r" + \int_0^1 f(x)\,dx"
+    )
+    source = f"\\[\n{equation}\n\\]"
+
+    def render(width: int) -> list[str]:
+        return [strip_ansi(line).rstrip() for line in Markdown(source, 0, 0, default_markdown_theme).render(width)]
+
+    assert render(40) == [
+        "∂² u   ∂² u   n   1   1",
+        "──── + ──── = ∑   ── +∫ f(x) dx",
+        "∂ x²   ∂ y²  i=1  i²  0",
+    ]
+
+    narrow = render(30)
+    assert narrow[0] == "\\["
+    assert narrow[-1] == "\\]"
+    assert not any("─" in line for line in narrow)
+    assert all(len(line) <= 30 for line in narrow)
 
 
 # Unclosed display math before tables (#11159)

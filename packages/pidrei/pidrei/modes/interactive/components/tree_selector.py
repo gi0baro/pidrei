@@ -1309,6 +1309,10 @@ class TreeSelectorComponent(Container):
         self._tree_container.clear()
         self._tree_container.add_child(self._tree_list)
 
+    @property
+    def captures_viewport_input(self) -> bool:
+        return self._label_input is None
+
     def handle_input(self, key_data: str) -> None:
         if self._label_input is not None:
             self._label_input.handle_input(key_data)

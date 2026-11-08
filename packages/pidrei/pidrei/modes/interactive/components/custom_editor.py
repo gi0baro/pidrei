@@ -86,6 +86,15 @@ class CustomEditor(Editor):
         if self.on_extension_shortcut is not None and self.on_extension_shortcut(data):
             return
 
+        # Selection page keys move an open autocomplete menu before app actions run.
+        # This lets users bind Ctrl+V even though it pastes images by default.
+        if self.is_showing_autocomplete() and (
+            self._keybindings.matches(data, "tui.select.pageUp")
+            or self._keybindings.matches(data, "tui.select.pageDown")
+        ):
+            super().handle_input(data)
+            return
+
         # Check for clipboard paste keybinding
         if self._keybindings.matches(data, "app.clipboard.pasteImage"):
             if self.on_paste_image is not None:

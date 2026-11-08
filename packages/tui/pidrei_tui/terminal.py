@@ -78,6 +78,7 @@ from pidrei_utils.timers import Interval
 from .keys import set_kitty_protocol_active
 from .program_status import PROGRAM_STATUS_QUERY, ProgramStatus, format_program_status, is_program_status_reply
 from .stdin_buffer import StdinBuffer
+from .utils import replace_control_characters
 
 
 TERMINAL_PROGRESS_KEEPALIVE_MS = 1000
@@ -122,8 +123,13 @@ def is_apple_terminal_session() -> bool:
     return sys.platform == "darwin" and os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
 
 
+# Some Apple Terminal setups send ESC+CR (Alt+Enter) for Shift+Enter (#11559).
+def _is_native_shift_enter_candidate(data: str) -> bool:
+    return data in ("\r", "\x1b\r")
+
+
 def normalize_apple_terminal_input(data: str, is_apple_terminal: bool, is_shift_pressed: bool) -> str:
-    if is_apple_terminal and data == "\r" and is_shift_pressed:
+    if is_apple_terminal and _is_native_shift_enter_candidate(data) and is_shift_pressed:
         return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE
     return data
 
@@ -653,7 +659,7 @@ class ProcessTerminal:
         return min(pending) if pending else None
 
     def _forward_input_sequence(self, sequence: str) -> None:
-        is_apple_terminal = sequence == "\r" and is_apple_terminal_session()
+        is_apple_terminal = _is_native_shift_enter_candidate(sequence) and is_apple_terminal_session()
         input_ = normalize_apple_terminal_input(
             sequence,
             is_apple_terminal,
@@ -912,8 +918,9 @@ class ProcessTerminal:
         self.write_sync("\x1b[2J\x1b[H")  # Clear screen and move to home (1,1)
 
     def set_title(self, title: str) -> None:
-        # OSC 0;title BEL - set terminal window title
-        self.write_sync(f"\x1b]0;{title}\x07")
+        # OSC 0;title BEL - set terminal window title. A BEL or ESC in the title would end the sequence early and
+        # send the rest to the terminal as escape sequences (session names come from session files).
+        self.write_sync(f"\x1b]0;{replace_control_characters(title)}\x07")
 
     def set_program_status(self, status: ProgramStatus) -> None:
         # Under the lock the reader confirms support with, so a confirmation

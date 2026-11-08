@@ -254,7 +254,24 @@ FUNCTIONAL_CODEPOINTS = {
     "pageDown": -13,
     "home": -14,
     "end": -15,
+    "f1": -21,
+    "f2": -22,
+    "f3": -23,
+    "f4": -24,
+    "f5": -25,
+    "f6": -26,
+    "f7": -27,
+    "f8": -28,
+    "f9": -29,
+    "f10": -30,
+    "f11": -31,
+    "f12": -32,
 }
+
+# Kitty reserves this Private Use Area range for functional keys (F13-F35,
+# media keys, modifier keys, ...). CSI-u codepoints in it are never text.
+_KITTY_FUNCTIONAL_PUA_START = 57344
+_KITTY_FUNCTIONAL_PUA_END = 63743
 
 KITTY_FUNCTIONAL_KEY_EQUIVALENTS = {
     57399: 48,  # KP_0 -> 0
@@ -456,8 +473,8 @@ KeyEventType = str
 # Store the last parsed event type for is_key_release() to query
 _last_event_type: KeyEventType = "press"
 
-_RELEASE_MARKERS = (":3u", ":3~", ":3A", ":3B", ":3C", ":3D", ":3H", ":3F")
-_REPEAT_MARKERS = (":2u", ":2~", ":2A", ":2B", ":2C", ":2D", ":2H", ":2F")
+_RELEASE_MARKERS = (":3u", ":3~", ":3A", ":3B", ":3C", ":3D", ":3H", ":3F", ":3P", ":3Q", ":3S")
+_REPEAT_MARKERS = (":2u", ":2~", ":2A", ":2B", ":2C", ":2D", ":2H", ":2F", ":2P", ":2Q", ":2S")
 
 
 def is_key_release(data: str) -> bool:
@@ -506,6 +523,7 @@ _ARROW_RE = re.compile(r"^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$")
 _FUNC_RE = re.compile(r"^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?~$")
 _HOME_END_RE = re.compile(r"^\x1b\[1;(\d+)(?::(\d+))?([HF])$")
 _MODIFY_OTHER_KEYS_RE = re.compile(r"^\x1b\[27;(\d+);(\d+)~$")
+_F_KEY_RE = re.compile(r"^\x1b\[(?:1;(\d+)(?::(\d+))?)?([PQS])$")
 
 _ARROW_CODES = {"A": -1, "B": -2, "C": -3, "D": -4}
 _FUNC_CODES = {
@@ -515,7 +533,20 @@ _FUNC_CODES = {
     6: FUNCTIONAL_CODEPOINTS["pageDown"],
     7: FUNCTIONAL_CODEPOINTS["home"],
     8: FUNCTIONAL_CODEPOINTS["end"],
+    11: FUNCTIONAL_CODEPOINTS["f1"],
+    12: FUNCTIONAL_CODEPOINTS["f2"],
+    13: FUNCTIONAL_CODEPOINTS["f3"],
+    14: FUNCTIONAL_CODEPOINTS["f4"],
+    15: FUNCTIONAL_CODEPOINTS["f5"],
+    17: FUNCTIONAL_CODEPOINTS["f6"],
+    18: FUNCTIONAL_CODEPOINTS["f7"],
+    19: FUNCTIONAL_CODEPOINTS["f8"],
+    20: FUNCTIONAL_CODEPOINTS["f9"],
+    21: FUNCTIONAL_CODEPOINTS["f10"],
+    23: FUNCTIONAL_CODEPOINTS["f11"],
+    24: FUNCTIONAL_CODEPOINTS["f12"],
 }
+_F_KEY_CODES = {"P": FUNCTIONAL_CODEPOINTS["f1"], "Q": FUNCTIONAL_CODEPOINTS["f2"], "S": FUNCTIONAL_CODEPOINTS["f4"]}
 
 
 def _parse_kitty_sequence(data: str) -> dict | None:
@@ -595,6 +626,21 @@ def _parse_kitty_sequence(data: str) -> dict | None:
         _last_event_type = event_type
         return {
             "codepoint": codepoint,
+            "shiftedKey": None,
+            "baseLayoutKey": None,
+            "modifier": mod_value - 1,
+            "eventType": event_type,
+        }
+
+    # F1, F2, F4: \x1b[P/Q/S or \x1b[1;<mod>P/Q/S or \x1b[1;<mod>:<event>P/Q/S
+    # F3 is sent as \x1b[13~ because \x1b[1;<mod>R collides with cursor position reports.
+    f_key_match = _F_KEY_RE.match(data)
+    if f_key_match:
+        mod_value = int(f_key_match.group(1)) if f_key_match.group(1) else 1
+        event_type = _parse_event_type(f_key_match.group(2))
+        _last_event_type = event_type
+        return {
+            "codepoint": _F_KEY_CODES[f_key_match.group(3)],
             "shiftedKey": None,
             "baseLayoutKey": None,
             "modifier": mod_value - 1,
@@ -1055,9 +1101,9 @@ def matches_key(data: str, key_id: str) -> bool:
         return _matches_kitty_sequence(data, ARROW_CODEPOINTS["right"], modifier)
 
     if key in ("f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"):
-        if modifier != 0:
-            return False
-        return _matches_legacy_sequence(data, LEGACY_KEY_SEQUENCES[key])
+        if modifier == 0 and _matches_legacy_sequence(data, LEGACY_KEY_SEQUENCES[key]):
+            return True
+        return _matches_kitty_sequence(data, FUNCTIONAL_CODEPOINTS[key], modifier)
 
     # Handle single letter/digit keys and symbols
     if len(key) == 1 and (("a" <= key <= "z") or _is_digit_key(key) or key in SYMBOL_KEYS):
@@ -1162,6 +1208,8 @@ def _format_parsed_key(codepoint: int, modifier: int, base_layout_key: int | Non
         key_name = "pageUp"
     elif effective_codepoint == FUNCTIONAL_CODEPOINTS["pageDown"]:
         key_name = "pageDown"
+    elif FUNCTIONAL_CODEPOINTS["f12"] <= effective_codepoint <= FUNCTIONAL_CODEPOINTS["f1"]:
+        key_name = f"f{FUNCTIONAL_CODEPOINTS['f1'] - effective_codepoint + 1}"
     elif effective_codepoint == ARROW_CODEPOINTS["up"]:
         key_name = "up"
     elif effective_codepoint == ARROW_CODEPOINTS["down"]:
@@ -1338,6 +1386,9 @@ def decode_kitty_printable(data: str) -> str | None:
     effective_codepoint = _normalize_kitty_functional_codepoint(effective_codepoint)
     # Drop control characters or invalid codepoints.
     if effective_codepoint < 32:
+        return None
+    # Drop unmapped Kitty functional keys (F13-F35, media keys, ...).
+    if _KITTY_FUNCTIONAL_PUA_START <= effective_codepoint <= _KITTY_FUNCTIONAL_PUA_END:
         return None
 
     try:

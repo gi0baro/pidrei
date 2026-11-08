@@ -1015,7 +1015,36 @@ def highlight_code(code: str, lang: str | None = None) -> list:
             theme=_get_cli_highlight_theme(_current_theme),
         ).split("\n")
     except Exception:
-        return code.split("\n")
+        return [theme.fg("mdCodeBlock", line) for line in code.split("\n")]
+
+
+class CodeHighlighter:
+    """Highlights code for one owner, such as a tool row, and reuses the last
+    result while the code, the language and the theme stay the same.
+
+    Each owner keeps its own highlighter, so cached results live as long as the
+    code they show instead of in a process-wide cache. pi also checks the number
+    of registered grammars, which grows when highlight.js's deferred grammars
+    load; pygments has no grammar registry that changes at runtime (see
+    `utils/syntax_highlight.py`), so there is nothing to check here. Used from
+    renderers, under the UI state lock; the last result is one tuple.
+    """
+
+    __slots__ = ("_last",)
+
+    def __init__(self) -> None:
+        self._last: tuple[str, str | None, Theme | None, tuple[str, ...]] | None = None
+
+    def highlight(self, code: str, lang: str | None) -> tuple[str, ...]:
+        """Like `highlight_code`; the result is shared with later calls."""
+        # Renderers cannot tell a theme change from any other redraw, so the highlighter checks what its result depends on.
+        current_theme = _current_theme
+        last = self._last
+        if last is not None and last[0] == code and last[1] == lang and last[2] is current_theme:
+            return last[3]
+        lines = tuple(highlight_code(code, lang))
+        self._last = (code, lang, current_theme, lines)
+        return lines
 
 
 _EXT_TO_LANG = {
@@ -1105,23 +1134,8 @@ def get_markdown_theme() -> dict:
         "italic": lambda text: theme.italic(text),
         "underline": lambda text: theme.underline(text),
         "strikethrough": lambda text: chalk.strikethrough(text),
-        "highlightCode": _markdown_highlight_code,
+        "highlightCode": highlight_code,
     }
-
-
-def _markdown_highlight_code(code: str, lang: str | None = None) -> list:
-    valid_lang = lang if lang and supports_language(lang) else None
-    if not valid_lang:
-        return [theme.fg("mdCodeBlock", line) for line in code.split("\n")]
-    try:
-        return highlight(
-            code,
-            language=valid_lang,
-            ignore_illegals=True,
-            theme=_get_cli_highlight_theme(_current_theme),
-        ).split("\n")
-    except Exception:
-        return [theme.fg("mdCodeBlock", line) for line in code.split("\n")]
 
 
 def get_select_list_theme() -> dict:

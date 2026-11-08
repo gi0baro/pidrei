@@ -109,8 +109,9 @@ MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024
 DOUBLE_CLICK_INTERVAL_S = 0.5
 COPY_ERROR_FLASH_DURATION_MS = 5000
 # Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
-# so mirror common terminal word-selection behavior by keeping paths and kebab-case tokens whole.
-TERMINAL_WORD_SELECTION_JOINERS = {"/", "-"}
+# so it uses iTerm2's default "characters considered part of a word" set:
+# https://github.com/gnachman/iTerm2/blob/7f4ff739721f95d0b93003d8701c4523a7edf261/sources/Settings/iTermPreferences.m#L743
+TERMINAL_WORD_SELECTION_JOINERS = {"/", "-", "+", "\\", "~", "_", "."}
 _word_segmenter = get_word_segmenter()
 
 _SGR_MOUSE_RE = re.compile(r"^\x1b\[<(\d+);(\d+);(\d+)([Mm])$")
@@ -690,7 +691,10 @@ class TuiAltScreen(TuiBase):
         with self.state_lock:
             self._flashes.flash(message, duration_ms)
 
-    def _should_defer_viewport_input_to_overlay(self) -> bool:
+    def _should_defer_viewport_input(self) -> bool:
+        """Focused overlays and components that capture viewport input receive viewport keys instead of the transcript."""
+        if getattr(self.get_focused_component(), "captures_viewport_input", False):
+            return True
         search = self._active_search
         search_overlay = search.get("overlay") if search is not None else None
         search_focused = search_overlay is not None and search_overlay.is_focused()
@@ -782,7 +786,7 @@ class TuiAltScreen(TuiBase):
                 if not is_release:
                     self._close_search()
                 return {"consume": True}
-        if self._should_defer_viewport_input_to_overlay():
+        if self._should_defer_viewport_input():
             return None
         if keybindings.matches(data, "tui.altScreen.pageUp"):
             if not is_release:

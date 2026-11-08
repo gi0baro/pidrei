@@ -3,9 +3,19 @@
 EnabledIds: None = all enabled (no filter), list = explicit ordered list.
 """
 
-from pidrei_tui import Container, Input, Key, Spacer, Text, fuzzy_filter, get_keybindings, matches_key
+from pidrei_tui import (
+    Container,
+    Input,
+    Key,
+    Spacer,
+    Text,
+    fuzzy_filter,
+    get_keybindings,
+    get_select_page_index,
+    matches_key,
+)
 
-from ..model_search import get_model_search_text
+from ..model_search import get_distinct_model_name, get_model_search_text
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_display_text
@@ -76,6 +86,8 @@ class ScopedModelsSelectorComponent(Container):
     ``config`` is ``{"allModels", "enabledModelIds"}``; ``callbacks`` is
     ``{"onChange", "onPersist", "onCancel"}``.
     """
+
+    captures_viewport_input = True
 
     def __init__(self, config: dict, callbacks: dict) -> None:
         super().__init__()
@@ -248,11 +260,13 @@ class ScopedModelsSelectorComponent(Container):
             model_id = item["model"].id if item["model"] is not None else item["fullId"]
             styled_id = model_id if item["model"] is not None else theme.strikethrough(model_id)
             model_text = theme.fg("accent", styled_id) if is_selected else styled_id
+            name = get_distinct_model_name(item["model"].id, item["model"].name) if item["model"] is not None else None
+            name_text = theme.fg("muted", f" ({name})") if name else ""
             provider_badge = theme.fg(
                 "muted", f" [{item['model'].provider}]" if item["model"] is not None else " [unavailable]"
             )
             status = theme.fg("accent", "✓ ") if item["model"] is not None and item["enabled"] else "  "
-            rows.append(Text(f"{prefix}{status}{model_text}{provider_badge}", 0, 0))
+            rows.append(Text(f"{prefix}{status}{model_text}{name_text}{provider_badge}", 0, 0))
 
         # Add scroll indicator if needed
         if start_index > 0 or end_index < len(self._filtered_items):
@@ -284,6 +298,13 @@ class ScopedModelsSelectorComponent(Container):
             self._selected_index = (
                 0 if self._selected_index == len(self._filtered_items) - 1 else self._selected_index + 1
             )
+            self._update_list()
+            return
+        page_index = get_select_page_index(kb, data, self._selected_index, len(self._filtered_items), self._max_visible)
+        if page_index is not None:
+            if not self._filtered_items:
+                return
+            self._selected_index = page_index
             self._update_list()
             return
 

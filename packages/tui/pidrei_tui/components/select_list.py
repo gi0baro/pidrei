@@ -11,7 +11,7 @@ the latter receiving a ``{"text", "maxWidth", "columnWidth", "item",
 import math
 import re
 
-from ..keybindings import get_keybindings
+from ..keybindings import get_keybindings, get_select_page_index
 from ..tui import TuiMouseEvent, TuiMouseEventResult
 from ..utils import truncate_to_width, visible_width
 
@@ -34,6 +34,8 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
 
 
 class SelectList:
+    captures_viewport_input = True
+
     def __init__(self, items: list[dict], max_visible: int, theme: dict, layout: dict | None = None) -> None:
         self._items = items
         self._filtered_items = items
@@ -132,6 +134,9 @@ class SelectList:
 
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
+        page_index = get_select_page_index(
+            kb, key_data, self._selected_index, len(self._filtered_items), self._max_visible
+        )
         # Up arrow - wrap to bottom when at top
         if kb.matches(key_data, "tui.select.up"):
             self._selected_index = (
@@ -143,6 +148,12 @@ class SelectList:
             self._selected_index = (
                 0 if self._selected_index == len(self._filtered_items) - 1 else self._selected_index + 1
             )
+            self._notify_selection_change()
+        # Page up/down - move by one visible page, clamped to the list bounds
+        elif page_index is not None:
+            if not self._filtered_items or page_index == self._selected_index:
+                return
+            self._selected_index = page_index
             self._notify_selection_change()
         # Enter
         elif kb.matches(key_data, "tui.select.confirm"):
