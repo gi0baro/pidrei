@@ -31,7 +31,7 @@ from types import SimpleNamespace
 from typing import Protocol, runtime_checkable
 
 import tonio.colored as tonio
-from tonio.colored import fs, signals as tonio_signals
+from tonio.colored import fs
 
 from pidrei_ai.auth.types import AuthOperationOptions, LoginOptions
 from pidrei_ai.registry import ModelsRefreshOptions
@@ -124,7 +124,7 @@ from ...utils.git import parse_git_url
 from ...utils.image_process import convert_image_to_png_base64
 from ...utils.paths import get_cwd_relative_path
 from ...utils.process import probe_tmux_hyperlinks, run_command
-from ...utils.shell import kill_tracked_detached_children
+from ...utils.shell import SignalDispatcher, kill_tracked_detached_children
 from ...utils.temp_file_writer import discard_temp_file
 from ...utils.tools_manager import ensure_tool
 from ...utils.version_check import RELEASES_URL, check_for_new_version
@@ -562,7 +562,7 @@ class ExtensionUIContext:
 
         mode = self._mode
         if isinstance(theme_or_name, ThemeClass):
-            return mode._theme_controller.set_theme_instance(theme_or_name)
+            return await mode._theme_controller.set_theme_instance(theme_or_name)
         result = await mode._theme_controller.set_theme_name(theme_or_name)
         if result["success"] and mode.settings_manager.get_theme() != theme_or_name:
             mode.settings_manager.set_theme(theme_or_name)
@@ -597,11 +597,19 @@ class InteractiveMode:
 
     ``startupDiagnostics`` are the diagnostics collected before the TUI was
     initialized, replayed into the transcript. ``terminal`` is the terminal
-    implementation; it defaults to the current process terminal."""
+    implementation; it defaults to the current process terminal.
 
-    def __init__(self, runtime_host, options: dict | None = None) -> None:
+    ``signal_dispatcher`` is the process's signal receiver; the mode installs
+    its signal handlers on it at init."""
+
+    def __init__(
+        self, runtime_host, options: dict | None = None, *, signal_dispatcher: SignalDispatcher | None = None
+    ) -> None:
         options = options or {}
         self.runtime_host = runtime_host
+        self._signal_dispatcher = signal_dispatcher
+        # Set while suspended (Ctrl+Z): the SIGCONT handler sets it to resume.
+        self._suspend_resumed: tonio.Event | None = None
         set_capability_overrides(self.settings_manager.get_terminal_capability_overrides())
         tui_mode = options.get("tuiMode") or self.settings_manager.get_tui_mode()
         self._options = {**options, "tuiMode": tui_mode}
@@ -704,11 +712,6 @@ class InteractiveMode:
         # shutdown: they run on different tasks (spawned key actions, the
         # signal watcher, /quit, extensions, the crash guard).
         self._shutdown_guard = threading.Lock()
-        # Bumped on unregister so stale signal watchers turn inert. tonio's
-        # signal receiver cannot be cancelled from outside while blocked, but
-        # every unregister call site exits the process right after, so an
-        # inert watcher never outlives anything that matters.
-        self._signal_watch_generation = 0
         self._changelog_markdown: str | None = None
         self._startup_notices_shown = False
         self._anthropic_subscription_warning_shown = False
@@ -743,7 +746,6 @@ class InteractiveMode:
 
         # Agent subscription unsubscribe function
         self._unsubscribe = None
-        self._signal_cleanup_handlers: list = []
 
         # Track if editor is in bash mode (text starts with !)
         self._is_bash_mode = False
@@ -967,7 +969,7 @@ class InteractiveMode:
             {
                 "name": cmd.invocation_name,
                 "description": self._prefix_autocomplete_description(cmd.description, cmd.source_info),
-                "getArgumentCompletions": getattr(cmd, "get_argument_completions", None),
+                "getArgumentCompletions": cmd.get_argument_completions,
             }
             for cmd in self.session.extension_runner.get_registered_commands()
             if cmd.name not in builtin_command_names
@@ -2149,8 +2151,8 @@ class InteractiveMode:
                 target_id,
                 {
                     "summarize": options.get("summarize"),
-                    "custom_instructions": options.get("customInstructions"),
-                    "replace_instructions": options.get("replaceInstructions"),
+                    "custom_instructions": options.get("custom_instructions"),
+                    "replace_instructions": options.get("replace_instructions"),
                     "label": options.get("label"),
                 },
             )
@@ -4391,7 +4393,6 @@ class InteractiveMode:
     def _emergency_terminal_exit(self) -> None:
         with self._shutdown_guard:
             self._is_shutting_down = True
-        self._unregister_signal_handlers()
         kill_tracked_detached_children()
         # The terminal is gone. Do not run normal shutdown because TUI and
         # extension cleanup can write restore sequences and re-trigger EIO.
@@ -4419,8 +4420,6 @@ class InteractiveMode:
             self._is_shutting_down = True
         if already_shutting_down:
             hard_exit(1)
-        with contextlib.suppress(Exception):
-            self._unregister_signal_handlers()
         with contextlib.suppress(Exception):
             kill_tracked_detached_children()
         with contextlib.suppress(Exception):
@@ -4455,33 +4454,36 @@ class InteractiveMode:
         converts into _emergency_terminal_exit (see pi #4144, #5080).
 
         Deviation: pi prepends process listeners and hooks stdout/stderr
-        "error" events plus uncaughtException; here a tonio signal receiver
-        feeds a background watcher, write errors surface at the write site,
-        and the run loop's crash guard covers _uncaught_crash.
+        "error" events plus uncaughtException; here the handlers go on the
+        process's signal dispatcher once, at init, write errors surface at the
+        write site, and the run loop's crash guard covers _uncaught_crash.
+        A signal during a shutdown already under way does nothing: `shutdown`
+        returns for every call after the first.
+
+        SIGWINCH asks for a frame (the terminal size is read fresh on every
+        frame); a stopped TUI ignores the request. SIGCONT resumes a
+        suspended TUI (see `_handle_ctrl_z`) and does nothing otherwise.
         """
-        self._unregister_signal_handlers()
-        with self._shutdown_guard:
-            generation = self._signal_watch_generation
+        if self._signal_dispatcher is None:
+            return
 
-        async def watch_signals() -> None:
-            try:
-                with tonio_signals.signal_receiver(signal.SIGTERM, signal.SIGHUP) as receiver:
-                    async for _sig in receiver:
-                        with self._shutdown_guard:
-                            superseded = self._signal_watch_generation != generation
-                        if superseded:
-                            return
-                        kill_tracked_detached_children()
-                        await self.shutdown({"fromSignal": True})
-            except ValueError, RuntimeError:
-                # Signals can only be watched from the main thread (tests).
-                return
+        async def on_shutdown_signal(_signum: int) -> None:
+            kill_tracked_detached_children()
+            await self.shutdown({"fromSignal": True})
 
-        tonio.spawn.without_tracking(watch_signals())
+        async def on_resize(_signum: int) -> None:
+            self.ui.request_render()
 
-    def _unregister_signal_handlers(self) -> None:
-        with self._shutdown_guard:
-            self._signal_watch_generation += 1
+        async def on_continue(_signum: int) -> None:
+            resumed = self._suspend_resumed
+            if resumed is not None:
+                self._suspend_resumed = None
+                resumed.set()
+
+        self._signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
+        self._signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
+        self._signal_dispatcher.set_handler(signal.SIGWINCH, on_resize)
+        self._signal_dispatcher.set_handler(signal.SIGCONT, on_continue)
 
     async def _handle_ctrl_z(self) -> None:
         """Suspend to background (Ctrl+Z): the suspend action's work, which
@@ -4494,35 +4496,30 @@ class InteractiveMode:
         (spec/ui-island.md).
 
         Deviations: Python processes stay alive without pi's event-loop
-        keep-alive timer, and SIGCONT is awaited through a tonio signal
-        receiver instead of process.once. SIGINT is ignored while suspended
-        so Ctrl+C in the terminal does not kill the backgrounded process.
+        keep-alive timer, and SIGCONT reaches the resume through the
+        `_suspend_resumed` event the mode's SIGCONT handler sets, instead of
+        process.once. pi's SIGINT listener while suspended is not ported: the
+        runtime delivers no SIGINT to pidrei's code.
         """
+        resumed = tonio.Event()
+        # Published before the suspend: the SIGCONT of the resume finds it.
+        self._suspend_resumed = resumed
         try:
-            previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        except ValueError:
-            previous_sigint = None
-
-        # Undone here if the suspend fails, else by the resume.
-        with contextlib.ExitStack() as suspended:
-            if previous_sigint is not None:
-                suspended.callback(signal.signal, signal.SIGINT, previous_sigint)
-            sigcont = suspended.enter_context(tonio_signals.signal_receiver(signal.SIGCONT))
-
             # Stop the TUI (restore terminal to normal mode)
             await self.ui.stop()
 
             # Send SIGTSTP to the process group (pid 0 means all
             # processes in the group)
             os.kill(0, signal.SIGTSTP)
+        except BaseException:
+            self._suspend_resumed = None
+            raise
 
-            self._spawn_flow(self._resume_after_suspend(sigcont, suspended.pop_all()))
+        self._spawn_flow(self._resume_after_suspend(resumed))
 
-    async def _resume_after_suspend(self, sigcont, suspended: contextlib.ExitStack) -> None:
-        with suspended:
-            # Stopped until `fg`; SIGCONT wakes the receiver.
-            async for _sig in sigcont:
-                break
+    async def _resume_after_suspend(self, resumed) -> None:
+        # Stopped until `fg`; its SIGCONT sets the event.
+        await resumed.wait()
         await self.ui.start()
         self.ui.request_render(True)
 
@@ -5903,7 +5900,7 @@ class InteractiveMode:
 
     async def _handle_resume_session(self, session_path: str, options: dict | None = None) -> dict:
         self._clear_status_indicator()
-        with_session = options.get("withSession") if options else None
+        with_session = options.get("with_session") if options else None
         try:
             result = await self.runtime_host.switch_session(
                 session_path,
@@ -7389,4 +7386,3 @@ class InteractiveMode:
         # fds again from here.
         detach_terminal()
         await self.ui.close()
-        self._unregister_signal_handlers()

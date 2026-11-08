@@ -13,7 +13,7 @@ from pidrei_tui import Text
 from ....modes.interactive.components.keybinding_hints import key_hint
 from ..render_utils import get_text_output, invalid_arg_text, shorten_path, str_or_none
 from ..truncate import DEFAULT_MAX_BYTES, format_size
-from .types import ToolRenderers
+from .types import ToolRenderers, detail_field, detail_truncation
 
 
 def _format_grep_call(args: dict | None, theme) -> str:
@@ -55,9 +55,9 @@ def _format_grep_result(result, options: dict, theme, show_images: bool) -> str:
             )
 
     details = result.get("details") if isinstance(result, dict) else getattr(result, "details", None)
-    match_limit = getattr(details, "match_limit_reached", None) if details is not None else None
-    truncation = getattr(details, "truncation", None) if details is not None else None
-    lines_truncated = getattr(details, "lines_truncated", None) if details is not None else None
+    match_limit = detail_field(details, "match_limit_reached")
+    truncation = detail_truncation(details)
+    lines_truncated = detail_field(details, "lines_truncated")
     if match_limit or (truncation is not None and truncation.truncated) or lines_truncated:
         warnings = []
         if match_limit:

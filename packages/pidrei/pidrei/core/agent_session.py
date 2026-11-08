@@ -895,7 +895,10 @@ class AgentSession:
             event["usage"] = ctx.result.usage
             hook_result = await runner.emit_tool_result(event)
 
-        content = (hook_result.get("content") if hook_result is not None else None) or ctx.result.content or []
+        # pi's `hookResult?.content ?? result.content ?? []`: an empty list from the hook replaces the content.
+        content = hook_result.get("content") if hook_result is not None else None
+        if content is None:
+            content = ctx.result.content if ctx.result.content is not None else []
         # Runs after the extension hook so images injected or replaced by
         # extensions are normalized too.
         normalized_content = await normalize_tool_result_images(

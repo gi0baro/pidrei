@@ -10,6 +10,7 @@ import tonio.colored as tonio
 
 from pidrei.config import get_readme_path
 from pidrei.core.extensions.types import ToolDefinition
+from pidrei.core.message_wire import to_wire_value
 from pidrei.core.tools.bash import BashExecResult, create_bash_tool_definition
 from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
 from pidrei.core.tools.renderers import with_built_in_renderers
@@ -218,6 +219,28 @@ class TestToolExecutionComponentParity:
         assert len(re.findall(r"Full output:", rendered)) == 1
         assert re.search(r"line-4000[^\n]*\n[^\S\n]*\n \[Full output:", rendered)
         assert not re.search(r"line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:", rendered)
+        assert "Truncated: showing 2000 of 4000 lines" in rendered
+        assert "[Showing lines 2001-4000 of 4000. Full output:" not in rendered
+
+    @pytest.mark.tonio
+    async def test_bash_renderer_shows_truncation_details_read_back_from_a_session_file(self):
+        # pidrei-only: live details are dataclasses, resumed ones pi's camelCase dicts.
+        class Operations:
+            async def exec(self, _command, _cwd, *, on_data, cancel=None, timeout=None, env=None):
+                for i in range(1, 4001):
+                    on_data(f"line-{i:04d}\n".encode())
+                return BashExecResult(exit_code=0)
+
+        tool = create_bash_tool_definition(CWD, operations=Operations(), expose_session_environment=False)
+        result = await tool.execute("tool-bash-1c", {"command": "generate output"}, None, None, None)
+        component = ToolExecutionComponent(
+            "bash", "tool-bash-1c", {"command": "generate output"}, {}, tool, create_fake_tui(), CWD
+        )
+        component.set_expanded(True)
+        resumed_details = to_wire_value(result.details)
+        component.update_result({"content": result.content, "details": resumed_details, "isError": False}, False)
+
+        rendered = strip_ansi("\n".join(component.render(200)))
         assert "Truncated: showing 2000 of 4000 lines" in rendered
         assert "[Showing lines 2001-4000 of 4000. Full output:" not in rendered
 

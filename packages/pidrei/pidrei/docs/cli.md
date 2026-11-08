@@ -76,11 +76,11 @@ pidrei --continue
 
 | Option | Behavior |
 |--------|----------|
-| `-c`, `--continue` | Continue the most recent session for this project |
-| `-r`, `--resume` | Open the session picker |
-| `--session <path\|id>` | Open by path, exact ID, or ID prefix; a match in another project offers to fork it here |
-| `--session-id <id>` | Open the project session with this exact ID, creating it if absent |
-| `--fork <path\|id>` | Fork an existing session into a new one for this project |
+| `-c`, `--continue` | Continue the most recent session for the current directory |
+| `-r`, `--resume` | Open the session picker and resume the chosen session in its working directory; Tab includes sessions from other directories |
+| `--session <path\|id>` | Open a session by path, exact ID, or ID prefix, and resume it in its working directory; when the ID only matches sessions stored for another directory, offer to fork it into the current one instead |
+| `--session-id <id>` | Open the current directory's session with this exact ID, creating it if absent |
+| `--fork <path\|id>` | Fork a session, chosen by path, exact ID, or ID prefix, into a new session in the current directory |
 | `--session-dir <dir>` | Storage and lookup directory; beats `PIDREI_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting |
 | `--no-session` | In-memory session, never written to disk |
 | `-n`, `--name <name>` | Set the session display name |
@@ -295,11 +295,11 @@ See [MCP Servers](mcp.md).
 | Command | Behavior |
 |---------|----------|
 | `pidrei mcp add <server> [options] -- <command> [args...]` | Add or replace a stdio server in `mcp.json`; `--env KEY=VALUE` (repeatable) and `--cwd <dir>` set its environment and working directory. Arguments after the command are passed to it |
-| `pidrei mcp add <server> [options] --url <url>` | Add or replace a streamable HTTP server; `--header KEY=VALUE` (repeatable), `--bearer-token-env-var <NAME>` (sends `Authorization: Bearer ${NAME}`), `--oauth-client-id`, `--oauth-client-secret`, `--oauth-callback-port`, and `--oauth-client-name` configure authentication |
+| `pidrei mcp add <server> [options] --url <url>` | Add or replace a streamable HTTP server; `--header KEY=VALUE` (repeatable), `--bearer-token-env-var <NAME>` (sends `Authorization: Bearer ${NAME}`), `--oauth-client-id`, `--oauth-client-secret`, `--oauth-callback-port`, `--oauth-client-name`, and `--oauth-client-registration` (`auto`, `cimd`, or `dcr`) configure authentication |
 | `pidrei mcp remove <server>` | Remove a server from `mcp.json`; stored OAuth credentials are kept |
 | `pidrei mcp list [--json]` | Connect to every enabled server and print its state, tools, and errors; exit with `1` when a config entry is invalid or an enabled server is not connected |
-| `pidrei mcp login <server> [--timeout <seconds>]` | Sign in to an OAuth server: open the authorization page and wait for the browser; a terminal also accepts the pasted redirect URL. `--timeout` limits the whole sign-in, including requests to the authorization server (default 300 seconds) |
-| `pidrei mcp logout <server>` | Delete the stored OAuth credentials of a server |
+| `pidrei mcp login <server> [-l] [--timeout <seconds>]` | Sign in to an OAuth server: open the authorization page and wait for the browser; a terminal also accepts the pasted redirect URL. `--timeout` limits the whole sign-in, including requests to the authorization server (default 300 seconds). `-l` requires the server to be defined in the project's `.pidrei/mcp.json` |
+| `pidrei mcp logout <server> [-l]` | Delete the stored OAuth credentials of a server |
 
 `add` and `remove` change `~/.pidrei/agent/mcp.json`, or `.pidrei/mcp.json` in
 the current directory with `--local` (`-l`). `add` also takes

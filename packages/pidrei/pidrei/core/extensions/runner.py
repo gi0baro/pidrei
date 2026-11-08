@@ -523,7 +523,9 @@ async def emit_project_trust_event(
         for handler in handlers:
             try:
                 handler_result = await handler(event, ctx)
-                if isinstance(handler_result, dict) and handler_result.get("trusted") == "undecided":
+                # Subscripting a result that is not a decision raises, so it is reported and
+                # the next handler decides, as pi's `handlerResult.trusted` does on undefined.
+                if handler_result["trusted"] == "undecided":
                     continue
                 return handler_result, errors
             except Exception as error:
@@ -949,6 +951,7 @@ class ExtensionRunner:
                     handler=command.handler,
                     description=command.description,
                     source_info=command.source_info,
+                    get_argument_completions=command.get_argument_completions,
                     invocation_name=invocation_name,
                 )
             )

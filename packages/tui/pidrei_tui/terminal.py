@@ -4,11 +4,13 @@ Port deviations (documented once here):
 
 - pi drives input through node's `process.stdin` data events; here `start()`
   spawns a tonio input reader (`tonio.io.register` + `arm_r` over a
-  non-blocking stdin fd, incremental UTF-8 decode) and a SIGWINCH resize
-  watcher inside a tonio scope, so `start`/`stop` are async. The resize
-  watcher needs the runtime created with `tonio.run(..., signals=
-  [signal.SIGWINCH])`; without it resize events never fire (SIGWINCH's
-  default disposition is to be ignored, so nothing breaks).
+  non-blocking stdin fd, incremental UTF-8 decode) inside a tonio scope, so
+  `start`/`stop` are async.
+- pi listens for `process.stdout` "resize" events here; `ProcessTerminal`
+  does not watch SIGWINCH. The application owns the process's signals and
+  asks the TUI for a frame on SIGWINCH (pidrei's interactive mode), and the
+  size is read fresh on every frame. `start()`'s `on_resize` is for
+  terminals that report resizes themselves.
 - Raw mode is entered with termios mirroring libuv's TTY_MODE_RAW (the mode
   behind node's `setRawMode(true)`): input flags BRKINT/ICRNL/INPCK/ISTRIP/
   IXON off, CS8 on, ECHO/ICANON/IEXTEN/ISIG off, VMIN=1/VTIME=0 — output
@@ -62,14 +64,13 @@ import contextlib
 import math
 import os
 import re
-import signal as signal_module
 import sys
 import termios
 import threading
 from typing import Any, Protocol
 
 import tonio.colored as tonio
-from tonio.colored import io as tonio_io, signals as tonio_signals
+from tonio.colored import io as tonio_io
 from tonio.colored.sync import channel as tonio_channel
 
 from pidrei_utils import clock
@@ -320,7 +321,6 @@ class ProcessTerminal:
         # start: the consumer outlives stop/start until `close()`.
         self._items_tx = None
         self._items_rx = None
-        self._resize_handler = None
         # The negotiation state and protocol flags: the reader and the
         # protocol teardown (`drain_input`, `stop`).
         self._protocol_lock = threading.RLock()
@@ -416,7 +416,8 @@ class ProcessTerminal:
         self._reply_handler = on_reply
         # Kept after `stop()`: the consumer may still be finishing an item.
         self._error_handler = on_error
-        self._resize_handler = on_resize
+        # `on_resize` is unused: this terminal does not watch SIGWINCH (see the
+        # module docstring).
 
         # The input side runs inside an armed window (the reader needs the
         # non-blocking fd); a caller that did not arm gets it here.
@@ -428,8 +429,8 @@ class ProcessTerminal:
         # Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
         self.write_sync("\x1b[?2004h")
 
-        # Set up the resize watcher and the input reader; the reader plays the
-        # role of node's process.stdin "data" listener.
+        # Set up the input reader; it plays the role of node's process.stdin
+        # "data" listener.
         # One registration per fd: a pty test (and a caller passing the same
         # fd for both sides) shares the output pump's.
         self._sio = self._out_sio if self._input_fd == self._output_fd else tonio_io.register(self._input_fd)
@@ -439,10 +440,6 @@ class ProcessTerminal:
         self._set_input_handler(on_input)
         self._scope = tonio.scope()
         await self._scope.__aenter__()
-        if self._resize_handler is not None:
-            # `None` means the caller has no interest in resize events (tests
-            # exercising the pumps); skip the SIGWINCH machinery entirely.
-            self._scope.spawn(self._resize_watcher())
 
         # Query Kitty keyboard protocol and fall back to modifyOtherKeys when DA confirms no Kitty response.
         # See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
@@ -752,14 +749,6 @@ class ProcessTerminal:
                     raise
                 on_error(error)
 
-    async def _resize_watcher(self) -> None:
-        with tonio_signals.signal_receiver(signal_module.SIGWINCH) as receiver:
-            async for _sig in receiver:
-                handler = self._resize_handler
-                if handler is None:
-                    break  # stop() requested; exit through the receiver's cleanup
-                handler()
-
     def _disable_keyboard_protocols(self) -> None:
         with self._protocol_lock:
             should_disable_kitty_protocol = self._keyboard_protocol_pushed or self._kitty_protocol_active
@@ -818,12 +807,6 @@ class ProcessTerminal:
         # on input handling, which may be what is stopping the terminal.
         self._set_input_handler(None)
         self._reply_handler = None
-        # No nudge needed for the resize watcher: the scope cancel below
-        # unwinds it through `signal_receiver.__exit__` (sync `with` cleanup
-        # runs on cancellation), which removes the SIGWINCH registration. A
-        # self-sent SIGWINCH here would also blow up any runtime that is not
-        # listening for signals (the pytest runtime, by design).
-        self._resize_handler = None
 
         # Stop the reader before touching termios so buffered input (e.g.,
         # Ctrl+D) cannot be re-interpreted after raw mode is disabled (pi

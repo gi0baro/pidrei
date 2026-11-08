@@ -9,6 +9,7 @@ Used for:
 
 import json
 import signal
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,7 +17,7 @@ from ..core.agent_session import ExtensionBindings
 from ..core.json_wire import to_wire
 from ..core.output_guard import drain_output, write_raw_stdout, write_stderr
 from ..utils.fd_io import hard_exit
-from ..utils.shell import kill_tracked_detached_children
+from ..utils.shell import SignalDispatcher, kill_tracked_detached_children, signal_exit_status
 from .json_event import to_json_event
 
 
@@ -34,7 +35,9 @@ class PrintModeOptions:
     initial_images: list[Any] | None = None
 
 
-async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
+async def run_print_mode(
+    runtime_host, options: PrintModeOptions, *, signal_dispatcher: SignalDispatcher | None = None
+) -> int:
     """Run in print (single-shot) mode.
 
     Sends prompts to the agent and outputs the result.
@@ -46,41 +49,33 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
     unsubscribe: Any = None
     unsubscribe_backpressure: Any = None
     disposed = False
-    signal_cleanup_handlers: list[Any] = []
+    # The signal handler and the normal exit both dispose; the first one claims it.
+    dispose_guard = threading.Lock()
 
     async def dispose_runtime() -> None:
         nonlocal disposed
-        if disposed:
-            return
-        disposed = True
+        with dispose_guard:
+            if disposed:
+                return
+            disposed = True
         if unsubscribe is not None:
             unsubscribe()
         if unsubscribe_backpressure is not None:
             unsubscribe_backpressure()
         await runtime_host.dispose()
 
-    def register_signal_handlers() -> None:
-        # pi awaits runtime disposal before exiting on a signal; a sync
-        # Python signal handler cannot await, so the handler kills tracked
-        # children and exits directly. Extension shutdown on signal is
-        # pi's regression 5080, still to mirror.
-        def make_handler(exit_status: int):
-            def handler(_signum, _frame) -> None:
-                kill_tracked_detached_children()
-                hard_exit(exit_status)
+    async def on_shutdown_signal(signum: int) -> None:
+        # pi: kill the tracked children, then exit once the runtime is
+        # disposed, so extensions get session_shutdown. Once the normal exit
+        # has claimed the dispose, this exits at once (pi has removed its
+        # handlers there, and the signal's default action ends the process).
+        kill_tracked_detached_children()
+        await dispose_runtime()
+        hard_exit(signal_exit_status(signum))
 
-            return handler
-
-        try:
-            previous_term = signal.signal(signal.SIGTERM, make_handler(143))
-            signal_cleanup_handlers.append(lambda: signal.signal(signal.SIGTERM, previous_term))
-            previous_hup = signal.signal(signal.SIGHUP, make_handler(129))
-            signal_cleanup_handlers.append(lambda: signal.signal(signal.SIGHUP, previous_hup))
-        except ValueError:
-            # Signals can only be installed from the main thread.
-            pass
-
-    register_signal_handlers()
+    if signal_dispatcher is not None:
+        signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
+        signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
 
     async def rebind_from_runtime(_session, swap) -> None:
         swap()
@@ -189,7 +184,5 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
         write_stderr(f"{error}\n")
         return 1
     finally:
-        for cleanup in signal_cleanup_handlers:
-            cleanup()
         await dispose_runtime()
         await drain_output()

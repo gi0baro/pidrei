@@ -93,6 +93,7 @@ from .modes.print_mode import PrintModeOptions
 from .utils.colors import dim, red, yellow
 from .utils.fd_io import FdReader
 from .utils.paths import is_local_path, normalize_path, resolve_path
+from .utils.shell import SignalDispatcher
 
 
 EXTENSION_LOAD_FAILURE_HINT = f'Hint: Start without extensions using "{APP_NAME} -ne".'
@@ -568,17 +569,26 @@ def _resolve_cli_paths(cwd: str, paths: list[str] | None) -> list[str] | None:
     return [resolve_path(value, cwd) if is_local_path(value) else value for value in paths]
 
 
-async def main(args: list[str], *, extension_factories: list[Any] | None = None) -> int:
+async def main(
+    args: list[str],
+    *,
+    extension_factories: list[Any] | None = None,
+    signal_dispatcher: SignalDispatcher | None = None,
+) -> int:
     """Run the CLI. Returns the process exit code.
 
     pi calls process.exit() throughout main; the port raises SystemExit in
     the same places and converts it to a return value here. Any other
     failure is reported here and exits 1: nothing crosses the tonio runtime
     boundary. `except*` covers a plain exception and one raised inside a
-    group (from spawned children) alike."""
+    group (from spawned children) alike.
+
+    `signal_dispatcher` is the process's signal receiver, which the mode
+    installs its signal handlers on; None when the caller handles no signals
+    (the CLI entry point always passes one)."""
     exit_code: int | None = None
     try:
-        await _main(args, extension_factories=extension_factories)
+        await _main(args, extension_factories=extension_factories, signal_dispatcher=signal_dispatcher)
     except* SystemExit as group:
         code = group.exceptions[0].code
         exit_code = code if isinstance(code, int) else 0
@@ -590,7 +600,12 @@ async def main(args: list[str], *, extension_factories: list[Any] | None = None)
     return 0 if exit_code is None else exit_code
 
 
-async def _main(args: list[str], *, extension_factories: list[Any] | None = None) -> None:
+async def _main(
+    args: list[str],
+    *,
+    extension_factories: list[Any] | None = None,
+    signal_dispatcher: SignalDispatcher | None = None,
+) -> None:
     reset_timings()
     # Commands and startup selectors can load user-authored themes before runtime creation.
     set_theme_json_validator(validate_theme_json)
@@ -973,7 +988,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     if app_mode == "rpc":
         print_timings()
-        await run_rpc_mode(runtime)
+        await run_rpc_mode(runtime, signal_dispatcher=signal_dispatcher)
     elif app_mode == "interactive":
         # Permanent by tonio's design (its author ruled unstarted coroutines
         # unreachable for cleanup — do not wait for an upstream fix):
@@ -1013,6 +1028,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 "tuiMode": parsed.tui_mode,
                 "initialThemeSetting": parsed.use_theme,
             },
+            signal_dispatcher=signal_dispatcher,
         )
         if startup_benchmark:
             await interactive_mode.init()
@@ -1038,6 +1054,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 initial_message=initial.initial_message,
                 initial_images=initial.initial_images,
             ),
+            signal_dispatcher=signal_dispatcher,
         )
         stop_theme_watcher()
         restore_stdout()

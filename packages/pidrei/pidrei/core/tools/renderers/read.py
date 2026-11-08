@@ -18,8 +18,8 @@ from ....modes.interactive.theme import get_language_from_path, highlight_code
 from ....utils.paths import format_path_relative_to_cwd_or_absolute
 from ..path_utils import resolve_to_cwd
 from ..render_utils import format_read_line_range, get_text_output, render_tool_path, replace_tabs, str_or_none
-from ..truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, format_size
-from .types import ToolRenderers
+from ..truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, format_size
+from .types import ToolRenderers, detail_truncation
 
 
 _COMPACT_RESOURCE_FILE_NAMES = {"AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
@@ -106,14 +106,6 @@ def _trim_trailing_empty_lines(lines: list) -> list:
     return lines[:end]
 
 
-def _details_truncation(details) -> TruncationResult | None:
-    if details is None:
-        return None
-    if isinstance(details, dict):
-        return details.get("truncation")
-    return getattr(details, "truncation", None)
-
-
 def _format_read_result(args, result, options, theme, show_images, _cwd, is_error) -> str:
     if not options.get("expanded") and not is_error:
         return ""
@@ -139,7 +131,7 @@ def _format_read_result(args, result, options, theme, show_images, _cwd, is_erro
             + theme.fg("muted", ")")
         )
 
-    truncation = _details_truncation(result.get("details") if isinstance(result, dict) else result.details)
+    truncation = detail_truncation(result.get("details") if isinstance(result, dict) else result.details)
     if truncation is not None and truncation.truncated:
         if truncation.first_line_exceeds_limit:
             max_bytes = truncation.max_bytes if truncation.max_bytes is not None else DEFAULT_MAX_BYTES

@@ -7,9 +7,14 @@ import shutil
 import signal
 import sys
 import threading
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from tonio.colored import signals as tonio_signals
+
 from ..config import get_bin_dir
+from .fd_io import hard_exit
+from .runtime_options import HANDLED_SIGNALS
 
 
 @dataclass(slots=True)
@@ -96,6 +101,51 @@ def kill_tracked_detached_children() -> None:
         _tracked_detached_child_pids.clear()
     for pid in pids:
         kill_process_tree(pid)
+
+
+def signal_exit_status(signum: int) -> int:
+    """The exit status of a process ended by SIGHUP (129) or SIGTERM (143)."""
+    return 129 if signum == signal.SIGHUP else 143
+
+
+async def exit_on_signal(signum: int) -> None:
+    """The SIGTERM/SIGHUP handler while no mode runs (startup, the package and
+    config commands): what the signal's default action did, after killing
+    the tracked detached children."""
+    kill_tracked_detached_children()
+    hard_exit(signal_exit_status(signum))
+
+
+async def stop_on_signal(_signum: int) -> None:
+    """The SIGTSTP handler: stop the process, as SIGTSTP's default action did
+    before the runtime handled it. SIGSTOP cannot be handled, so the kernel
+    stops the process; SIGCONT resumes it."""
+    os.kill(os.getpid(), signal.SIGSTOP)
+
+
+async def _ignore_signal(_signum: int) -> None:
+    return None
+
+
+class SignalDispatcher:
+    """The process's one receiver for every signal the runtime is created
+    with (`runtime_options.HANDLED_SIGNALS`): `watch()` runs for the whole
+    process and calls the handler installed for each signal it receives,
+    one at a time. Handlers start as no-ops; whoever installs one decides
+    in it what the signal does."""
+
+    __slots__ = ("_handlers",)
+
+    def __init__(self) -> None:
+        self._handlers: dict[int, Callable[[int], Awaitable[None]]] = dict.fromkeys(HANDLED_SIGNALS, _ignore_signal)
+
+    def set_handler(self, signum: int, handler: Callable[[int], Awaitable[None]]) -> None:
+        self._handlers[signum] = handler
+
+    async def watch(self) -> None:
+        with tonio_signals.signal_receiver(*HANDLED_SIGNALS) as receiver:
+            async for signum in receiver:
+                await self._handlers[signum](signum)
 
 
 def kill_process_tree(pid: int) -> None:

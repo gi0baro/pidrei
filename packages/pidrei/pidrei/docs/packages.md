@@ -136,12 +136,24 @@ project packages installed and loaded, only once the project is trusted, so
 `--approve` / `--no-approve` decide that for a single command. Every subcommand
 takes `--help`.
 
+If a configured package fails to install at startup, for example because git
+cannot reach the remote, pidrei warns about it, skips that package's
+resources, and keeps running. It tries to install the package again on the
+next start or `/reload`. `pidrei install` and `pidrei update` still report the
+failure and exit non-zero.
+
 To try a package for one run without adding it to settings, pass it to
 `-e`/`--extension`:
 
 ```bash
 pidrei -e git:github.com/someone/pack
 ```
+
+pidrei caches `-e` packages under `~/.pidrei/agent/tmp/extensions/` and checks
+them on every start and `/reload`: a git package is fetched and reset to the
+remote branch or ref. A ref that is a commit hash already checked out is not
+fetched. If the check fails or offline mode is on, pidrei loads the cached
+copy.
 
 **pidrei does not update itself.** pi's `update` also reinstalls pi through
 whichever package manager installed it; pidrei installs from git, where
