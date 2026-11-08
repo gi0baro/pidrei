@@ -823,8 +823,9 @@ RENAMES = {
     "packages/coding-agent/src/utils/exif-orientation.ts": "packages/pidrei/pidrei/utils/image_process.py",
     # PNG conversion for Kitty lives in the same module (Pillow replaces Photon).
     "packages/coding-agent/src/utils/image-convert.ts": "packages/pidrei/pidrei/utils/image_process.py",
-    # 0.84.4: consolidated into generate_models.py like its models-dev sibling.
-    "packages/ai/scripts/openrouter-reasoning-options.ts": "packages/ai/scripts/generate_models.py",
+    # 0.84.4: consolidated into the generator like its models-dev sibling; it
+    # lives in the OpenRouter source since the 1.5.0 catalog restructure.
+    "packages/ai/scripts/openrouter-reasoning-options.ts": "packages/ai/scripts/catalog/sources/openrouter.py",
     "packages/ai/src/models.generated.ts": "packages/ai/pidrei_ai/models_generated.py",
     "packages/ai/src/image-models.generated.ts": "packages/ai/pidrei_ai/image_models_generated.py",
     "packages/coding-agent/src/cli.ts": "packages/pidrei/pidrei/__main__.py",
@@ -843,8 +844,8 @@ RENAMES = {
     # catalog loader pidrei always had; the per-provider *.models.ts stubs map
     # through GENERATED_CATALOG_STUB_RE below.
     "packages/ai/src/model-catalog.ts": "packages/ai/pidrei_ai/models_generated.py",
-    # Consolidated into generate_models.py like openrouter-reasoning-options.ts.
-    "packages/ai/scripts/openrouter-catalog.ts": "packages/ai/scripts/generate_models.py",
+    # Renamed to catalog/sources/openrouter.ts in 1.5.0 (`2e0f175b`).
+    "packages/ai/scripts/openrouter-catalog.ts": "packages/ai/scripts/catalog/sources/openrouter.py",
     # 1.0.0.0 codemode: pi's prelude is JavaScript source run in the VM;
     # pidrei's is host-side Python plus a small in-session prelude, one module.
     "packages/codemode/src/runtime/prelude-source.ts": "packages/codemode/pidrei_codemode/runtime/prelude.py",
@@ -865,8 +866,8 @@ RENAMES = {
     # (the worker-thread half is dropped below).
     "packages/coding-agent/src/utils/image-resize-core.ts": "packages/pidrei/pidrei/utils/image_process.py",
     "packages/coding-agent/src/utils/image-resize.ts": "packages/pidrei/pidrei/utils/image_process.py",
-    # 1.1.0: consolidated into generate_models.py like the OpenRouter catalog helpers.
-    "packages/ai/scripts/ai-gateway-pricing.ts": "packages/ai/scripts/generate_models.py",
+    # Folded into catalog/sources/vercel-ai-gateway.ts in 1.5.0 (`2e0f175b`).
+    "packages/ai/scripts/ai-gateway-pricing.ts": "packages/ai/scripts/catalog/sources/vercel_ai_gateway.py",
     # 1.2.0: pi split its host into the Node worker launcher (runtime/host.ts,
     # dropped) and the calls/output/store/limits half every VM placement
     # shares (runtime/execution.ts), which is what pidrei's Monty driver mirrors.

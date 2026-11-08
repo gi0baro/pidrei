@@ -159,7 +159,8 @@ Judgement calls with precedent:
 - A diff outside a dropped path that only makes sense with dropped surface
   (e.g. consumers of a non-ported subsystem): port the product half, drop the
   rest with a one-line note.
-- **Catalog commits** (`generate-models.ts`): port the generator change.
+- **Catalog commits** (`packages/ai/catalog/`): port the generator change
+  into the matching module of `packages/ai/scripts/catalog/`.
   The catalog is regenerated once at close-out, so tests asserting catalog
   contents fail until then; note them, don't chase them.
 - **Cross-commit dependencies.** A commit can build on another one placed in

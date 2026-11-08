@@ -72,10 +72,10 @@ def test_forwards_required_tool_choice():
         )
     )
     params = build_request_params(
-        get_builtin_model("openai", "gpt-5.4"), context, OpenAIResponsesOptions(tool_choice="required")
+        get_builtin_model("openai", "gpt-5.6-luna"), context, OpenAIResponsesOptions(tool_choice="required")
     )
     assert params["tool_choice"] == "required"
-    # gpt-5.4 declares its tools in additional_tools items; tool_choice applies to them.
+    # gpt-5.6-luna declares its tools in additional_tools items; tool_choice applies to them.
     assert len(params["input"]) == 2
     assert params["input"][0]["type"] == "additional_tools"
     assert [tool["name"] for tool in params["input"][0]["tools"]] == ["ping"]

@@ -1,13 +1,12 @@
 """Mirror of pi's openrouter-reasoning-options.test.ts.
 
-pi's map helper lives in scripts/openrouter-reasoning-options.ts; pidrei
-consolidates it into scripts/generate_models.py next to its models.dev
-sibling, so the map cases import the generator script. The payload cases
-mirror pi's `onPayload` capture: the callback records the request and raises,
-which surfaces as an errored message rather than a sent request.
+pi's map helper lives in catalog/sources/openrouter.ts, as does PiDrei's
+(scripts/catalog/sources/openrouter.py). The payload cases mirror pi's
+`onPayload` capture: the callback records the request and raises, which
+surfaces as an errored message rather than a sent request.
 """
 
-import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,17 +16,10 @@ from pidrei_ai.types import Context, Model, ModelCost, OpenAICompletionsCompat, 
 from pidrei_ai.utils.transcript import normalize_context
 
 
-def _load_generate_models():
-    """Import the sibling generator script (not an installed module)."""
-    path = Path(__file__).parents[1] / "scripts" / "generate_models.py"
-    spec = importlib.util.spec_from_file_location("pidrei_ai_scripts_generate_models", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from catalog.sources.openrouter import get_openrouter_thinking_level_map
 
-generate_models = _load_generate_models()
-get_openrouter_thinking_level_map = generate_models.get_openrouter_thinking_level_map
 
 CONTEXT = normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=0)]))
 

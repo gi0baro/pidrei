@@ -93,6 +93,7 @@ def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-6.1-sol",
+        "gpt-6.1-terra",
     ],
 )
 def test_includes_xhigh_for_openai_codex_models(model_id):
@@ -103,12 +104,23 @@ def test_includes_xhigh_for_openai_codex_models(model_id):
 
 
 @pytest.mark.parametrize(
+    "model_id", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-terra"]
+)
+def test_includes_xhigh_and_max_for_openai_models(model_id):
+    model = next((model for model in MODELS["openai"] if model.id == model_id), None)
+    assert model is not None
+
+    assert get_supported_thinking_levels(model) == ["off", "low", "medium", "high", "xhigh", "max"]
+
+
+@pytest.mark.parametrize(
     ("model_id", "cost", "codex_context_window"),
     [
         ("gpt-6-sol", ModelCost(input=2, output=10, cache_read=0.2, cache_write=2.5), 272000),
         ("gpt-6-luna", ModelCost(input=0.1, output=0.5, cache_read=0.01, cache_write=0.125), 272000),
         # Codex serves GPT-6.1 Sol with a 500K default context window (#10840)
         ("gpt-6.1-sol", ModelCost(input=2, output=10, cache_read=0.1, cache_write=2.5), 500000),
+        ("gpt-6.1-terra", ModelCost(input=1, output=5, cache_read=0.05, cache_write=1.25), 500000),
     ],
 )
 def test_includes_official_metadata_for_openai_and_codex(model_id, cost, codex_context_window):
@@ -152,6 +164,15 @@ def test_does_not_support_off_for_gpt_6_1_sol():
         assert model is not None, provider
         assert get_supported_thinking_levels(model) == levels
         assert model.thinking_level_map["off"] is None
+
+
+# GPT-6.1 Terra accepts reasoning.effort "none" but, like GPT-6.1 Sol, rejects "minimal".
+def test_supports_off_but_not_minimal_for_gpt_6_1_terra():
+    for provider in ("openai", "azure", "openai-codex"):
+        model = next((model for model in MODELS[provider] if model.id == "gpt-6.1-terra"), None)
+        assert model is not None, provider
+        assert model.thinking_level_map["off"] == "none"
+        assert model.thinking_level_map["minimal"] == ("low" if provider == "openai-codex" else None)
 
 
 def test_preserves_low_high_max_metadata_for_deepseek_v4_1_flash_on_openrouter():
