@@ -511,6 +511,55 @@ class TestToolExecutionComponentParity:
         assert "two" in rendered
         assert "two\n\n" not in rendered
 
+    # #9265: every argument delta re-ran the call renderer; a streamed `write` re-highlighted its whole content each time.
+    def test_renders_streamed_partial_arguments_once_per_frame_with_the_latest_arguments(self):
+        write = create_write_tool_definition(CWD)
+        render_calls = 0
+
+        def counting_render_call(*args):
+            nonlocal render_calls
+            render_calls += 1
+            return write.render_call(*args)
+
+        counted = replace(write, render_call=counting_render_call)
+        render_requests = 0
+
+        def request_render(force=False):
+            nonlocal render_requests
+            render_requests += 1
+
+        tui = SimpleNamespace(request_render=request_render)
+        component = ToolExecutionComponent("write", "tool-9", {}, {}, counted, tui, ".")
+        calls_before = render_calls
+        content = ""
+        for index in range(200):
+            content += f"const line{index} = {index};\n"
+            component.update_args({"path": "src/file.ts", "content": content})
+        assert render_calls == calls_before
+        assert render_requests > 0
+
+        streamed = strip_ansi("\n".join(component.render(120)))
+        assert render_calls - calls_before == 1
+        # The same preview as rendering the final arguments directly.
+        direct = ToolExecutionComponent(
+            "write", "tool-10", {"path": "src/file.ts", "content": content}, {}, write, tui, "."
+        )
+        assert streamed == strip_ansi("\n".join(direct.render(120)))
+
+        # More deltas before the next frame: one more renderer run, which shows them all.
+        component.update_args({"path": "src/file.ts", "content": f"{content}const tail = 1;\n"})
+        final = {"path": "src/file.ts", "content": f"{content}const tail = 2;\n"}
+        component.update_args(final)
+        following = strip_ansi("\n".join(component.render(120)))
+        assert render_calls - calls_before == 2
+        assert "201 total" in following
+        assert following == strip_ansi(
+            "\n".join(ToolExecutionComponent("write", "t", final, {}, write, tui, ".").render(120))
+        )
+        # Rendering again without new arguments does not run the renderer.
+        component.render(120)
+        assert render_calls - calls_before == 2
+
     def test_trims_trailing_blank_display_lines_from_read_results(self):
         component = ToolExecutionComponent(
             "read", "tool-8", {"path": "notes.txt"}, {}, create_read_tool_definition(CWD), create_fake_tui(), CWD

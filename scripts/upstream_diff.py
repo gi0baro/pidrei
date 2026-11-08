@@ -1635,9 +1635,9 @@ TEST_HOMES = {
     "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/constrained-sampling.test.ts": (
-        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases "
-        "and the 1.0.0 foreign-item-id replay case; "
-        "the grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
+        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases, "
+        "the 1.0.0 foreign-item-id replay case and the 1.5.0 grammar-input-JSON and custom-input streaming cases; "
+        "the other grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
     "packages/coding-agent/test/git-update.test.ts": "PARITY GAP: package_manager.py git update (force-push handling) unmirrored",

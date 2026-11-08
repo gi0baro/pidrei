@@ -38,7 +38,6 @@ dependencies = [
     # signs a JWT assertion to exchange for an access token (auth/google_adc.py).
     # pi gets this from google-auth-library via @google/genai.
     "cryptography~=49.0",
-    "partial-json-parser~=0.2.1",
     "jsonschema~=4.26",
 ]
 

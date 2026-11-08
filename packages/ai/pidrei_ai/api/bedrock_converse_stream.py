@@ -97,9 +97,9 @@ from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.identity import format_user_agent
-from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import (
     collapse_system_messages,
@@ -183,11 +183,12 @@ def stream(
 
     async def _run() -> None:
         blocks = output.content
-        # pi tags blocks with the provider's contentBlockIndex while streaming and
-        # deletes it afterwards; dataclasses have no spare slot, so the mapping
-        # lives beside the blocks and is simply dropped at the end.
+        # Stream state of the open Bedrock content blocks, kept off the blocks so
+        # it never reaches partials (pi's `OpenBlocks`): the content index per
+        # `contentBlockIndex`, a tool call's arguments and the encrypted
+        # reasoning chunks, the last two per content index.
         block_indices: dict[int, int] = {}
-        partial_json: dict[int, str] = {}
+        tool_arguments: dict[int, ToolCallArgumentsStream] = {}
         redacted_chunks: dict[int, list[bytes]] = {}
 
         # A profile explicitly configured through pi's auth flow (the `profile`
@@ -340,14 +341,14 @@ def stream(
                     out_stream.push(StartEvent(partial=output))
                 elif "contentBlockStart" in item:
                     _handle_content_block_start(
-                        item["contentBlockStart"], blocks, block_indices, partial_json, output, out_stream
+                        item["contentBlockStart"], blocks, block_indices, tool_arguments, output, out_stream
                     )
                 elif "contentBlockDelta" in item:
                     _handle_content_block_delta(
                         item["contentBlockDelta"],
                         blocks,
                         block_indices,
-                        partial_json,
+                        tool_arguments,
                         redacted_chunks,
                         output,
                         out_stream,
@@ -357,7 +358,7 @@ def stream(
                         item["contentBlockStop"],
                         blocks,
                         block_indices,
-                        partial_json,
+                        tool_arguments,
                         redacted_chunks,
                         output,
                         out_stream,
@@ -634,7 +635,7 @@ def _copy_thinking_budgets(budgets: ThinkingBudgets | None) -> ThinkingBudgets:
 
 
 def _handle_content_block_start(
-    event: dict, blocks: list, block_indices: dict, partial_json: dict, output: AssistantMessageBuilder, out_stream
+    event: dict, blocks: list, block_indices: dict, tool_arguments: dict, output: AssistantMessageBuilder, out_stream
 ) -> None:
     index = event.get("contentBlockIndex")
     start = event.get("start") or {}
@@ -646,7 +647,7 @@ def _handle_content_block_start(
         output.content.append(block)
         position = len(blocks) - 1
         block_indices[index] = position
-        partial_json[position] = ""
+        tool_arguments[position] = ToolCallArgumentsStream()
         out_stream.push(ToolCallStartEvent(content_index=position, partial=output))
 
 
@@ -654,7 +655,7 @@ def _handle_content_block_delta(
     event: dict,
     blocks: list,
     block_indices: dict,
-    partial_json: dict,
+    tool_arguments: dict,
     redacted_chunks: dict,
     output: AssistantMessageBuilder,
     out_stream,
@@ -675,9 +676,8 @@ def _handle_content_block_delta(
         if block.type == "text":
             block.text += delta["text"]
             out_stream.push(TextDeltaEvent(content_index=index, delta=delta["text"], partial=output))
-    elif delta.get("toolUse") and block is not None and block.type == "toolCall":
-        partial_json[index] = partial_json.get(index, "") + (delta["toolUse"].get("input") or "")
-        block.arguments = parse_streaming_json(partial_json[index])
+    elif delta.get("toolUse") and block is not None and block.type == "toolCall" and index in tool_arguments:
+        block.arguments = tool_arguments[index].append(delta["toolUse"].get("input") or "")
         out_stream.push(
             ToolCallDeltaEvent(content_index=index, delta=delta["toolUse"].get("input") or "", partial=output)
         )
@@ -720,11 +720,9 @@ def _handle_content_block_delta(
 
 
 def _flush_redacted_content(blocks: list, redacted_chunks: dict, index: int | None = None) -> None:
-    """Encode buffered encrypted reasoning into `thinking_signature` and drop the scratch
-    buffer. pi also strips the `index`/`partialJson` fields it stashes on the block itself;
-    here that scratch already lives beside the blocks, so only the redacted payload needs
-    folding back in. Runs from the terminal paths as well as `contentBlockStop`, because a
-    stream can settle without stopping each block."""
+    """Encode buffered encrypted reasoning into `thinking_signature` and drop the chunks,
+    which stay in the stream state, never on the block. Runs from the terminal paths as
+    well as `contentBlockStop`, because a stream can settle without stopping each block."""
     for position in list(redacted_chunks) if index is None else [index]:
         chunks = redacted_chunks.pop(position, None)
         if chunks is None:
@@ -768,7 +766,7 @@ def _handle_content_block_stop(
     event: dict,
     blocks: list,
     block_indices: dict,
-    partial_json: dict,
+    tool_arguments: dict,
     redacted_chunks: dict,
     output: AssistantMessageBuilder,
     out_stream,
@@ -784,7 +782,9 @@ def _handle_content_block_stop(
         _flush_redacted_content(blocks, redacted_chunks, index)
         out_stream.push(ThinkingEndEvent(content_index=index, content=block.thinking, partial=output))
     elif block.type == "toolCall":
-        block.arguments, block.arguments_error = parse_tool_call_arguments(partial_json.pop(index, ""))
+        arguments = tool_arguments.pop(index, None)
+        if arguments is not None:
+            block.arguments, block.arguments_error = arguments.finish()
         out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 
 

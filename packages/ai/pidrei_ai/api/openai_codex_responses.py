@@ -676,14 +676,6 @@ def stream(
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()
         except Exception as error:
-            for block in output.content:
-                # Streaming scratch buffers are only used during parsing; never persist them.
-                for scratch in ("partial_json", "custom_input"):
-                    if hasattr(block, scratch):
-                        try:
-                            delattr(block, scratch)
-                        except AttributeError:
-                            pass
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
             output.error_message = format_provider_error(normalize_provider_error(error))
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))

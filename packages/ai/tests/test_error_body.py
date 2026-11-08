@@ -5,7 +5,9 @@ pi synthesizes one error per JS-SDK shape; the Python port probes the
 snake_case fields our adapters and punkreq raise (`status_code`, `status`,
 `body`, `error` — see error_body.py's docstring), so the two Bedrock
 `$metadata`/`$response` cases (including the unread-response-stream guard from
-pi af3b934f) have no counterpart here by design.
+pi af3b934f) have no counterpart here by design. Neither has 1.5.0's
+"keeps an excerpt that does not hold the whole body alive": V8 slices are views
+that keep the sliced text alive, Python slices are copies.
 """
 
 import json

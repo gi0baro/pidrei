@@ -1,13 +1,13 @@
-"""Port of pi's JSON repair + streaming parse (packages/ai/src/utils/json-parse.ts).
+"""Port of pi's JSON repair and finished-arguments parse (packages/ai/src/utils/json-parse.ts).
 
-`partial_json_parser` (PyPI) is the official Python port of the npm
-`partial-json` package pi uses, so partial-parse semantics match by construction.
+pi's `parseStreamingJson` (a full re-parse of the accumulated text through the
+`partial-json` package) is not ported: since 1.5.0 every adapter reads streamed
+tool-call arguments through `pidrei_ai.utils.streaming_json`, so it has no
+caller here.
 """
 
 import json
 from typing import Any
-
-from partial_json_parser import loads as _partial_parse
 
 
 _VALID_JSON_ESCAPES = frozenset('"\\/bfnrt')
@@ -81,7 +81,7 @@ def _is_repairable(error: ValueError) -> bool:
     # \\escape", "Invalid \\uXXXX escape"). Any other first error — a truncated
     # prefix's "Unterminated string"/"Expecting …", "Extra data" — sits before
     # every repairable spot and survives the repair unchanged, so the O(n)
-    # Python pass is skipped: this runs once per streamed tool-argument delta.
+    # Python pass is skipped.
     return isinstance(error, json.JSONDecodeError) and error.msg.startswith("Invalid")
 
 
@@ -110,7 +110,7 @@ def parse_json_with_repair(json_text: str) -> Any:
 def parse_tool_call_arguments(json_text: str | None) -> tuple[dict[str, Any], str | None]:
     """Parse the model's complete arguments text of a finished tool call.
 
-    Unlike `parse_streaming_json`, this never keeps a partially parsed prefix:
+    Unlike the streamed partial arguments, this never keeps a partially parsed prefix:
     once the call is finished, text that is not a valid JSON object means the
     model sent malformed arguments. Returns `(arguments, arguments_error)`; on
     failure the arguments are `{}` and the error describes the problem,
@@ -126,26 +126,3 @@ def parse_tool_call_arguments(json_text: str | None) -> tuple[dict[str, Any], st
     if not isinstance(parsed, dict):
         return {}, f"Tool arguments must be a JSON object\n\nReceived arguments:\n{json_text}"
     return parsed, None
-
-
-def parse_streaming_json(partial_json: str | None) -> Any:
-    """Parse potentially incomplete JSON during streaming.
-
-    Always returns a value, even if the JSON is incomplete; falls back to an
-    empty dict when nothing can be parsed.
-    """
-    if not partial_json or partial_json.strip() == "":
-        return {}
-
-    try:
-        return parse_json_with_repair(partial_json)
-    except ValueError:
-        try:
-            result = _partial_parse(partial_json)
-            return result if result is not None else {}
-        except Exception:
-            try:
-                result = _partial_parse(repair_json(partial_json))
-                return result if result is not None else {}
-            except Exception:
-                return {}
