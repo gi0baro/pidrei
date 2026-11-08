@@ -175,7 +175,7 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             if lines is None:
                 try:
                     content = await ops.read_file(file_path)
-                    lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+                    lines = content.replace("\r\n", "\n").split("\n")
                 except Exception:
                     lines = []
                 file_cache[file_path] = lines

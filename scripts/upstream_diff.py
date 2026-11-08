@@ -791,6 +791,11 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/test/exec-runtime-limit.test.ts",
         "V8's maximum string length bounds pi's exec maxBuffer; no Python counterpart (1.5.0 delta port)",
     ),
+    (
+        "packages/coding-agent/test/session-manager/fork-from.test.ts",
+        "added by 8ddc44ec and removed by ed76cca6, which moved its case into custom-session-id.test.ts "
+        "(test_session_manager.py TestForkFrom) (1.5.0 delta port)",
+    ),
     ("packages/coding-agent/test/interactive-mode-extension-changelog.test.ts", _EXTENSION_CHANGELOG_REASON),
     # `531340f1` deletes them; pidrei never had npm root shims
     ("packages/ai/bedrock-provider.js", "npm root entry shim, not ported (1.5.0 delta port)"),
@@ -1628,8 +1633,9 @@ TEST_HOMES = {
         "home: packages/pidrei/tests/test_interactive_mode_status.py (working-indicator cases; verify per delta)"
     ),
     "packages/coding-agent/test/image-processing.test.ts": (
-        "PARITY GAP: image conversion/EXIF cases unmirrored (Pillow's exif_transpose replaces pi's "
-        "APP1 scanner, so orientation deltas are usually moot); port behaviour deltas into a new mirror"
+        "partial mirror: packages/pidrei/tests/test_image_process.py holds the transcoder and "
+        "PNG-or-JPEG resize cases; the other conversion/EXIF cases are a PARITY GAP (Pillow's "
+        "exif_transpose replaces pi's APP1 scanner, so orientation deltas are usually moot)"
     ),
     "packages/ai/test/env-api-keys.test.ts": "covered by packages/ai/tests/test_providers.py (+ test_registry.py; see its docstring)",
     "packages/ai/test/supports-xhigh.test.ts": "covered by packages/ai/tests/test_registry.py + test_models_generated.py (get_supported_thinking_levels)",

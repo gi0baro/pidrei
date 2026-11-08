@@ -1149,23 +1149,12 @@ class InteractiveMode:
         # Load changelog (only show new entries, skip for resumed sessions)
         self._changelog_markdown = await self._get_changelog_for_display()
 
-        if self.session.scoped_models and self._should_show_startup_details():
-            model_parts = []
-            for sm in self.session.scoped_models:
-                model = sm["model"] if isinstance(sm, dict) else sm.model
-                thinking_level = (
-                    sm.get("thinkingLevel") if isinstance(sm, dict) else getattr(sm, "thinking_level", None)
-                )
-                thinking_str = f":{thinking_level}" if thinking_level else ""
-                model_parts.append(f"{model.id}{thinking_str}")
-            model_list = ", ".join(model_parts)
-            cycle_keys = self._keybindings.get_keys("app.model.cycleForward")
-            cycle_hint = (
-                theme.fg("muted", f" ({format_key_text('/'.join(cycle_keys), {'capitalize': True})} to cycle)")
-                if cycle_keys
-                else ""
-            )
-            write_stdout(theme.fg("dim", f"Model scope: {model_list}{cycle_hint}") + "\n")
+        # Fullscreen renders on the alternate screen, so text printed to stdout here would stay in the shell
+        # after exit. Fullscreen shows the notice in the header instead (pi #11508).
+        if self._renderer.mode != "fullscreen":
+            model_scope_notice = self._get_model_scope_notice()
+            if model_scope_notice:
+                write_stdout(model_scope_notice + "\n")
 
         # Keep one component tree and remount it when changing renderers.
         self._render_widgets()  # Initialize with default spacer
@@ -1306,6 +1295,8 @@ class InteractiveMode:
         with self.ui.state_lock:
             for child in header_children:
                 self._header_container.add_child(child)
+            if self._renderer.mode == "fullscreen":
+                self._show_fullscreen_model_scope_notice()
             self.ui.request_render()
 
         # Resolve fd and rg after mounting the TUI (pi also downloads them
@@ -1577,6 +1568,30 @@ class InteractiveMode:
     def _should_show_startup_header(self) -> bool:
         """Startup header (logo, version, key hints). Hidden only by quietStartup: true."""
         return self._options.get("verbose") is True or self.settings_manager.get_quiet_startup() is not True
+
+    def _get_model_scope_notice(self) -> str | None:
+        if not self.session.scoped_models or not self._should_show_startup_details():
+            return None
+        model_parts = []
+        for sm in self.session.scoped_models:
+            model = sm["model"] if isinstance(sm, dict) else sm.model
+            thinking_level = sm.get("thinkingLevel") if isinstance(sm, dict) else getattr(sm, "thinking_level", None)
+            thinking_str = f":{thinking_level}" if thinking_level else ""
+            model_parts.append(f"{model.id}{thinking_str}")
+        model_list = ", ".join(model_parts)
+        cycle_keys = self._keybindings.get_keys("app.model.cycleForward")
+        cycle_hint = (
+            theme.fg("muted", f" ({format_key_text('/'.join(cycle_keys), {'capitalize': True})} to cycle)")
+            if cycle_keys
+            else ""
+        )
+        return theme.fg("dim", f"Model scope: {model_list}{cycle_hint}")
+
+    def _show_fullscreen_model_scope_notice(self) -> None:
+        if not self._get_model_scope_notice():
+            return
+        self._header_container.add_child(ThemedText(lambda: self._get_model_scope_notice() or "", 1, 0))
+        self._header_container.add_child(Spacer(1))
 
     def _should_show_startup_details(self) -> bool:
         """Startup details (model scope, loaded resources). Hidden by quietStartup: true or "header"."""
@@ -2037,7 +2052,7 @@ class InteractiveMode:
                     self._loaded_resources_container.add_child(
                         ThemedText(
                             lambda: (
-                                f"{theme.fg('warning', '[Skill conflicts]')}\n"
+                                f"{theme.fg('warning', '[Skill warnings]')}\n"
                                 f"{self._format_diagnostics(skill_diagnostics, source_infos)}"
                             ),
                             0,
@@ -2877,8 +2892,11 @@ class InteractiveMode:
             # Save text from current editor before switching
             current_text = self.editor.get_text()
 
-            self._dispose_active_selector()
-            self._editor_container.clear()
+            # An open extension dialog keeps the editor slot; the new editor is shown when the last dialog closes.
+            dialog_open = len(self._extension_dialogs) > 0
+            if not dialog_open:
+                self._dispose_active_selector()
+                self._editor_container.clear()
 
             if factory is not None:
                 # Create the custom editor with tui, theme, and keybindings
@@ -2942,7 +2960,8 @@ class InteractiveMode:
                 self._default_editor.set_text(current_text)
                 self.editor = self._default_editor
 
-            self._editor_container.add_child(self.editor)
+            if not dialog_open:
+                self._editor_container.add_child(self.editor)
             if self._active_status_indicator is not None:
                 self._status_container.clear()
                 self._active_working_indicator_embedded = self._set_editor_working_status_indicator(
@@ -2950,7 +2969,8 @@ class InteractiveMode:
                 )
                 if not self._active_working_indicator_embedded:
                     self._status_container.set_children([self._active_status_indicator])
-            self.ui.set_focus(self.editor)
+            if not dialog_open:
+                self.ui.set_focus(self.editor)
             self.ui.request_render()
 
     def _show_extension_notify(self, message: str, type=None) -> None:
@@ -3021,7 +3041,12 @@ class InteractiveMode:
                 if on_handle is not None:
                     on_handle(guard_overlay_handle(self.ui, state["overlay_handle"]))
             else:
-                self._push_extension_dialog(component)
+                # `"blocked": {"kind", "message"}` reports pidrei as blocked while the component is visible;
+                # overlays are not on the dialog stack and ignore it.
+                blocked = options.get("blocked")
+                self._push_extension_dialog(
+                    component, BlockedStatus(blocked["kind"], blocked["message"]) if blocked else None
+                )
 
         with self.ui.state_lock:
             state["editor_text"] = self.editor.get_text()
@@ -3933,6 +3958,8 @@ class InteractiveMode:
                             self._get_markdown_theme_with_settings(),
                             self._output_pad,
                             self._get_markdown_transformers(),
+                            options.get("messageId"),
+                            options.get("timestamp"),
                         )
                         self._chat_container.add_child(user_component)
                 else:
@@ -3941,6 +3968,8 @@ class InteractiveMode:
                         self._get_markdown_theme_with_settings(),
                         self._output_pad,
                         self._get_markdown_transformers(),
+                        options.get("messageId"),
+                        options.get("timestamp"),
                     )
                     self._chat_container.add_child(user_component)
                 if options.get("populateHistory"):
@@ -3953,6 +3982,8 @@ class InteractiveMode:
                 self._hidden_thinking_label,
                 self._output_pad,
                 self._get_markdown_transformers(),
+                options.get("messageId"),
+                options.get("timestamp"),
             )
             self._chat_container.add_child(assistant_component)
         elif role == "toolResult":
@@ -3960,8 +3991,14 @@ class InteractiveMode:
             # separately
             pass
 
-    def _render_session_items(self, items: list, options: dict | None = None) -> None:
+    def _render_session_items(
+        self, items: list, message_meta: dict[int, dict] | None = None, options: dict | None = None
+    ) -> None:
+        """``message_meta`` maps ``id()`` of a message in ``items`` to its
+        session entry's ``{"id", "timestamp"}`` (pi: a Map keyed by the
+        message); ``items`` keeps the messages alive meanwhile."""
         options = options or {}
+        message_meta = message_meta or {}
         self._pending_tools.clear()
         rendered_pending_tools: dict = {}
         # Cache misses are not persisted, unlike successful cache-warming
@@ -3991,7 +4028,8 @@ class InteractiveMode:
             message = item
             # Assistant messages need special handling for tool calls
             if message.role == "assistant":
-                self._add_message_to_chat(message)
+                meta = message_meta.get(id(message), {})
+                self._add_message_to_chat(message, {"messageId": meta.get("id"), "timestamp": meta.get("timestamp")})
                 # Render tool call components
                 for content in message.content:
                     if content.type == "toolCall":
@@ -4048,7 +4086,10 @@ class InteractiveMode:
                     rendered_pending_tools.pop(message.tool_call_id, None)
             else:
                 # All other messages use standard rendering
-                self._add_message_to_chat(message, options)
+                meta = message_meta.get(id(message), {})
+                self._add_message_to_chat(
+                    message, {**options, "messageId": meta.get("id"), "timestamp": meta.get("timestamp")}
+                )
 
         for tool_call_id, component in rendered_pending_tools.items():
             self._pending_tools[tool_call_id] = component
@@ -4088,15 +4129,18 @@ class InteractiveMode:
         if isinstance(self._renderer, TuiAltScreen):
             self._renderer.reset_text_selection()
         items: list = []
+        message_meta: dict[int, dict] = {}
         for entry in entries:
             if entry.get("type") == "custom" or (entry.get("type") == "usage" and entry.get("kind") == "cache_warm"):
                 items.append(entry)
                 continue
             messages = session_entry_to_context_messages(entry)
+            for message in messages:
+                message_meta[id(message)] = {"id": entry.get("id"), "timestamp": entry.get("timestamp")}
             items.extend(messages)
             if entry.get("type") in ("compaction", "branch_summary") and entry.get("usage") and messages:
                 items.append({"type": "compaction_cost", "kind": entry["type"], "usage": entry["usage"]})
-        self._render_session_items(items, options)
+        self._render_session_items(items, message_meta, options)
 
     def _add_cache_warming_usage(self, entry: dict) -> None:
         if not self.settings_manager.get_show_cache_miss_notices():
@@ -4622,6 +4666,8 @@ class InteractiveMode:
             result = await edit_in_external_editor({"command": editor_cmd, "content": content})
             if result["status"] == "complete":
                 self._set_editor_text(result["content"])
+            else:
+                self.show_status(result["message"])
         finally:
             await self.ui.start()
             self.ui.request_render(True)
@@ -6464,7 +6510,14 @@ class InteractiveMode:
             if event.type == "auth_url":
                 dialog.show_auth(event.url, event.instructions)
             elif event.type == "device_code":
-                dialog.show_device_code({"verificationUri": event.verification_uri, "userCode": event.user_code})
+                dialog.show_device_code(
+                    {
+                        "verificationUri": event.verification_uri,
+                        "userCode": event.user_code,
+                        "openBrowserOnConfirm": event.open_browser_on_confirm,
+                        "copyCodeOnConfirm": event.copy_code_on_confirm,
+                    }
+                )
                 dialog.show_waiting("Waiting for authentication...")
             elif event.type == "info":
                 dialog.show_info(event.message, event.links)

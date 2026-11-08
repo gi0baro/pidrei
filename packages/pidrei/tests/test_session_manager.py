@@ -1131,6 +1131,54 @@ class TestCustomSessionId:
         )
 
 
+class TestForkFrom:
+    @pytest.mark.tonio
+    async def test_copies_all_entries_unchanged_into_the_forked_session(self, tmp_path):
+        temp_dir = str(tmp_path)
+        source_path = os.path.join(temp_dir, "source.jsonl")
+
+        def stringify(value: dict) -> str:
+            return json.dumps(value, separators=(",", ":"))  # JSON.stringify
+
+        lines = [
+            stringify(
+                {
+                    "type": "session",
+                    "version": 3,
+                    "id": "source-id",
+                    "timestamp": "2025-01-01T00:00:00.000Z",
+                    "cwd": temp_dir,
+                }
+            )
+        ]
+        parent_id = None
+        for i in range(50):
+            entry_id = f"e{i}"
+            lines.append(
+                stringify(
+                    {
+                        "type": "message",
+                        "id": entry_id,
+                        "parentId": parent_id,
+                        "timestamp": "2025-01-01T00:00:00.000Z",
+                        "message": {"role": "user", "content": f"message {i}", "timestamp": 0},
+                    }
+                )
+            )
+            parent_id = entry_id
+        with open(source_path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+
+        forked = await SessionManager.fork_from(source_path, temp_dir, os.path.join(temp_dir, "sessions"))
+
+        with open(forked.get_session_file(), encoding="utf-8") as handle:
+            written = handle.read().rstrip().split("\n")
+        assert len(written) == 51
+        assert json.loads(written[0])["parentSession"] == source_path
+        assert written[1:] == lines[1:]
+        assert len(forked.get_entries()) == 50
+
+
 def _write_session_header(file: str, cwd: str, session_id: str, prefix: str = "") -> None:
     with open(file, "w", encoding="utf-8") as handle:
         handle.write(
@@ -1509,6 +1557,57 @@ class TestSessionFileCreation:
         await session.append_message(assistant_msg("first answer"))
 
         assert read_session_file_roles(session.get_session_file()) == ["session", "user", "custom", "assistant"]
+
+    # #10166, #10661, #11460: a failed write must not leave later entries pointing to a missing parent
+    @pytest.mark.tonio
+    async def test_does_not_keep_an_entry_in_memory_when_writing_it_fails(self, tmp_path):
+        session = await SessionManager(str(tmp_path), str(tmp_path))
+        first_id = await session.append_message(user_msg("first question"))
+        file = session.get_session_file()
+
+        os.chmod(file, 0o444)
+        with pytest.raises(OSError):
+            await session.append_message(assistant_msg("lost answer"))
+        assert session.get_leaf_id() == first_id
+        assert [entry["id"] for entry in session.get_entries()] == [first_id]
+
+        os.chmod(file, 0o644)
+        second_id = await session.append_message(assistant_msg("second answer"))
+        assert session.get_entry(second_id)["parentId"] == first_id
+
+        reopened = await SessionManager(session_dir=str(tmp_path), session_file=file)
+        assert [entry["id"] for entry in reopened.get_branch()] == [first_id, second_id]
+
+    @pytest.mark.tonio
+    async def test_does_not_keep_an_entry_in_memory_when_creating_the_file_fails(self, tmp_path):
+        session_dir = tmp_path / "sessions"
+        session_dir.mkdir()
+        session = await SessionManager(str(tmp_path), str(session_dir))
+        model_change_id = await session.append_model_change("anthropic", "claude-sonnet-4-5")
+
+        os.chmod(session_dir, 0o555)
+        try:
+            with pytest.raises(OSError):
+                await session.append_message(user_msg("first question"))
+        finally:
+            os.chmod(session_dir, 0o755)
+        assert session.get_leaf_id() == model_change_id
+        assert [entry["id"] for entry in session.get_entries()] == [model_change_id]
+
+        await session.append_message(user_msg("second question"))
+        assert read_session_file_roles(session.get_session_file()) == ["session", "model_change", "user"]
+
+    @pytest.mark.tonio
+    async def test_restores_the_label_when_writing_a_label_change_fails(self, tmp_path):
+        # PiDrei: pi sets the label only after the append succeeds; here it is undone with the entry.
+        session = await SessionManager(str(tmp_path), str(tmp_path))
+        first_id = await session.append_message(user_msg("first question"))
+        await session.append_label_change(first_id, "kept")
+
+        os.chmod(session.get_session_file(), 0o444)
+        with pytest.raises(OSError):
+            await session.append_label_change(first_id, "lost")
+        assert session.get_label(first_id) == "kept"
 
 
 class TestLabels:

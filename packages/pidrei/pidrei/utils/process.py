@@ -50,13 +50,40 @@ stream that grows past it abandons the child exactly like the deadline does
 (signal, drop the pipes) and raises `OutputLimitExceeded` once it is reaped.
 """
 
+import fcntl
 import signal as signal_module
 import subprocess
+import sys
+import termios
 from collections.abc import Sequence
 from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored.exceptions import ResourceBroken
+
+
+#: How long a child's pipes must stay idle after it exits before they are closed: detached
+#: descendants can keep inherited pipes open (pi's EXIT_STDIO_GRACE_MS in
+#: utils/child-process.ts). Used by the bash tool and `core/exec.py`, as pi's
+#: waitForChildProcess is.
+EXIT_STDIO_GRACE_S = 0.1
+
+
+def pipe_is_drained(stream) -> bool:
+    """Nothing left unread in the child's pipe (FIONREAD), or it is already closed.
+
+    Drop this (and its uses) once tonio exposes a readiness API over fds,
+    as it does for net: a reader could then wait for "readable, or the child
+    exited" itself. Asking the kernel is the only non-invasive readiness peek
+    today — arming an fd's read readiness from outside would steal the parked
+    reader's wakeup (one reader slot per fd).
+    """
+    if stream is None or (fd := stream.fileno()) < 0:
+        return True
+    try:
+        return int.from_bytes(fcntl.ioctl(fd, termios.FIONREAD, bytes(4)), sys.byteorder) == 0
+    except OSError:
+        return True
 
 
 #: How long a signalled child gets before SIGKILL. Never observed by the caller:

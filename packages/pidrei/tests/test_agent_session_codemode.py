@@ -264,6 +264,88 @@ async def test_presents_callable_tools_per_codemode_mode(harnesses):
     assert description("echo") == "Echo text back.\n\nSecond paragraph."
 
 
+# #11501
+@pytest.mark.tonio
+async def test_summarizes_union_and_named_output_types_instead_of_inlining_them(harnesses):
+    def output_tool(name: str, output_schema: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name=name,
+            label=name,
+            description=f"{name} tool",
+            parameters=EMPTY_SCHEMA,
+            output_schema=output_schema,
+            execute=_echo,
+        )
+
+    process = output_tool(
+        "process",
+        {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"const": "start", "type": "string"},
+                        "process": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "Process id"},
+                                "pid": {"type": "integer"},
+                            },
+                            "required": ["id", "pid"],
+                        },
+                    },
+                    "required": ["action", "process"],
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"const": "list", "type": "string"},
+                        "processes": {
+                            "type": "array",
+                            "items": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+                        },
+                        "truncated": {"type": "boolean"},
+                    },
+                    "required": ["action", "processes"],
+                },
+            ]
+        },
+    )
+    entries = output_tool(
+        "entries",
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "size": {"type": "integer"}},
+                "required": ["id", "size"],
+            },
+        },
+    )
+    count = output_tool("count", {"type": "number"})
+
+    async def register(pi) -> None:
+        for definition in (process, entries, count):
+            pi.register_tool(definition)
+
+    harness = await setup(harnesses, [register])
+    harness.session.set_active_tools_by_name(["process", "entries", "count", "codemode"])
+
+    def description(name: str) -> str:
+        return next((tool.description for tool in harness.session.agent.state.tools if tool.name == name), "")
+
+    call = "takes the parameters as keyword arguments and returns"
+    assert description("process") == (
+        f"process tool\n\nCodemode: `await tools.process(...)` {call} a dict with keys action ('start'), process"
+        " | a dict with keys action ('list'), processes, truncated (optional)."
+    )
+    assert description("entries") == (
+        f"entries tool\n\nCodemode: `await tools.entries(...)` {call} a value; `await describe_tool('entries')`"
+        " shows its type."
+    )
+    assert description("count") == f"count tool\n\nCodemode: `await tools.count(...)` {call} `float`."
+
+
 # #10343
 @pytest.mark.tonio
 async def test_shows_the_guidelines_of_tools_that_do_not_fit_the_inline_budget_through_describe_tool(harnesses):

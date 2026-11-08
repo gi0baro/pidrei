@@ -147,27 +147,24 @@ def build_system_prompt_sections(input: BuildSystemPromptOptions) -> SystemPromp
         prompt_sections["preamble"] = options.custom_prompt
     else:
         prompt_sections["preamble"] = (
-            "You are an expert coding assistant operating inside pidrei, a coding agent harness. "
-            "You help users by reading files, executing commands, editing code, and writing new files."
+            "You are a coding assistant running inside pidrei, a coding agent harness. "
+            "Help users inspect files, run commands, and modify code."
         )
         visible_tools = [name for name in declared_tools if tool_snippets.get(name)]
         tools = "\n".join(f"- {name}: {tool_snippets[name]}" for name in visible_tools) if visible_tools else "(none)"
-        prompt_sections["tools"] = (
-            f"{tools}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project."
-        )
+        prompt_sections["tools"] = f"{tools}\n\nAdditional tools may be available."
         prompt_sections["rules"] = _build_rules(
             declared_tools, options.tool_guidelines or {}, options.prompt_guidelines or []
         )
         prompt_sections[
             "docs"
-        ] = f"""PiDrei documentation (read only when the user asks about pidrei itself, its SDK, extensions, themes, skills, or TUI):
+        ] = f"""PiDrei documentation (read only when the user asks about the harness itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: {get_readme_path()}
 - Additional docs: {get_docs_path()}
 - Examples: {get_examples_path()} (extensions, custom tools, SDK)
 - When reading pidrei docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pidrei packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
-- When working on pidrei topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pidrei .md files completely and follow links to related docs (e.g., tui.md for TUI API details)"""
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
+- Before implementing harness changes, read the relevant docs and examples in full, following related cross-references."""
 
     if options.append_system_prompt:
         prompt_sections["addendum"] = options.append_system_prompt

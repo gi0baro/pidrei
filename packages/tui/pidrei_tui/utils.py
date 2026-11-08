@@ -490,6 +490,14 @@ def strip_terminal_sequences(s: str) -> str:
     return "".join(result)
 
 
+_CONTROL_CHARACTERS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def replace_control_characters(s: str) -> str:
+    """Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space."""
+    return _CONTROL_CHARACTERS_RE.sub(" ", s)
+
+
 def get_grapheme_cell_range(line: str, column: int) -> tuple[int, int] | None:
     """Return the terminal-cell range ``(start, end)`` of the grapheme at a visible column."""
     current_col = 0

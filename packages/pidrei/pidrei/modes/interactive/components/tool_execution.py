@@ -16,7 +16,7 @@ from pidrei_tui import (
 )
 
 from ..theme import theme
-from .keybinding_hints import key_hint
+from .keybinding_hints import key_hint, key_text
 
 
 FALLBACK_PREVIEW_LINES = 10
@@ -130,6 +130,9 @@ class ToolExecutionComponent(Container):
             "isError": bool(self._result["isError"]) if self._result else False,
             "durationMs": None if self._is_partial or not self._result else self._result.get("durationMs"),
             "outputPad": self._output_pad,
+            # The host's keybinding hints (pi's KeybindingHints).
+            "keyText": key_text,
+            "keyHint": key_hint,
         }
 
     def _create_call_fallback(self):

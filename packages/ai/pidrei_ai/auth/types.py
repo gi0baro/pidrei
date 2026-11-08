@@ -161,6 +161,10 @@ class AuthEvent:
     instructions: str | None = None
     user_code: str | None = None
     verification_uri: str | None = None
+    # Offer best-effort browser opening on user confirmation. Defaults to true; clients may ignore it.
+    open_browser_on_confirm: bool | None = None
+    # Offer copying of user_code on user confirmation, replacing the clipboard. Defaults to true.
+    copy_code_on_confirm: bool | None = None
     interval_seconds: float | None = None
     expires_in_seconds: float | None = None
 

@@ -392,6 +392,11 @@ class AgentSessionConfig:
     extension_runner_ref: Any = None
     # Session start event metadata emitted when extensions bind to this runtime.
     session_start_event: dict[str, Any] | None = None
+    # The agent's stream function when it resolves auth through `model_runtime` itself, as the one
+    # create_agent_session installs. Summaries sent through it must not pass pre-resolved
+    # credentials: the runtime would take them as an explicit API key instead of the stored OAuth
+    # login (pi #11520). pi records it in a module-level WeakMap; here the session holds it.
+    runtime_stream_function: Any = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -663,6 +668,7 @@ class AgentSession:
         self._extension_error_unsubscriber: Callable[[], None] | None = None
 
         self._model_runtime = config.model_runtime
+        self._runtime_stream_function = config.runtime_stream_function
         self._cache_warmer = config.cache_warmer
         if self._cache_warmer is not None:
             self._cache_warmer.on_warmed = lambda entry: self._emit(EntryAppendedEvent(entry=entry))
@@ -779,6 +785,10 @@ class AgentSession:
             "env": None,
             "thinking_level": thinking_level,
         }
+        # The runtime resolves auth once, as for normal prompts. A replaced stream function gets
+        # resolved credentials again.
+        if self._runtime_stream_function is not None and self.agent.stream_function is self._runtime_stream_function:
+            return unauthenticated
         try:
             result = await self._model_runtime.get_auth(model, ModelRuntimeAuthOverrides(cancel=cancel))
             if result is None:
@@ -1859,9 +1869,15 @@ class AgentSession:
         declared to the model. Active tools with a `prepare_loadout` hook can
         change the declared descriptions and hide declarations from requests
         (see `_install_hidden_declarations_projection`). Callers hold
-        `_tool_loadout_guard`."""
+        `_tool_loadout_guard`.
+
+        The active tools are a set: tools that stay active keep their current
+        order and newly active ones are appended, so reordering the same names
+        does not change the prompt (pi #11495)."""
+        requested = dict.fromkeys(tool_names)
+        kept = [name for name in self.get_active_tool_names() if name in requested]
         tools: list[AgentTool] = []
-        for name in dict.fromkeys(tool_names):
+        for name in dict.fromkeys([*kept, *requested]):
             tool = self._tool_registry.get(name)
             if tool is not None and self._get_tool_exposure(name) != "hidden" and self._is_activatable(name):
                 tools.append(tool)
@@ -4487,6 +4503,7 @@ class AgentSession:
                     headers=auth["headers"],
                     env=auth["env"],
                     cancel=branch_summary_cancel,
+                    thinking_level=auth["thinking_level"],
                     custom_instructions=custom_instructions,
                     replace_instructions=replace_instructions,
                     reserve_tokens=branch_summary_settings["reserve_tokens"],

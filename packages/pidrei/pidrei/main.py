@@ -599,7 +599,14 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     if offline_mode:
         os.environ["PIDREI_OFFLINE"] = "1"
 
-    cwd = os.getcwd()
+    try:
+        cwd = os.getcwd()
+    except FileNotFoundError:
+        write_stderr(
+            red("Error: The current working directory no longer exists. Change to an existing directory and try again.")
+            + "\n"
+        )
+        raise SystemExit(1) from None
     agent_dir = get_agent_dir()
     bootstrap_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=False)
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
@@ -750,7 +757,9 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         elif parsed.project_trust_override is not None:
             project_trusted = parsed.project_trust_override
         else:
-            project_trusted = not has_trust_requiring_resources or await trust_store.get(cwd) is True
+            # A saved decision wins over auto-trust for projects without trust-requiring resources (pi #10947).
+            saved_trust = await trust_store.get(cwd)
+            project_trusted = saved_trust if saved_trust is not None else not has_trust_requiring_resources
         runtime_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=project_trusted)
 
         async def resolve_trust(extensions_result=None) -> bool:

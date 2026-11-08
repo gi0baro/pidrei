@@ -11,12 +11,6 @@ OSC133_ZONE_END = "\x1b]133;B\x07"
 OSC133_ZONE_FINAL = "\x1b]133;C\x07"
 
 
-def _has_visible_content(content) -> bool:
-    return (content.type == "text" and content.text.strip()) or (
-        content.type == "thinking" and content.thinking.strip()
-    )
-
-
 class AssistantMessageComponent(Container):
     """Component that renders a complete assistant message."""
 
@@ -28,6 +22,8 @@ class AssistantMessageComponent(Container):
         hidden_thinking_label: str = "Thinking...",
         output_pad: int = 1,
         markdown_transformers=(),
+        message_id: str | None = None,
+        timestamp: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -36,6 +32,8 @@ class AssistantMessageComponent(Container):
         self._hidden_thinking_label = hidden_thinking_label
         self._output_pad = output_pad
         self._markdown_transformers = markdown_transformers
+        self._message_id = message_id
+        self._timestamp = timestamp
         self._last_message = None
         self._has_tool_calls = False
         self._is_streaming = False
@@ -110,13 +108,26 @@ class AssistantMessageComponent(Container):
                     0,
                     self._markdown_theme,
                     default_text_style,
-                    {"transform": create_markdown_transform(kind, self._is_streaming, self._markdown_transformers)},
+                    {
+                        "transform": create_markdown_transform(
+                            kind, self._is_streaming, self._markdown_transformers, self._message_id, self._timestamp
+                        )
+                    },
                 )
             new_slots.append((key, component))
             return component
 
-        if any(_has_visible_content(c) for c in message.content):
-            children.append(Spacer(1))
+        # Spacers are added lazily, right before the next visible content block. This puts a blank
+        # line before the first visible block and after each visible thinking run that is followed
+        # by more visible content, while hidden thinking runs without a label contribute nothing.
+        needs_spacer = True
+
+        def add_visible_child(child) -> None:
+            nonlocal needs_spacer
+            if needs_spacer:
+                children.append(Spacer(1))
+                needs_spacer = False
+            children.append(child)
 
         # Render content in order
         thinking_run_index = 0
@@ -126,7 +137,7 @@ class AssistantMessageComponent(Container):
             if content.type == "text" and content.text.strip():
                 # Assistant text messages with no background - trim the text.
                 # paddingY=0 avoids extra spacing before tool executions.
-                children.append(markdown(content.text.strip(), "assistant", None))
+                add_visible_child(markdown(content.text.strip(), "assistant", None))
             elif content.type == "thinking":
                 thinking_blocks: list = []
                 while i < len(message.content):
@@ -143,14 +154,13 @@ class AssistantMessageComponent(Container):
                     i += 1
                     continue
 
-                # Add spacing only when another visible assistant content
-                # block follows. This avoids a superfluous blank line before
-                # separately-rendered tool execution blocks.
-                has_visible_content_after = any(_has_visible_content(c) for c in message.content[i + 1 :])
-
                 run_index = thinking_run_index
                 thinking_run_index += 1
                 hidden = self._thinking_visibility_overrides.get(run_index, self._hide_thinking_block)
+                # A hidden run with an empty label renders nothing, including no spacing.
+                if hidden and not self._hidden_thinking_label.strip():
+                    i += 1
+                    continue
                 if hidden:
                     # Show one static label for each run of thinking blocks when hidden.
                     thinking_component = Text(
@@ -174,9 +184,10 @@ class AssistantMessageComponent(Container):
                         self.update_content(self._last_message)
                     return TuiMouseEventResult(handled=True)
 
-                children.append(MouseRegion(thinking_component, toggle_thinking))
-                if has_visible_content_after:
-                    children.append(Spacer(1))
+                add_visible_child(MouseRegion(thinking_component, toggle_thinking))
+                # Add spacing only when another visible assistant content block follows.
+                # This avoids a superfluous blank line before separately-rendered tool execution blocks.
+                needs_spacer = True
             i += 1
 
         # Check if incomplete/failed - show after partial content.

@@ -163,6 +163,75 @@ async def test_shows_a_confirm_opened_from_an_inline_custom_component_and_then_r
     assert context.focused is context.editor
 
 
+# Regression for #11428: inline custom dialogs could not report blocked program status.
+@pytest.mark.tonio
+async def test_reports_blocked_status_for_an_inline_custom_component_that_opts_in(dialog_setup):
+    context = _create_context()
+    dones: list = []
+
+    def factory(label: str):
+        def build(_tui, _theme, _keybindings, done):
+            dones.append(done)
+            return Text(label)
+
+        return build
+
+    first = context._show_extension_custom(
+        factory("approval"), {"blocked": {"kind": "permission", "message": "Approve?"}}
+    )
+    assert "approval" in _visible(context)
+    assert context.blocked_calls[-1] == ("extension-dialog", BlockedStatus("permission", "Approve?"))
+
+    loader = context._show_extension_custom(factory("loading"))
+    assert "loading" in _visible(context)
+    assert context.blocked_calls[-1] == ("extension-dialog", None)
+
+    dones[1]("loaded")
+    assert await loader == "loaded"
+    assert context.blocked_calls[-1] == ("extension-dialog", BlockedStatus("permission", "Approve?"))
+
+    dones[0]("yes")
+    assert await first == "yes"
+    assert context.focused is context.editor
+    assert context.blocked_calls[-1] == ("extension-dialog", None)
+
+
+# Regression for #11431: replacing the editor while a dialog was open hid the dialog and left it unanswerable.
+@pytest.mark.tonio
+async def test_keeps_an_open_dialog_visible_when_the_editor_component_is_replaced(dialog_setup):
+    context = _create_context()
+    context.editor.on_submit = None
+    context.editor.on_change = None
+    context._default_editor = context.editor
+    context._active_status_indicator = None
+    confirmed = context._show_extension_confirm("Title", "Continue?")
+
+    class CustomEditor:
+        on_submit = None
+        on_change = None
+
+        def render(self, _width: int) -> list[str]:
+            return ["custom editor"]
+
+        def invalidate(self) -> None:
+            pass
+
+        def get_text(self) -> str:
+            return ""
+
+        def set_text(self, _text: str) -> None:
+            pass
+
+    custom_editor = CustomEditor()
+    context._set_custom_editor_component(lambda _tui, _theme, _keybindings: custom_editor)
+
+    assert "Title" in _visible(context)
+    context.focused.handle_input("\r")
+    assert await confirmed is True
+    assert context.focused is custom_editor
+    assert context._editor_container.children == [custom_editor]
+
+
 @pytest.mark.tonio
 async def test_reset_disposes_every_dialog_when_one_closes_itself_from_dispose(dialog_setup):
     context = _create_context()

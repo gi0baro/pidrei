@@ -93,6 +93,42 @@ class TestAssistantMessageComponent:
         assert "answer" in rendered
 
     @pytest.mark.tonio
+    async def test_renders_nothing_for_hidden_thinking_with_an_empty_label(self):
+        await init_theme("dark")
+
+        thinking_only = AssistantMessageComponent(
+            create_assistant_message(
+                [
+                    ThinkingContent(thinking="reasoning"),
+                    ToolCall(id="tool-1", name="read", arguments={"path": "file.txt"}),
+                ],
+                stop_reason="toolUse",
+            ),
+            True,
+            None,
+            "",
+        )
+        assert thinking_only.render(80) == []
+
+        with_text = AssistantMessageComponent(
+            create_assistant_message([ThinkingContent(thinking="reasoning"), TextContent(text="answer")]),
+            True,
+            None,
+            "",
+        )
+        assert [strip_ansi(line).strip() for line in with_text.render(80)] == ["", "answer"]
+
+    @pytest.mark.tonio
+    async def test_keeps_label_row_and_spacing_for_hidden_thinking_with_a_label(self):
+        await init_theme("dark")
+
+        component = AssistantMessageComponent(
+            create_assistant_message([ThinkingContent(thinking="reasoning"), TextContent(text="answer")]),
+            True,
+        )
+        assert [strip_ansi(line).strip() for line in component.render(80)] == ["", "Thinking...", "", "answer"]
+
+    @pytest.mark.tonio
     async def test_collapses_individual_thinking_runs_when_clicked(self):
         await init_theme("dark")
         component = AssistantMessageComponent(
@@ -175,7 +211,16 @@ class TestAssistantMessageComponent:
 
         assert "The result is x². Done." in strip_ansi("\n".join(component.render(80)))
         assert calls == ["formula", "suffix"]
-        assert contexts == [{"messageType": "assistant", "isStreaming": False, "availableWidth": 78}]
+        # pi's toEqual ignores the undefined `messageId`/`timestamp`; here they are None.
+        assert contexts == [
+            {
+                "messageType": "assistant",
+                "isStreaming": False,
+                "availableWidth": 78,
+                "messageId": None,
+                "timestamp": None,
+            }
+        ]
 
     @pytest.mark.tonio
     async def test_identifies_partial_assistant_markdown_as_streaming(self):

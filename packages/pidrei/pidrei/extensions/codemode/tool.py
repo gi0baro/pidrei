@@ -474,7 +474,8 @@ def _describe_fields(schema: Any, depth: int) -> str | None:
     """The keys of an object schema, `a dict with keys output, exit_code,
     full_output_path (optional)`, with the keys of dict-typed keys `depth`
     levels deep: `a dict with keys content, structuredContent (optional, a dict
-    with keys results)`. None for other schemas."""
+    with keys results)`, and the value of `const` keys: `a dict with keys
+    action ('start'), id`. None for other schemas."""
     if not isinstance(schema, Mapping) or schema.get("type") != "object":
         return None
     properties = schema.get("properties")
@@ -484,20 +485,43 @@ def _describe_fields(schema: Any, depth: int) -> str | None:
     keys = []
     for name, field_schema in properties.items():
         notes = [] if name in required else ["optional"]
-        nested = _describe_fields(field_schema, depth - 1) if depth > 0 else None
+        if isinstance(field_schema, Mapping) and "const" in field_schema:
+            nested = repr(field_schema["const"])
+        else:
+            nested = _describe_fields(field_schema, depth - 1) if depth > 0 else None
         if nested:
             notes.append(nested)
         keys.append(f"{name} ({', '.join(notes)})" if notes else name)
     return f"a dict with keys {', '.join(keys)}"
 
 
+def _describe_union_fields(schema: Any) -> str | None:
+    """The keys of each variant of an `anyOf`/`oneOf` whose variants are all
+    objects, joined by `|`."""
+    if not isinstance(schema, Mapping):
+        return None
+    variants = schema.get("anyOf", schema.get("oneOf"))
+    if not isinstance(variants, list) or not variants:
+        return None
+    described = [_describe_fields(variant, 0) for variant in variants]
+    return None if None in described else " | ".join(described)
+
+
 def _describe_output(rendered: RenderedTool) -> str:
     """What a script call returns, in a few words: `a string`, the keys of a
-    dict (see `_describe_fields`), or the rendered type for anything else."""
+    dict (see `_describe_fields`), the keys of each dict in a union, the
+    rendered type when it shows the whole value, or a pointer to
+    `describe_tool()` when the type names `TypedDict`s. Inlining those would
+    send the full type of a large schema with every request (pi #11501)."""
     if rendered.output_type == "str":
         return "a string"
-    fields = _describe_fields(rendered.tool.output_schema, 1)
-    return fields if fields is not None else f"`{' '.join(rendered.output_type.split())}`"
+    schema = rendered.tool.output_schema
+    fields = _describe_fields(schema, 1) or _describe_union_fields(schema)
+    if fields:
+        return fields
+    if not rendered.output_names_definitions:
+        return f"`{rendered.output_type}`"
+    return f"a value; `await describe_tool({rendered.tool.name!r})` shows its type"
 
 
 def _describe_script_call(tool: AgentTool, rendered: RenderedTool) -> str:

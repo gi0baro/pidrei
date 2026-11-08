@@ -834,7 +834,7 @@ class TestBashTool:
         """pidrei-only (the macOS CI flake): the post-exit grace window must
         not close pipes that still hold output just because the readers were
         not scheduled yet. A zero window is the extreme of that."""
-        monkeypatch.setattr(bash_module, "_EXIT_STDIO_GRACE_S", 0.0)
+        monkeypatch.setattr(bash_module, "EXIT_STDIO_GRACE_S", 0.0)
 
         result = await execute_bash_with_operations("seq 3000", os.getcwd(), create_local_bash_operations())
 
@@ -922,6 +922,22 @@ class TestGrepTool:
         assert "context.txt-3- after" in output
         assert "[1 matches limit reached. Use limit=2 for more, or refine pattern]" in output
         assert "match two" not in output
+
+    # https://github.com/earendil-works/pi/issues/11398
+    @pytest.mark.tonio
+    async def test_keeps_context_line_numbers_aligned_with_ripgrep_when_a_file_contains_a_lone_cr(self, tmp_path):
+        test_file = tmp_path / "lone-cr.txt"
+        test_file.write_bytes(b"before\rprogress\nneedle\nafter")
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-lone-cr", {"pattern": "needle", "path": str(test_file), "context": 1}
+        )
+
+        output = get_text_output(result)
+        assert "lone-cr.txt-1- beforeprogress" in output
+        assert "lone-cr.txt:2: needle" in output
+        assert "lone-cr.txt-3- after" in output
 
     # https://github.com/earendil-works/pi/issues/11203
     @pytest.mark.tonio

@@ -40,7 +40,7 @@ class TestPromptStructure:
             )
         )
 
-        assert default_prompt.startswith("You are an expert coding assistant operating inside pidrei")
+        assert default_prompt.startswith("You are a coding assistant running inside pidrei, a coding agent harness.")
         assert custom_prompt.startswith("You are Exact.\n\n<cwd>")
 
     def test_preserves_an_exact_forced_prompt_without_sections(self):
@@ -92,6 +92,10 @@ class TestDefaultTools:
             "examples/... under Examples, not the current working directory"
         ) in prompt
         assert "environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)" in prompt
+        assert (
+            "Before implementing harness changes, read the relevant docs and examples in full, following related "
+            "cross-references."
+        ) in prompt
         assert (
             "MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as "
             "classifiers and image models (docs/codemode.md)"
@@ -161,6 +165,9 @@ class TestSkills:
         assert "<available_skills>" in prompt
         assert "<name>test-skill</name>" in prompt
         assert "Use bash to load a skill's file" in prompt
+        assert (
+            "Resolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls."
+        ) in prompt
 
     def test_omits_skills_without_read_or_bash(self):
         prompt = build_system_prompt(

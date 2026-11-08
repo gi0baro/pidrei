@@ -455,6 +455,8 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             excluded_tool_names=excluded_tool_names,
             extension_runner_ref=extension_runner_ref,
             session_start_event=options.session_start_event,
+            # This stream resolves auth through model_runtime, so summaries must not pre-resolve it (pi #11520).
+            runtime_stream_function=agent.stream_function,
         )
     )
     extensions_result = resource_loader.get_extensions()

@@ -3,6 +3,7 @@
 from pidrei_tui import Box, Container, Markdown, Spacer, Text
 
 from ..theme import get_markdown_theme, theme
+from .keybinding_hints import key_hint, key_text
 
 
 class CustomMessageComponent(Container):
@@ -52,7 +53,14 @@ class CustomMessageComponent(Container):
         if self._custom_renderer is not None:
             try:
                 component = self._custom_renderer(
-                    self._message, {"expanded": self._expanded, "outputPad": self._output_pad}, theme
+                    self._message,
+                    {
+                        "expanded": self._expanded,
+                        "outputPad": self._output_pad,
+                        "keyText": key_text,
+                        "keyHint": key_hint,
+                    },
+                    theme,
                 )
                 if component is not None:
                     # Custom renderer provides its own styled component

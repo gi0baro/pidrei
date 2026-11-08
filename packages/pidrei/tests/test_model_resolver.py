@@ -124,6 +124,8 @@ REFERENCE_CATALOG = [
     _reference_model("gw-b", "claude-opus-4-8"),
     _reference_model("gw-b", "gw-b/free"),
     _reference_model("gw-b", "zz:free"),
+    # URL-derived provider id containing "/" (#11394)
+    _reference_model("llama=http://host:10800", "unsloth/qwen-gguf:BF16"),
 ]
 
 
@@ -154,6 +156,16 @@ REFERENCE_CASES = [
         "provider prefix, colon id, and thinking suffix",
         "openrouter/qwen/qwen3-coder:exacto:high",
         {"model": "openrouter/qwen/qwen3-coder:exacto", "thinking_level": "high"},
+    ),
+    ReferenceCase(
+        "provider id containing a slash",
+        "llama=http://host:10800/unsloth/qwen-gguf:BF16",
+        {"model": "llama=http://host:10800/unsloth/qwen-gguf:BF16"},
+    ),
+    ReferenceCase(
+        "provider id containing a slash, with thinking suffix",
+        "llama=http://host:10800/unsloth/qwen-gguf:BF16:high",
+        {"model": "llama=http://host:10800/unsloth/qwen-gguf:BF16", "thinking_level": "high"},
     ),
     ReferenceCase(
         "raw id wins when the provider prefix names no matching model",

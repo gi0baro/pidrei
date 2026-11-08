@@ -13,14 +13,43 @@ import sys
 
 import tonio.colored as tonio
 
-from pidrei_tui import Container, Input, Spacer, Text, get_keybindings
+from pidrei_ai.auth.oauth.urls import trusted_http_url
+from pidrei_tui import (
+    Container,
+    Input,
+    Spacer,
+    Text,
+    TruncatedText,
+    get_keybindings,
+    hyperlink,
+    replace_control_characters,
+)
 from pidrei_utils.cancel import CancelToken
 
+from ....utils.clipboard import copy_to_clipboard
 from ....utils.open_browser import open_browser
 from ..theme import theme
 from .auth_url import AuthUrlComponent
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint
+
+
+# pi's `webUrl` is `trusted_http_url`: the `http:` or `https:` URL a value
+# names, normalized, or None. The shared launcher also opens files and custom
+# protocols, so login only opens web URLs. Normalizing percent-encodes control
+# characters, which would otherwise end a terminal hyperlink early.
+
+
+def _display_url(value: str) -> str:
+    """`value` normalized as a web URL, else with control characters replaced: an untrusted string printed as is
+    could end a hyperlink early or send its own escape sequences to the terminal."""
+    return trusted_http_url(value) or replace_control_characters(value)
+
+
+def _web_link(text: str, url: str) -> str:
+    """`text` as a terminal hyperlink to `url` when that is a web URL, else plain `text`."""
+    target = trusted_http_url(url)
+    return text if target is None else hyperlink(text, target)
 
 
 class LoginCancelledError(Exception):
@@ -39,6 +68,9 @@ class LoginDialogComponent(Container):
         self._input_event: tonio.Event | None = None
         self._input_value: str | None = None
         self._input_error: Exception | None = None
+        # The device code's pending confirm action, and the hint row it reuses for progress/result text.
+        self._device_code_action: tuple[dict, Container] | None = None
+        self._device_code_hint: Container | None = None
         self._focused = False
 
         provider_name = provider_name_override or provider_id
@@ -92,7 +124,15 @@ class LoginDialogComponent(Container):
             Text(f"> {value}", 0, 0) if child is self._input else child for child in self._content_container.children
         ]
 
+    def _clear_device_code_action(self) -> None:
+        if self._device_code_hint is not None:
+            self._content_container.remove_child(self._device_code_hint)
+        self._device_code_hint = None
+        self._device_code_action = None
+
     def _cancel(self) -> None:
+        # On the input path, which holds the UI state lock.
+        self._clear_device_code_action()
         self._abort_controller.cancel(LoginCancelledError())
         if self._input_event is not None and not self._input_event.is_set():
             self._input_error = LoginCancelledError()
@@ -113,10 +153,13 @@ class LoginDialogComponent(Container):
     def show_auth(self, url: str, instructions: str | None = None) -> None:
         """Called by on_auth callback - show URL and optional instructions."""
 
+        target = trusted_http_url(url)
+
         def apply() -> None:
+            self._clear_device_code_action()
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
-            self._auth_url = AuthUrlComponent(self._tui, url)
+            self._auth_url = AuthUrlComponent(self._tui, target or replace_control_characters(url))
             self._content_container.add_child(self._auth_url)
 
             if instructions:
@@ -124,29 +167,79 @@ class LoginDialogComponent(Container):
                 self._content_container.add_child(Text(theme.fg("warning", instructions), 1, 0))
 
         self._post_content(apply)
-        open_browser(url)
+        if target is not None:
+            open_browser(target)
 
     def show_device_code(self, info: dict) -> None:
         """Called by on_device_code callback - show URL and user code.
 
-        ``info`` is a ``{"verificationUri", "userCode"}`` record.
+        ``info`` is a ``{"verificationUri", "userCode", "openBrowserOnConfirm"?,
+        "copyCodeOnConfirm"?}`` record; the two flags default to true.
         """
+        info = {
+            **info,
+            "openBrowserOnConfirm": info.get("openBrowserOnConfirm") is not False,
+            "copyCodeOnConfirm": info.get("copyCodeOnConfirm") is not False,
+        }
 
         def apply() -> None:
             self._auth_url = None
+            self._clear_device_code_action()
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
-            verification_uri = info["verificationUri"]
-            linked_url = f"\x1b]8;;{verification_uri}\x07{verification_uri}\x1b]8;;\x07"
-            self._content_container.add_child(Text(theme.fg("accent", linked_url), 1, 0))
+            shown_url = _display_url(info["verificationUri"])
+            self._content_container.add_child(Text(theme.fg("accent", _web_link(shown_url, shown_url)), 1, 0))
 
             click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
-            hyperlink = f"\x1b]8;;{verification_uri}\x07{click_hint}\x1b]8;;\x07"
-            self._content_container.add_child(Text(theme.fg("dim", hyperlink), 1, 0))
+            self._content_container.add_child(
+                Text(theme.fg("dim", _web_link(click_hint, info["verificationUri"])), 1, 0)
+            )
             self._content_container.add_child(Spacer(1))
             self._content_container.add_child(Text(theme.fg("warning", f"Enter code: {info['userCode']}"), 1, 0))
 
+            if not self.signal.cancelled and (info["openBrowserOnConfirm"] or info["copyCodeOnConfirm"]):
+                if info["openBrowserOnConfirm"]:
+                    action_label = "to open browser and copy code" if info["copyCodeOnConfirm"] else "to open browser"
+                else:
+                    action_label = "to copy code"
+                # Reuse this single row for progress/result text, including in narrow terminals.
+                hint = Container()
+                hint.add_child(TruncatedText(f"({key_hint('tui.select.confirm', action_label)})", 1, 0))
+                self._content_container.add_child(hint)
+                self._device_code_hint = hint
+                self._device_code_action = (info, hint)
+
         self._post_content(apply)
+
+    def _set_device_code_status(self, hint: Container, message: str) -> None:
+        def apply() -> None:
+            if self.signal.cancelled or not self._focused or hint not in self._content_container.children:
+                return
+            hint.children = [TruncatedText(theme.fg("dim", message), 1, 0)]
+
+        self._post_content(apply)
+
+    def _activate_device_code(self, info: dict, hint: Container) -> None:
+        self._set_device_code_status(hint, "Copying code..." if info["copyCodeOnConfirm"] else "Browser open requested")
+        if info["copyCodeOnConfirm"]:
+
+            async def copy() -> None:
+                try:
+                    await copy_to_clipboard(info["userCode"], self._tui.terminal.write_sync)
+                except Exception:
+                    self._set_device_code_status(hint, "Copy code manually")
+                else:
+                    self._set_device_code_status(hint, "Code copied to clipboard")
+
+            # Do not delay polling or browser opening while clipboard tools are running.
+            tonio.spawn.without_tracking(copy())
+        if info["openBrowserOnConfirm"]:
+            try:
+                target = trusted_http_url(info["verificationUri"])
+                if target is not None:
+                    open_browser(target)
+            except Exception:
+                pass  # Launcher failures must not interrupt login.
 
     def _await_input(self):
         self._input_event = tonio.Event()
@@ -170,6 +263,7 @@ class LoginDialogComponent(Container):
         response = self._await_input()
 
         def apply() -> None:
+            self._clear_device_code_action()
             self._input.set_value("")
             self._content_container.add_child(Spacer(1))
             self._content_container.add_child(Text(theme.fg("dim", prompt), 1, 0))
@@ -189,6 +283,7 @@ class LoginDialogComponent(Container):
         response = self._await_input()
 
         def apply() -> None:
+            self._clear_device_code_action()
             self._content_container.add_child(Spacer(1))
             self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
             if placeholder:
@@ -211,6 +306,7 @@ class LoginDialogComponent(Container):
 
         def apply() -> None:
             self._auth_url = None
+            self._clear_device_code_action()
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
             for line in lines:
@@ -229,9 +325,9 @@ class LoginDialogComponent(Container):
             self._content_container.add_child(Spacer(1))
             self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
             for link in links:
-                text = f"{link['label']}: {link['url']}" if link.get("label") else link["url"]
-                hyperlink = f"\x1b]8;;{link['url']}\x07{text}\x1b]8;;\x07"
-                self._content_container.add_child(Text(theme.fg("accent", hyperlink), 1, 0))
+                url = _display_url(link["url"])
+                text = f"{link['label']}: {url}" if link.get("label") else url
+                self._content_container.add_child(Text(theme.fg("accent", _web_link(text, url)), 1, 0))
             if show_close_hint:
                 self._content_container.add_child(Spacer(1))
                 self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to close')})", 1, 0))
@@ -261,6 +357,20 @@ class LoginDialogComponent(Container):
         if self._auth_url is not None and kb.matches(data, "app.message.copy"):
             # pi's `void this.authUrl.copy()`; `copy` reports its own failure in the hint.
             tonio.spawn.without_tracking(self._auth_url.copy())
+            return
+
+        if (
+            self._device_code_action is not None
+            and self._input_event is None
+            and not self.signal.cancelled
+            and self._focused
+            and kb.matches(data, "tui.select.confirm")
+        ):
+            info, hint = self._device_code_action
+            # Consume once so a repeated Enter cannot launch multiple browsers or clipboard writes.
+            self._device_code_action = None
+            self._activate_device_code(info, hint)
+            self._tui.request_render()
             return
 
         # Pass to input

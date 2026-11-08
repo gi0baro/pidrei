@@ -12,8 +12,11 @@ _ST = r"(?:\x07|\x1b\\|\x9c)"
 # OSC sequences: ESC ] ... ST
 _OSC_START = r"\x1b\]"
 
-# CSI and related: ESC/C1, optional intermediates, optional params (supports ; and :), then final byte
-_CSI_START = r"[\x1b\x9b][\[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?"
+# CSI and related: ESC/C1, optional intermediates, optional params (supports ; and :), then final byte.
+# A private prefix (<, =, >) is accepted only right after a real CSI introducer (ESC [ or 0x9B), so
+# ESC[<35;59;1M (SGR mouse report) is stripped whole. After a bare ESC these bytes stay final bytes:
+# ESC = and ESC > (keypad modes) must not swallow the digits of the text that follows.
+_CSI_START = r"(?:(?:\x1b\[|\x9b)[<=>]|[\x1b\x9b][\[\]()#;?]*)(?:\d{1,4}(?:[;:]\d{0,4})*)?"
 _CSI_FINAL = r"[\dA-PR-TZcf-nq-uy=><~]"
 
 # Complete sequences. OSC is non-greedy until the first ST.

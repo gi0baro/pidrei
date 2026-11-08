@@ -10,9 +10,9 @@ from dataclasses import replace
 
 import pytest
 
-from pidrei.core.compaction import generate_branch_summary
+from pidrei.core.compaction import generate_branch_summary, prepare_branch_entries
 from pidrei_ai.providers.faux import faux_assistant_message
-from pidrei_ai.types import AssistantMessage, DoneEvent, Model, ModelCost, TextContent, ToolCall
+from pidrei_ai.types import AssistantMessage, DoneEvent, Model, ModelCost, TextContent, ToolCall, UserMessage
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
@@ -65,6 +65,22 @@ def _stream_fn(message: AssistantMessage) -> tuple:
 
 
 @pytest.mark.tonio
+async def test_passes_the_thinking_level_only_for_reasoning_capable_models():
+    stream_fn, calls = _stream_fn(_response([TextContent(text="summary")]))
+    reasoning_model = replace(MODEL, reasoning=True)
+
+    await generate_branch_summary(
+        ENTRIES, model=reasoning_model, cancel=None, stream_fn=stream_fn, thinking_level="xhigh"
+    )
+    await generate_branch_summary(
+        ENTRIES, model=reasoning_model, cancel=None, stream_fn=stream_fn, thinking_level="off"
+    )
+    await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn, thinking_level="high")
+
+    assert [options.reasoning for options in calls] == ["xhigh", None, None]
+
+
+@pytest.mark.tonio
 async def test_does_not_override_tool_choice_for_branch_summaries():
     stream_fn, calls = _stream_fn(_response([TextContent(text="summary")]))
 
@@ -96,3 +112,55 @@ async def test_rejects_length_limited_branch_summaries():
     result = await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
 
     assert result.error == "Branch summarization failed: generation hit the token cap and the summary is incomplete"
+
+
+def test_applies_context_edits_to_branch_entries():
+    def ts(n: int) -> str:
+        return f"1970-01-01T00:00:00.00{n}Z"
+
+    branch = [
+        {
+            "type": "message",
+            "id": "u1",
+            "parentId": None,
+            "timestamp": ts(1),
+            "message": UserMessage(content="Investigate login", timestamp=1),
+        },
+        {
+            "type": "message",
+            "id": "failed",
+            "parentId": "u1",
+            "timestamp": ts(2),
+            "message": faux_assistant_message("FAILED_ATTEMPT", stop_reason="error", error_message="lost"),
+        },
+        {
+            "type": "context_edit",
+            "id": "e1",
+            "parentId": "failed",
+            "timestamp": ts(3),
+            "targetId": "failed",
+            "replacement": None,
+        },
+        {
+            "type": "message",
+            "id": "ok",
+            "parentId": "e1",
+            "timestamp": ts(4),
+            "message": faux_assistant_message("ORIGINAL_TEXT"),
+        },
+        {
+            "type": "context_edit",
+            "id": "e2",
+            "parentId": "ok",
+            "timestamp": ts(5),
+            "targetId": "ok",
+            "replacement": {"content": "REPLACED_TEXT"},
+        },
+    ]
+
+    serialized = repr(prepare_branch_entries(branch).messages)
+
+    assert "Investigate login" in serialized
+    assert "FAILED_ATTEMPT" not in serialized
+    assert "ORIGINAL_TEXT" not in serialized
+    assert "REPLACED_TEXT" in serialized

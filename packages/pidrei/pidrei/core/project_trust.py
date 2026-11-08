@@ -55,7 +55,8 @@ async def resolve_project_trusted(options: ResolveProjectTrustedOptions) -> bool
         return options.trust_override
     # Walks cwd's ancestors probing for project resources — one blocking unit.
     if not await tonio.spawn_blocking(has_trust_requiring_project_resources_blocking, options.cwd):
-        return True
+        saved = await options.trust_store.get(options.cwd)
+        return saved if saved is not None else True
 
     if options.extensions_result is not None:
         result, errors = await emit_project_trust_event(

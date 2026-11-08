@@ -163,15 +163,21 @@ def _split_thinking_suffix(text: str) -> tuple[str, str] | None:
 
 
 def _split_provider_prefix(text: str, models: list[Model]) -> tuple[str, str] | None:
-    slash_index = text.find("/")
-    if slash_index == -1:
-        return None
-    prefix = text[:slash_index].strip().lower()
-    model_text = text[slash_index + 1 :].strip()
-    if not prefix or not model_text:
-        return None
-    provider = next((model.provider for model in models if model.provider.lower() == prefix), None)
-    return (provider, model_text) if provider else None
+    # Provider ids may contain "/" themselves (e.g. URL-derived ids), so match known ids, longest first
+    lower_text = text.lower()
+    best: tuple[str, str] | None = None
+    for model in models:
+        provider = model.provider
+        prefix = provider.strip().lower()
+        if not prefix or (best is not None and len(best[0]) >= len(provider)):
+            continue
+        slash_index = lower_text.find("/", len(prefix))
+        if slash_index == -1 or lower_text[:slash_index].strip() != prefix:
+            continue
+        model_text = text[slash_index + 1 :].strip()
+        if model_text:
+            best = (provider, model_text)
+    return best
 
 
 def resolve_model_reference(

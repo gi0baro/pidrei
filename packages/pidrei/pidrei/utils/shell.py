@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import signal
+import sys
 import threading
 from dataclasses import dataclass
 
@@ -99,6 +100,17 @@ def kill_tracked_detached_children() -> None:
 
 def kill_process_tree(pid: int) -> None:
     """Kill a process and all its children (POSIX process-group SIGKILL)."""
+    if sys.platform == "darwin":
+        # macOS signals group members individually after releasing the group lock. A killed
+        # child can wake its waiting shell before that shell is signalled, letting `a; b`
+        # start b during cancellation (#11252). Stop the group first to reduce this race;
+        # this is best-effort, not an atomic freeze. SIGKILL also kills stopped processes.
+        # Linux holds tasklist_lock across group signalling; child exit notification needs
+        # its write lock, so the shell is signalled before observing the killed child's exit.
+        try:
+            os.killpg(pid, signal.SIGSTOP)
+        except OSError:
+            pass  # A failed stop must not prevent the kill attempt or its single-process fallback.
     try:
         os.killpg(pid, signal.SIGKILL)
     except OSError:

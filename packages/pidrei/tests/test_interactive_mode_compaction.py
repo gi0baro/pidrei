@@ -85,18 +85,25 @@ def test_renders_each_compaction_cost_after_its_summary():
     )
     entries = [
         _compaction_entry("current", "previous", "current summary", 200, current_usage),
-        _compaction_entry("previous", None, "previous summary", 100, previous_usage),
+        {
+            **_compaction_entry("previous", None, "previous summary", 100, previous_usage),
+            "timestamp": "2025-01-01T00:00:00Z",
+        },
     ]
     render_calls: list = []
     # pi's fake has no `renderer`; its `instanceof TuiAltScreen` is then false.
     fake = SimpleNamespace(_renderer=None)
-    fake._render_session_items = lambda items, options=None: render_calls.append((items, options))
+    fake._render_session_items = lambda items, message_meta, options=None: render_calls.append(
+        (items, message_meta, options)
+    )
 
     InteractiveMode._render_session_entries(fake, entries)
 
     assert len(render_calls) == 1
-    items, options = render_calls[0]
+    items, message_meta, options = render_calls[0]
     assert options is None
+    assert message_meta[id(items[0])] == {"id": "current", "timestamp": "2025-01-02T00:00:00Z"}
+    assert message_meta[id(items[2])] == {"id": "previous", "timestamp": "2025-01-01T00:00:00Z"}
     assert items[0].role == "compactionSummary"
     assert items[0].summary == "current summary"
     assert items[1] == {"type": "compaction_cost", "kind": "compaction", "usage": current_usage}

@@ -1,15 +1,20 @@
 """Partial mirror of pi coding-agent test/image-process.test.ts: the 0.87.0
-GIF-signature cases, and the 1.0.2 transcoder case of image-processing.test.ts
-(through `convert_image_to_png_base64`, pi's `loadPngTranscoder`). BMP->PNG
-conversion is covered by test_tool_result_images.py and test_tools.py.
+GIF-signature cases, and the 1.0.2 transcoder case and 1.5.0 PNG-or-JPEG case
+of image-processing.test.ts (through `convert_image_to_png_base64`, pi's
+`loadPngTranscoder`, and `resize_image`). BMP->PNG conversion is covered by
+test_tool_result_images.py and test_tools.py.
 """
 
 import base64
+import io
+import math
 
 import pytest
+from PIL import Image
 
-from pidrei.utils.image_process import convert_image_to_png_base64
+from pidrei.utils.image_process import convert_image_to_png_base64, resize_image
 from pidrei.utils.mime import detect_supported_image_mime_type
+from pidrei_ai.types import ModelImageResizeOptions
 
 
 @pytest.mark.parametrize("signature", ["GIF87a", "GIF89a"])
@@ -47,3 +52,33 @@ async def test_converts_to_oriented_png_data():
     png = base64.b64decode(await convert_image_to_png_base64(_jpeg_with_xmp_before_orientation(), "image/jpeg"))
     assert [int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")] == [1, 2]
     assert await convert_image_to_png_base64(base64.b64encode(b"not an image").decode(), "image/jpeg") is None
+
+
+def _photo_like_jpeg(width: int, height: int) -> bytes:
+    """Photo-like JPEG: smooth gradients with light deterministic noise, so PNG compresses it poorly."""
+    pixels = bytearray(width * height * 3)
+    seed = 1
+    for y in range(height):
+        for x in range(width):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            noise = seed % 6
+            i = (y * width + x) * 3
+            pixels[i] = int(x / width * 200 + noise)
+            pixels[i + 1] = int(y / height * 200 + noise)
+            pixels[i + 2] = int(128 + math.sin(x / 30) * 60 + noise)
+    buffer = io.BytesIO()
+    Image.frombytes("RGB", (width, height), bytes(pixels)).save(buffer, "JPEG", quality=85)
+    return buffer.getvalue()
+
+
+# Regression test for #11551: PNG was returned whenever it fit, even when JPEG was much smaller.
+def test_picks_jpeg_over_a_larger_png_when_resizing_a_photo():
+    # pi's resizeImageInProcess is resize_image here (Pillow runs in the caller's blocking job).
+    input_bytes = _photo_like_jpeg(1200, 800)
+    result = resize_image(input_bytes, "image/jpeg", ModelImageResizeOptions(max_width=1000, max_height=1000))
+
+    assert result is not None
+    assert result.was_resized is True
+    assert result.mime_type == "image/jpeg"
+    assert result.width == 1000
+    assert len(result.data) < math.ceil(len(input_bytes) / 3) * 4 * 2

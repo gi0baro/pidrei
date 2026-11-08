@@ -3,6 +3,7 @@
 from pidrei_tui import Box, Container, Spacer, Text
 
 from ..theme import theme
+from .keybinding_hints import key_hint, key_text
 
 
 class CustomEntryComponent(Container):
@@ -42,7 +43,9 @@ class CustomEntryComponent(Container):
         self._custom_component = None
 
         try:
-            component = self._renderer(self._entry, {"expanded": self._expanded}, theme)
+            component = self._renderer(
+                self._entry, {"expanded": self._expanded, "keyText": key_text, "keyHint": key_hint}, theme
+            )
         except Exception as error:
             box = Box(self._output_pad, 1, lambda text: theme.bg("customMessageBg", text))
             box.add_child(Text(theme.fg("error", f"[{self._entry['customType']}] renderer failed: {error}"), 0, 0))

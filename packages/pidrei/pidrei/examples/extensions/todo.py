@@ -190,8 +190,8 @@ async def extension(pi):
         if result_details.get("error"):
             return Text(theme.fg("error", f"Error: {result_details['error']}"), 0, 0)
 
-        todo_list = result_details["todos"]
-        action = result_details["action"]
+        todo_list = result_details.get("todos")
+        action = result_details.get("action")
 
         if action == "list":
             if not todo_list:
@@ -223,8 +223,14 @@ async def extension(pi):
             msg = getattr(first, "text", "") or ""
             return Text(theme.fg("success", "✓ ") + theme.fg("muted", msg), 0, 0)
 
-        # clear
-        return Text(theme.fg("success", "✓ ") + theme.fg("muted", "Cleared all todos"), 0, 0)
+        if action == "clear":
+            return Text(theme.fg("success", "✓ ") + theme.fg("muted", "Cleared all todos"), 0, 0)
+
+        # Anything else (a validation error's result) shows the result text.
+        content = result["content"] if isinstance(result, dict) else result.content
+        first = content[0] if content else None
+        text = getattr(first, "text", None) if getattr(first, "type", None) == "text" else None
+        return Text(theme.fg("error", text) if text is not None else "", 0, 0)
 
     pi.register_tool(
         ToolDefinition(

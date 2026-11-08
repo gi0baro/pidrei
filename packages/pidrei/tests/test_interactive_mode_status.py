@@ -1094,7 +1094,7 @@ class TestShowLoadedResources:
         InteractiveMode._show_loaded_resources(fake, {"force": False, "showDiagnosticsWhenQuiet": True})
 
         output = render_all(fake._loaded_resources_container)
-        assert "[Skill conflicts]" in output
+        assert "[Skill warnings]" in output
         assert "[Skills]" not in output
 
 

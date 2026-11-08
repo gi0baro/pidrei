@@ -48,7 +48,10 @@ class TestUserMessageComponent:
 
         assert "The input is x². Done." in strip_ansi("\n".join(component.render(80)))
         assert calls == ["formula", "suffix"]
-        assert contexts == [{"messageType": "user", "isStreaming": False, "availableWidth": 78}]
+        # pi's toEqual ignores the undefined `messageId`/`timestamp`; here they are None.
+        assert contexts == [
+            {"messageType": "user", "isStreaming": False, "availableWidth": 78, "messageId": None, "timestamp": None}
+        ]
 
     @pytest.mark.tonio
     async def test_reapplies_markdown_transformers_when_invalidated(self):
@@ -64,3 +67,20 @@ class TestUserMessageComponent:
         component.invalidate()
 
         assert "Message after" in strip_ansi("\n".join(component.render(80)))
+
+    @pytest.mark.tonio
+    async def test_passes_persisted_entry_identity_in_transformer_context_live_leaves_it_undefined(self):
+        await init_theme("dark")
+        captured: list[dict] = []
+
+        def capture(markdown, context):
+            captured.append({"messageId": context["messageId"], "timestamp": context["timestamp"]})
+            return markdown
+
+        UserMessageComponent("restored", None, 1, [capture], "entry-abc", "2025-01-15T10:30:00.000Z").render(80)
+        UserMessageComponent("live", None, 1, [capture]).render(80)
+
+        assert captured == [
+            {"messageId": "entry-abc", "timestamp": "2025-01-15T10:30:00.000Z"},
+            {"messageId": None, "timestamp": None},
+        ]
