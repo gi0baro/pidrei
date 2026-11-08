@@ -1280,20 +1280,37 @@ those model-visible rules into `pidrei_ai/utils/schema/` and keeps
     re-entry stack and memo.
   - `validator.ts` → `validator.py` (`compile`, `Validator`,
     `CoercingValidator`) and `types.ts` → `types.py`.
-  - The helper half of `checks.ts` → `checks.py`: `typeName`, `listValues`,
-    the enum/const/contains/unique checks, `isMultiple`, `codePoints`,
-    `isObject`. JSON equality is pi's (`1` ≠ `true`, key order ignored).
-- **The engine is `jsonschema`**: the boolean check of a subschema is
-  `root_validator.evolve(schema=subschema).is_valid(value)`, which resolves
-  references through the root. The walk resolves `$ref` with the
-  validator's `referencing` resolver. A dangling `$ref` raises only when a
-  value reaches it: the check counts that node as failing, and the walk
-  reports `unresolved reference <ref>` at its path. Formats are
-  `FORMAT_CHECKER` with the `jsonschema[format-nongpl]` extra, plus PiDrei
-  checkers for `url` and `json-pointer-uri-fragment`.
+  - The helper half of `checks.ts` → `checks.py`: the type checks by name,
+    the enum/const/contains/unique checks, `isMultiple`, `isObject`, and
+    JSON equality as pi's (`1` ≠ `true`, key order ignored). `typeName` and
+    `listValues` live in `explain.py`, as in pi. `codePoints` has no port:
+    a `str`'s length is its code points.
+  - JavaScript's `String(number)`, `JSON.stringify` and `===` are in
+    `checks.py` (`number_string`, `json_stringify`, `same_value`): messages
+    say `expected >= 1`, never `1.0`.
+- **The engine is `jsonschema`** (`engine.py`): the boolean check of a
+  subschema is the root validator's `descend()` with that node's scope (its
+  `referencing` resolver), so references resolve as in the root; the walk
+  and the coercion resolve `$ref` with the scope's `lookup`. The registry is
+  empty: nothing is retrieved over the network. Keywords pi's compiler
+  answers differently are overridden there, each covered by a probe: a type
+  name the draft does not define matches nothing; a dangling `$ref` fails
+  the value at its place (`unresolved reference <ref>` in the walk);
+  `multipleOf` is exact for decimals; draft 7's array `items`,
+  `additionalItems` and `dependencies` apply; a number-valued keyword whose
+  value is not a number is ignored; unions stop at the answer, and
+  assertions run before applicators (both only change the cost: without
+  them a recursive union is exponential). Formats are `FORMAT_CHECKER`
+  (`formats.py`) with the `format-nongpl` extra's packages listed one by
+  one, without `rfc3987-syntax`: `jsonschema` imports it whenever it is
+  installed, and its grammars cost ~0.65 s at every launch. PiDrei checks
+  `iri` and `iri-reference` itself (RFC 3987's IRI-to-URI mapping over
+  `rfc3986-validator`), and `url` and `json-pointer-uri-fragment`.
 - **Built at `compile()`**: the explainer and the coercer are built with the
   validator (pi builds them lazily), so a validator shared by parallel tool
-  calls is one published value. Per-call state stays per call.
+  calls is one published value. Per-call state (the `$ref` memo, the
+  re-entry stack) lives in a walk object per call. `compile()` deep-copies
+  the schema, as pi's compiled checks capture it.
 - **`validation.py`** is pi's `validation.ts`: one compiled validator per
   schema through the identity/JSON-key cache under its lock,
   `parse(deepcopy(arguments))`, and errors formatted as
@@ -1304,15 +1321,16 @@ those model-visible rules into `pidrei_ai/utils/schema/` and keeps
   fixtures (they test the compiler). PiDrei's schemas stay plain dicts
   (pi's builders are typing sugar), and the coding agent's own config
   validators keep `jsonschema`'s messages, as pi keeps TypeBox there.
-- **Engine differences, documented in the module docstring**: `pattern`
-  runs on Python `re`, not ECMAScript; format strictness follows the Python
-  checkers, not TypeBox's regexes.
+- **Engine differences, documented in `engine.py`**: `pattern` runs on
+  Python `re`, not ECMAScript (`\p{L}` is an error there); format
+  strictness follows the Python checkers, not TypeBox's regexes.
 - **Upstream diffs**: commits to the not-ported files are nothing to port. A
   hunk in the ported files lands 1:1; one that changes how pi's compiler
   answers a check lands on the `jsonschema` call that answers it here.
 - **Tests**: `coerce.test.ts`, `coerce-typebox.test.ts`,
-  `validation.test.ts`, `validation-probes.test.ts`, the error cases of
-  `validator.test.ts` and the JSON-equality cases of `shared.test.ts`.
+  `validation.test.ts`, `validation-probes.test.ts` and `validator.test.ts`
+  (all but its JavaScript-only, `bytes`, `schemas` and `draft` cases).
+  `shared.test.ts` tests `shared.ts`'s garbage collection: not mirrored.
 
 ### `tool-search-unigrams` (`coding-agent/src/extensions/tool-search/tool.ts`)
 

@@ -126,7 +126,7 @@ class AgentTool[TDetails]:
     name: str
     label: str
     description: str
-    parameters: dict[str, Any]  # JSON Schema (pi: TypeBox TSchema)
+    parameters: dict[str, Any]  # JSON Schema of the arguments (pi: any JSON Schema object)
     # pi-ai `Tool` field carried through (adapters read it when converting tools).
     constrained_sampling: Any = None
     # Recovery policy for an effect whose durable intent exists but whose outcome is unknown.

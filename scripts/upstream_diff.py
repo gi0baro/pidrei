@@ -760,10 +760,15 @@ DROPPED_PREFIXES += tuple(
         "packages/schema/test/suite.ts",
         "packages/schema/test/builders.test.ts",
         "packages/schema/test/typebox-static.test.ts",
+        # shared.ts's cases: V8 collecting shared checks and patterns (WeakRef, FinalizationRegistry)
+        "packages/schema/test/shared.test.ts",
         "packages/schema/LICENSES/",
         "packages/agent/test/agent-tool-typebox.test.ts",
         # pi-ai's typed builders over pi-schema; pidrei's schemas stay plain dicts
         "packages/ai/src/providers/schema-builders.ts",
+        # StringEnum (renamed from typebox-helpers.ts, which pidrei never had): typing sugar for
+        # `{"type": "string", "enum": [...]}`, which pidrei schemas write as a dict
+        "packages/ai/src/utils/string-enum.ts",
     )
 )
 DROPPED_PREFIXES += (
@@ -892,7 +897,6 @@ RENAMES = {
     "packages/schema/test/coerce.test.ts": "packages/ai/tests/test_schema_coerce.py",
     "packages/schema/test/coerce-typebox.test.ts": "packages/ai/tests/test_schema_coerce_typebox.py",
     "packages/schema/test/validator.test.ts": "packages/ai/tests/test_schema_validator.py",
-    "packages/schema/test/shared.test.ts": "packages/ai/tests/test_schema_shared.py",
     # 1.5.0: pi's legacy extension OAuth types; pidrei's OAuthLoginCallbacks
     # lives with the provider composer (the device-code info fields land in
     # pidrei_ai/auth/types.py).
@@ -1561,9 +1565,10 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             (
                 "schema-on-jsonschema",
                 (
-                    "jsonschema is the engine: subschema checks are root_validator.evolve(schema=...).is_valid, "
-                    "$ref resolution is the validator's referencing resolver; the explainer and coercer are built "
-                    "at compile()"
+                    "jsonschema is the engine (utils/schema/engine.py): a subschema check is the root validator's "
+                    "descend() with the node's referencing scope, $ref resolution is that scope's lookup, and "
+                    "keywords pi's compiler answers differently are overridden there; the explainer and coercer "
+                    "are built at compile() and keep per-call state per call"
                 ),
             ),
         ),
@@ -1572,8 +1577,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         (
             "schema-on-jsonschema",
             (
-                "only the helpers explain and coerce call port (typeName, listValues, enum/const/contains/unique "
-                "checks, isMultiple, codePoints, isObject); the closure compilers are jsonschema's"
+                "only the helpers explain and coerce call port (the type checks, enum/const/contains/unique "
+                "checks, isMultiple, isObject; codePoints is str length); the closure compilers are jsonschema's, "
+                "a change to what one answers lands in utils/schema/engine.py"
             ),
         ),
     ),

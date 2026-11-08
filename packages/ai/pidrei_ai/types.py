@@ -4,8 +4,9 @@ Attribute names are snake_case; every observable string *value* (stop reasons,
 roles, event type tags, thinking levels, …) is byte-identical to pi's, since
 those appear in the event protocol and in serialized sessions.
 
-TypeBox tool schemas are plain JSON Schema dicts here; pi's validation/coercion
-semantics are ported separately (`utils/validation`, Phase 1).
+Tool schemas are plain JSON Schema dicts, as pi's `Tool` takes any JSON Schema
+object; validation and coercion are `utils/validation` over pi-schema's rules
+(`utils/schema`).
 
 Messages and content blocks are immutable values (frozen dataclasses): once
 published they may be read from any task without coordination. Streaming
@@ -398,7 +399,7 @@ type ConstrainedSamplingConfig = JsonSchemaConstrainedSampling | GrammarConstrai
 class Tool:
     name: str
     description: str
-    parameters: dict[str, Any]  # JSON Schema (pi: TypeBox TSchema)
+    parameters: dict[str, Any]  # JSON Schema of the arguments (pi: any JSON Schema object)
     constrained_sampling: ConstrainedSamplingConfig | Literal[False] | None = None
 
 

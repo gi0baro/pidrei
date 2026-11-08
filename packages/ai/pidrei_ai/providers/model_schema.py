@@ -1,8 +1,9 @@
 """Mirror of pi ai src/providers/model-schema.ts.
 
 Model metadata schemas shared by models.json validation and the published
-configuration schemas. pi builds them with TypeBox; here they are the JSON
-Schema TypeBox emits, as plain dicts (validated with `jsonschema`).
+configuration schemas. pi builds them with pi-schema's builders, shaped like
+the TypeBox schemas they replaced; here they are the JSON Schema both emit, as
+plain dicts (validated with `jsonschema`).
 """
 
 from typing import Any

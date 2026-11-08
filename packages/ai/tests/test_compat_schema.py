@@ -2,8 +2,8 @@
 
 pi's "preserves property types in the provider superset" case is a TypeScript
 type assertion (`expectTypeOf`) with nothing to observe at runtime; it is not
-mirrored. The defaults cases read what TypeBox's `Default({})` fills in: the
-`default` annotation of each top-level property.
+mirrored. The defaults cases read the `default` annotation of each top-level
+property, as pi's `defaults()` helper does.
 """
 
 from pidrei_ai.providers.compat_schema import (
