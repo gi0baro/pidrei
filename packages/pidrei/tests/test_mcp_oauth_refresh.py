@@ -179,6 +179,7 @@ async def test_uses_the_configured_authorization_server_metadata_url(monkeypatch
 # #10302: MCP OAuth client ID metadata documents.
 
 _CIMD = McpOAuthSettings(client_registration="cimd")
+_DCR = McpOAuthSettings(client_registration="dcr")
 
 
 class _PastePrompt:
@@ -212,12 +213,58 @@ async def _start_cimd_server(oauth_servers, **options):
 
 
 @pytest.mark.tonio
-async def test_registers_dynamically_by_default_even_when_the_server_supports_documents(monkeypatch):
+async def test_registers_dynamically_with_dcr_even_when_the_server_supports_documents(monkeypatch):
     async with oauth_mcp_servers(monkeypatch) as oauth_servers:
         server, _store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
+        await sign_in(_DCR)
+        assert len(server.registrations) == 1
+        assert server.authorizations[0]["client_id"] == "client-1"
+
+
+# #11426. pi's case is "uses pi's document by default when authorization responses name their issuer":
+# `auto` uses the document only for a build named pi, so PiDrei registers.
+@pytest.mark.tonio
+async def test_registers_dynamically_by_default_even_when_the_server_supports_documents(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
         await sign_in(McpOAuthSettings())
         assert len(server.registrations) == 1
         assert server.authorizations[0]["client_id"] == "client-1"
+        assert (await store.load())["clientInformation"]["client_id"] == "client-1"
+
+
+# #11426
+@pytest.mark.tonio
+async def test_registers_dynamically_by_default_when_the_server_does_not_support_documents(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, _store, sign_in = await _start_cimd_server(oauth_servers, iss_parameter=True)
+        await sign_in(McpOAuthSettings())
+        assert len(server.registrations) == 1
+        assert server.authorizations[0]["client_id"] == "client-1"
+
+
+# #11426
+@pytest.mark.tonio
+async def test_registers_dynamically_by_default_with_a_client_name(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, _store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
+        await sign_in(McpOAuthSettings(client_name="Claude Code"))
+        [registration] = server.registrations
+        assert registration["client_name"] == "Claude Code"
+
+
+# #11426
+@pytest.mark.tonio
+async def test_keeps_a_registered_client_by_default(monkeypatch):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
+        await sign_in(_DCR)
+        await sign_in(McpOAuthSettings())
+        # The registered client's tokens are refreshed instead of signing in again.
+        assert len(server.authorizations) == 1
+        assert server.token_requests[1]["grant_type"] == "refresh_token"
+        assert server.token_requests[1]["client_id"] == "client-1"
+        assert (await store.load())["clientInformation"]["client_id"] == "client-1"
 
 
 @pytest.mark.tonio
@@ -261,7 +308,7 @@ async def test_uses_a_document_and_callback_path_specific_to_the_mcp_server_with
 async def test_replaces_a_registered_client_when_switching_to_the_document(monkeypatch):
     async with oauth_mcp_servers(monkeypatch) as oauth_servers:
         server, store, sign_in = await _start_cimd_server(oauth_servers, cimd=True, iss_parameter=True)
-        await sign_in(McpOAuthSettings())
+        await sign_in(_DCR)
         assert (await store.load())["clientInformation"]["client_id"] == "client-1"
         await sign_in(_CIMD)
         # The registered client's tokens are not refreshed with another client.

@@ -67,10 +67,14 @@ _MCP_EXPOSURE_ALIASES: dict[str, McpExposure] = {"codemode-deferred": "codemode"
 # - `oauth.clientName`: `client_name` sent with dynamic client registration,
 #   for servers that only accept known clients. Default: `pidrei`.
 # - `oauth.clientRegistration`: how pidrei identifies itself without
-#   `clientId`. `"dcr"` (default): dynamic client registration. `"cimd"`:
-#   pi's Client ID Metadata Document on pi.dev, for authorization servers that
-#   allow pi by that URL. The server must support it for public clients, and
-#   the callback must use the default path `/callback`.
+#   `clientId`. `"auto"` (default): pi's Client ID Metadata Document on pi.dev
+#   when the authorization server supports it for public clients, otherwise
+#   dynamic client registration; with `clientName` or a `callbackUrl` other
+#   than `/callback` on localhost or 127.0.0.1, always dynamic client
+#   registration. pidrei is not pi, so `"auto"` always registers dynamically
+#   (`offers_client_metadata_document` in `extensions/mcp/oauth.py`).
+#   `"cimd"`: always the document, and sign-in fails without support.
+#   `"dcr"`: always dynamic client registration.
 # - `oauth.authServerMetadataUrl`: authorization server metadata document
 #   (RFC 8414 or OpenID Connect discovery) to use instead of discovery through
 #   the server, for servers that advertise a wrong authorization server or
@@ -127,6 +131,17 @@ def is_loopback_redirect_uri(value: str) -> bool:
     return url.scheme == "http" and _host_of(url) in _LOOPBACK_HOSTS and not url.query and not url.fragment
 
 
+def is_client_metadata_document_callback(callback_url: str | None) -> bool:
+    """Whether pi's Client ID Metadata Documents list a redirect URI for the
+    loopback `callback_url`: they list `/callback` on localhost and 127.0.0.1,
+    on any port. Without `callback_url`, pidrei uses such a URI."""
+    if callback_url is None:
+        return True
+    url = _parse_url(callback_url)
+    # `url.path or "/"`: an http URL's pathname is "/" when it names none.
+    return url is not None and _host_of(url) != "[::1]" and (url.path or "/") == "/callback"
+
+
 def _is_string_record(value: Any) -> bool:
     return isinstance(value, dict) and all(isinstance(entry, str) for entry in value.values())
 
@@ -156,14 +171,13 @@ def _validate_oauth(value: Any) -> str | None:
         return "oauth.scope must be a string"
     if "clientName" in value and (not isinstance(value["clientName"], str) or not value["clientName"].strip()):
         return "oauth.clientName must be a non-empty string"
-    if "clientRegistration" in value and value["clientRegistration"] != "dcr":
+    if "clientRegistration" in value and value["clientRegistration"] not in ("auto", "dcr"):
         if value["clientRegistration"] != "cimd":
-            return 'oauth.clientRegistration must be "dcr" or "cimd"'
+            return 'oauth.clientRegistration must be "auto", "dcr", or "cimd"'
         if "clientId" in value or "clientName" in value:
             return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName'
-        callback = _parse_url(value["callbackUrl"]) if isinstance(value.get("callbackUrl"), str) else None
-        # `url.path or "/"`: an http URL's pathname is "/" when it names none.
-        if callback is not None and (_host_of(callback) == "[::1]" or (callback.path or "/") != "/callback"):
+        callback_url = value.get("callbackUrl")
+        if not is_client_metadata_document_callback(callback_url if isinstance(callback_url, str) else None):
             return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback'
     if "authServerMetadataUrl" in value:
         metadata_url = value["authServerMetadataUrl"]

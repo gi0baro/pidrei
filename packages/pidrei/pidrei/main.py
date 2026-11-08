@@ -908,8 +908,11 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     set_capability_overrides(settings_manager.get_terminal_capability_overrides())
     apply_http_proxy_settings(settings_manager.get_global_settings().get("httpProxy"))
 
+    startup_diagnostics = deduplicate_diagnostics([*startup_settings_diagnostics, *runtime.diagnostics])
+    has_runtime_errors = any(diagnostic.type == "error" for diagnostic in runtime.diagnostics)
+
     if parsed.help:
-        _report_diagnostics(startup_settings_diagnostics)
+        _report_diagnostics(startup_diagnostics)
         extension_flags = [
             flag for extension in resource_loader.get_extensions().extensions for flag in extension.flags.values()
         ]
@@ -917,7 +920,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         raise SystemExit(0)
 
     if parsed.list_models is not None:
-        _report_diagnostics(startup_settings_diagnostics)
+        _report_diagnostics(startup_diagnostics)
         search_pattern = parsed.list_models if isinstance(parsed.list_models, str) else None
         await list_models(model_runtime, search_pattern, _timeout_cancel(15_000))
         raise SystemExit(0)
@@ -939,8 +942,6 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     # mode; migrations.ts is not ported (see module docstring).
 
     time("resolveModelScope")
-    startup_diagnostics = deduplicate_diagnostics([*startup_settings_diagnostics, *runtime.diagnostics])
-    has_runtime_errors = any(diagnostic.type == "error" for diagnostic in runtime.diagnostics)
     if app_mode != "interactive" or has_runtime_errors:
         _report_diagnostics(startup_diagnostics)
     if has_runtime_errors:

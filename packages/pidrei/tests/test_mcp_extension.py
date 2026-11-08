@@ -254,7 +254,8 @@ async def test_validates_the_oauth_callback_url_scope_and_client_name(tmp_path):
                     "url": "https://a.example/mcp",
                     "oauth": {"clientRegistration": "cimd", "callbackUrl": "http://localhost/callback"},
                 },
-                "badRegistration": {"url": "https://a.example/mcp", "oauth": {"clientRegistration": "auto"}},
+                "auto": {"url": "https://a.example/mcp", "oauth": {"clientRegistration": "auto", "clientName": "x"}},
+                "badRegistration": {"url": "https://a.example/mcp", "oauth": {"clientRegistration": "oidc"}},
                 "cimdClient": {
                     "url": "https://a.example/mcp",
                     "oauth": {"clientRegistration": "cimd", "clientId": "x"},
@@ -268,14 +269,14 @@ async def test_validates_the_oauth_callback_url_scope_and_client_name(tmp_path):
         {},
     )
     loaded = await load_mcp_config(**paths, project_trusted=False)
-    assert [server.name for server in loaded.servers] == ["ok", "ipv6", "same", "named", "metadata", "cimd"]
+    assert [server.name for server in loaded.servers] == ["ok", "ipv6", "same", "named", "metadata", "cimd", "auto"]
     expected = [
         'server "remote": oauth.callbackUrl must be an http URI on localhost',
         'server "both": oauth.callbackUrl and oauth.callbackPort name different ports',
         'server "scope": oauth.scope must be a string',
         'server "unnamed": oauth.clientName must be a non-empty string',
         'server "plainMetadata": oauth.authServerMetadataUrl must be an https URL',
-        'server "badRegistration": oauth.clientRegistration must be "dcr" or "cimd"',
+        'server "badRegistration": oauth.clientRegistration must be "auto", "dcr", or "cimd"',
         'server "cimdClient": oauth.clientRegistration "cimd" cannot be combined',
         'server "cimdPath": oauth.clientRegistration "cimd" requires oauth.callbackUrl',
     ]

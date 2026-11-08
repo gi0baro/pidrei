@@ -35,7 +35,7 @@ from .extensions.types import (
 )
 from .footer_data_provider import _find_git_paths_blocking
 from .output_guard import write_stderr
-from .package_manager import DefaultPackageManager, ResolvedResource
+from .package_manager import DefaultPackageManager, PackageInstallFailure, ResolvedResource
 from .prompt_templates import PromptTemplate, load_prompt_templates
 from .settings_manager import SettingsManager
 from .skills import LoadSkillsResult, Skill, load_skills
@@ -198,6 +198,30 @@ def is_builtin_extension(entry: Any) -> bool:
     """Built-in extensions supply the code of `builtin:<name>` extension paths
     (an `InlineExtension` with `builtin=True`)."""
     return not callable(entry) and getattr(entry, "builtin", False) is True
+
+
+def _describe_package_install_failure(failure: PackageInstallFailure) -> str:
+    """Describe a package that was skipped because it could not be installed, including how to drop it."""
+    hint = (
+        "Check the source and try again."
+        if failure.scope == "temporary"
+        else f'Run "{APP_NAME} remove {failure.source}{" --local" if failure.scope == "project" else ""}" '
+        "to remove it from settings.json."
+    )
+    return f"failed to install ({failure.message}). {hint}"
+
+
+def format_package_install_warning(failure: PackageInstallFailure) -> str:
+    """One-line startup warning for a package that could not be installed."""
+    return f'Extension package "{failure.source}": {_describe_package_install_failure(failure)}'
+
+
+def _collect_package_install_warnings(*failures: list[PackageInstallFailure]) -> list[ExtensionLoadWarning]:
+    return [
+        ExtensionLoadWarning(path=failure.source, warning=_describe_package_install_failure(failure))
+        for entries in failures
+        for failure in entries
+    ]
 
 
 def _merge_extension_warnings(result: LoadExtensionsResult, warnings: list[ExtensionLoadWarning]) -> None:
@@ -445,6 +469,9 @@ class DefaultResourceLoader:
         cli_extension_paths = await self._package_manager.resolve_extension_sources(
             self._additional_extension_paths, temporary=True
         )
+        install_warnings = _collect_package_install_warnings(
+            resolved_paths.install_failures, cli_extension_paths.install_failures
+        )
         # Kept on the instance so post-reload passes (extend_resources) can
         # still resolve package metadata.
         self._resource_metadata_by_path = {}
@@ -488,6 +515,7 @@ class DefaultResourceLoader:
         ]
 
         extensions_result = await self._load_final_extension_set(extension_paths, pre_trust_extensions)
+        _merge_extension_warnings(extensions_result, install_warnings)
         for resolved in await self._missing_local_paths(self._additional_extension_paths):
             extensions_result.errors.append(
                 ExtensionLoadError(path=resolved, error=f"Extension path does not exist: {resolved}")
@@ -610,7 +638,11 @@ class DefaultResourceLoader:
             if not path.startswith(BUILTIN_PATH_PREFIX)
         ]
 
+        install_warnings = _collect_package_install_warnings(
+            resolved_paths.install_failures, cli_extension_paths.install_failures
+        )
         extensions_result = await load_extensions_cached(extension_paths, self._cwd, self._event_bus)
+        _merge_extension_warnings(extensions_result, install_warnings)
         if not include_inline_factories:
             return extensions_result
 

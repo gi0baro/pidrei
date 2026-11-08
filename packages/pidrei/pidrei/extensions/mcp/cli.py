@@ -46,8 +46,8 @@ HELP = f"""{bold("Usage:")}
   {APP_NAME} mcp add <server> [options] --url <url>
   {APP_NAME} mcp remove <server> [-l]
   {APP_NAME} mcp list [--json]
-  {APP_NAME} mcp login <server> [--timeout <seconds>]
-  {APP_NAME} mcp logout <server>
+  {APP_NAME} mcp login <server> [-l] [--timeout <seconds>]
+  {APP_NAME} mcp logout <server> [-l]
 
 Configure and check MCP servers and sign in to OAuth servers without starting a session.
 Reads ~/{CONFIG_DIR_NAME}/agent/mcp.json and, in trusted projects, {CONFIG_DIR_NAME}/mcp.json.
@@ -59,7 +59,7 @@ Commands:
   login <server>          Sign in through the browser
   logout <server>         Delete the stored OAuth credentials
 
-Options for add and remove:
+Options for add, remove, login, and logout:
   -l, --local             Use {CONFIG_DIR_NAME}/mcp.json in the current project instead of the global file
 
 Options for add:
@@ -76,6 +76,8 @@ Options for add:
                           Fixed OAuth callback port
   --oauth-client-name <name>
                           Client name sent when registering with the OAuth server
+  --oauth-client-registration <mode>
+                          auto (default), cimd, or dcr
   --exposure <mode>       codemode (default), deferred, direct, or hidden
   --description <text>    What the server offers, shown in the system prompt
 
@@ -149,7 +151,8 @@ def _parse_options(
     parsed = _ParsedOptions(positional=[], values={}, lists={})
     index = 0
     while index < len(args):
-        arg = _OPTION_ALIASES.get(args[index], args[index])
+        typed = args[index]
+        arg = _OPTION_ALIASES.get(typed, typed)
         if arg == "--" or len(parsed.positional) >= max_positionals:
             parsed.positional.extend(args[index + 1 if arg == "--" else index :])
             break
@@ -160,7 +163,7 @@ def _parse_options(
         name = arg[2:]
         kind = known.get(name)
         if kind is None:
-            error(f"Unknown option {arg}.\n{HELP_HINT}")
+            error(f"Unknown option {typed}.\n{HELP_HINT}")
             return None
         if kind == "flag":
             parsed.values[name] = True
@@ -215,18 +218,25 @@ async def run_mcp_command(args: list[str], options: McpCommandOptions) -> int:
                 return 1
             return await _list(loaded, "json" in parsed.values, untrusted_note, options, credentials, log)
         case "login" | "logout":
-            parsed = _parse_options(rest, {"timeout": "value"} if command == "login" else {}, error)
+            parsed = _parse_options(
+                rest, {"local": "flag", "timeout": "value"} if command == "login" else {"local": "flag"}, error
+            )
             if parsed is None:
                 return 1
             if len(parsed.positional) != 1:
-                error(f"Usage: {APP_NAME} mcp {command} <server>\n{HELP_HINT}")
+                error(f"Usage: {APP_NAME} mcp {command} <server> [-l]\n{HELP_HINT}")
                 return 1
             name = parsed.positional[0]
             entry = next((server for server in loaded.servers if server.name == name), None)
             if entry is None:
-                configured = ", ".join(server.name for server in loaded.servers) or "none"
+                names = [server.name for server in loaded.servers]
+                suggestion = next((candidate for candidate in names if _edit_distance(candidate, name) <= 2), None)
+                hint = f' Did you mean "{suggestion}"?' if suggestion else ""
                 note = f" {untrusted_note}" if untrusted_note else ""
-                error(f'No MCP server named "{name}".{note} Configured: {configured}.')
+                error(f'No MCP server named "{name}".{hint}{note} Configured: {", ".join(names) or "none"}.')
+                return 1
+            if "local" in parsed.values and entry.scope != "project":
+                error(f'MCP server "{name}" is defined in {entry.source}, not in the project; omit --local.')
                 return 1
             connection = _create_connection(entry, options, credentials)
             url = connection.oauth_url
@@ -272,6 +282,17 @@ def _seconds(value: str | None) -> float | None:
     return seconds if 0 < seconds < float("inf") else None
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance, to suggest a configured server name for a mistyped one."""
+    previous = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        current = [i]
+        for j in range(1, len(b) + 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] != b[j - 1])))
+        previous = current
+    return previous[len(b)]
+
+
 def _parse_pairs(option: str, pairs: list[str] | None, error: Output) -> dict[str, str] | None:
     """Parse `KEY=VALUE` pairs of a repeatable option into a dict."""
     record: dict[str, str] = {}
@@ -291,6 +312,7 @@ _HTTP_ONLY = (
     "oauth-client-secret",
     "oauth-callback-port",
     "oauth-client-name",
+    "oauth-client-registration",
 )
 _STDIO_ONLY = ("env", "cwd")
 
@@ -310,6 +332,7 @@ async def _add(args: list[str], project_config: str, options: McpCommandOptions,
             "oauth-client-secret": "value",
             "oauth-callback-port": "value",
             "oauth-client-name": "value",
+            "oauth-client-registration": "value",
             "exposure": "value",
             "description": "value",
         },
@@ -354,6 +377,8 @@ async def _add(args: list[str], project_config: str, options: McpCommandOptions,
             oauth["callbackPort"] = _js_number(port)
         if parsed.value("oauth-client-name") is not None:
             oauth["clientName"] = parsed.value("oauth-client-name")
+        if parsed.value("oauth-client-registration") is not None:
+            oauth["clientRegistration"] = parsed.value("oauth-client-registration")
         config = {"url": url, **({"headers": headers} if headers else {}), **({"oauth": oauth} if oauth else {})}
     else:
         env = _parse_pairs("env", parsed.lists.get("env"), error)

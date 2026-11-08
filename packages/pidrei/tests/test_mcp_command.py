@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from pidrei.core.trust_manager import ProjectTrustStore
 from pidrei.extensions.mcp.cli import McpCommandOptions, run_mcp_command
 
 
@@ -84,6 +85,33 @@ async def test_rejects_unknown_servers_and_servers_without_oauth_for_login_and_l
         'MCP server "fixture" does not use OAuth. Only HTTP servers without an Authorization header do.',
     )
     assert (await run(tmp_path, ["frobnicate"], SERVERS))[0] == 1
+
+
+@pytest.mark.tonio
+async def test_suggests_a_configured_server_for_a_mistyped_name(tmp_path):
+    assert (await run(tmp_path, ["login", "fixtures"], SERVERS))[1] == (
+        'No MCP server named "fixtures". Did you mean "fixture"? Configured: fixture, broken, parked.'
+    )
+
+
+@pytest.mark.tonio
+async def test_reports_options_as_typed(tmp_path):
+    assert "Unknown option -l." in (await run(tmp_path, ["list", "-l"], SERVERS))[1]
+
+
+@pytest.mark.tonio
+async def test_restricts_login_and_logout_to_project_servers_with_local(tmp_path):
+    _, _, agent_dir = await run(tmp_path, ["add", "-l", "local", "--", "node", "server.js"], SERVERS)
+    await ProjectTrustStore(agent_dir).set(agent_dir, True)
+
+    assert (await run(tmp_path, ["logout", "-l", "local"], None, agent_dir))[:2] == (
+        1,
+        'MCP server "local" does not use OAuth. Only HTTP servers without an Authorization header do.',
+    )
+    assert (await run(tmp_path, ["login", "-l", "fixture"], None, agent_dir))[:2] == (
+        1,
+        f'MCP server "fixture" is defined in {os.path.join(agent_dir, "mcp.json")}, not in the project; omit --local.',
+    )
 
 
 @pytest.mark.tonio
@@ -161,6 +189,16 @@ async def test_adds_http_servers_and_keeps_other_content_of_the_file(tmp_path):
     assert sentry["url"] == "https://mcp.sentry.dev/mcp"
     assert sentry["oauth"] == {"clientId": "pi", "clientName": "Claude Code"}
 
+    await run(
+        tmp_path,
+        ["add", "linear", "--url", "https://mcp.linear.app/mcp", "--oauth-client-registration", "dcr"],
+        None,
+        agent_dir,
+    )
+    linear = read_config(os.path.join(agent_dir, "mcp.json"))["mcpServers"]["linear"]
+    assert linear["url"] == "https://mcp.linear.app/mcp"
+    assert linear["oauth"] == {"clientRegistration": "dcr"}
+
 
 @pytest.mark.tonio
 @pytest.mark.parametrize(
@@ -174,6 +212,7 @@ async def test_adds_http_servers_and_keeps_other_content_of_the_file(tmp_path):
         ["add", "x", "--header", "A=1", "--", "cmd"],
         ["add", "x", "--env", "NOVALUE", "--", "cmd"],
         ["add", "x", "--exposure", "loud", "--", "cmd"],
+        ["add", "x", "--url", "https://example.com", "--oauth-client-registration", "maybe"],
     ],
 )
 async def test_rejects_invalid_add_invocations_without_writing(tmp_path, args):

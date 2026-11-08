@@ -57,7 +57,7 @@ from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 from ...config import APP_NAME, get_agent_dir
 from ...core.auth_storage import FileAuthStorageBackend
-from ...core.mcp_servers import mcp_namespace
+from ...core.mcp_servers import is_client_metadata_document_callback, mcp_namespace
 from ...utils.lockfile import FileLock
 
 
@@ -94,7 +94,7 @@ class McpOAuthSettings:
     scope: str | None = None
     # `client_name` for dynamic client registration. Default: `APP_NAME`.
     client_name: str | None = None
-    # See `McpOAuthConfig.clientRegistration`: "dcr" or "cimd".
+    # See `McpOAuthConfig.clientRegistration`: "auto", "dcr" or "cimd".
     client_registration: str | None = None
     # See `McpOAuthConfig.authServerMetadataUrl`.
     auth_server_metadata_url: str | None = None
@@ -297,24 +297,35 @@ def _callback_id(server_url: str) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(href.encode()).digest()[:9]).decode().rstrip("=")
 
 
+def _offers_client_metadata_document(settings: McpOAuthSettings) -> bool:
+    """Whether sign-in may identify with pi's Client ID Metadata Document instead
+    of registering. `auto` registers when the user asked for a client name, the
+    redirect URI is not one the documents list, or a rebranded build would show
+    up as pi. PiDrei is such a build (`APP_NAME` is not pi's), so `auto`
+    always registers; only an explicit `cimd` uses pi's document."""
+    registration = settings.client_registration if settings.client_registration is not None else "auto"
+    if registration != "auto":
+        return registration == "cimd"
+    if settings.client_id or settings.client_name or APP_NAME != "pi":
+        return False
+    return is_client_metadata_document_callback(settings.callback_url)
+
+
 def _client_metadata_document(
     server_url: str, redirect_url: str, metadata: AuthorizationServerMetadata | None
-) -> OAuthClientMetadataDocument:
-    """pi's Client ID Metadata Document, for `clientRegistration: "cimd"`, chosen
-    like Codex chooses its own. The configuration ensures the default callback
-    path. Without the `iss` parameter in authorization responses (RFC 9207), the
-    redirect URI and the document are specific to the MCP server, so a response
-    cannot be mixed up with one from another authorization server (RFC 9700
-    section 4.4.2.2)."""
+) -> OAuthClientMetadataDocument | None:
+    """pi's Client ID Metadata Document, chosen like Codex chooses its own, or
+    None when the authorization server does not support documents for public
+    clients. Without the `iss` parameter in authorization responses (RFC 9207),
+    the redirect URI and the document are specific to the MCP server, so a
+    response cannot be mixed up with one from another authorization server
+    (RFC 9700 section 4.4.2.2)."""
     if (
         metadata is None
         or not metadata.get("client_id_metadata_document_supported")
         or "none" not in (metadata.get("token_endpoint_auth_methods_supported") or [])
     ):
-        raise Exception(
-            "The authorization server does not support Client ID Metadata Documents for public clients; "
-            'remove oauth.clientRegistration "cimd"'
-        )
+        return None
     if metadata.get("authorization_response_iss_parameter_supported"):
         return OAuthClientMetadataDocument(url=f"{CLIENT_METADATA_BASE_URL}/client.json", redirect_url=redirect_url)
     callback_id = _callback_id(server_url)
@@ -331,15 +342,20 @@ def _create_provider(
     redirect_url: str,
     on_redirect: Callable[[str], Awaitable[None]],
 ) -> McpOAuthProvider:
+    def client_metadata_document(metadata: AuthorizationServerMetadata | None) -> OAuthClientMetadataDocument | None:
+        document = _client_metadata_document(server_url, redirect_url, metadata)
+        if document is None and settings.client_registration == "cimd":
+            raise Exception(
+                "The authorization server does not support Client ID Metadata Documents for public clients; "
+                'remove oauth.clientRegistration "cimd"'
+            )
+        return document
+
     return McpOAuthProvider(
         server_url=server_url,
         redirect_url=redirect_url,
         client_metadata={"client_name": settings.client_name if settings.client_name is not None else APP_NAME},
-        client_metadata_document=(
-            (lambda metadata: _client_metadata_document(server_url, redirect_url, metadata))
-            if settings.client_registration == "cimd"
-            else None
-        ),
+        client_metadata_document=client_metadata_document if _offers_client_metadata_document(settings) else None,
         client_id=settings.client_id,
         client_secret=settings.client_secret,
         store=store,
@@ -650,11 +666,11 @@ async def sign_in_mcp_server(
     if preferred_port is None and registered:
         registered_port = parse_url(registered[0]).port
         preferred_port = int(registered_port) if registered_port and int(registered_port) else None
-    cimd = settings.client_registration == "cimd"
+    offers_document = _offers_client_metadata_document(settings)
     callback = await _listen_for_callback(
         callback_options,
         # The redirect URI of a server-specific Client ID Metadata Document.
-        [f"{_CALLBACK_PATH}/{_callback_id(server_url)}"] if cimd else [],
+        [f"{_CALLBACK_PATH}/{_callback_id(server_url)}"] if offers_document else [],
         preferred_port,
         callback_options.port is not None,
     )
@@ -667,10 +683,13 @@ async def sign_in_mcp_server(
         if stored:
             # Every sign-in gets a fresh `state` parameter.
             next_state: McpOAuthState = {key: value for key, value in stored.items() if key != "oauthState"}  # type: ignore[assignment]
-            # A registered client cannot use another redirect URI, and its tokens belong to it. A Client ID
-            # Metadata Document is not stored, so with one, a stored client was registered before and is replaced.
+            # A registered client cannot use another redirect URI, and its tokens belong to it. `cimd` replaces a
+            # registered client; `auto` keeps it. A Client ID Metadata Document is not stored, so tokens without
+            # a stored client belong to the document.
             keep_client = settings.client_id or (
-                not stored.get("clientInformation") if cimd else redirect_url in registered
+                settings.client_registration != "cimd" and redirect_url in registered
+                if stored.get("clientInformation")
+                else offers_document
             )
             if not keep_client:
                 for key in ("clientInformation", "tokens", "tokensExpireAt"):

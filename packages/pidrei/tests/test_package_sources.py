@@ -20,6 +20,7 @@ from pidrei.core.package_manager import (
     DefaultPackageManager,
     GitSource,
     LocalSource,
+    PackageInstallFailure,
     UnsupportedSourceError,
     get_extension_temp_folder,
 )
@@ -375,6 +376,106 @@ async def test_resolve_skips_installing_missing_sources_when_offline(dirs):
 
     assert dirs.commands == []
     assert result.extensions == []
+
+
+# -- package install failures (#11088; pi's broken package is `npm:`) -------------
+
+
+@pytest.mark.tonio
+async def test_skips_a_package_source_that_fails_to_install_and_reports_it(dirs):
+    dirs.settings.set_project_packages(["git:github.com/user/broken-package"])
+    installs = []
+
+    async def install_parsed_source(parsed, scope) -> None:
+        installs.append((parsed, scope))
+        raise Exception("git clone https://github.com/user/broken-package failed: fatal")
+
+    dirs.manager._install_parsed_source = install_parsed_source
+
+    result = await dirs.manager.resolve()
+
+    assert len(installs) == 1
+    assert result.install_failures == [
+        PackageInstallFailure(
+            source="git:github.com/user/broken-package",
+            scope="project",
+            message="git clone https://github.com/user/broken-package failed: fatal",
+        )
+    ]
+    assert result.extensions == []
+
+
+@pytest.mark.tonio
+async def test_does_not_report_install_failures_for_sources_that_are_skipped(dirs):
+    dirs.settings.set_project_packages(["git:github.com/user/missing-package"])
+    dirs.stub_run_command()
+
+    async def skip(_source):
+        return "skip"
+
+    result = await dirs.manager.resolve(skip)
+
+    assert dirs.commands == []
+    assert result.install_failures == []
+
+
+@pytest.mark.tonio
+async def test_keeps_a_missing_source_an_error_when_the_caller_asks_for_one(dirs):
+    dirs.settings.set_project_packages(["git:github.com/user/missing-package"])
+
+    async def error(_source):
+        return "error"
+
+    with pytest.raises(Exception, match="Missing source: git:github.com/user/missing-package"):
+        await dirs.manager.resolve(error)
+
+
+# https://github.com/earendil-works/pi/issues/11375
+@pytest.mark.tonio
+async def test_refreshes_temporary_git_sources_with_a_branch_ref(dirs):
+    source = "git:github.com/example/repo@main"
+    parsed = dirs.manager.parse_source(source)
+    assert isinstance(parsed, GitSource)
+    installed_path = await dirs.manager._get_git_install_path(parsed, "temporary")
+    os.makedirs(os.path.join(installed_path, "extensions"))
+    with open(os.path.join(installed_path, "extensions", "index.py"), "w") as handle:
+        handle.write("async def extension(pi):\n    pass\n")
+    updates = []
+
+    async def update_git(source, scope) -> None:
+        updates.append((source, scope))
+
+    dirs.manager._update_git = update_git
+
+    result = await dirs.manager.resolve_extension_sources([source], temporary=True)
+
+    assert [(source.ref, scope) for source, scope in updates] == [("main", "temporary")]
+    assert any(r.path.endswith(os.path.join("extensions", "index.py")) and r.enabled for r in result.extensions)
+
+
+@pytest.mark.tonio
+async def test_does_not_refresh_temporary_git_sources_pinned_to_the_checked_out_commit(dirs):
+    source = "git:github.com/example/repo@abc1234"
+    parsed = dirs.manager.parse_source(source)
+    assert isinstance(parsed, GitSource)
+    os.makedirs(await dirs.manager._get_git_install_path(parsed, "temporary"))
+
+    async def run_command(command: str, args: list[str], *, cwd: str | None = None) -> str:
+        dirs.commands.append((command, args, cwd))
+        return "ABC1234def5678901234567890123456789012345\n"
+
+    dirs.manager._run_command = run_command
+    updates = []
+
+    async def update_git(source, scope) -> None:
+        updates.append((source, scope))
+
+    dirs.manager._update_git = update_git
+
+    await dirs.manager.resolve_extension_sources([source], temporary=True)
+
+    assert [args for _command, args, _cwd in dirs.commands] == [["rev-parse", "HEAD"]]
+    assert updates == []
 
 
 # https://github.com/earendil-works/pi/issues/9982
