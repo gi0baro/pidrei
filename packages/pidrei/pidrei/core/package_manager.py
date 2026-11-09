@@ -40,13 +40,13 @@ from pidrei_ai.utils.tasks import gather
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
-from ..utils.paths import canonicalize_path_blocking, is_local_path, normalize_path, resolve_path
+from ..utils.paths import get_path_comparison_key, is_local_path, normalize_path, paths_equal, resolve_path
 from .exec import exec_command
 from .extensions.loader import is_extension_file, resolve_extension_entries_blocking
 from .pidrei_manifest import read_pidrei_manifest_blocking
 from .settings_manager import SettingsManager
 from .skills import IgnoreMatcher, add_ignore_rules_blocking
-from .source_info import BUILTIN_PATH_PREFIX, PathMetadata
+from .source_info import BUILTIN_PATH_PREFIX, PathMetadata, get_resource_path_key_blocking
 
 
 RESOURCE_TYPES = ("extensions", "skills", "prompts", "themes")
@@ -678,8 +678,8 @@ class DefaultPackageManager:
             # host/path, so ssh and https forms of one repo are one package.
             return f"git:{parsed.host}/{parsed.path}"
         if scope:
-            return f"local:{self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope))}"
-        return f"local:{self._resolve_resource_path(parsed.path)}"
+            return f"local:{get_path_comparison_key(self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope)))}"
+        return f"local:{get_path_comparison_key(self._resolve_resource_path(parsed.path))}"
 
     def _resolve_resource_path(self, path: str) -> str:
         return resolve_path(path, self._cwd, home_dir=_get_home_dir(), trim=True)
@@ -1005,13 +1005,13 @@ class DefaultPackageManager:
         parsed = self.parse_source(source)
         if isinstance(parsed, GitSource):
             return f"git:{parsed.host}/{parsed.path}"
-        return f"local:{self._resolve_resource_path(parsed.path)}"
+        return f"local:{get_path_comparison_key(self._resolve_resource_path(parsed.path))}"
 
     def _source_match_key_for_settings(self, source: str, scope: str) -> str:
         parsed = self.parse_source(source)
         if isinstance(parsed, GitSource):
             return f"git:{parsed.host}/{parsed.path}"
-        return f"local:{self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope))}"
+        return f"local:{get_path_comparison_key(self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope)))}"
 
     def _package_sources_match(self, existing: Any, input_source: str, scope: str) -> bool:
         left = self._source_match_key_for_settings(self._get_package_source_string(existing), scope)
@@ -1166,7 +1166,7 @@ class DefaultPackageManager:
             [
                 dir
                 for dir in collect_ancestor_agents_skill_dirs_blocking(self._cwd)
-                if os.path.abspath(dir) != os.path.abspath(user_agents_skills_dir)
+                if not paths_equal(dir, user_agents_skills_dir)
             ]
             if project_trusted
             else []
@@ -1284,10 +1284,10 @@ class DefaultPackageManager:
             seen: set[str] = set()
             deduped: list[ResolvedResource] = []
             for entry in resolved:
-                canonical_path = canonicalize_path_blocking(entry.path)
-                if canonical_path in seen:
+                path_key = get_resource_path_key_blocking(entry.path)
+                if path_key in seen:
                     continue
-                seen.add(canonical_path)
+                seen.add(path_key)
                 deduped.append(entry)
             return deduped
 

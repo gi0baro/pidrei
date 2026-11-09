@@ -47,7 +47,7 @@ from pidrei.core.pidrei_manifest import read_pidrei_manifest_blocking
 from pidrei.core.source_info import create_synthetic_source_info, get_synthetic_path_source, is_synthetic_path
 from pidrei.core.timings import time as record_time
 from pidrei.core.virtual_models import VirtualModelDefinition
-from pidrei.utils.paths import resolve_path
+from pidrei.utils.paths import paths_equal, resolve_path
 
 from .types import (
     RUNTIME_NOT_INITIALIZED,
@@ -98,7 +98,7 @@ def clear_extension_cache() -> None:
 def _use_extension_cache_cwd(cwd: str) -> ExtensionCacheToken:
     global _extension_cache_cwd
     resolved_cwd = resolve_path(cwd)
-    if _extension_cache_cwd is not None and _extension_cache_cwd != resolved_cwd:
+    if _extension_cache_cwd is not None and not paths_equal(_extension_cache_cwd, resolved_cwd):
         clear_extension_cache()
     _extension_cache_cwd = resolved_cwd
     return ExtensionCacheToken(cwd=resolved_cwd, generation=_extension_cache_generation)

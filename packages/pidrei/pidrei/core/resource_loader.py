@@ -16,7 +16,7 @@ from pidrei_ai.utils.tasks import gather
 from pidrei_tui import detect_capabilities, get_terminal_color_mode
 
 from ..config import APP_NAME, CONFIG_DIR_NAME
-from ..utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
+from ..utils.paths import canonicalize_path_blocking, is_local_path, is_path_within, paths_equal, resolve_path
 from ..utils.text import strip_bom
 from .diagnostics import ResourceCollision, ResourceDiagnostic
 from .event_bus import EventBus
@@ -44,6 +44,7 @@ from .source_info import (
     PathMetadata,
     SourceInfo,
     create_source_info,
+    get_resource_path_key_blocking,
     get_synthetic_path_source,
     is_synthetic_path,
 )
@@ -134,13 +135,13 @@ def _find_shadowed_context_file_blocking(cwd: str) -> str | None:
     main_repo_root = os.path.dirname(common_git_dir)
     # False for an ordinary repo, where the two are the same dir, and for a sibling
     # worktree (`git worktree add ../feat`), whose main repo is not an ancestor.
-    if not worktree_root.startswith(f"{main_repo_root}{os.sep}"):
+    if not is_path_within(main_repo_root, worktree_root) or paths_equal(worktree_root, main_repo_root):
         return None
     # dirname of the common git dir is the main worktree root only when that dir is
     # itself checked out from the same repo. In a bare layout (`proj/.bare` +
     # `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
     # submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
-    if canonicalize_path_blocking(os.path.join(main_repo_root, ".git")) != common_git_dir:
+    if not paths_equal(canonicalize_path_blocking(os.path.join(main_repo_root, ".git")), common_git_dir):
         return None
     worktree_context_file = _load_context_file_from_dir_blocking(worktree_root)
     if worktree_context_file is None:
@@ -177,8 +178,10 @@ def _load_project_context_files_blocking(*, cwd: str, agent_dir: str) -> list[Ag
         is_shadowed = (
             shadowed_context_file is not None
             and context_file is not None
-            and os.path.join(canonicalize_path_blocking(current_dir), os.path.basename(context_file.path))
-            == shadowed_context_file
+            and paths_equal(
+                os.path.join(canonicalize_path_blocking(current_dir), os.path.basename(context_file.path)),
+                shadowed_context_file,
+            )
         )
         if context_file is not None and not is_shadowed and context_file.path not in seen_paths:
             ancestor_context_files.insert(0, context_file)
@@ -657,6 +660,9 @@ class DefaultResourceLoader:
     def _resolve_extension_load_path(self, path: str) -> str:
         return path if is_synthetic_path(path) else resolve_path(path, self._cwd, normalize_unicode_spaces=True)
 
+    def _get_extension_path_key_blocking(self, path: str) -> str:
+        return get_resource_path_key_blocking(self._resolve_extension_load_path(path))
+
     async def _load_extension_paths(
         self, paths: list[str], runtime: ExtensionRuntime | None = None
     ) -> LoadExtensionsResult:
@@ -690,36 +696,38 @@ class DefaultResourceLoader:
         # The bootstrap pass already ran its factories; re-running them would
         # double every registration, so only the paths it did not reach load now.
         preloaded = pre_trust_extensions.extensions if pre_trust_extensions is not None else []
-        preloaded_by_path = {
-            extension.resolved_path: extension for extension in preloaded if not extension.path.startswith("<inline:")
-        }
-        failed_preload_paths = {
-            self._resolve_extension_load_path(error.path)
-            for error in (pre_trust_extensions.errors if pre_trust_extensions is not None else [])
-        }
+        keyed_preloaded = [extension for extension in preloaded if not extension.path.startswith("<inline:")]
+        preload_errors = pre_trust_extensions.errors if pre_trust_extensions is not None else []
+        # The path keys follow symlinks (`get_resource_path_key_blocking`), so they are built on the pool.
+        preloaded_keys, failed_preload_keys, path_keys = await tonio.spawn_blocking(
+            lambda: (
+                [get_resource_path_key_blocking(extension.resolved_path) for extension in keyed_preloaded],
+                {self._get_extension_path_key_blocking(error.path) for error in preload_errors},
+                [self._get_extension_path_key_blocking(path) for path in extension_paths],
+            )
+        )
+        preloaded_by_path = dict(zip(preloaded_keys, keyed_preloaded, strict=True))
         remaining_paths = [
             path
-            for path in extension_paths
-            if self._resolve_extension_load_path(path) not in preloaded_by_path
-            and self._resolve_extension_load_path(path) not in failed_preload_paths
+            for path, path_key in zip(extension_paths, path_keys, strict=True)
+            if path_key not in preloaded_by_path and path_key not in failed_preload_keys
         ]
         remaining = await self._load_extension_paths(
             remaining_paths, pre_trust_extensions.runtime if pre_trust_extensions is not None else None
         )
+        remaining_keys = await tonio.spawn_blocking(
+            lambda: [get_resource_path_key_blocking(extension.resolved_path) for extension in remaining.extensions]
+        )
         loaded_by_path = dict(preloaded_by_path)
-        for extension in remaining.extensions:
-            loaded_by_path[extension.resolved_path] = extension
+        for path_key, extension in zip(remaining_keys, remaining.extensions, strict=True):
+            loaded_by_path[path_key] = extension
 
         if pre_trust_extensions is not None:
             inline_extensions = [extension for extension in preloaded if extension.path.startswith("<inline:")]
             inline_errors: list[ExtensionLoadError] = []
         else:
             inline_extensions, inline_errors = await self._load_extension_factories(remaining.runtime)
-        ordered = [
-            extension
-            for path in extension_paths
-            if (extension := loaded_by_path.get(self._resolve_extension_load_path(path))) is not None
-        ]
+        ordered = [extension for path_key in path_keys if (extension := loaded_by_path.get(path_key)) is not None]
         ordered.extend(inline_extensions)
 
         replacement_warnings: list[ExtensionLoadWarning] = []
@@ -1036,10 +1044,7 @@ class DefaultResourceLoader:
         normalized_resource_path = os.path.abspath(resource_path)
         if extra_source_infos:
             for source_path, source_info in extra_source_infos.items():
-                normalized_source_path = os.path.abspath(source_path)
-                if normalized_resource_path == normalized_source_path or normalized_resource_path.startswith(
-                    f"{normalized_source_path}{os.sep}"
-                ):
+                if is_path_within(source_path, normalized_resource_path):
                     return replace(source_info, path=resource_path)
 
         if metadata_by_path:
@@ -1048,10 +1053,7 @@ class DefaultResourceLoader:
                 return create_source_info(resource_path, exact)
 
             for source_path, metadata in metadata_by_path.items():
-                normalized_source_path = os.path.abspath(source_path)
-                if normalized_resource_path == normalized_source_path or normalized_resource_path.startswith(
-                    f"{normalized_source_path}{os.sep}"
-                ):
+                if is_path_within(source_path, normalized_resource_path):
                     return create_source_info(resource_path, metadata)
 
         return None
@@ -1088,13 +1090,13 @@ class DefaultResourceLoader:
         seen: set[str] = set()
 
         resolved_paths = [self._resolve_resource_path(path) for path in [*primary, *additional]]
-        canonical_paths = await tonio.spawn_blocking(
-            lambda: [canonicalize_path_blocking(path) for path in resolved_paths]
+        path_keys = await tonio.spawn_blocking(
+            lambda: [get_resource_path_key_blocking(path) for path in resolved_paths]
         )
-        for resolved, canonical_path in zip(resolved_paths, canonical_paths, strict=True):
-            if canonical_path in seen:
+        for resolved, path_key in zip(resolved_paths, path_keys, strict=True):
+            if path_key in seen:
                 continue
-            seen.add(canonical_path)
+            seen.add(path_key)
             merged.append(resolved)
 
         return merged

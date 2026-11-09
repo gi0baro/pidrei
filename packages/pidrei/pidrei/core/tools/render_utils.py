@@ -2,7 +2,6 @@
 
 import json
 import math
-import os
 from pathlib import Path
 
 from pidrei_tui import get_capabilities, get_image_dimensions, hyperlink, image_fallback
@@ -10,17 +9,14 @@ from pidrei_utils import clock
 from pidrei_utils.timers import Interval
 
 from ...utils.ansi import strip_ansi
-from ...utils.paths import resolve_path
+from ...utils.paths import resolve_path, shorten_home_path
 from ...utils.shell import sanitize_binary_output
 
 
 def shorten_path(path) -> str:
     if not isinstance(path, str):
         return ""
-    home = os.path.expanduser("~")
-    if path.startswith(home):
-        return f"~{path[len(home) :]}"
-    return path
+    return shorten_home_path(path)
 
 
 def link_path(styled_text: str, raw_path: str, cwd: str) -> str:

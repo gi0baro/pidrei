@@ -54,7 +54,7 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
 from ..config import APP_NAME, get_agent_dir as get_default_agent_dir, get_sessions_dir
-from ..utils.paths import normalize_path, resolve_path
+from ..utils.paths import normalize_path, paths_equal, resolve_path
 from .message_wire import (
     parse_content_block,
     parse_message,
@@ -699,7 +699,7 @@ def _get_session_header_cwd(header: dict[str, Any]) -> str | None:
 
 
 def _session_cwd_matches(cwd: str | None, resolved_cwd: str) -> bool:
-    return cwd is not None and cwd != "" and resolve_path(cwd) == resolved_cwd
+    return cwd is not None and cwd != "" and paths_equal(resolve_path(cwd), resolved_cwd)
 
 
 def find_most_recent_session_blocking(session_dir: str, cwd: str | None = None) -> str | None:
@@ -1179,7 +1179,7 @@ class SessionManager:
         return self._session_dir
 
     def uses_default_session_dir(self) -> bool:
-        return self._session_dir == _get_default_session_dir_path(self._cwd)
+        return paths_equal(self._session_dir, _get_default_session_dir_path(self._cwd))
 
     def get_session_id(self) -> str:
         return self._session_id
@@ -1761,7 +1761,7 @@ class SessionManager:
 
         def find_blocking() -> tuple[str, str | None]:
             directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
-            filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+            filter_cwd = session_dir is not None and not paths_equal(directory, _get_default_session_dir_path(cwd))
             return directory, find_most_recent_session_blocking(directory, cwd if filter_cwd else None)
 
         directory, most_recent = await tonio.spawn_blocking(find_blocking)
@@ -1851,7 +1851,7 @@ class SessionManager:
     @staticmethod
     def _find_by_id_blocking(cwd: str, session_id: str, session_dir: str | None = None) -> str | None:
         directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
-        filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+        filter_cwd = session_dir is not None and not paths_equal(directory, _get_default_session_dir_path(cwd))
         resolved_cwd = resolve_path(cwd)
 
         try:
@@ -1883,7 +1883,7 @@ class SessionManager:
             if session_dir
             else await tonio.spawn_blocking(get_default_session_dir_blocking, cwd)
         )
-        filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+        filter_cwd = session_dir is not None and not paths_equal(directory, _get_default_session_dir_path(cwd))
         resolved_cwd = resolve_path(cwd)
 
         def include_session(session: SessionInfo) -> bool:

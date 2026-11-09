@@ -200,8 +200,9 @@ def test_exposes_distinct_native_effort_levels(model_id, levels):
 
 
 @pytest.mark.tonio
-async def test_keeps_toggle_only_messages_models_without_a_verified_fallback_on_budget_based_thinking():
-    model = get_builtin_model("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4")
+async def test_keeps_non_adaptive_messages_models_on_budget_based_thinking():
+    # Use a fixed fixture: the live catalog no longer lists toggle-only Messages models.
+    model = make_fireworks_model()
     assert model.compat.force_adaptive_thinking is None
     payload = await _capture_messages_payload(model, "high")
     assert payload.get("thinking") == {"type": "enabled", "budget_tokens": 16384, "display": "summarized"}
@@ -217,7 +218,7 @@ async def test_resolves_fireworks_api_key_from_the_environment():
 
 
 def test_sets_fireworks_compat_for_session_affinity_and_unsupported_tool_fields():
-    model = get_builtin_model("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4")
+    model = get_builtin_model("fireworks", "accounts/fireworks/models/deepseek-v4p1-flash")
 
     assert model is not None
     assert model.compat is not None

@@ -19,10 +19,15 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      },
       "compat": {
+        "forceAdaptiveThinking": true,
         "supportsMidConvoSystemMessages": true,
         "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
         "supportsStrictTools": true,
         "allowedFallbackModels": [
           {
@@ -46,11 +51,6 @@
             }
           }
         ]
-      },
-      "thinkingLevelMap": {
-        "off": null,
-        "xhigh": "xhigh",
-        "max": "max"
       },
       "promptCache": {
         "short": 300,
@@ -89,17 +89,17 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoEffort": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
-        "supportsStrictTools": true
-      },
       "thinkingLevelMap": {
         "off": null,
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsMidConvoEffort": true,
+        "supportsMidConvoSystemMessages": true,
+        "supportsMidConvoToolChanges": true,
+        "supportsStrictTools": true
       },
       "promptCache": {
         "short": 300,
@@ -236,11 +236,11 @@
         "max": "max"
       },
       "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
         "supportsMidConvoEffort": true,
         "supportsMidConvoSystemMessages": true,
         "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false,
         "supportsStrictTools": true
       },
       "promptCache": {
@@ -450,16 +450,16 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false,
-        "supportsStrictTools": true
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoSystemMessages": true,
+        "supportsMidConvoToolChanges": true,
+        "supportsStrictTools": true
       },
       "promptCache": {
         "short": 300,
@@ -498,17 +498,17 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoEffort": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false,
-        "supportsStrictTools": true
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoEffort": true,
+        "supportsMidConvoSystemMessages": true,
+        "supportsMidConvoToolChanges": true,
+        "supportsStrictTools": true
       },
       "promptCache": {
         "short": 300,
@@ -557,11 +557,11 @@
         "max": "max"
       },
       "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
         "supportsMidConvoEffort": true,
         "supportsMidConvoSystemMessages": true,
         "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false,
         "supportsStrictTools": true
       },
       "promptCache": {
@@ -780,11 +780,11 @@
         "max": "max"
       },
       "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
         "supportsMidConvoEffort": true,
         "supportsMidConvoSystemMessages": true,
         "supportsMidConvoToolChanges": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false,
         "supportsStrictTools": true
       },
       "promptCache": {

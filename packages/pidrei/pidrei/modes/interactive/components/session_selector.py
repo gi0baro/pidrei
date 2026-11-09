@@ -15,7 +15,11 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 from pidrei_utils.timers import Timeout
 
-from ....utils.paths import canonicalize_path_blocking as _canonicalize_path_blocking
+from ....utils.paths import (
+    canonicalize_path_blocking as _canonicalize_path_blocking,
+    get_path_comparison_key,
+    shorten_home_path,
+)
 from ....utils.process import run_command
 from ..theme import theme
 from .dynamic_border import DynamicBorder
@@ -24,15 +28,6 @@ from .session_selector_search import MessageTextCache, filter_and_sort_sessions,
 
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def _shorten_path(path: str) -> str:
-    home = os.path.expanduser("~")
-    if not path:
-        return path
-    if path.startswith(home):
-        return f"~{path[len(home) :]}"
-    return path
 
 
 def format_session_date(date: datetime) -> str:
@@ -213,7 +208,7 @@ def build_canonical_path_map_blocking(sessions: list, *paths: str | None) -> dic
     canonical: dict[str, str] = {}
     for path in (*(p for session in sessions for p in (session.path, session.parent_session_path)), *paths):
         if path and path not in canonical:
-            canonical[path] = _canonicalize_path_blocking(path)
+            canonical[path] = get_path_comparison_key(_canonicalize_path_blocking(path))
     return canonical
 
 
@@ -522,9 +517,9 @@ class SessionList:
             msg_count = str(session.message_count)
             right_part = f"{msg_count} {age}"
             if self._show_cwd and session.cwd:
-                right_part = f"{_shorten_path(session.cwd)} {right_part}"
+                right_part = f"{shorten_home_path(session.cwd)} {right_part}"
             if self._show_path:
-                right_part = f"{_shorten_path(session.path)} {right_part}"
+                right_part = f"{shorten_home_path(session.path)} {right_part}"
 
             # Cursor
             cursor = theme.fg("accent", "› ") if is_selected else "  "

@@ -122,7 +122,7 @@ from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
 from ...utils.image_process import convert_image_to_png_base64
-from ...utils.paths import get_cwd_relative_path
+from ...utils.paths import get_cwd_relative_path, shorten_home_path
 from ...utils.process import probe_tmux_hyperlinks, run_command
 from ...utils.shell import SignalDispatcher, kill_tracked_detached_children
 from ...utils.temp_file_writer import discard_temp_file
@@ -1541,14 +1541,7 @@ class InteractiveMode:
     # =========================================================================
 
     def _format_display_path(self, p: str) -> str:
-        home = os.path.expanduser("~")
-        result = p
-
-        # Replace home directory with ~
-        if result.startswith(home):
-            result = f"~{result[len(home) :]}"
-
-        return result
+        return shorten_home_path(p)
 
     def _format_extension_display_path(self, path: str) -> str:
         # pi strips its directory entry (`index.ts`/`index.js`); ours is `__init__.py`.

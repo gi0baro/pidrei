@@ -11,7 +11,7 @@ from tonio.colored import fs
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.lockfile import FileLock
-from ..utils.paths import canonicalize_path_blocking, resolve_path
+from ..utils.paths import canonicalize_path_blocking, paths_equal, resolve_path
 from ..utils.text import strip_bom
 
 
@@ -54,12 +54,18 @@ def _normalize_cwd_blocking(cwd: str) -> str:
     return canonicalize_path_blocking(resolve_path(cwd))
 
 
+def _find_trust_file_keys(data: dict[str, Any], path: str) -> list[str]:
+    """Trust file keys naming `path`. Usually one (pi: several on Windows when saved with different casing)."""
+    return [key for key in data if paths_equal(key, path)]
+
+
 def _find_nearest_trust_entry_blocking(data: dict[str, Any], cwd: str) -> ProjectTrustStoreEntry | None:
     current_dir = _normalize_cwd_blocking(cwd)
     while True:
-        value = data.get(current_dir)
-        if value is True or value is False:
-            return ProjectTrustStoreEntry(current_dir, value)
+        for key in _find_trust_file_keys(data, current_dir):
+            value = data[key]
+            if value is True or value is False:
+                return ProjectTrustStoreEntry(key, value)
 
         parent_dir = os.path.dirname(current_dir)
         if parent_dir == current_dir:
@@ -154,7 +160,7 @@ def has_trust_requiring_project_resources_blocking(cwd: str) -> bool:
 
     while True:
         agents_skills_dir = os.path.join(current_dir, ".agents", "skills")
-        if agents_skills_dir != user_agents_skills_dir and os.path.exists(agents_skills_dir):
+        if not paths_equal(agents_skills_dir, user_agents_skills_dir) and os.path.exists(agents_skills_dir):
             return True
 
         parent_dir = os.path.dirname(current_dir)
@@ -203,9 +209,9 @@ class ProjectTrustStore:
             data = _read_trust_file_blocking(self._trust_path)
             for update in decisions:
                 key = _normalize_cwd_blocking(update.path)
-                if update.decision is None:
-                    data.pop(key, None)
-                else:
+                for existing_key in _find_trust_file_keys(data, key):
+                    del data[existing_key]
+                if update.decision is not None:
                     data[key] = update.decision
             _write_trust_file_blocking(self._trust_path, data)
 

@@ -247,8 +247,9 @@ In order:
        imports the module first, so counts shift with test order.
      - A site reached through a spawned coroutine can show as
        "driven by production code" even when a test drives it.
-     - Python's own reads (imports, traceback/linecache) are not PiDrei's
-       I/O.
+     - Python's own reads (imports, traceback/linecache) and the trust store
+       `ssl` loads for a default context are not PiDrei's I/O; the detector
+       does not report them.
    - `make release-check` fails **only** on the missing `vX.Y.Z.0` tag.
 7. **Report and stop.** Lead with the verification state, list what landed,
    and surface every judgement call: deviations, drops, deferrals, parity

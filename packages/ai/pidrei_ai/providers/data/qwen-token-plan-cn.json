@@ -6,13 +6,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -25,6 +18,13 @@
       },
       "contextWindow": 196608,
       "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "type": "chat"
     },
     "chat:deepseek-v3.2": {
@@ -33,13 +33,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -52,6 +45,13 @@
       },
       "contextWindow": 131072,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "type": "chat"
     },
     "chat:deepseek-v4-flash": {
@@ -60,13 +60,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -79,6 +72,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -96,13 +96,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -115,6 +108,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -132,13 +132,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -151,6 +144,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -168,13 +168,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -187,6 +180,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -204,13 +204,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -224,6 +217,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -251,13 +251,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -271,6 +264,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -298,13 +298,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -317,6 +310,13 @@
       },
       "contextWindow": 202752,
       "maxTokens": 16384,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "minimal": null,
         "low": null,
@@ -333,13 +333,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -352,6 +345,13 @@
       },
       "contextWindow": 202752,
       "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "minimal": null,
         "low": null,
@@ -368,13 +368,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -387,6 +380,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -404,13 +404,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -423,6 +416,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -440,13 +440,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -460,6 +453,13 @@
       },
       "contextWindow": 262144,
       "maxTokens": 98304,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -478,13 +478,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -498,6 +491,13 @@
       },
       "contextWindow": 262144,
       "maxTokens": 262144,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -516,13 +516,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -536,6 +529,13 @@
       },
       "contextWindow": 262144,
       "maxTokens": 262144,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -554,13 +554,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -574,6 +567,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -592,13 +592,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -612,6 +605,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -630,13 +630,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text"
@@ -649,6 +642,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "type": "chat"
     },
     "chat:qwen3.7-plus": {
@@ -657,13 +657,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": false
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -677,6 +670,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": false
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -695,13 +695,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -715,6 +708,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -742,13 +742,6 @@
       "api": "openai-completions",
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
-        "supportsStore": false,
-        "supportsReasoningEffort": true
-      },
       "reasoning": true,
       "input": [
         "text",
@@ -762,6 +755,13 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,

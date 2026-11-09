@@ -35,6 +35,38 @@ def canonicalize_path_blocking(path: str) -> str:
         return path
 
 
+def get_path_comparison_key(path: str) -> str:
+    """Key for comparing filesystem paths: the resolved absolute path (pi
+    also case-folds on Windows). Does not touch the filesystem; call
+    `canonicalize_path_blocking` first when symlinks must compare equal. Use
+    only for comparison, never for display or filesystem access."""
+    return os.path.abspath(path)
+
+
+def paths_equal(left: str, right: str) -> bool:
+    """True when both paths name the same location (see `get_path_comparison_key`)."""
+    return get_path_comparison_key(left) == get_path_comparison_key(right)
+
+
+def is_path_within(parent: str, child: str) -> bool:
+    """True when `child` is `parent` or inside it (see `get_path_comparison_key`)."""
+    parent_key = get_path_comparison_key(parent)
+    child_key = get_path_comparison_key(child)
+    if child_key == parent_key:
+        return True
+    # The filesystem root (`/`) already ends with a separator.
+    return child_key.startswith(parent_key if parent_key.endswith(os.sep) else f"{parent_key}{os.sep}")
+
+
+def shorten_home_path(path: str, home_dir: str | None = None) -> str:
+    """Replace a leading home directory with `~` for display. Relative paths are returned unchanged."""
+    home = os.path.expanduser("~") if home_dir is None else home_dir
+    if not home or not os.path.isabs(path) or not is_path_within(home, path):
+        return path
+    relative_path = os.path.relpath(path, home)
+    return "~" if relative_path == "." else f"~{os.sep}{relative_path}"
+
+
 def is_local_path(value: str) -> bool:
     """Returns True if the value is NOT a package source (npm:, git:, etc.),
     a built-in extension (builtin:), or a remote URL protocol. Bare names,

@@ -98,7 +98,7 @@ def test_allows_empty_thinking_signatures_for_every_vercel_ai_gateway_model():
         "accounts/fireworks/models/deepseek-v4p1-flash",
         "accounts/fireworks/models/qwen3p8-max",
         "accounts/fireworks/models/qwen3p8-2p4t-a95b",
-        "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+        "accounts/fireworks/models/ember-1",
     ],
 )
 async def test_preserves_unsigned_thinking_for_fireworks(model_id):
