@@ -19,7 +19,7 @@ from typing import Any
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
-from pidrei_ai.auth.oauth.urls import http_or_https_url
+from pidrei_ai.auth.oauth.urls import trusted_http_url
 from pidrei_ai.auth.types import (
     AuthEvent,
     LoginOptions,
@@ -88,7 +88,7 @@ async def _start_device_authorization(cancel: CancelToken) -> _DeviceAuthorizati
     device_code = fields.get("device_code")
     user_code = fields.get("user_code")
     # The verification URI is opened in the user's browser; only http(s) URLs are trusted.
-    verification_uri = http_or_https_url(fields.get("verification_uri_complete")) or http_or_https_url(
+    verification_uri = trusted_http_url(fields.get("verification_uri_complete")) or trusted_http_url(
         fields.get("verification_uri")
     )
     if (
@@ -175,7 +175,7 @@ async def _mint_api_key(identity_token: str, cancel: CancelToken) -> OAuthCreden
         raise RuntimeError(f"Meta API key mint failed with status {response.status}{_error_detail(body)}")
     api_key = body.get("api_key") if body else None
     if not isinstance(api_key, str) or not api_key:
-        action_url = http_or_https_url(body.get("action_url") if body else None)
+        action_url = trusted_http_url(body.get("action_url") if body else None)
         raise RuntimeError(f"Meta did not issue an API key.{f' Complete setup at {action_url}' if action_url else ''}")
     return OAuthCredential(refresh=identity_token, access=api_key, expires=clock.now_ms() + API_KEY_LIFETIME_MS)
 

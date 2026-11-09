@@ -1,6 +1,6 @@
 """Built-in model catalog (pi: src/models.generated.ts, model-catalog.ts + providers/data/*.json).
 
-Loads the vendored catalog JSON (produced by scripts/generate_models.py,
+Loads the vendored catalog JSON (produced by scripts/catalog/generate.py,
 pi-shaped: camelCase keys, grouped `{api: {"type:id": model}}`) into typed
 `Model`/`ImageModel`/`ClassifierModel` dataclasses, split by each entry's
 `type` (an entry without one is a chat model). JSON `null` values in

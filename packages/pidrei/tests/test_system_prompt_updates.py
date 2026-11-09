@@ -79,6 +79,21 @@ async def test_declares_the_prompt_and_tools_once_and_reuses_them_across_resume(
     assert get_system_message_text(head) == harness.session.system_prompt
 
 
+# #11495
+@pytest.mark.tonio
+async def test_does_not_patch_the_prompt_when_the_active_tools_are_only_reordered(harnesses):
+    harness = await create_harness()
+    harnesses.append(harness)
+    harness.set_responses([faux_assistant_message("first"), faux_assistant_message("second")])
+    await harness.session.prompt("one")
+    before = harness.session.get_active_tool_names()
+    harness.session.set_active_tools_by_name(list(reversed(before)))
+    assert harness.session.get_active_tool_names() == before
+    await harness.session.prompt("two")
+    system_messages = [message for message in harness.session.messages if message.role == "system"]
+    assert len(system_messages) == 1
+
+
 @pytest.mark.tonio
 async def test_opens_a_transcript_without_a_system_message_and_declares_the_prompt_on_the_first_request(tmp_path):
     session_manager = SessionManager.in_memory(str(tmp_path))

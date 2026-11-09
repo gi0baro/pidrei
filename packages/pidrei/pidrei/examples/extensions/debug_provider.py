@@ -11,7 +11,6 @@ Start pidrei with this extension:
 import copy
 import json
 
-from pidrei.modes.interactive.components import key_hint
 from pidrei_tui import Box, Text
 
 
@@ -30,7 +29,9 @@ async def extension(pi):
         box = Box(1, 1, lambda text: theme.bg("customMessageBg", text))
         events = data["events"]
         count = f"{len(events)} event{'' if len(events) == 1 else 's'}"
-        expand_hint = "" if options.get("expanded") else f" ({key_hint('app.tools.expand', 'to view events')})"
+        expand_hint = (
+            "" if options.get("expanded") else f" ({options['keyHint']('app.tools.expand', 'to view events')})"
+        )
         box.add_child(
             Text(
                 f"{theme.fg('accent', '[provider debug]')} {data['provider']}/{data['model']} "

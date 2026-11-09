@@ -2,8 +2,9 @@
 
 Compatibility settings schemas: one per API, plus the API-agnostic superset
 models.json validates provider and model `compat` against. pi builds them with
-TypeBox; here they are the JSON Schema TypeBox emits, as plain dicts. The
-compat value types themselves stay in `pidrei_ai.types`.
+pi-schema's builders, shaped like the TypeBox schemas they replaced; here they
+are the JSON Schema both emit, as plain dicts. The compat value types
+themselves stay in `pidrei_ai.types`.
 """
 
 from collections.abc import Mapping, Sequence

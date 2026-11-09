@@ -231,6 +231,9 @@ class PresetExtension:
             container.add_child(DynamicBorder(accent))
 
             class Selector:
+                # Let PageUp/PageDown page the list instead of scrolling the fullscreen transcript.
+                captures_viewport_input = select_list.captures_viewport_input
+
                 def render(self, width: int) -> list[str]:
                     return container.render(width)
 

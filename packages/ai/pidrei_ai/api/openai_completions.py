@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from pidrei_ai.api.constrained_sampling import (
     GrammarToolInputJsonBuffer,
     append_grammar_tool_input_json_delta,
+    close_grammar_tool_input_json,
     create_grammar_tool_input_properties,
     get_grammar_tool_input,
     get_json_schema_tool_parameters,
@@ -77,11 +78,12 @@ from pidrei_ai.utils.error_body import format_provider_error, normalize_provider
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.identity import set_default_identity_headers
-from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
+from pidrei_ai.utils.openrouter_cost import apply_openrouter_reported_cost, is_openrouter_model
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_http import http
@@ -606,6 +608,10 @@ def _parse_chunk_usage(raw_usage: dict, model: Model) -> UsageBuilder:
         total_tokens=input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
     )
     calculate_cost(model, usage)
+    if is_openrouter_model(model):
+        # OpenRouter adds billing fields to streamed usage at runtime,
+        # although the OpenAI SDK does not type those fields.
+        apply_openrouter_reported_cost(usage, raw_usage)
     return usage
 
 
@@ -1040,7 +1046,7 @@ def convert_messages(
     return params
 
 
-def build_params(  # noqa: C901 (mirrors pi's compat ladder)
+def build_params(
     model: Model,
     context: TranscriptContext,
     options: OpenAICompletionsOptions,
@@ -1216,7 +1222,11 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
 
 @dataclass(slots=True)
 class _ToolScratch:
-    partial_args: str | None = None
+    """Stream state of a tool call, kept off the content block so it never reaches
+    partials: its JSON `arguments`, or the input of a grammar (custom) tool
+    (`custom_property` and `json_buffer`)."""
+
+    arguments: ToolCallArgumentsStream | None = None
     custom_property: str | None = None
     json_buffer: GrammarToolInputJsonBuffer | None = None
     stream_index: int | None = None
@@ -1231,7 +1241,7 @@ def _openai_options(options: StreamOptions | None) -> OpenAICompletionsOptions:
     return OpenAICompletionsOptions(**values)
 
 
-def stream(  # noqa: C901
+def stream(
     model: Model,
     context: TranscriptContext,
     options: StreamOptions | None = None,
@@ -1261,7 +1271,7 @@ def stream(  # noqa: C901
         if streamed_reasoning_details is not None:
             block.thinking_signature = json.dumps(streamed_reasoning_details)
 
-    async def _run() -> None:  # noqa: C901
+    async def _run() -> None:
         nonlocal streamed_reasoning_details
         try:
             compat = get_compat(model)
@@ -1323,23 +1333,6 @@ def stream(  # noqa: C901
             def tool_scratch(block: ToolCallBuilder) -> _ToolScratch:
                 return scratch.setdefault(id(block), _ToolScratch())
 
-            def get_custom_tool_call_input(block: ToolCallBuilder) -> str:
-                prop = tool_scratch(block).custom_property
-                if prop is None:
-                    return ""
-                value = block.arguments.get(prop)
-                return value if isinstance(value, str) else ""
-
-            def append_custom_tool_call_input(block: ToolCallBuilder, next_input: str, close: bool) -> str | None:
-                entry = tool_scratch(block)
-                if entry.custom_property is None or entry.json_buffer is None:
-                    return None
-                delta = append_grammar_tool_input_json_delta(
-                    entry.json_buffer, entry.custom_property, next_input, close
-                )
-                block.arguments = {entry.custom_property: next_input}
-                return delta
-
             def finish_block(block) -> None:
                 index = content_index(block)
                 if index == -1:
@@ -1351,13 +1344,14 @@ def stream(  # noqa: C901
                     out_stream.push(ThinkingEndEvent(content_index=index, content=block.thinking, partial=output))
                 elif block.type == "toolCall":
                     entry = tool_scratch(block)
-                    if entry.custom_property is not None:
-                        delta = append_custom_tool_call_input(block, get_custom_tool_call_input(block), True)
+                    scratch.pop(id(block), None)
+                    if entry.custom_property is not None and entry.json_buffer is not None:
+                        delta = close_grammar_tool_input_json(entry.json_buffer, entry.custom_property, None)
+                        block.arguments = entry.json_buffer.arguments
                         if delta is not None:
                             out_stream.push(ToolCallDeltaEvent(content_index=index, delta=delta, partial=output))
-                    else:
-                        block.arguments, block.arguments_error = parse_tool_call_arguments(entry.partial_args)
-                    scratch.pop(id(block), None)
+                    elif entry.arguments is not None:
+                        block.arguments, block.arguments_error = entry.arguments.finish()
                     out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 
             def ensure_text_block() -> TextContentBuilder:
@@ -1399,10 +1393,11 @@ def stream(  # noqa: C901
                         arguments={custom_input_property: ""} if has_custom else {},
                     )
                     entry = tool_scratch(block)
-                    entry.partial_args = None if has_custom else ""
                     if has_custom:
                         entry.custom_property = custom_input_property
                         entry.json_buffer = GrammarToolInputJsonBuffer()
+                    else:
+                        entry.arguments = ToolCallArgumentsStream()
                     entry.stream_index = stream_index
                     if stream_index is not None:
                         tool_blocks_by_index[stream_index] = block
@@ -1423,7 +1418,7 @@ def stream(  # noqa: C901
                     block.arguments = {custom_input_property: ""}
                     entry.custom_property = custom_input_property
                     entry.json_buffer = GrammarToolInputJsonBuffer()
-                    entry.partial_args = None
+                    entry.arguments = None
                 return block
 
             async for chunk in _iterate_chunks(response, opts.cancel):
@@ -1528,13 +1523,17 @@ def stream(  # noqa: C901
                             function_arguments = (tool_call.get("function") or {}).get("arguments")
                             custom_input = (tool_call.get("custom") or {}).get("input")
                             entry = tool_scratch(block)
-                            if function_arguments:
+                            if function_arguments and entry.arguments is not None:
                                 call_delta = function_arguments
-                                entry.partial_args = (entry.partial_args or "") + function_arguments
-                                block.arguments = parse_streaming_json(entry.partial_args)
-                            elif custom_input:
-                                next_input = get_custom_tool_call_input(block) + custom_input
-                                call_delta = append_custom_tool_call_input(block, next_input, False) or ""
+                                block.arguments = entry.arguments.append(function_arguments)
+                            elif custom_input and entry.custom_property is not None and entry.json_buffer is not None:
+                                call_delta = (
+                                    append_grammar_tool_input_json_delta(
+                                        entry.json_buffer, entry.custom_property, custom_input
+                                    )
+                                    or ""
+                                )
+                                block.arguments = entry.json_buffer.arguments
                             out_stream.push(
                                 ToolCallDeltaEvent(content_index=content_index(block), delta=call_delta, partial=output)
                             )

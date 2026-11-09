@@ -8,6 +8,7 @@ of `iterate_sse_messages`.
 """
 
 import codecs
+import re
 from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, field
 
@@ -60,26 +61,32 @@ def _decode_sse_line(line: str, state: _SseDecoderState) -> ServerSentEvent | No
     return None
 
 
-def _next_line_break_index(text: str) -> int:
-    carriage_return_index = text.find("\r")
-    newline_index = text.find("\n")
-    if carriage_return_index == -1:
-        return newline_index
-    if newline_index == -1:
-        return carriage_return_index
-    return min(carriage_return_index, newline_index)
+# A bare CR, a bare LF or a CRLF ends a line. A CR that ends the text so far ends
+# its line alone, so a CRLF split across chunks reads as two breaks, as in pi.
+_LINE_BREAK = re.compile(r"\r\n?|\n")
 
 
-def _consume_line(text: str) -> tuple[str, str] | None:
-    line_break_index = _next_line_break_index(text)
-    if line_break_index == -1:
-        return None
+def _consume_lines(text: str, pending: list[str]) -> list[str]:
+    """The lines `text` completes, the first one continuing `pending`; the
+    unterminated rest goes to `pending`.
 
-    next_index = line_break_index + 1
-    if text[line_break_index] == "\r" and next_index < len(text) and text[next_index] == "\n":
-        next_index += 1
-
-    return text[:line_break_index], text[next_index:]
+    Lines are cut by searching from an offset and the unterminated line is
+    kept in pieces, so a chunk costs its own length: pi's decoder slices the
+    buffer per line, which is cheap in JavaScript but copies in Python.
+    """
+    lines: list[str] = []
+    position = 0
+    while (match := _LINE_BREAK.search(text, position)) is not None:
+        line = text[position : match.start()]
+        if pending:
+            pending.append(line)
+            line = "".join(pending)
+            pending.clear()
+        lines.append(line)
+        position = match.end()
+    if position < len(text):
+        pending.append(text[position:])
+    return lines
 
 
 async def iterate_sse_messages(
@@ -88,7 +95,8 @@ async def iterate_sse_messages(
 ) -> AsyncGenerator[ServerSentEvent]:
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     state = _SseDecoderState()
-    buffer = ""
+    # The unterminated line, in pieces.
+    pending: list[str] = []
     iterator = aiter(body)
 
     while True:
@@ -100,19 +108,15 @@ async def iterate_sse_messages(
         except StopAsyncIteration:
             break
 
-        buffer += decoder.decode(chunk)
-        while (consumed := _consume_line(buffer)) is not None:
-            line, buffer = consumed
+        for line in _consume_lines(decoder.decode(chunk), pending):
             if (event := _decode_sse_line(line, state)) is not None:
                 yield event
 
-    buffer += decoder.decode(b"", final=True)
-    while (consumed := _consume_line(buffer)) is not None:
-        line, buffer = consumed
+    for line in _consume_lines(decoder.decode(b"", final=True), pending):
         if (event := _decode_sse_line(line, state)) is not None:
             yield event
 
-    if buffer and (event := _decode_sse_line(buffer, state)) is not None:
+    if pending and (event := _decode_sse_line("".join(pending), state)) is not None:
         yield event
 
     if (trailing := _flush_sse_event(state)) is not None:

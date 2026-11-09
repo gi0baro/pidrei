@@ -254,7 +254,10 @@ class Component(Protocol):
     # Optional: handle_input(data) for keyboard input when focused;
     # handle_mouse(event) -> TuiMouseEventResult | None for normalized
     # pointer input in fullscreen mode; wants_key_release = True to receive
-    # Kitty key release events.
+    # Kitty key release events; captures_viewport_input = True while focused
+    # to receive fullscreen viewport keys (`tui.altScreen.*` scrolling and
+    # prompt jumps) instead of scrolling the transcript, as a focused overlay
+    # does (default False).
 
 
 class Focusable(Protocol):

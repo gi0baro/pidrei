@@ -31,10 +31,12 @@ def test_provides_output_padding_to_custom_renderers_and_updates_it():
     )
     component = CustomMessageComponent(message, renderer, None, 1)
 
-    assert options_seen == [{"expanded": False, "outputPad": 1}]
+    # pi's toMatchObject: the options also carry the host's keybinding hints.
+    assert len(options_seen) == 1
+    assert {"expanded": False, "outputPad": 1}.items() <= options_seen[0].items()
     assert any(line.startswith(" custom") for line in map(strip_ansi, component.render(40)))
 
     component.set_output_pad(0)
 
-    assert options_seen[-1] == {"expanded": False, "outputPad": 0}
+    assert {"expanded": False, "outputPad": 0}.items() <= options_seen[-1].items()
     assert any(line.startswith("custom") for line in map(strip_ansi, component.render(40)))

@@ -109,6 +109,8 @@ class SelectSubmenu(Container):
             is_nav = (
                 kb.matches(data, "tui.select.up")
                 or kb.matches(data, "tui.select.down")
+                or kb.matches(data, "tui.select.pageUp")
+                or kb.matches(data, "tui.select.pageDown")
                 or kb.matches(data, "tui.select.confirm")
                 or kb.matches(data, "tui.select.cancel")
             )

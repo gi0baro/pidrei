@@ -161,7 +161,8 @@ async def test_anthropic_1h_ttl_when_cache_retention_option_is_long():
 
 
 @pytest.mark.parametrize(
-    "model_id", ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol"]
+    "model_id",
+    ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-terra"],
 )
 def test_responses_does_not_enable_cache_warming_from_the_documented_ttl_alone(model_id):
     assert get_builtin_model("openai", model_id).prompt_cache is None

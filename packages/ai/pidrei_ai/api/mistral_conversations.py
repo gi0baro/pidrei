@@ -59,12 +59,13 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_ai.utils.error_body import truncate_error_text
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.identity import get_identity_headers
-from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import get_current_tools, resolve_transcript
 from pidrei_http import http
@@ -440,12 +441,6 @@ def format_mistral_error(error: Any) -> str:
     return safe_json_stringify(error)
 
 
-def truncate_error_text(text: str, max_chars: int) -> str:
-    if len(text) <= max_chars:
-        return text
-    return f"{text[:max_chars]}... [truncated {len(text) - max_chars} chars]"
-
-
 def safe_json_stringify(value: Any) -> str:
     try:
         return json.dumps(value, separators=(",", ":"))
@@ -513,8 +508,9 @@ async def consume_chat_stream(
 ) -> None:
     current_block: TextContent | ThinkingContent | None = None
     blocks = output.content
-    tool_blocks_by_key: dict[str | int, int] = {}
-    partial_args: dict[int, str] = {}
+    # Stream state per Mistral tool call, kept off the content blocks so it never
+    # reaches partials: the content index and the arguments.
+    tool_calls_by_key: dict[str | int, tuple[int, ToolCallArgumentsStream]] = {}
 
     def block_index() -> int:
         return len(blocks) - 1
@@ -619,21 +615,13 @@ async def consume_chat_stream(
             raw_id = tool_call.get("id")
             call_id = raw_id if raw_id and raw_id != "null" else derive_mistral_tool_call_id(f"toolcall:{index}", 0)
             key = tool_call["index"] if tool_call.get("index") is not None else call_id
-            existing_index = tool_blocks_by_key.get(key)
-            block = None
-
-            if existing_index is not None:
-                existing = output.content[existing_index]
-                if existing.type == "toolCall":
-                    block = existing
-
-            if block is None:
+            open_call = tool_calls_by_key.get(key)
+            if open_call is None:
                 function = tool_call.get("function") or {}
-                block = ToolCallBuilder(id=call_id, name=function.get("name") or "", arguments={})
-                output.content.append(block)
-                tool_blocks_by_key[key] = len(output.content) - 1
-                partial_args[len(output.content) - 1] = ""
-                out_stream.push(ToolCallStartEvent(content_index=len(output.content) - 1, partial=output))
+                output.content.append(ToolCallBuilder(id=call_id, name=function.get("name") or "", arguments={}))
+                open_call = (len(output.content) - 1, ToolCallArgumentsStream())
+                tool_calls_by_key[key] = open_call
+                out_stream.push(ToolCallStartEvent(content_index=open_call[0], partial=output))
 
             raw_arguments = (tool_call.get("function") or {}).get("arguments")
             args_delta = (
@@ -641,18 +629,15 @@ async def consume_chat_stream(
                 if isinstance(raw_arguments, str)
                 else json.dumps(raw_arguments or {}, separators=(",", ":"))
             )
-            position = tool_blocks_by_key[key]
-            partial_args[position] = partial_args.get(position, "") + args_delta
-            block.arguments = parse_streaming_json(partial_args[position])
+            position, arguments = open_call
+            output.content[position].arguments = arguments.append(args_delta)
             out_stream.push(ToolCallDeltaEvent(content_index=position, delta=args_delta, partial=output))
 
     finish_current_block(current_block)
-    for index in tool_blocks_by_key.values():
-        block = output.content[index]
-        if block.type != "toolCall":
-            continue
-        block.arguments, block.arguments_error = parse_tool_call_arguments(partial_args.get(index, ""))
-        out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
+    for position, arguments in tool_calls_by_key.values():
+        block = output.content[position]
+        block.arguments, block.arguments_error = arguments.finish()
+        out_stream.push(ToolCallEndEvent(content_index=position, tool_call=block, partial=output))
 
 
 def to_function_tools(tools: list[Tool]) -> list[dict[str, Any]]:

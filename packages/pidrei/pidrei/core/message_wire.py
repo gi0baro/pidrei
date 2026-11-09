@@ -71,6 +71,7 @@ def serialize_usage(usage: Any) -> Any:
         "cacheWrite": cost.cache_write,
         "total": cost.total,
     }
+    _put(data["cost"], "totalFromProvider", cost.total_from_provider)
     return data
 
 
@@ -92,6 +93,7 @@ def parse_usage(data: Any) -> Usage | None:
             cache_read=cost.get("cacheRead", 0.0),
             cache_write=cost.get("cacheWrite", 0.0),
             total=cost.get("total", 0.0),
+            total_from_provider=cost.get("totalFromProvider"),
         ),
     )
 

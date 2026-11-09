@@ -15,6 +15,7 @@ from typing import Any
 from pidrei_ai.api.constrained_sampling import (
     GrammarToolInputJsonBuffer,
     append_grammar_tool_input_json_delta,
+    close_grammar_tool_input_json,
     get_grammar_tool_input,
     get_json_schema_tool_parameters,
     resolve_grammar_constrained_sampling,
@@ -50,8 +51,8 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
-from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import TranscriptToolSupport, resolve_transcript, resolve_transcript_tools
 
@@ -468,12 +469,20 @@ def convert_responses_tools(
 
 @dataclass(slots=True)
 class _Slot:
+    """An output item's block and its stream state, kept here and never on the
+    block, so it never reaches partials. A tool call has either JSON `arguments`
+    (a function call) or the input of a custom (grammar) tool call
+    (`custom_property`, `json_buffer`, and `unsent`: the JSON text of the item's
+    initial input, sent with the first delta). Both are cleared when the call's
+    `output_item.done` arrives."""
+
     kind: str  # "thinking" | "text" | "toolCall"
     block: Any
     content_index: int
-    partial_json: str | None = None
+    arguments: ToolCallArgumentsStream | None = None
     custom_property: str | None = None
     json_buffer: GrammarToolInputJsonBuffer | None = None
+    unsent: str = ""
 
 
 def _map_stop_reason(status: str | None, incomplete_reason: str | None = None) -> tuple[StopReason, str | None]:
@@ -497,7 +506,7 @@ def _map_stop_reason(status: str | None, incomplete_reason: str | None = None) -
     raise RuntimeError(f"Unhandled stop reason: {status}")
 
 
-async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
+async def process_responses_stream(
     events,
     output: AssistantMessageBuilder,
     stream: AssistantMessageEventStream,
@@ -513,7 +522,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
     saw_terminal_response_event = False
     output_slots: dict[int, _Slot] = {}
     # Every tool-call slot in content order, including ones a later slot displaced from
-    # `output_slots` (a server that omits output_index); pi keeps this scratch on the block.
+    # `output_slots` (a server that omits output_index); pi's `unfinishedToolCalls`.
     tool_call_slots: list[_Slot] = []
     reasoning_blocks_by_id: dict[str, ThinkingContentBuilder] = {}
 
@@ -526,18 +535,25 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             return
         stream.push(ToolCallDeltaEvent(content_index=slot.content_index, delta=delta, partial=output))
 
-    def get_custom_input(slot: _Slot) -> str:
-        if slot.custom_property is None:
-            return ""
-        value = slot.block.arguments.get(slot.custom_property)
-        return value if isinstance(value, str) else ""
+    def append_custom_input(slot: _Slot, delta: str) -> str | None:
+        """Append to a streaming custom tool input; returns the matching piece of its JSON arguments text."""
+        return send_custom_input(
+            slot, append_grammar_tool_input_json_delta(slot.json_buffer, slot.custom_property, delta)
+        )
 
-    def append_custom_input(slot: _Slot, next_input: str, close: bool) -> str | None:
-        if slot.custom_property is None or slot.json_buffer is None:
-            return None
-        delta = append_grammar_tool_input_json_delta(slot.json_buffer, slot.custom_property, next_input, close)
-        slot.block.arguments = {slot.custom_property: next_input}
-        return delta
+    def close_custom_input(slot: _Slot, final_input: str | None) -> str | None:
+        """Close a custom tool input with the provider's complete input, if it sent one."""
+        return send_custom_input(
+            slot, close_grammar_tool_input_json(slot.json_buffer, slot.custom_property, final_input)
+        )
+
+    def send_custom_input(slot: _Slot, json_delta: str | None) -> str | None:
+        slot.block.arguments = slot.json_buffer.arguments
+        if slot.unsent == "":
+            return json_delta
+        sent = slot.unsent + (json_delta or "")
+        slot.unsent = ""
+        return sent
 
     def apply_message_phase_stop_reason(item: dict) -> None:
         if item.get("type") == "message" and item.get("phase") == "final_answer":
@@ -561,38 +577,37 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             stream.push(TextStartEvent(content_index=slot.content_index, partial=output))
             return slot
         if item_type == "function_call":
+            arguments = ToolCallArgumentsStream()
             block = ToolCallBuilder(
                 id=f"{item.get('call_id')}|{item.get('id')}",
                 name=item.get("name", ""),
-                arguments={},
+                arguments=arguments.append(item["arguments"]) if item.get("arguments") else {},
                 namespace=item.get("namespace"),
             )
             output.content.append(block)
-            slot = _Slot(
-                kind="toolCall",
-                block=block,
-                content_index=len(output.content) - 1,
-                partial_json=item.get("arguments") or "",
-            )
+            slot = _Slot(kind="toolCall", block=block, content_index=len(output.content) - 1, arguments=arguments)
             output_slots[output_index] = slot
             tool_call_slots.append(slot)
             stream.push(ToolCallStartEvent(content_index=slot.content_index, partial=output))
             return slot
         if item_type == "custom_tool_call":
             input_property = grammar_tool_input_properties.get(item.get("name", ""), "input")
+            initial_input = item.get("input") or ""
             block = ToolCallBuilder(
                 id=f"{item.get('call_id')}|{item.get('id')}",
                 name=item.get("name", ""),
-                arguments={input_property: item.get("input") or ""},
+                arguments={input_property: initial_input},
                 namespace=item.get("namespace"),
             )
             output.content.append(block)
+            json_buffer = GrammarToolInputJsonBuffer()
             slot = _Slot(
                 kind="toolCall",
                 block=block,
                 content_index=len(output.content) - 1,
                 custom_property=input_property,
-                json_buffer=GrammarToolInputJsonBuffer(),
+                json_buffer=json_buffer,
+                unsent=append_grammar_tool_input_json_delta(json_buffer, input_property, initial_input) or "",
             )
             output_slots[output_index] = slot
             tool_call_slots.append(slot)
@@ -689,34 +704,27 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             stream.push(TextDeltaEvent(content_index=slot.content_index, delta=event.get("delta", ""), partial=output))
         elif event_type == "response.function_call_arguments.delta":
             slot = get_slot(event.get("output_index"), "toolCall")
-            if slot is None or slot.partial_json is None:
+            if slot is None or slot.arguments is None:
                 continue
-            slot.partial_json += event.get("delta", "")
-            slot.block.arguments = parse_streaming_json(slot.partial_json)
+            slot.block.arguments = slot.arguments.append(event.get("delta", ""))
             push_tool_call_delta(slot, event.get("delta", ""))
         elif event_type == "response.function_call_arguments.done":
             slot = get_slot(event.get("output_index"), "toolCall")
-            if slot is None or slot.partial_json is None:
+            if slot is None or slot.arguments is None:
                 continue
-            previous_partial_json = slot.partial_json
-            slot.partial_json = event.get("arguments", "")
-            slot.block.arguments = parse_streaming_json(slot.partial_json)
-            if slot.partial_json.startswith(previous_partial_json):
-                delta = slot.partial_json[len(previous_partial_json) :]
-                if delta:
-                    push_tool_call_delta(slot, delta)
+            delta, slot.block.arguments = slot.arguments.replace(event.get("arguments", ""))
+            if delta:
+                push_tool_call_delta(slot, delta)
         elif event_type == "response.custom_tool_call_input.delta":
             slot = get_slot(event.get("output_index"), "toolCall")
             if slot is None or slot.custom_property is None:
                 continue
-            push_tool_call_delta(
-                slot, append_custom_input(slot, get_custom_input(slot) + event.get("delta", ""), False)
-            )
+            push_tool_call_delta(slot, append_custom_input(slot, event.get("delta", "")))
         elif event_type == "response.custom_tool_call_input.done":
             slot = get_slot(event.get("output_index"), "toolCall")
             if slot is None or slot.custom_property is None:
                 continue
-            push_tool_call_delta(slot, append_custom_input(slot, event.get("input", ""), True))
+            push_tool_call_delta(slot, close_custom_input(slot, event.get("input")))
         elif event_type == "response.output_item.done":
             item = event.get("item") or {}
             apply_message_phase_stop_reason(item)
@@ -745,14 +753,14 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 item_type == "function_call"
                 and slot is not None
                 and slot.kind == "toolCall"
-                and slot.partial_json is not None
+                and slot.arguments is not None
             ):
-                slot.block.arguments, slot.block.arguments_error = parse_tool_call_arguments(
-                    item.get("arguments") or slot.partial_json
-                )
+                if item.get("arguments"):
+                    slot.arguments.replace(item["arguments"])
+                slot.block.arguments, slot.block.arguments_error = slot.arguments.finish()
                 if item.get("namespace") is not None:
                     slot.block.namespace = item["namespace"]
-                slot.partial_json = None
+                slot.arguments = None
                 stream.push(ToolCallEndEvent(content_index=slot.content_index, tool_call=slot.block, partial=output))
                 output_slots.pop(event.get("output_index"), None)
             elif (
@@ -761,11 +769,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 and slot.kind == "toolCall"
                 and slot.custom_property is not None
             ):
-                next_input = item.get("input")
-                push_tool_call_delta(
-                    slot,
-                    append_custom_input(slot, next_input if next_input is not None else get_custom_input(slot), True),
-                )
+                push_tool_call_delta(slot, close_custom_input(slot, item.get("input")))
                 if item.get("namespace") is not None:
                     slot.block.namespace = item["namespace"]
                 slot.custom_property = None
@@ -794,10 +798,10 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
         raise RuntimeError("OpenAI Responses stream ended before a terminal response event")
     # The agent runs every tool call in the final message. Refuse to hand over calls whose
     # output_item.done never arrived: their arguments may be cut off or mixed up, e.g. when a
-    # non-compliant server omits output_index. Finished calls have their scratch buffers removed.
+    # non-compliant server omits output_index.
     if output.stop_reason == "toolUse":
         for slot in tool_call_slots:
-            if slot.partial_json is not None or slot.custom_property is not None:
+            if slot.arguments is not None or slot.custom_property is not None:
                 raise RuntimeError(
                     "OpenAI Responses stream completed with an unfinished tool call: "
                     f"{slot.block.name} ({slot.block.id})"

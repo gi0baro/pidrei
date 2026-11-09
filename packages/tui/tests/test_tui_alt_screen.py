@@ -16,6 +16,8 @@ import tonio.colored as tonio
 
 from pidrei_tui import tui_alt_screen as tui_alt_screen_module
 from pidrei_tui.components import alt_screen_flash as alt_screen_flash_module
+from pidrei_tui.components.box import Box
+from pidrei_tui.components.editor import Editor
 from pidrei_tui.components.h_stack import HStack
 from pidrei_tui.components.image import Image
 from pidrei_tui.components.mouse_region import MouseRegion
@@ -39,6 +41,7 @@ from pidrei_tui.terminal_image import (
 from pidrei_tui.tui import TuiMouseEventResult, render_fake_cursor
 from pidrei_tui.tui_alt_screen import TuiAltScreen
 
+from .themes import default_editor_theme
 from .virtual_terminal import VirtualTerminal
 
 
@@ -1158,6 +1161,52 @@ async def test_crops_a_kitty_image_whose_first_line_is_above_the_viewport():
 
 
 @pytest.mark.tonio
+async def test_crops_a_kitty_image_in_a_padded_colored_box_whose_first_line_is_above_the_viewport():
+    terminal = RecordingTerminal(20, 3)
+    tui = TuiAltScreen(terminal)
+    image_id = 11271
+    image_line = encode_kitty("AAAA", columns=2, rows=3, image_id=image_id, move_cursor=False)
+    register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 3, "widthPx": 100, "heightPx": 100})
+    box = Box(1, 0, lambda text: f"\x1b[44m{text}\x1b[49m")
+    box.add_child(RenderComponent([image_line, "", ""]))
+    tui.add_child(RenderComponent(["before"]))
+    tui.add_child(box)
+    tui.add_child(RenderComponent(["after", "end"]))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    assert tui.viewport_top == 3
+    assert any(
+        event["type"] == "write" and "i=11271" in event["data"] and "y=66,h=34,r=1" in event["data"]
+        for event in terminal.events
+    )
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_crops_a_kitty_image_whose_placeholder_rows_contain_text_when_its_first_line_is_above_the_viewport():
+    # Regression test for #11271: borders or side-by-side text on placeholder rows stopped the search.
+    terminal = RecordingTerminal(20, 3)
+    tui = TuiAltScreen(terminal)
+    image_id = 11272
+    image_line = encode_kitty("AAAA", columns=2, rows=3, image_id=image_id, move_cursor=False)
+    register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 3, "widthPx": 100, "heightPx": 100})
+    tui.add_child(RenderComponent(["before", image_line, "   | side", "   | side"]))
+    tui.add_child(RenderComponent(["after", "end"]))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    assert tui.viewport_top == 3
+    assert any(
+        event["type"] == "write" and "i=11272" in event["data"] and "y=66,h=34,r=1" in event["data"]
+        for event in terminal.events
+    )
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_redraws_wezterm_kitty_images_after_writes_to_covered_rows(monkeypatch):
     # Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
     monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1599,6 +1648,9 @@ async def test_coalesces_slash_and_hyphen_separated_segments_for_double_click_wo
     for line, needle in [
         ("extensions/starline/fixed-editor/compositor.ts", "starline"),
         ("earendil-works/pi-tui", "works"),
+        ("~/.pi/agent/settings.json", "agent"),
+        ("~\\Documents\\pi", "Documents"),
+        ("foo+bar", "bar"),
     ]:
         copied: list[str] = []
         copied_event = tonio.Event()
@@ -2272,4 +2324,88 @@ async def test_lets_mouse_aware_components_consume_wheel_events_before_viewport_
     await terminal.wait_for_render(since)
     assert wheel_events[0] == 1
     assert tui.viewport_top == viewport_top
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_defers_viewport_keys_to_a_focused_list_instead_of_scrolling_the_transcript():
+    # #7629
+    terminal = VirtualTerminal(20, 6)
+    tui = TuiAltScreen(terminal)
+    select_list = SelectList(
+        [{"value": f"item-{index}", "label": f"item-{index}"} for index in range(12)],
+        3,
+        {
+            "selectedPrefix": lambda text: text,
+            "selectedText": lambda text: text,
+            "description": lambda text: text,
+            "scrollInfo": lambda text: text,
+            "noMatch": lambda text: text,
+        },
+    )
+    tui.add_child(Text("\n".join(f"line {index + 1}" for index in range(12)), 0, 0))
+    tui.add_child(select_list)
+    tui.set_focus(select_list)
+    await tui.start()
+    await terminal.wait_for_render()
+    top_before = tui.viewport_top
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[6~")  # PageDown
+    await terminal.send_input("\x1b[1;5H")  # Ctrl+Home
+    await terminal.wait_for_render(since)
+    assert select_list.get_selected_item()["value"] == "item-3"
+    assert tui.viewport_top == top_before
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_gives_viewport_keys_back_to_the_transcript_when_editor_autocomplete_closes():
+    # #7629
+    terminal = VirtualTerminal(40, 8)
+    tui = TuiAltScreen(terminal)
+    editor = Editor(tui, default_editor_theme)
+    submitted: list[str] = []
+    editor.on_submit = submitted.append
+
+    class Provider:
+        async def get_suggestions(self, *_args, **_kwargs):
+            items = [{"value": f"/command-{index}", "label": f"command-{index}"} for index in range(12)]
+            return {"items": items, "prefix": "/"}
+
+        def apply_completion(self, lines, cursor_line, _cursor_col, item, _prefix):
+            return {
+                "lines": [item["value"] if index == cursor_line else line for index, line in enumerate(lines)],
+                "cursorLine": cursor_line,
+                "cursorCol": len(item["value"]),
+            }
+
+    editor.set_autocomplete_provider(Provider())
+    tui.add_child(Text("\n".join(f"line {index + 1}" for index in range(30)), 0, 0))
+    tui.add_child(editor)
+    tui.set_focus(editor)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    await terminal.send_input("/")
+    # pi waits for the render: the suggestions land on their own task, which
+    # publishes the menu before the frame that shows it (and moves the viewport).
+    assert await terminal.until(editor.is_showing_autocomplete)
+    assert await _wait_for_viewport_text(terminal, "command-0")
+    top_with_menu = tui.viewport_top
+    since = terminal.frames
+    await terminal.send_input("\x1b[6~")  # PageDown pages the menu
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top == top_with_menu
+
+    since = terminal.frames
+    await terminal.send_input("\r")
+    await terminal.wait_for_render(since)
+    assert submitted == ["/command-5"]
+    assert editor.is_showing_autocomplete() is False
+    top_without_menu = tui.viewport_top
+    since = terminal.frames
+    await terminal.send_input("\x1b[5~")  # PageUp scrolls the transcript again
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top < top_without_menu
     await tui.stop()

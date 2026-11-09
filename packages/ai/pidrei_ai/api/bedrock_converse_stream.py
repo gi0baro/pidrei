@@ -42,7 +42,12 @@ from pidrei_ai.api.bedrock_runtime import (
     BedrockRuntimeServiceException,
     ConverseStreamCommand,
 )
-from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import (
+    get_json_schema_tool_parameters,
+    is_strict_tool_limit_error_message,
+    prefers_json_schema_strict_sampling,
+    resolve_json_schema_strict_sampling,
+)
 from pidrei_ai.api.simple_options import (
     adjust_max_tokens_for_thinking,
     build_base_options,
@@ -62,6 +67,7 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     CacheRetention,
+    DiagnosticErrorInfo,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -91,9 +97,9 @@ from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.identity import format_user_agent
-from pidrei_ai.utils.json_parse import parse_streaming_json, parse_tool_call_arguments
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import (
     collapse_system_messages,
@@ -177,11 +183,12 @@ def stream(
 
     async def _run() -> None:
         blocks = output.content
-        # pi tags blocks with the provider's contentBlockIndex while streaming and
-        # deletes it afterwards; dataclasses have no spare slot, so the mapping
-        # lives beside the blocks and is simply dropped at the end.
+        # Stream state of the open Bedrock content blocks, kept off the blocks so
+        # it never reaches partials (pi's `OpenBlocks`): the content index per
+        # `contentBlockIndex`, a tool call's arguments and the encrypted
+        # reasoning chunks, the last two per content index.
         block_indices: dict[int, int] = {}
-        partial_json: dict[int, str] = {}
+        tool_arguments: dict[int, ToolCallArgumentsStream] = {}
         redacted_chunks: dict[int, list[bytes]] = {}
 
         # A profile explicitly configured through pi's auth flow (the `profile`
@@ -268,28 +275,53 @@ def stream(
             initial_system_prompt = (
                 get_system_message_text(initial_system_message) if initial_system_message is not None else None
             )
-            command_input: dict[str, Any] = {
-                "modelId": model.id,
-                "messages": convert_messages(normalized_context, model, cache_retention, opts.env),
-                "system": build_system_prompt(initial_system_prompt, model, cache_retention, opts.env),
-                "inferenceConfig": {
-                    **({"maxTokens": inference_max_tokens} if inference_max_tokens is not None else {}),
-                    **({"temperature": opts.temperature} if opts.temperature is not None else {}),
-                },
-                "toolConfig": convert_tool_config(
+            disable_preferred_strict_tools = False
+            while True:
+                tool_config, has_preferred_strict_tools = convert_tool_config(
                     get_current_tools(normalized_context.messages),
                     opts.tool_choice,
                     bool(getattr(model.compat, "supports_strict_mode", None)),
-                ),
-                "additionalModelRequestFields": build_additional_model_request_fields(model, opts),
-                **({"requestMetadata": opts.request_metadata} if opts.request_metadata is not None else {}),
-            }
-            next_command_input = await maybe_call(opts.on_payload, command_input, model)
-            if next_command_input is not None:
-                command_input = next_command_input
-            command = ConverseStreamCommand(command_input)
-
-            response = await client.send(command, cancel=opts.cancel)
+                    disable_preferred_strict_tools,
+                )
+                command_input: dict[str, Any] = {
+                    "modelId": model.id,
+                    "messages": convert_messages(normalized_context, model, cache_retention, opts.env),
+                    "system": build_system_prompt(initial_system_prompt, model, cache_retention, opts.env),
+                    "inferenceConfig": {
+                        **({"maxTokens": inference_max_tokens} if inference_max_tokens is not None else {}),
+                        **({"temperature": opts.temperature} if opts.temperature is not None else {}),
+                    },
+                    "toolConfig": tool_config,
+                    "additionalModelRequestFields": build_additional_model_request_fields(model, opts),
+                    **({"requestMetadata": opts.request_metadata} if opts.request_metadata is not None else {}),
+                }
+                next_command_input = await maybe_call(opts.on_payload, command_input, model)
+                if next_command_input is not None:
+                    command_input = next_command_input
+                try:
+                    response = await client.send(ConverseStreamCommand(command_input), cancel=opts.cancel)
+                    break
+                except BedrockRuntimeServiceException as error:
+                    # Bedrock checks the tool schemas before it starts the stream, so a retry never repeats
+                    # streamed output.
+                    if (
+                        (opts.cancel is not None and opts.cancel.cancelled)
+                        or disable_preferred_strict_tools
+                        or not has_preferred_strict_tools
+                        or error.name != "ValidationException"
+                        or not is_strict_tool_limit_error_message(str(error))
+                    ):
+                        raise
+                    disable_preferred_strict_tools = True
+                    append_assistant_message_diagnostic(
+                        output,
+                        AssistantMessageDiagnostic(
+                            type="bedrock_strict_tools_fallback",
+                            timestamp=clock.now_ms(),
+                            error=DiagnosticErrorInfo(message=str(error)),
+                            details={"reason": "strict_tool_limits_exceeded"},
+                        ),
+                    )
             response_request_id = _normalize_diagnostic_value(response.metadata.request_id)
             if not observed_raw_response and response.metadata.http_status_code is not None:
                 response_headers: dict[str, str] = {}
@@ -309,14 +341,14 @@ def stream(
                     out_stream.push(StartEvent(partial=output))
                 elif "contentBlockStart" in item:
                     _handle_content_block_start(
-                        item["contentBlockStart"], blocks, block_indices, partial_json, output, out_stream
+                        item["contentBlockStart"], blocks, block_indices, tool_arguments, output, out_stream
                     )
                 elif "contentBlockDelta" in item:
                     _handle_content_block_delta(
                         item["contentBlockDelta"],
                         blocks,
                         block_indices,
-                        partial_json,
+                        tool_arguments,
                         redacted_chunks,
                         output,
                         out_stream,
@@ -326,7 +358,7 @@ def stream(
                         item["contentBlockStop"],
                         blocks,
                         block_indices,
-                        partial_json,
+                        tool_arguments,
                         redacted_chunks,
                         output,
                         out_stream,
@@ -603,7 +635,7 @@ def _copy_thinking_budgets(budgets: ThinkingBudgets | None) -> ThinkingBudgets:
 
 
 def _handle_content_block_start(
-    event: dict, blocks: list, block_indices: dict, partial_json: dict, output: AssistantMessageBuilder, out_stream
+    event: dict, blocks: list, block_indices: dict, tool_arguments: dict, output: AssistantMessageBuilder, out_stream
 ) -> None:
     index = event.get("contentBlockIndex")
     start = event.get("start") or {}
@@ -615,7 +647,7 @@ def _handle_content_block_start(
         output.content.append(block)
         position = len(blocks) - 1
         block_indices[index] = position
-        partial_json[position] = ""
+        tool_arguments[position] = ToolCallArgumentsStream()
         out_stream.push(ToolCallStartEvent(content_index=position, partial=output))
 
 
@@ -623,7 +655,7 @@ def _handle_content_block_delta(
     event: dict,
     blocks: list,
     block_indices: dict,
-    partial_json: dict,
+    tool_arguments: dict,
     redacted_chunks: dict,
     output: AssistantMessageBuilder,
     out_stream,
@@ -644,9 +676,8 @@ def _handle_content_block_delta(
         if block.type == "text":
             block.text += delta["text"]
             out_stream.push(TextDeltaEvent(content_index=index, delta=delta["text"], partial=output))
-    elif delta.get("toolUse") and block is not None and block.type == "toolCall":
-        partial_json[index] = partial_json.get(index, "") + (delta["toolUse"].get("input") or "")
-        block.arguments = parse_streaming_json(partial_json[index])
+    elif delta.get("toolUse") and block is not None and block.type == "toolCall" and index in tool_arguments:
+        block.arguments = tool_arguments[index].append(delta["toolUse"].get("input") or "")
         out_stream.push(
             ToolCallDeltaEvent(content_index=index, delta=delta["toolUse"].get("input") or "", partial=output)
         )
@@ -689,11 +720,9 @@ def _handle_content_block_delta(
 
 
 def _flush_redacted_content(blocks: list, redacted_chunks: dict, index: int | None = None) -> None:
-    """Encode buffered encrypted reasoning into `thinking_signature` and drop the scratch
-    buffer. pi also strips the `index`/`partialJson` fields it stashes on the block itself;
-    here that scratch already lives beside the blocks, so only the redacted payload needs
-    folding back in. Runs from the terminal paths as well as `contentBlockStop`, because a
-    stream can settle without stopping each block."""
+    """Encode buffered encrypted reasoning into `thinking_signature` and drop the chunks,
+    which stay in the stream state, never on the block. Runs from the terminal paths as
+    well as `contentBlockStop`, because a stream can settle without stopping each block."""
     for position in list(redacted_chunks) if index is None else [index]:
         chunks = redacted_chunks.pop(position, None)
         if chunks is None:
@@ -737,7 +766,7 @@ def _handle_content_block_stop(
     event: dict,
     blocks: list,
     block_indices: dict,
-    partial_json: dict,
+    tool_arguments: dict,
     redacted_chunks: dict,
     output: AssistantMessageBuilder,
     out_stream,
@@ -753,7 +782,9 @@ def _handle_content_block_stop(
         _flush_redacted_content(blocks, redacted_chunks, index)
         out_stream.push(ThinkingEndEvent(content_index=index, content=block.thinking, partial=output))
     elif block.type == "toolCall":
-        block.arguments, block.arguments_error = parse_tool_call_arguments(partial_json.pop(index, ""))
+        arguments = tool_arguments.pop(index, None)
+        if arguments is not None:
+            block.arguments, block.arguments_error = arguments.finish()
         out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 
 
@@ -1045,16 +1076,23 @@ def convert_messages(
 
 
 def convert_tool_config(
-    tools: list[Tool] | None, tool_choice: Any, supports_strict_mode: bool
-) -> dict[str, Any] | None:
-    if not tools:
-        return None
-    if tool_choice == "none":
-        return None
+    tools: list[Tool] | None, tool_choice: Any, supports_strict_mode: bool, disable_preferred_strict_tools: bool
+) -> tuple[dict[str, Any] | None, bool]:
+    """`(tool_config, has_preferred_strict_tools)`: whether a `strict: "prefer"` tool went out strict."""
+    if not tools or tool_choice == "none":
+        return None, False
 
+    has_preferred_strict_tools = False
     bedrock_tools: list[dict[str, Any]] = []
     for tool in tools:
-        strict = resolve_json_schema_strict_sampling(tool, supports_strict_mode)
+        preferred = prefers_json_schema_strict_sampling(tool)
+        strict = (
+            None
+            if disable_preferred_strict_tools and preferred
+            else resolve_json_schema_strict_sampling(tool, supports_strict_mode)
+        )
+        if strict is True and preferred:
+            has_preferred_strict_tools = True
         bedrock_tools.append(
             {
                 "toolSpec": {
@@ -1074,7 +1112,7 @@ def convert_tool_config(
     elif isinstance(tool_choice, BedrockToolChoiceTool):
         bedrock_tool_choice = {"tool": {"name": tool_choice.name}}
 
-    return {"tools": bedrock_tools, "toolChoice": bedrock_tool_choice}
+    return {"tools": bedrock_tools, "toolChoice": bedrock_tool_choice}, has_preferred_strict_tools
 
 
 def map_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:

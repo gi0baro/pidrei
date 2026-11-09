@@ -5,11 +5,8 @@ timeout watchdog, and a post-exit stdio grace window mirroring pi's
 waitForChildProcess semantics (earendil-works/pi#5303).
 """
 
-import fcntl
 import math
 import subprocess
-import sys
-import termios
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +19,7 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import JsonSchemaConstrainedSampling, TextContent
 from pidrei_utils import clock
 
+from ...utils.process import EXIT_STDIO_GRACE_S, pipe_is_drained
 from ...utils.shell import (
     ShellConfig,
     get_shell_config_blocking,
@@ -42,7 +40,6 @@ MAX_TIMEOUT_MS = 2_147_483_647
 STRUCTURED_OUTPUT_MAX_BYTES = 1024 * 1024
 MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000
 
-_EXIT_STDIO_GRACE_S = 0.1
 
 BASH_SCHEMA = {
     "type": "object",
@@ -103,23 +100,6 @@ class BashSpawnContext:
     command: str
     cwd: str
     env: dict[str, str]
-
-
-def _pipe_is_drained(stream) -> bool:
-    """Nothing left unread in the child's pipe (FIONREAD), or it is already closed.
-
-    Drop this (and its use below) once tonio exposes a readiness API over fds,
-    as it does for net: a reader could then wait for "readable, or the child
-    exited" itself. Asking the kernel is the only non-invasive readiness peek
-    today — arming an fd's read readiness from outside would steal the parked
-    reader's wakeup (one reader slot per fd).
-    """
-    if stream is None or (fd := stream.fileno()) < 0:
-        return True
-    try:
-        return int.from_bytes(fcntl.ioctl(fd, termios.FIONREAD, bytes(4)), sys.byteorder) == 0
-    except OSError:
-        return True
 
 
 class LocalShellOperations:
@@ -223,10 +203,10 @@ class LocalShellOperations:
         # yet (or woke but did not run yet) still has the output in its pipe.
         while not readers_done.is_set():
             before = activity["count"]
-            await readers_done.wait(_EXIT_STDIO_GRACE_S)
+            await readers_done.wait(EXIT_STDIO_GRACE_S)
             if readers_done.is_set():
                 break
-            if activity["count"] == before and all(map(_pipe_is_drained, (process.stdout, process.stderr))):
+            if activity["count"] == before and all(map(pipe_is_drained, (process.stdout, process.stderr))):
                 break
 
         for stream in (process.stdout, process.stderr):

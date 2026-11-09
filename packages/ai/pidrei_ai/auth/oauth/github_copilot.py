@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
-from pidrei_ai.auth.oauth.urls import http_or_https_url
+from pidrei_ai.auth.oauth.urls import trusted_http_url
 from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
@@ -324,10 +324,8 @@ async def _start_device_flow(domain: str, cancel: CancelToken) -> _DeviceCodeRes
     ):
         raise RuntimeError("Invalid device code response fields")
 
-    # The verification URI is opened in the user's browser and to prevent `open` from
-    # opening an executable or similar, we force it to be a URL.
-    parsed_uri = http_or_https_url(verification_uri)
-    if parsed_uri is None:
+    parsed_uri = trusted_http_url(verification_uri)
+    if not parsed_uri:
         raise RuntimeError("Untrusted verification_uri in device code response")
 
     return _DeviceCodeResponse(

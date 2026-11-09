@@ -159,7 +159,7 @@ pidrei registers as `pidrei`. Some servers only accept registrations from known 
 
 The name is only sent when pidrei registers a client. To register again under a new name, sign out first.
 
-Some authorization servers allow clients by their Client ID Metadata Document URL instead of registering them. pidrei has no such document of its own: set `clientRegistration` to `cimd` to identify as Pi's document on pi.dev instead of registering. With it, pidrei signs in as Pi: the consent screen shows Pi's name and logo, and the authorization server attributes the sign-in to Pi.
+Some authorization servers allow clients by their Client ID Metadata Document URL instead of registering them. pidrei has no such document of its own, so by default it registers a client dynamically, even when the authorization server supports documents. A client registered before stays in use while its redirect URI matches, until you sign out. Set `clientRegistration` to choose the method: `auto` (default) and `dcr` register, and `cimd` identifies as Pi's document on pi.dev instead of registering. With `cimd`, pidrei signs in as Pi: the consent screen shows Pi's name and logo, and the authorization server attributes the sign-in to Pi.
 
 ```json
 {
@@ -169,7 +169,9 @@ Some authorization servers allow clients by their Client ID Metadata Document UR
 }
 ```
 
-The client ID is `https://pi.dev/oauth/client.json` with the redirect URI `http://127.0.0.1:<port>/callback`. If the authorization server does not send the `iss` parameter in authorization responses (RFC 9207), pidrei uses a document and redirect path specific to the MCP server instead: `https://pi.dev/oauth/<id>/client.json` with `http://127.0.0.1:<port>/callback/<id>`. The authorization server must advertise Client ID Metadata Document support and public clients, or sign-in fails. `cimd` cannot be combined with `clientId` or `clientName`, and a `callbackUrl` must use `localhost` or `127.0.0.1` with the path `/callback`.
+With `cimd`, the client ID is `https://pi.dev/oauth/client.json` with the redirect URI `http://127.0.0.1:<port>/callback`. If the authorization server does not send the `iss` parameter in authorization responses (RFC 9207), pidrei uses a document and redirect path specific to the MCP server instead: `https://pi.dev/oauth/<id>/client.json` with `http://127.0.0.1:<port>/callback/<id>`. Sign-in fails if the authorization server does not support documents for public clients.
+
+`pidrei mcp add --oauth-client-registration <mode>` sets it when adding a server. `cimd` cannot be combined with `clientId` or `clientName`, and a `callbackUrl` must use `localhost` or `127.0.0.1` with the path `/callback`.
 
 pidrei finds the authorization server through the server's protected resource metadata (RFC 9728) and checks that the authorization server's metadata names the expected issuer (RFC 8414). Some servers advertise the wrong authorization server or none, so sign-in opens a page that does not exist. Set `authServerMetadataUrl` to the metadata document of the right authorization server:
 

@@ -2175,6 +2175,34 @@ async def test_undoes_autocomplete(monkeypatch):
 
 
 @pytest.mark.tonio
+async def test_moves_the_autocomplete_selection_with_selection_page_keys():
+    # #7629
+    editor = Editor(create_test_tui(), default_editor_theme)
+    submitted: list[str] = []
+    editor.on_submit = submitted.append
+
+    async def get_suggestions(*_args, **_kwargs):
+        return {
+            "items": [{"value": f"/command-{index}", "label": f"command-{index}"} for index in range(12)],
+            "prefix": "/",
+        }
+
+    editor.set_autocomplete_provider(MockProvider(get_suggestions))
+
+    assert editor.captures_viewport_input is False
+    editor.handle_input("/")
+    await flush_autocomplete(editor)
+    assert editor.captures_viewport_input is True
+
+    editor.handle_input("\x1b[6~")
+    editor.handle_input("\x1b[6~")
+    editor.handle_input("\x1b[5~")
+    editor.handle_input("\r")
+
+    assert submitted == ["/command-5"]
+
+
+@pytest.mark.tonio
 async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation(monkeypatch):
     for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】", "(", "see (", "`", "["]:
         for trigger in ["@", "#", "$", "-"]:

@@ -10,7 +10,13 @@ values are taken as-is, the [2, 8] clamp only shapes the computed default.
 """
 
 import os
+import signal
 
+
+#: The signals the runtime is created with. A registered signal nothing
+#: receives is an unhandled interrupt, so `utils.shell.SignalDispatcher`
+#: receives every one of them for the whole process.
+HANDLED_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH, signal.SIGCONT, signal.SIGTSTP)
 
 _THREADS_MIN = 2
 _THREADS_MAX = 8
@@ -37,10 +43,12 @@ def runtime_threads() -> int:
 
 
 def runtime_options() -> dict:
-    """Keyword arguments for `tonio.run` sizing the runtime for pidrei."""
+    """Keyword arguments for `tonio.run`: the runtime's sizing, and the
+    signals it delivers (`HANDLED_SIGNALS`)."""
     threads = runtime_threads()
     blocking = _env_positive_int("PIDREI_BLOCKING_THREADS")
     return {
         "threads": threads,
         "blocking_threadpool_size": blocking if blocking is not None else threads * _BLOCKING_PER_THREAD,
+        "signals": list(HANDLED_SIGNALS),
     }

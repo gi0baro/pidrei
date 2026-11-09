@@ -55,6 +55,9 @@ class ExtensionEditorComponent(Container):
         # Wire up Enter to submit (Shift+Enter for newlines, like the main editor)
         self._editor.on_submit = lambda text: self._on_submit_callback(text)
         self.add_child(self._editor)
+        # Shows external editor failures; renders nothing while empty.
+        self._external_editor_status = Text("", 1, 0)
+        self.add_child(self._external_editor_status)
 
         self.add_child(Spacer(1))
 
@@ -111,6 +114,8 @@ class ExtensionEditorComponent(Container):
     async def _edit_in_external_editor(self, content: str) -> None:
         try:
             result = await edit_in_external_editor({"command": self._external_editor_command, "content": content})
+            status = theme.fg("warning", result["message"]) if result["status"] == "failed" else ""
+            self._tui.apply(functools.partial(self._external_editor_status.set_text, status))
             if result["status"] == "complete":
                 self._tui.apply(functools.partial(self._editor.set_text, result["content"]))
         finally:

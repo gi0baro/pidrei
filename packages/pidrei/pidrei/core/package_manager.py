@@ -40,18 +40,20 @@ from pidrei_ai.utils.tasks import gather
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
-from ..utils.paths import canonicalize_path_blocking, is_local_path, normalize_path, resolve_path
+from ..utils.paths import get_path_comparison_key, is_local_path, normalize_path, paths_equal, resolve_path
 from .exec import exec_command
 from .extensions.loader import is_extension_file, resolve_extension_entries_blocking
 from .pidrei_manifest import read_pidrei_manifest_blocking
 from .settings_manager import SettingsManager
 from .skills import IgnoreMatcher, add_ignore_rules_blocking
-from .source_info import BUILTIN_PATH_PREFIX, PathMetadata
+from .source_info import BUILTIN_PATH_PREFIX, PathMetadata, get_resource_path_key_blocking
 
 
 RESOURCE_TYPES = ("extensions", "skills", "prompts", "themes")
 # Git packages updated at once.
 GIT_UPDATE_CONCURRENCY = 4
+# A ref that is (an abbreviation of) a commit hash, not a branch or tag name.
+_COMMIT_HASH_REF = re.compile(r"[0-9a-f]{7,64}", re.IGNORECASE)
 
 _FILE_PATTERNS: dict[str, re.Pattern] = {
     # pi matches `.ts`/`.js`; a pidrei extension is a Python module.
@@ -75,6 +77,17 @@ class ResolvedPaths:
     skills: list[ResolvedResource] = field(default_factory=list)
     prompts: list[ResolvedResource] = field(default_factory=list)
     themes: list[ResolvedResource] = field(default_factory=list)
+    #: Configured packages that were skipped because installing them failed.
+    install_failures: list[PackageInstallFailure] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PackageInstallFailure:
+    """A configured package that could not be installed while resolving resources."""
+
+    source: str
+    scope: str
+    message: str
 
 
 @dataclass(slots=True)
@@ -120,7 +133,8 @@ class GitSource:
 
     @property
     def pinned(self) -> bool:
-        """A configured ref is a checkout target, not a floating branch."""
+        """True if a ref was specified. `pidrei update` reconciles the checkout
+        to the ref but does not move the ref."""
         return self.ref is not None
 
 
@@ -664,8 +678,8 @@ class DefaultPackageManager:
             # host/path, so ssh and https forms of one repo are one package.
             return f"git:{parsed.host}/{parsed.path}"
         if scope:
-            return f"local:{self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope))}"
-        return f"local:{self._resolve_resource_path(parsed.path)}"
+            return f"local:{get_path_comparison_key(self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope)))}"
+        return f"local:{get_path_comparison_key(self._resolve_resource_path(parsed.path))}"
 
     def _resolve_resource_path(self, path: str) -> str:
         return resolve_path(path, self._cwd, home_dir=_get_home_dir(), trim=True)
@@ -789,10 +803,16 @@ class DefaultPackageManager:
         fetch_args, ref = await self._get_local_git_update_target(target_dir)
         await self._ensure_git_ref(target_dir, fetch_args, ref)
 
-    async def _refresh_temporary_git_source(self, source: GitSource, source_str: str) -> None:
+    async def _refresh_temporary_git_source(self, source: GitSource, source_str: str, installed_path: str) -> None:
         if is_offline_mode_enabled():
             return
         try:
+            # A ref can name a moving branch, so refresh refs too. Skip the network call only when the
+            # ref is a commit hash that is already checked out.
+            if source.ref and _COMMIT_HASH_REF.fullmatch(source.ref):
+                head = await self._run_command("git", ["rev-parse", "HEAD"], cwd=installed_path)
+                if head.strip().lower().startswith(source.ref.lower()):
+                    return
             await self._with_progress(
                 "pull", source_str, f"Refreshing {source_str}...", lambda: self._update_git(source, "temporary")
             )
@@ -985,13 +1005,13 @@ class DefaultPackageManager:
         parsed = self.parse_source(source)
         if isinstance(parsed, GitSource):
             return f"git:{parsed.host}/{parsed.path}"
-        return f"local:{self._resolve_resource_path(parsed.path)}"
+        return f"local:{get_path_comparison_key(self._resolve_resource_path(parsed.path))}"
 
     def _source_match_key_for_settings(self, source: str, scope: str) -> str:
         parsed = self.parse_source(source)
         if isinstance(parsed, GitSource):
             return f"git:{parsed.host}/{parsed.path}"
-        return f"local:{self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope))}"
+        return f"local:{get_path_comparison_key(self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope)))}"
 
     def _package_sources_match(self, existing: Any, input_source: str, scope: str) -> bool:
         left = self._source_match_key_for_settings(self._get_package_source_string(existing), scope)
@@ -1146,7 +1166,7 @@ class DefaultPackageManager:
             [
                 dir
                 for dir in collect_ancestor_agents_skill_dirs_blocking(self._cwd)
-                if os.path.abspath(dir) != os.path.abspath(user_agents_skills_dir)
+                if not paths_equal(dir, user_agents_skills_dir)
             ]
             if project_trusted
             else []
@@ -1264,10 +1284,10 @@ class DefaultPackageManager:
             seen: set[str] = set()
             deduped: list[ResolvedResource] = []
             for entry in resolved:
-                canonical_path = canonicalize_path_blocking(entry.path)
-                if canonical_path in seen:
+                path_key = get_resource_path_key_blocking(entry.path)
+                if path_key in seen:
                     continue
-                seen.add(canonical_path)
+                seen.add(path_key)
                 deduped.append(entry)
             return deduped
 
@@ -1480,7 +1500,8 @@ class DefaultPackageManager:
         sources: list[tuple[Any, str]],
         accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
         on_missing=None,
-    ) -> None:
+    ) -> list[PackageInstallFailure]:
+        install_failures: list[PackageInstallFailure] = []
         for package, scope in sources:
             source_str = self._get_package_source_string(package)
             filter = self._get_package_filter(package)
@@ -1500,27 +1521,34 @@ class DefaultPackageManager:
             async def install_missing(parsed=parsed, resolved_source=resolved_source, scope=resolved_scope) -> bool:
                 if is_offline_mode_enabled():
                     return False
-                if on_missing is None:
+                if on_missing is not None:
+                    action = await on_missing(resolved_source)
+                    if action == "skip":
+                        return False
+                    if action == "error":
+                        raise Exception(f"Missing source: {resolved_source}")
+                # A source that cannot be installed (no network, missing repository, failing clone) must
+                # not abort startup. Skip its resources, like offline mode does, and report the failure.
+                try:
                     await self._install_parsed_source(parsed, scope)
-                    return True
-                action = await on_missing(resolved_source)
-                if action == "skip":
+                except Exception as error:
+                    install_failures.append(
+                        PackageInstallFailure(source=resolved_source, scope=scope, message=str(error))
+                    )
                     return False
-                if action == "error":
-                    raise Exception(f"Missing source: {resolved_source}")
-                await self._install_parsed_source(parsed, scope)
                 return True
 
             installed_path = await self._get_git_install_path(parsed, resolved_scope)
             if not await fs.Path(installed_path).exists():
                 if not await install_missing():
                     continue
-            elif resolved_scope == "temporary" and not parsed.pinned and not is_offline_mode_enabled():
-                await self._refresh_temporary_git_source(parsed, resolved_source)
+            elif resolved_scope == "temporary" and not is_offline_mode_enabled():
+                await self._refresh_temporary_git_source(parsed, resolved_source, installed_path)
             metadata.base_dir = installed_path
             await tonio.spawn_blocking(
                 self._collect_package_resources_blocking, installed_path, accumulator, filter, metadata
             )
+        return install_failures
 
     async def resolve(self, on_missing=None) -> ResolvedPaths:
         accumulator = self._create_accumulator()
@@ -1532,14 +1560,18 @@ class DefaultPackageManager:
             *[(package, "project") for package in (project_settings.get("packages") or [])],
             *[(package, "user") for package in (global_settings.get("packages") or [])],
         ]
-        await self._resolve_package_sources(self._dedupe_packages(all_packages), accumulator, on_missing)
+        install_failures = await self._resolve_package_sources(
+            self._dedupe_packages(all_packages), accumulator, on_missing
+        )
 
         # Everything after the package sources is synchronous filesystem work
         # over the one accumulator, in a fixed order (local entries, then
         # auto-discovery, then canonicalization); one pool hop instead of ~10.
-        return await tonio.spawn_blocking(
+        resolved = await tonio.spawn_blocking(
             self._resolve_local_and_discovered_blocking, accumulator, global_settings, project_settings
         )
+        resolved.install_failures = install_failures
+        return resolved
 
     def _resolve_local_and_discovered_blocking(
         self,
@@ -1612,5 +1644,7 @@ class DefaultPackageManager:
                     True,
                 )
         package_sources = [(source, scope) for source in sources if not source.startswith(BUILTIN_PATH_PREFIX)]
-        await self._resolve_package_sources(package_sources, accumulator)
-        return await tonio.spawn_blocking(self._to_resolved_paths_blocking, accumulator)
+        install_failures = await self._resolve_package_sources(package_sources, accumulator)
+        resolved = await tonio.spawn_blocking(self._to_resolved_paths_blocking, accumulator)
+        resolved.install_failures = install_failures
+        return resolved

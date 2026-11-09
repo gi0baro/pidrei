@@ -85,7 +85,7 @@ async def test_preserves_scoped_model_order_in_the_model_scoped_tab(harnesses):
 
     rendered_lines = [line for line in render().split("\n") if f"[{model_one.provider}]" in line]
     ordered_ids = [
-        line.strip().removeprefix("→").strip().split(" [")[0].removeprefix("✓").strip() for line in rendered_lines[:3]
+        line.strip().removeprefix("→").lstrip().removeprefix("✓").lstrip().split(" ")[0] for line in rendered_lines[:3]
     ]
 
     assert ordered_ids == [model_two.id, model_one.id, model_three.id]

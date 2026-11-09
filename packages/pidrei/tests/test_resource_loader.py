@@ -10,12 +10,14 @@ also scans ~/.agents/skills, which must stay hermetic).
 import contextlib
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
 
 import pidrei.modes.interactive.theme as theme_module
-from pidrei.core import resource_loader
+from pidrei.core import package_manager, resource_loader
+from pidrei.core.exec import ExecResult
 from pidrei.core.extensions.types import InlineExtension
 from pidrei.core.resource_loader import DefaultResourceLoader, SourcedPath, load_project_context_files
 from pidrei.core.settings_manager import SettingsManager
@@ -336,6 +338,91 @@ class TestReload:
 
         assert loader.get_system_prompt() is None
         assert not any(skill.name == "project-skill" for skill in loader.get_skills().skills)
+
+
+# #11088. pi's broken package is `npm:` with an `npmCommand` that exits 1; here it is a git source
+# whose `git clone` fails, stubbed at the package manager's command seam so nothing reaches the network.
+BROKEN_PACKAGE = "git:github.com/example/broken-package"
+
+
+@pytest.fixture
+def failing_git(monkeypatch):
+    monkeypatch.delenv("PIDREI_OFFLINE", raising=False)
+
+    async def exec_command(_command, _args, _cwd, **_kwargs):
+        return ExecResult(
+            stdout="", stderr="fatal: could not read from remote", code=128, killed=False, truncated=False
+        )
+
+    monkeypatch.setattr(package_manager, "exec_command", exec_command)
+
+
+class TestPackageInstallFailures:
+    @pytest.mark.tonio
+    async def test_warns_and_keeps_loading_when_a_configured_package_cannot_be_installed(self, dirs, failing_git):
+        _tmp, agent_dir, cwd, home = dirs
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            settings_manager=SettingsManager.in_memory({"packages": [BROKEN_PACKAGE]}),
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        [warning] = loader.get_extensions().warnings
+        assert warning.path == BROKEN_PACKAGE
+        assert re.match(r"^failed to install \(.*fatal: could not read from remote\)\.", warning.warning)
+        assert f'Run "pidrei remove {BROKEN_PACKAGE}" to remove it from settings.json.' in warning.warning
+
+    @pytest.mark.tonio
+    async def test_points_temporary_extension_sources_at_the_source_instead_of_pidrei_remove(self, dirs, failing_git):
+        _tmp, agent_dir, cwd, home = dirs
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            additional_extension_paths=[BROKEN_PACKAGE],
+            settings_manager=SettingsManager.in_memory(),
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        [warning] = loader.get_extensions().warnings
+        assert warning.path == BROKEN_PACKAGE
+        assert "Check the source and try again." in warning.warning
+        assert "pidrei remove" not in warning.warning
+
+    @pytest.mark.tonio
+    async def test_points_project_extension_packages_at_pidrei_remove_local(self, dirs, failing_git):
+        _tmp, agent_dir, cwd, home = dirs
+        write(cwd / ".pidrei" / "settings.json", json.dumps({"packages": [BROKEN_PACKAGE]}))
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            settings_manager=await SettingsManager(str(cwd), str(agent_dir), project_trusted=True),
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        [warning] = loader.get_extensions().warnings
+        assert f'Run "pidrei remove {BROKEN_PACKAGE} --local"' in warning.warning
+
+    @pytest.mark.tonio
+    async def test_warns_once_about_a_failing_install_when_project_trust_is_resolved(self, dirs, failing_git):
+        _tmp, agent_dir, cwd, home = dirs
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            settings_manager=SettingsManager.in_memory({"packages": [BROKEN_PACKAGE]}),
+        )
+
+        async def distrust(_extensions_result):
+            return False
+
+        with fake_home(home):
+            await loader.reload(resolve_project_trust=distrust)
+
+        [warning] = loader.get_extensions().warnings
+        assert warning.path == BROKEN_PACKAGE
 
 
 def _command_factory(name: str, description: str, loaded: list[str] | None = None):

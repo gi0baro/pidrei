@@ -27,6 +27,6 @@ def opencode_provider() -> Provider:
             "openai-completions": with_opencode_session_header(openai_completions_api()),
             "openai-responses": with_opencode_session_header(openai_responses_api()),
         },
-        # OpenCode Zen serves TypeSafe's System One protocol at /zen/v1/systemone.
+        # OpenCode Zen serves TypeSafe's System One protocol at /inference/systemone/v1/systemone.
         classifiers={"typesafe-system-one": typesafe_system_one_api()},
     )

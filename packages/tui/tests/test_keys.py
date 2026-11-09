@@ -8,6 +8,8 @@ from pidrei_tui.keys import (
     Key,
     decode_kitty_printable,
     decode_printable_key,
+    is_key_release,
+    is_key_repeat,
     matches_key,
     parse_key,
     set_kitty_protocol_active,
@@ -478,6 +480,26 @@ def test_matches_legacy_function_keys_and_clear():
     assert matches_key("\x1b[E", "clear") is True
 
 
+def test_matches_kitty_function_keys_f1_f12_with_and_without_modifiers():
+    assert matches_key("\x1b[P", "f1") is True
+    assert matches_key("\x1b[Q", "f2") is True
+    assert matches_key("\x1b[13~", "f3") is True
+    assert matches_key("\x1b[S", "f4") is True
+    assert matches_key("\x1b[1;5P", "ctrl+f1") is True
+    assert matches_key("\x1b[1;5P", "f1") is False
+    assert matches_key("\x1b[1;2S", "shift+f4") is True
+    assert matches_key("\x1b[15;5~", "ctrl+f5") is True
+    assert matches_key("\x1b[24;3~", "alt+f12") is True
+    assert matches_key("\x1b[15;1:2~", "f5") is True
+    assert parse_key("\x1b[P") == "f1"
+    assert parse_key("\x1b[1;5P") == "ctrl+f1"
+    assert parse_key("\x1b[13~") == "f3"
+    assert parse_key("\x1b[21;2~") == "shift+f10"
+    assert parse_key("\x1b[1;5R") is None
+    assert is_key_release("\x1b[1;1:3P") is True
+    assert is_key_repeat("\x1b[1;1:2S") is True
+
+
 def test_matches_alt_arrows():
     assert matches_key("\x1bp", "alt+up") is True
     assert matches_key("\x1bp", "up") is False
@@ -492,6 +514,12 @@ def test_matches_rxvt_modifier_sequences():
 
 
 # decodeKittyPrintable
+
+
+def test_ignores_unmapped_kitty_functional_keys_such_as_f13_f35():
+    assert decode_kitty_printable("\x1b[57376u") is None
+    assert decode_kitty_printable("\x1b[57398;2u") is None
+    assert decode_printable_key("\x1b[57382u") is None
 
 
 def test_decodes_kitty_keypad_functional_keys_to_printable_characters():

@@ -16,7 +16,7 @@ from pidrei_tui import (
 )
 
 from ..theme import theme
-from .keybinding_hints import key_hint
+from .keybinding_hints import key_hint, key_text
 
 
 FALLBACK_PREVIEW_LINES = 10
@@ -72,6 +72,8 @@ class ToolExecutionComponent(Container):
         self._is_partial = True
         self._execution_started = False
         self._args_complete = False
+        # `update_args()` ran since the last display update; the next render applies it.
+        self._args_pending = False
         self._result = None
         self._hide_component = False
 
@@ -128,6 +130,9 @@ class ToolExecutionComponent(Container):
             "isError": bool(self._result["isError"]) if self._result else False,
             "durationMs": None if self._is_partial or not self._result else self._result.get("durationMs"),
             "outputPad": self._output_pad,
+            # The host's keybinding hints (pi's KeybindingHints).
+            "keyText": key_text,
+            "keyHint": key_hint,
         }
 
     def _create_call_fallback(self):
@@ -162,8 +167,15 @@ class ToolExecutionComponent(Container):
         return MouseRegion(component, on_mouse)
 
     def update_args(self, args) -> None:
+        """Show new partial arguments.
+
+        Applied at the next render, so a call streaming many argument deltas
+        between two frames runs its renderer once per frame, not once per
+        delta (#9265). Both run under the UI state lock.
+        """
         self._args = args
-        self._update_display()
+        self._args_pending = True
+        self._ui.request_render()
 
     def mark_execution_started(self) -> None:
         self._execution_started = True
@@ -203,6 +215,8 @@ class ToolExecutionComponent(Container):
         self._update_display()
 
     def render(self, width: int) -> list:
+        if self._args_pending:
+            self._update_display()
         if self._hide_component:
             return []
 
@@ -231,6 +245,7 @@ class ToolExecutionComponent(Container):
         return self._self_render_container.handle_mouse(replace(event, y=event.y - 1, height=self._self_render_height))
 
     def _update_display(self) -> None:
+        self._args_pending = False
         if self._is_partial:
             bg_fn = lambda text: theme.bg("toolPendingBg", text)
         elif self._result and self._result["isError"]:

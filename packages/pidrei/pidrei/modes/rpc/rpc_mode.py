@@ -17,6 +17,7 @@ Protocol:
 import json
 import signal
 import sys
+import threading
 import uuid
 from typing import Any
 
@@ -31,7 +32,7 @@ from ...core.json_wire import to_wire
 from ...core.output_guard import drain_output, take_over_stdout, write_raw_stdout
 from ...core.session_manager import SessionManager
 from ...utils.fd_io import FdReader, hard_exit
-from ...utils.shell import kill_tracked_detached_children
+from ...utils.shell import SignalDispatcher, kill_tracked_detached_children, signal_exit_status
 from ..interactive.theme import theme
 from ..json_event import to_json_event
 from .jsonl import JsonlLineDecoder, serialize_json_line
@@ -63,35 +64,35 @@ class _RpcExtensionUIContext:
         self._create_dialog_promise = create_dialog_promise
         self._pending_extension_requests = pending_extension_requests
 
-    def select(self, title: str, options: list[str], opts: Any = None) -> Any:
+    def select(self, title: str, options: list[str], opts: dict[str, Any] | None = None) -> Any:
         def parse(response: dict[str, Any]) -> str | None:
             if response.get("cancelled"):
                 return None
             return response.get("value")
 
-        timeout = getattr(opts, "timeout", None) if opts is not None else None
+        timeout = (opts or {}).get("timeout")
         return self._create_dialog_promise(
             opts, None, {"method": "select", "title": title, "options": options, "timeout": timeout}, parse
         )
 
-    def confirm(self, title: str, message: str, opts: Any = None) -> Any:
+    def confirm(self, title: str, message: str, opts: dict[str, Any] | None = None) -> Any:
         def parse(response: dict[str, Any]) -> bool:
             if response.get("cancelled"):
                 return False
             return bool(response.get("confirmed", False))
 
-        timeout = getattr(opts, "timeout", None) if opts is not None else None
+        timeout = (opts or {}).get("timeout")
         return self._create_dialog_promise(
             opts, False, {"method": "confirm", "title": title, "message": message, "timeout": timeout}, parse
         )
 
-    def input(self, title: str, placeholder: str | None = None, opts: Any = None) -> Any:
+    def input(self, title: str, placeholder: str | None = None, opts: dict[str, Any] | None = None) -> Any:
         def parse(response: dict[str, Any]) -> str | None:
             if response.get("cancelled"):
                 return None
             return response.get("value")
 
-        timeout = getattr(opts, "timeout", None) if opts is not None else None
+        timeout = (opts or {}).get("timeout")
         return self._create_dialog_promise(
             opts, None, {"method": "input", "title": title, "placeholder": placeholder, "timeout": timeout}, parse
         )
@@ -140,7 +141,7 @@ class _RpcExtensionUIContext:
     def set_hidden_thinking_label(self, label: str | None = None) -> None:
         """Hidden thinking label not supported in RPC mode - requires TUI message rendering access."""
 
-    def set_widget(self, key: str, content: Any, options: Any = None) -> None:
+    def set_widget(self, key: str, content: Any, options: dict[str, Any] | None = None) -> None:
         # Only support string lists in RPC mode - component factories are ignored
         if content is None or isinstance(content, list):
             self._output(
@@ -151,7 +152,7 @@ class _RpcExtensionUIContext:
                         "method": "setWidget",
                         "widgetKey": key,
                         "widgetLines": content,
-                        "widgetPlacement": getattr(options, "placement", None) if options is not None else None,
+                        "widgetPlacement": (options or {}).get("placement"),
                     }
                 )
             )
@@ -256,7 +257,7 @@ class _RpcExtensionUIContext:
         """Tool expansion not supported in RPC mode - no TUI."""
 
 
-async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
+async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | None = None) -> None:
     """Run in RPC mode.
 
     Listens for JSON commands on stdin, outputs events and responses on
@@ -292,14 +293,16 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     # Shutdown request flag
     shutdown_requested = False
     shutting_down = False
-    signal_cleanup_handlers: list[Any] = []
+    shutdown_guard = threading.Lock()
 
-    def create_dialog_promise(opts: Any, default_value: Any, request: dict[str, Any], parse_response) -> Any:
+    def create_dialog_promise(
+        opts: dict[str, Any] | None, default_value: Any, request: dict[str, Any], parse_response
+    ) -> Any:
         """Helper for dialog methods with cancel/timeout support. The request
         goes out at call time; returns the spawn handle of the wait for the
         answer, which the caller may await or drop (spec/ui-island.md, `ctx.ui`)."""
-        cancel = getattr(opts, "cancel", None) if opts is not None else None
-        timeout = getattr(opts, "timeout", None) if opts is not None else None
+        cancel = (opts or {}).get("signal")
+        timeout = (opts or {}).get("timeout")
         if cancel is not None and cancel.cancelled:
             return tonio.spawn(_answer(default_value))
 
@@ -420,29 +423,10 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
         unsubscribe = session.subscribe(on_event)
         unsubscribe_backpressure = session.agent.subscribe(on_agent_event)
 
-    def register_signal_handlers() -> None:
-        # Same signal-handler note as print mode: the sync handler cannot
-        # await runtime disposal, so it kills tracked children and exits.
-        def make_handler(exit_status: int):
-            def handler(_signum, _frame) -> None:
-                kill_tracked_detached_children()
-                hard_exit(exit_status)
-
-            return handler
-
-        try:
-            previous_term = signal.signal(signal.SIGTERM, make_handler(143))
-            signal_cleanup_handlers.append(lambda: signal.signal(signal.SIGTERM, previous_term))
-            previous_hup = signal.signal(signal.SIGHUP, make_handler(129))
-            signal_cleanup_handlers.append(lambda: signal.signal(signal.SIGHUP, previous_hup))
-        except ValueError:
-            pass
-
     await rebind_session()
-    register_signal_handlers()
 
     # Handle a single command
-    async def handle_command(command: dict[str, Any]) -> dict[str, Any] | None:  # noqa: C901
+    async def handle_command(command: dict[str, Any]) -> dict[str, Any] | None:
         id = command.get("id")
         command_type = command.get("type")
 
@@ -772,11 +756,15 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     # Shutdown handling: called after handling each command and when stdin ends.
     async def shutdown(exit_code: int = 0, signal_name: str | None = None) -> None:
         nonlocal shutting_down
-        if shutting_down:
+        # Reached from the signal handler, the end of stdin and every handled
+        # line, in parallel: the first call claims the shutdown.
+        with shutdown_guard:
+            already_shutting_down = shutting_down
+            shutting_down = True
+        if already_shutting_down:
+            # pi removes its signal handlers when the shutdown starts: a
+            # signal from then on ends the process at once.
             hard_exit(exit_code)
-        shutting_down = True
-        for cleanup in signal_cleanup_handlers:
-            cleanup()
         if unsubscribe is not None:
             unsubscribe()
         if unsubscribe_backpressure is not None:
@@ -822,6 +810,16 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     def on_input_line(line: str) -> None:
         tonio.spawn.without_tracking(handle_input_line(line))
 
+    async def on_shutdown_signal(signum: int) -> None:
+        # pi: kill the tracked children, then shutdown(code, signal).
+        kill_tracked_detached_children()
+        await shutdown(signal_exit_status(signum), "SIGHUP" if signum == signal.SIGHUP else "SIGTERM")
+
+    # Installed once `shutdown` exists: a signal before this ends the process
+    # through the default handler.
+    if signal_dispatcher is not None:
+        signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
+        signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
     await _pump_stdin_commands(on_input_line, shutdown)
 
 

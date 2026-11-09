@@ -1332,6 +1332,31 @@ async def test_splits_large_differential_updates_without_a_full_redraw():
     assert "\x1b[2J" not in output, "the update should stay on the differential render path"
 
 
+# TUI OSC 133 markers
+
+
+@pytest.mark.tonio
+async def test_does_not_write_osc_133_prompt_markers_to_the_terminal():
+    # Terminals read 133;A as a new shell prompt and drop the OSC 7501 program status.
+    terminal = _BoundedWriteTerminal(80, 24)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+    component.lines = ["\x1b]133;A\x07prompt", "\x1b]133;B\x07\x1b]133;C\x07output"]
+    await tui.start()
+    await terminal.wait_for_render()
+    component.lines = [*component.lines, "\x1b]133;A\x1b\\reply", "\x1b]133;B\x1b\\\x1b]133;C\x1b\\done"]
+    since = terminal.frames
+    tui.request_render()
+    await terminal.wait_for_render(since)
+    await tui.stop()
+
+    output = terminal.get_writes()
+    assert "\x1b]133;" not in output, "regular mode must not emit OSC 133 markers"
+    for text in ["prompt", "output", "reply", "done"]:
+        assert text in output
+
+
 # TUI fake cursor
 
 _CURSOR_VISIBILITY_TAIL = re.compile(r"\x1b\[\?25[hl]$")

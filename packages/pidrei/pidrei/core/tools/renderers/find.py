@@ -13,7 +13,7 @@ from pidrei_tui import Text
 from ....modes.interactive.components.keybinding_hints import key_hint
 from ..render_utils import get_text_output, invalid_arg_text, shorten_path, str_or_none
 from ..truncate import DEFAULT_MAX_BYTES, format_size
-from .types import ToolRenderers
+from .types import ToolRenderers, detail_field, detail_truncation
 
 
 def _format_find_call(args: dict | None, theme) -> str:
@@ -52,8 +52,8 @@ def _format_find_result(result, options: dict, theme, show_images: bool) -> str:
             )
 
     details = result.get("details") if isinstance(result, dict) else getattr(result, "details", None)
-    result_limit = getattr(details, "result_limit_reached", None) if details is not None else None
-    truncation = getattr(details, "truncation", None) if details is not None else None
+    result_limit = detail_field(details, "result_limit_reached")
+    truncation = detail_truncation(details)
     if result_limit or (truncation is not None and truncation.truncated):
         warnings = []
         if result_limit:

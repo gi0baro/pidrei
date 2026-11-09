@@ -15,7 +15,7 @@ from ....modes.interactive.components.visual_truncate import VisualLinePreview
 from ....modes.interactive.theme import theme
 from ..render_utils import get_text_output, invalid_arg_text, start_tool_timer, str_or_none, tool_timer_text
 from ..truncate import DEFAULT_MAX_BYTES, format_size
-from .types import ToolRenderers
+from .types import ToolRenderers, detail_field, detail_truncation
 
 
 BASH_PREVIEW_LINES = 5
@@ -52,8 +52,8 @@ def _rebuild_bash_result_render_component(
 
     output = get_text_output(result, show_images).strip()
     details = _result_details(result)
-    truncation = getattr(details, "truncation", None) if details is not None else None
-    full_output_path = getattr(details, "full_output_path", None) if details is not None else None
+    truncation = detail_truncation(details)
+    full_output_path = detail_field(details, "full_output_path")
     if (
         not options.get("isPartial")
         and truncation is not None

@@ -100,15 +100,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -121,6 +112,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -140,15 +140,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -161,46 +152,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
-    "chat:gemini-3.1-flash-lite-image": {
-      "id": "gemini-3.1-flash-lite-image",
-      "name": "Nano Banana 2 Lite",
-      "api": "google-vertex",
-      "provider": "google-vertex",
-      "baseUrl": "https://{location}-aiplatform.googleapis.com",
-      "reasoning": true,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
-        "low": null,
-        "medium": null,
+        "low": "low",
+        "medium": "medium",
         "high": "high",
         "xhigh": null,
         "max": null
       },
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.25,
-        "output": 30,
-        "cacheRead": 0.025,
-        "cacheWrite": 0
-      },
-      "contextWindow": 65536,
-      "maxTokens": 4096,
       "inputLimits": {
         "images": {
           "resize": {
@@ -220,15 +180,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -241,6 +192,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -260,15 +220,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -281,6 +232,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -300,15 +260,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -321,6 +272,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -340,15 +300,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -361,6 +312,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -380,15 +340,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -401,6 +352,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -420,15 +380,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -441,6 +392,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -460,15 +420,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -481,6 +432,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -500,15 +460,6 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -521,6 +472,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {

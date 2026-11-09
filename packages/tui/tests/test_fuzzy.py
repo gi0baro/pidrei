@@ -57,6 +57,23 @@ def test_word_boundary_matches_score_better():
     assert at_boundary["score"] < not_at_boundary["score"]
 
 
+# #11220: greedy alignment took o, p, u from "openrouter", so the real "opus" scored worst
+def test_scores_a_contiguous_occurrence_instead_of_an_earlier_scattered_alignment():
+    opus = fuzzy_match("opus", "openrouter openrouter/anthropic/claude-opus-4.1")
+    sonnet = fuzzy_match("opus", "openrouter openrouter/anthropic/claude-sonnet-4.5")
+    gpt_oss = fuzzy_match("opus", "openrouter openrouter/openai/gpt-oss-120b")
+
+    assert opus["score"] < sonnet["score"]
+    assert opus["score"] < gpt_oss["score"]
+
+
+def test_uses_the_best_contiguous_occurrence_not_the_first():
+    embedded_first = fuzzy_match("opus", "xxopus opus")
+    boundary_only = fuzzy_match("opus", "xxxxxx opus")
+
+    assert embedded_first["score"] == boundary_only["score"]
+
+
 def test_matches_swapped_alpha_numeric_tokens():
     result = fuzzy_match("codex52", "gpt-5.2-codex")
     assert result["matches"] is True
@@ -105,6 +122,19 @@ def test_works_with_custom_get_text_function():
     assert len(result) == 2
     assert "foo" in [r["name"] for r in result]
     assert "foobar" in [r["name"] for r in result]
+
+
+# #11220: "radius radius/gpt" contains a, s, t, r, a in order, so every radius model matched there
+def test_ranks_a_model_containing_the_query_above_models_matching_a_shared_provider_prefix():
+    items = [
+        "radius radius/gpt-5.4 radius gpt-5.4 GPT 5.4",
+        "radius radius/agentic radius agentic Agentic",
+        "radius radius/gpt-6-sol radius gpt-6-sol GPT 6 Sol",
+        "radius radius/gpt-6-astra radius gpt-6-astra GPT 6 Astra",
+    ]
+    result = fuzzy_filter(items, "astra", lambda x: x)
+
+    assert result[0] == items[3]
 
 
 def test_matches_slash_separated_provider_model_queries_against_reordered_text():

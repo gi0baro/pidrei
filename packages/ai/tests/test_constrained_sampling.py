@@ -1,23 +1,34 @@
 """Partial mirror of pi ai/test/constrained-sampling.test.ts.
 
-Holds the 0.84.2 strict-schema-conversion cases (7915cdac) and the 1.0.0
-foreign-item-id replay case (bc2d8dc1); the pre-existing grammar/replay cases
-remain covered by the adapter suites and are a recorded parity gap in
-scripts/upstream_diff.py. pi builds schemas with TypeBox; plain
-JSON-schema dicts carry the same shapes here.
+Holds the 0.84.2 strict-schema-conversion cases (7915cdac), the 1.0.0
+foreign-item-id replay case (bc2d8dc1) and, from 1.5.0 (f715a15c), the
+grammar input JSON buffer cases and the streamed custom tool input cases; the
+other pre-existing grammar/replay cases remain covered by the adapter suites
+and are a recorded parity gap in scripts/upstream_diff.py. pi builds schemas
+with TypeBox; plain JSON-schema dicts carry the same shapes here.
 """
 
+import json
+import math
 import re
 import time
 
 import pytest
 
 from pidrei_ai.api.constrained_sampling import (
+    GrammarToolInputJsonBuffer,
     UnsupportedStrictJsonSchemaError,
+    append_grammar_tool_input_json_delta,
+    close_grammar_tool_input_json,
     make_strict_json_schema,
     resolve_json_schema_strict_sampling,
 )
-from pidrei_ai.api.openai_responses_shared import convert_responses_messages, convert_responses_tools
+from pidrei_ai.api.openai_responses_shared import (
+    convert_responses_messages,
+    convert_responses_tools,
+    process_responses_stream,
+)
+from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
@@ -30,6 +41,7 @@ from pidrei_ai.types import (
     ToolResultMessage,
     Usage,
 )
+from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.transcript import normalize_context
 
 
@@ -190,3 +202,102 @@ def test_drops_foreign_item_ids_when_replaying_grammar_calls_as_custom_responses
         "input": "abc",
     }
     assert call.get("id") is None
+
+
+def test_keeps_grammar_input_json_deltas_append_only():
+    buffer = GrammarToolInputJsonBuffer()
+    first = append_grammar_tool_input_json_delta(buffer, "payload", 'a"')
+    second = close_grammar_tool_input_json(buffer, "payload", 'a"\nb')
+
+    assert json.loads(f"{first}{second}") == {"payload": 'a"\nb'}
+    assert close_grammar_tool_input_json(buffer, "payload", 'a"\nb') is None
+    with pytest.raises(ValueError, match='grammar tool input for property "payload" changed after it was closed'):
+        close_grammar_tool_input_json(buffer, "payload", "changed")
+    with pytest.raises(ValueError, match='grammar tool input for property "payload" changed after it was closed'):
+        append_grammar_tool_input_json_delta(buffer, "payload", "x")
+
+
+def test_rejects_a_final_grammar_input_that_does_not_continue_the_streamed_input():
+    buffer = GrammarToolInputJsonBuffer()
+    append_grammar_tool_input_json_delta(buffer, "payload", "abc")
+    with pytest.raises(ValueError, match='grammar tool input for property "payload" changed non-monotonically'):
+        close_grammar_tool_input_json(buffer, "payload", "abd")
+
+
+async def run_custom_tool_call(events: list[dict]) -> tuple[AssistantMessageBuilder, list[dict], list[str]]:
+    """Process Responses events for a `sample_tool` grammar call; returns the output,
+    the arguments at each `toolcall_start` and the `toolcall_delta` texts."""
+    output = AssistantMessageBuilder(
+        content=[],
+        api="openai-responses",
+        provider="openai",
+        model="gpt-test",
+        usage=UsageBuilder(),
+        stop_reason="pending",
+        timestamp=0,
+    )
+    stream = AssistantMessageEventStream()
+
+    async def provider_events():
+        for event in events:
+            yield event
+
+    await process_responses_stream(
+        provider_events(), output, stream, make_model(), grammar_tool_input_properties={"sample_tool": "payload"}
+    )
+    stream.end()
+    starts: list[dict] = []
+    deltas: list[str] = []
+    async for event in stream:
+        if event.type == "toolcall_start":
+            starts.append(event.partial.content[event.content_index].arguments)
+        elif event.type == "toolcall_delta":
+            deltas.append(event.delta)
+    return output, starts, deltas
+
+
+def custom_tool_call_events(initial_input: str, deltas: list[str]) -> list[dict]:
+    item = {"type": "custom_tool_call", "call_id": "call_1", "id": "ctc_1", "name": "sample_tool"}
+    complete = initial_input + "".join(deltas)
+    return [
+        {"type": "response.output_item.added", "output_index": 0, "item": {**item, "input": initial_input}},
+        *(
+            {"type": "response.custom_tool_call_input.delta", "output_index": 0, "item_id": "ctc_1", "delta": delta}
+            for delta in deltas
+        ),
+        {"type": "response.custom_tool_call_input.done", "output_index": 0, "item_id": "ctc_1", "input": complete},
+        {"type": "response.output_item.done", "output_index": 0, "item": {**item, "input": complete}},
+        {
+            "type": "response.completed",
+            "response": {"status": "completed", "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}},
+        },
+    ]
+
+
+# #9265
+@pytest.mark.tonio
+async def test_streams_custom_tool_input_in_time_linear_in_its_length():
+    # pi measures V8 heap allocation; this measures wall time, best of two runs.
+    async def run(size: int) -> float:
+        best = math.inf
+        deltas = [f'chunk {index} "quoted" \\ \n'.ljust(32, "x") for index in range(size // 32)]
+        for _ in range(2):
+            started = time.perf_counter()
+            _, _, json_deltas = await run_custom_tool_call(custom_tool_call_events("", deltas))
+            best = min(best, time.perf_counter() - started)
+        assert json.loads("".join(json_deltas)) == {"payload": "".join(deltas)}
+        return best
+
+    small = await run(25_600)
+    large = await run(256_000)
+    assert large / small < 25
+
+
+@pytest.mark.tonio
+async def test_starts_custom_responses_tool_calls_with_their_initial_input():
+    output, starts, deltas = await run_custom_tool_call(custom_tool_call_events("a", ["b", "c"]))
+
+    assert output.stop_reason == "toolUse"
+    assert starts == [{"payload": "a"}]
+    assert output.freeze().content == [ToolCall(id="call_1|ctc_1", name="sample_tool", arguments={"payload": "abc"})]
+    assert json.loads("".join(deltas)) == {"payload": "abc"}

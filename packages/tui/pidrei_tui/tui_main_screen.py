@@ -27,6 +27,7 @@ from tonio.colored import fs
 
 from pidrei_utils import clock
 
+from .layout import OSC133_ZONE_PREFIX_RE
 from .terminal_image import delete_kitty_image, is_image_line
 from .tui import TuiBase
 from .utils import visible_width
@@ -244,7 +245,8 @@ class TuiMainScreen(TuiBase):
 
         # Render all components to get new lines
         # Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
-        new_lines = self._resolve_fake_cursors(self.render(width))
+        # Drop OSC 133 markers: the terminal reads 133;A as a new shell prompt, which ends program status (OSC 7501)
+        new_lines = self._resolve_fake_cursors([OSC133_ZONE_PREFIX_RE.sub("", line) for line in self.render(width)])
 
         # Composite overlays into the rendered lines (before differential compare)
         if self._overlay_stack:

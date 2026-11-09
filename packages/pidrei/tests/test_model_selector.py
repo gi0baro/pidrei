@@ -78,6 +78,65 @@ async def test_keeps_the_current_model_marked_while_browsing():
         harness.cleanup()
 
 
+# #5916
+@pytest.mark.tonio
+async def test_shows_model_names_that_differ_from_the_id():
+    harness = await create_harness(
+        models=[
+            {"id": "minimax/minimax-m3", "name": "MiniMax M3 [parasail]"},
+            {"id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5"},
+        ]
+    )
+    try:
+        provider = harness.get_model("minimax/minimax-m3").provider
+        selector = ModelSelectorComponent(
+            fake_tui(), None, harness.session.model_runtime, [], lambda *args: None, lambda *args: None
+        )
+
+        rows = [line[4:].rstrip() for line in render(selector).split("\n")]
+        assert f"minimax/minimax-m3 (MiniMax M3 [parasail]) [{provider}]" in rows
+        assert f"claude-sonnet-4-5 [{provider}]" in rows
+        selector.dispose()
+    finally:
+        harness.cleanup()
+
+
+@pytest.mark.tonio
+async def test_moves_by_one_page_with_remapped_selection_page_keys():
+    # #7629
+    set_keybindings(KeybindingsManager.in_memory({"tui.select.pageUp": "alt+v", "tui.select.pageDown": "ctrl+v"}))
+    harness = await create_harness(models=[{"id": f"model-{index:02d}"} for index in range(12)])
+    refresh_released = tonio.Event()
+
+    # Held pending, as in the first test: a refresh finishing mid-test resets the selection.
+    async def pending_refresh(_options=None, *, _requested_only=False):
+        await refresh_released.wait()
+        return ModelsRefreshResult(aborted=False, errors={})
+
+    harness.session.model_runtime.refresh = pending_refresh
+    try:
+        selected: list = []
+        selector = ModelSelectorComponent(
+            fake_tui(),
+            None,
+            harness.session.model_runtime,
+            [],
+            lambda model, *args: selected.append(model),
+            lambda: None,
+        )
+
+        selector.handle_input("\x16")  # Ctrl+V
+        selector.handle_input("\x16")
+        selector.handle_input("\x1bv")  # Alt+V
+        selector.handle_input("\r")
+
+        assert [model.id for model in selected] == ["model-01"]
+        selector.dispose()
+    finally:
+        refresh_released.set()
+        harness.cleanup()
+
+
 @pytest.mark.tonio
 async def test_uses_the_configured_save_binding():
     set_keybindings(KeybindingsManager.in_memory({"app.models.save": "ctrl+r"}))

@@ -54,7 +54,7 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
 from ..config import APP_NAME, get_agent_dir as get_default_agent_dir, get_sessions_dir
-from ..utils.paths import normalize_path, resolve_path
+from ..utils.paths import normalize_path, paths_equal, resolve_path
 from .message_wire import (
     parse_content_block,
     parse_message,
@@ -483,7 +483,8 @@ def build_context_entries(
     return context_entries
 
 
-def _project_context_entry(entry: dict[str, Any], edit: dict[str, Any] | None) -> list[Any]:
+def project_context_entry(entry: dict[str, Any], edit: dict[str, Any] | None) -> list[Any]:
+    """Project one entry into model-visible messages, applying its latest context edit if any."""
     messages = session_entry_to_context_messages(entry)
     if edit is None:
         return messages
@@ -526,7 +527,7 @@ def build_session_projection(
             messages=(
                 []
                 if source_entry.get("type") == "compaction" and index > 0
-                else _project_context_entry(source_entry, edits.get(source_entry.get("id")))
+                else project_context_entry(source_entry, edits.get(source_entry.get("id")))
             ),
         )
         for index, source_entry in enumerate(context_entries)
@@ -698,7 +699,7 @@ def _get_session_header_cwd(header: dict[str, Any]) -> str | None:
 
 
 def _session_cwd_matches(cwd: str | None, resolved_cwd: str) -> bool:
-    return cwd is not None and cwd != "" and resolve_path(cwd) == resolved_cwd
+    return cwd is not None and cwd != "" and paths_equal(resolve_path(cwd), resolved_cwd)
 
 
 def find_most_recent_session_blocking(session_dir: str, cwd: str | None = None) -> str | None:
@@ -1178,7 +1179,7 @@ class SessionManager:
         return self._session_dir
 
     def uses_default_session_dir(self) -> bool:
-        return self._session_dir == _get_default_session_dir_path(self._cwd)
+        return paths_equal(self._session_dir, _get_default_session_dir_path(self._cwd))
 
     def get_session_id(self) -> str:
         return self._session_id
@@ -1231,12 +1232,44 @@ class SessionManager:
             with self._lock:
                 self._flushed = True
 
-    def _append_entry_locked(self, entry: dict[str, Any]) -> None:
-        """In-memory half of an append. Caller holds `_lock` and `_io_lock`."""
+    def _append_entry_locked(self, entry: dict[str, Any]) -> str | None:
+        """In-memory half of an append; returns the leaf it replaced, for
+        `_persist_appended`. Caller holds `_lock` and `_io_lock`."""
+        previous_leaf_id = self._leaf_id
         self._file_entries.append(entry)
         self._entries_revision += 1
         self._by_id[entry["id"]] = entry
         self._leaf_id = entry["id"]
+        return previous_leaf_id
+
+    async def _persist_appended(
+        self, entry: dict[str, Any], previous_leaf_id: str | None, restore: Callable[[], None] | None = None
+    ) -> None:
+        """Write the entry `_append_entry_locked` just added. Caller holds `_io_lock`.
+
+        Keeps memory in line with the file: when the write fails, the entry
+        is taken back out and the leaf moved back, in one `_lock` section,
+        then the error propagates. An entry that was not written must not
+        become the parent of later entries, or the file would hold entries
+        pointing to a missing parent (pi #11460). `restore` undoes an
+        append's other in-memory effects (a label's). A writer that only
+        takes `_lock` (`new_session`, `branch`) may have replaced the entries
+        or moved the leaf meanwhile: only what is still this append's is
+        undone.
+        """
+        try:
+            await self._persist_entry(entry)
+        except BaseException:
+            with self._lock:
+                if self._file_entries and self._file_entries[-1] is entry and self._by_id.get(entry["id"]) is entry:
+                    self._file_entries.pop()
+                    self._entries_revision += 1
+                    del self._by_id[entry["id"]]
+                    if self._leaf_id == entry["id"]:
+                        self._leaf_id = previous_leaf_id
+                    if restore is not None:
+                        restore()
+            raise
 
     def _new_entry_base(self, entry_type: str) -> dict[str, Any]:
         return {
@@ -1256,8 +1289,8 @@ class SessionManager:
             with self._lock:
                 entry = self._new_entry_base("message")
                 entry["message"] = message
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def append_thinking_level_change(self, thinking_level: str) -> str:
@@ -1265,8 +1298,8 @@ class SessionManager:
             with self._lock:
                 entry = self._new_entry_base("thinking_level_change")
                 entry["thinkingLevel"] = thinking_level
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def append_model_change(self, provider: str, model_id: str) -> str:
@@ -1275,8 +1308,8 @@ class SessionManager:
                 entry = self._new_entry_base("model_change")
                 entry["provider"] = provider
                 entry["modelId"] = model_id
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def append_usage(
@@ -1293,8 +1326,8 @@ class SessionManager:
                 entry["usage"] = usage
                 if note:
                     entry["note"] = note
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry
 
     async def append_compaction(
@@ -1326,8 +1359,8 @@ class SessionManager:
                     entry["systemMessage"] = dataclasses.replace(
                         system_message, timestamp=int(_iso_to_epoch_ms(entry["timestamp"]))
                     )
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def append_custom_entry(self, custom_type: str, data: Any = None) -> str:
@@ -1338,8 +1371,8 @@ class SessionManager:
                 entry["customType"] = custom_type
                 if data is not None:
                     entry["data"] = data
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def append_session_info(self, name: str) -> str:
@@ -1349,8 +1382,8 @@ class SessionManager:
                 sanitized_name = re.sub(r"[\r\n]+", " ", name).strip()
                 entry = self._new_entry_base("session_info")
                 entry["name"] = sanitized_name
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     def get_session_name(self) -> str | None:
@@ -1377,8 +1410,8 @@ class SessionManager:
                 entry["display"] = display
                 if details is not None:
                     entry["details"] = details
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def append_context_edit(self, target_id: str, replacement: dict[str, Any] | None) -> str:
@@ -1417,8 +1450,8 @@ class SessionManager:
                 entry = self._new_entry_base("context_edit")
                 entry["targetId"] = target_id
                 entry["replacement"] = normalized_replacement
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     # -- tree traversal ----------------------------------------------------------
@@ -1455,14 +1488,26 @@ class SessionManager:
                 entry["targetId"] = target_id
                 if label is not None:
                     entry["label"] = label
-                self._append_entry_locked(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+                previous_label = self._labels_by_id.get(target_id)
+                previous_label_timestamp = self._label_timestamps_by_id.get(target_id)
                 if label:
                     self._labels_by_id[target_id] = label
                     self._label_timestamps_by_id[target_id] = entry["timestamp"]
                 else:
                     self._labels_by_id.pop(target_id, None)
                     self._label_timestamps_by_id.pop(target_id, None)
-            await self._persist_entry(entry)
+
+            def restore_label() -> None:
+                # pi sets the label only after the append succeeds.
+                if previous_label is None:
+                    self._labels_by_id.pop(target_id, None)
+                    self._label_timestamps_by_id.pop(target_id, None)
+                else:
+                    self._labels_by_id[target_id] = previous_label
+                    self._label_timestamps_by_id[target_id] = previous_label_timestamp
+
+            await self._persist_appended(entry, previous_leaf_id, restore_label)
             return entry["id"]
 
     def get_branch(self, from_id: str | None = None) -> list[dict[str, Any]]:
@@ -1594,8 +1639,8 @@ class SessionManager:
                     entry["usage"] = usage
                 if from_hook is not None:
                     entry["fromHook"] = from_hook
-                self._append_entry_locked(entry)
-            await self._persist_entry(entry)
+                previous_leaf_id = self._append_entry_locked(entry)
+            await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
     async def create_branched_session(self, leaf_id: str) -> str | None:
@@ -1716,7 +1761,7 @@ class SessionManager:
 
         def find_blocking() -> tuple[str, str | None]:
             directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
-            filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+            filter_cwd = session_dir is not None and not paths_equal(directory, _get_default_session_dir_path(cwd))
             return directory, find_most_recent_session_blocking(directory, cwd if filter_cwd else None)
 
         directory, most_recent = await tonio.spawn_blocking(find_blocking)
@@ -1806,7 +1851,7 @@ class SessionManager:
     @staticmethod
     def _find_by_id_blocking(cwd: str, session_id: str, session_dir: str | None = None) -> str | None:
         directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
-        filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+        filter_cwd = session_dir is not None and not paths_equal(directory, _get_default_session_dir_path(cwd))
         resolved_cwd = resolve_path(cwd)
 
         try:
@@ -1838,7 +1883,7 @@ class SessionManager:
             if session_dir
             else await tonio.spawn_blocking(get_default_session_dir_blocking, cwd)
         )
-        filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+        filter_cwd = session_dir is not None and not paths_equal(directory, _get_default_session_dir_path(cwd))
         resolved_cwd = resolve_path(cwd)
 
         def include_session(session: SessionInfo) -> bool:

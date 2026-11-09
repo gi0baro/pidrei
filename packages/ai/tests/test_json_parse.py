@@ -1,11 +1,14 @@
+"""Tests of `pidrei_ai.utils.json_parse`, with the mirror of pi's json-parse.test.ts.
+
+pi's `parseStreamingJson` cases have no target: PiDrei does not port that
+function (streamed arguments go through `streaming_json`). The behaviour they
+pin, invalid `\\u` escapes kept literal, valid ones decoded and one cut off
+mid-stream omitted, is `test_streaming_json.py`'s #10868 case.
+"""
+
 import pytest
 
-from pidrei_ai.utils.json_parse import (
-    parse_json_with_repair,
-    parse_streaming_json,
-    parse_tool_call_arguments,
-    repair_json,
-)
+from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_tool_call_arguments, repair_json
 
 
 def test_repair_doubles_invalid_escapes():
@@ -46,53 +49,6 @@ def test_parse_with_repair_fixes_pi_malformed_tool_json():
 def test_parse_with_repair_raises_on_unrepairable_input():
     with pytest.raises(ValueError):
         parse_json_with_repair("not json")
-
-
-def test_streaming_empty_input_returns_empty_dict():
-    assert parse_streaming_json(None) == {}
-    assert parse_streaming_json("") == {}
-    assert parse_streaming_json("   ") == {}
-
-
-def test_streaming_partial_object():
-    assert parse_streaming_json('{"a": "he') == {"a": "he"}
-    assert parse_streaming_json('{"a": 1, "b"') == {"a": 1}
-
-
-def test_streaming_partial_with_repair():
-    assert parse_streaming_json('{"path":"A\\H","text":"col1\tcol2"}') == {"path": "A\\H", "text": "col1\tcol2"}
-
-
-def test_streaming_prefix_with_raw_control_character_still_repairs():
-    # A streamed delta is both truncated and (pi-style) malformed; the repair
-    # gate must not skip the repair just because the text is a prefix.
-    assert parse_streaming_json('{"path":"A\\H","text":"col1\tcol') == {"path": "A\\H", "text": "col1\tcol"}
-
-
-def test_streaming_garbage_returns_empty_dict():
-    assert parse_streaming_json("not json at all") == {}
-
-
-# Mirror of pi's json-parse.test.ts (parseStreamingJson).
-
-
-def test_streaming_keeps_invalid_unicode_escapes_as_literal_text_without_dropping_fields():
-    # pi #10868
-    assert parse_streaming_json(r'{"text":"\url{x}"}') == {"text": "\\url{x}"}
-    assert parse_streaming_json(r'{"path":"a.tex","content":"\usepackage{x}","mode":"w"}') == {
-        "path": "a.tex",
-        "content": "\\usepackage{x}",
-        "mode": "w",
-    }
-
-
-def test_streaming_decodes_valid_unicode_escapes():
-    # The \u escape for "é", spelled in two pieces.
-    assert parse_streaming_json(r'{"text":"caf\u' + r'00e9 \url"}') == {"text": "café \\url"}
-
-
-def test_streaming_omits_a_unicode_escape_cut_off_mid_stream():
-    assert parse_streaming_json(r'{"text":"ab\u00') == {"text": "ab"}
 
 
 # Mirror of pi's json-parse.test.ts (parseToolCallArguments, pi #10897).

@@ -159,7 +159,8 @@ Judgement calls with precedent:
 - A diff outside a dropped path that only makes sense with dropped surface
   (e.g. consumers of a non-ported subsystem): port the product half, drop the
   rest with a one-line note.
-- **Catalog commits** (`generate-models.ts`): port the generator change.
+- **Catalog commits** (`packages/ai/catalog/`): port the generator change
+  into the matching module of `packages/ai/scripts/catalog/`.
   The catalog is regenerated once at close-out, so tests asserting catalog
   contents fail until then; note them, don't chase them.
 - **Cross-commit dependencies.** A commit can build on another one placed in
@@ -229,8 +230,8 @@ In order:
    §7, and its files get `DIVERGED` entries.
 6. **Verification gate**, all of it:
    - `make upstream-diff`: exit 0, "0 commits to port".
-   - `make lint`. New mirrored ladders may need
-     `# noqa: C901 (mirrors pi's ...)`, matching existing style.
+   - `make lint`. The complexity limit is set out of reach on purpose
+     (mirrored ladders stay as long as pi's); no `# noqa: C901`.
    - `make audit`: 0 findings.
    - The full suite, in slices (`AGENTS.md`), under `timeout 60`.
    - **Never block the runtime**: eyeball every new production I/O site,
@@ -246,8 +247,9 @@ In order:
        imports the module first, so counts shift with test order.
      - A site reached through a spawned coroutine can show as
        "driven by production code" even when a test drives it.
-     - Python's own reads (imports, traceback/linecache) are not PiDrei's
-       I/O.
+     - Python's own reads (imports, traceback/linecache) and the trust store
+       `ssl` loads for a default context are not PiDrei's I/O; the detector
+       does not report them.
    - `make release-check` fails **only** on the missing `vX.Y.Z.0` tag.
 7. **Report and stop.** Lead with the verification state, list what landed,
    and surface every judgement call: deviations, drops, deferrals, parity
@@ -1261,3 +1263,110 @@ the opt-out at once:
   the identity is still re-resolved on top of them.
 - **Tests**: `test_refreshes_send_the_current_client_identity` changes the
   identity between two refreshes.
+
+### `schema-on-jsonschema` (`schema/src/explain.ts`, `coerce.ts`, `validator.ts`, `types.ts`, `checks.ts`, `ai/src/utils/validation.ts`)
+
+Pi 1.5.0 validates tool arguments with pi-schema, its own JSON Schema
+compiler, and pi-schema owns the text the model sees when arguments are
+rejected, and how plain JSON Schema arguments are coerced. PiDrei ports
+those model-visible rules into `pidrei_ai/utils/schema/` and keeps
+`jsonschema` as the engine underneath. The package itself is not ported.
+
+- **Ported 1:1**:
+  - `explain.ts` → `explain.py`: the walk in pi's keyword order, union
+    blame (the tag, then the branch declaring most of the value's keys, then
+    the deepest first error), `listValues` truncation, and the
+    `{path: "", keyword: "schema", message: "invalid"}` fallback.
+  - `coerce.ts` → `coerce.py`: the three passes, copy-on-write, the
+    re-entry stack and memo.
+  - `validator.ts` → `validator.py` (`compile`, `Validator`,
+    `CoercingValidator`) and `types.ts` → `types.py`.
+  - The helper half of `checks.ts` → `checks.py`: the type checks by name,
+    the enum/const/contains/unique checks, `isMultiple`, `isObject`, and
+    JSON equality as pi's (`1` ≠ `true`, key order ignored). `typeName` and
+    `listValues` live in `explain.py`, as in pi. `codePoints` has no port:
+    a `str`'s length is its code points.
+  - JavaScript's `String(number)`, `JSON.stringify` and `===` are in
+    `checks.py` (`number_string`, `json_stringify`, `same_value`): messages
+    say `expected >= 1`, never `1.0`.
+- **The engine is `jsonschema`** (`engine.py`): the boolean check of a
+  subschema is the root validator's `descend()` with that node's scope (its
+  `referencing` resolver), so references resolve as in the root; the walk
+  and the coercion resolve `$ref` with the scope's `lookup`. The registry is
+  empty: nothing is retrieved over the network. Keywords pi's compiler
+  answers differently are overridden there, each covered by a probe: a type
+  name the draft does not define matches nothing; a dangling `$ref` fails
+  the value at its place (`unresolved reference <ref>` in the walk);
+  `multipleOf` is exact for decimals; draft 7's array `items`,
+  `additionalItems` and `dependencies` apply; a number-valued keyword whose
+  value is not a number is ignored; unions stop at the answer, and
+  assertions run before applicators (both only change the cost: without
+  them a recursive union is exponential). Formats are `FORMAT_CHECKER`
+  (`formats.py`) with the `format-nongpl` extra's packages listed one by
+  one, without `rfc3987-syntax`: `jsonschema` imports it whenever it is
+  installed, and its grammars cost ~0.65 s at every launch. PiDrei checks
+  `iri` and `iri-reference` itself (RFC 3987's IRI-to-URI mapping over
+  `rfc3986-validator`), and `url` and `json-pointer-uri-fragment`.
+- **Built at `compile()`**: the explainer and the coercer are built with the
+  validator (pi builds them lazily), so a validator shared by parallel tool
+  calls is one published value. Per-call state (the `$ref` memo, the
+  re-entry stack) lives in a walk object per call. `compile()` deep-copies
+  the schema, as pi's compiled checks capture it.
+- **`validation.py`** is pi's `validation.ts`: one compiled validator per
+  schema through the identity/JSON-key cache under its lock,
+  `parse(deepcopy(arguments))`, and errors formatted as
+  `  - <dotted path>: <message>`.
+- **Not ported**: `compiler.ts`, the closure compilers in `checks.ts`,
+  `resolver.ts`, `annotations.ts`, `shared.ts`, `formats/`, `builders.ts`,
+  `typebox-static.ts`, the benches and the conformance suite with its
+  fixtures (they test the compiler). PiDrei's schemas stay plain dicts
+  (pi's builders are typing sugar), and the coding agent's own config
+  validators keep `jsonschema`'s messages, as pi keeps TypeBox there.
+- **Engine differences, documented in `engine.py`**: `pattern` runs on
+  Python `re`, not ECMAScript (`\p{L}` is an error there); format
+  strictness follows the Python checkers, not TypeBox's regexes.
+- **Upstream diffs**: commits to the not-ported files are nothing to port. A
+  hunk in the ported files lands 1:1; one that changes how pi's compiler
+  answers a check lands on the `jsonschema` call that answers it here.
+- **Tests**: `coerce.test.ts`, `coerce-typebox.test.ts`,
+  `validation.test.ts`, `validation-probes.test.ts` and `validator.test.ts`
+  (all but its JavaScript-only, `bytes`, `schemas` and `draft` cases).
+  `shared.test.ts` tests `shared.ts`'s garbage collection: not mirrored.
+
+### `tool-search-unigrams` (`coding-agent/src/extensions/tool-search/tool.ts`)
+
+Pi 1.5.0 tokenises tool-search text with `Intl.Segmenter`, which gives
+dictionary words for Chinese, Japanese and Thai. Python has no word
+segmenter in the stdlib, and PiDrei takes no dependency for one. The
+tokenizer is hand-rolled:
+
+- Text is NFC-normalised (`unicodedata.normalize`). Code points whose
+  `unicodedata.category` starts with `L`, `M` or `N` are kept; the rest
+  become spaces.
+- ASCII text (`str.isascii()`) keeps the regex split, as pi has the same
+  fast path.
+- Otherwise, a run of kept characters splits into words at spaces. Inside a
+  run, each Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar and Tibetan
+  character is its own token, with its following combining marks
+  (`M*`) attached. Other scripts stay as runs (they write word spaces).
+- camelCase splitting, stop words and stemming apply to ASCII words only,
+  as in pi.
+- **Deviation to keep**: unigrams where pi gives dictionary words. Queries
+  and documents tokenise alike, so non-ASCII queries find their tools.
+- **Upstream diffs**: changes to ranking, weighting and the ASCII path port
+  1:1. A change to pi's segmentation lands in the hand-rolled split.
+- **Tests**: the zh/ja/th cases of pi's `segments Unicode words` take
+  unigram expectations; every other case is unchanged.
+
+### `no-extension-changelog` (`core/package-manager.ts`, `source-info.ts`, `pi-manifest.ts`, `settings-manager.ts`, `settings-schema.ts`, `modes/interactive/interactive-mode.ts`, `test/package-manager.test.ts`, `docs/packages.md`)
+
+Pi 1.5.0 (`b4b72a35`) shows the changelogs of updated extension packages at
+startup. PiDrei does not port the feature. There is no `changelogPath`
+manifest key, no `extensionChangelogVersions` setting, and no "Extension
+Updates" block; the `collapseChangelog` setting keeps its current meaning.
+
+- **Upstream diffs**: hunks that add, read or render extension changelogs
+  are skipped, with their test cases and the "Show a changelog" section of
+  `docs/packages.md`. The rest of these files ports normally.
+  `interactive-mode-extension-changelog.test.ts` is `DROPPED`.
+- A new upstream consumer of extension changelogs is skipped the same way.

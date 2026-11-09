@@ -15,6 +15,7 @@ from pidrei_ai.api import anthropic_messages, openai_completions, openai_respons
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
+    AssistantMessage,
     Context,
     Model,
     ModelCost,
@@ -22,8 +23,10 @@ from pidrei_ai.types import (
     OpenAIResponsesCompat,
     SimpleStreamOptions,
     SystemMessage,
+    TextContent,
     Tool,
     ToolReference,
+    Usage,
     UserMessage,
 )
 from pidrei_ai.utils.transcript import TranscriptTools, normalize_context, resolve_transcript_tools
@@ -248,6 +251,50 @@ async def test_sends_the_current_anthropic_tool_list_without_an_initial_tool():
     assert payload["tools"][0]["cache_control"] == {"type": "ephemeral"}
     assert "defer_loading" not in payload["tools"][0]
     assert [block["type"] for block in payload["messages"][-1]["content"]] == ["text"]
+
+
+# #11091
+@pytest.mark.tonio
+async def test_holds_an_anthropic_update_past_an_assistant_message_that_converts_to_no_blocks():
+    def reply(text: str, provider: str, api: str, model: str) -> AssistantMessage:
+        return AssistantMessage(
+            content=[TextContent(text=text)],
+            api=api,
+            provider=provider,
+            model=model,
+            usage=Usage(),
+            stop_reason="stop",
+            timestamp=3,
+        )
+
+    messages: list = [
+        SystemMessage(content="base prompt", timestamp=0),
+        UserMessage(content="hi", timestamp=1),
+        SystemMessage(content="updated guidance", timestamp=2),
+        # Another model's empty reply: Anthropic rejects empty text blocks, so it is dropped.
+        reply("", "openai-codex", "openai-codex-responses", "gpt-x"),
+        UserMessage(content="again", timestamp=4),
+    ]
+
+    def roles(payload: dict[str, Any]) -> list[str]:
+        return [message["role"] for message in payload["messages"]]
+
+    # No later assistant: the update goes at the end.
+    at_end = await capture_payload(ANTHROPIC_NATIVE_MODEL, Context(messages=messages))
+    assert roles(at_end) == ["user", "user", "system"]
+
+    # A later assistant that is sent: the update goes directly before it.
+    before_assistant = await capture_payload(
+        ANTHROPIC_NATIVE_MODEL,
+        Context(
+            messages=[
+                *messages,
+                reply("answer", ANTHROPIC_NATIVE_MODEL.provider, ANTHROPIC_NATIVE_MODEL.api, ANTHROPIC_NATIVE_MODEL.id),
+                UserMessage(content="third", timestamp=5),
+            ]
+        ),
+    )
+    assert roles(before_assistant) == ["user", "user", "system", "assistant", "user"]
 
 
 @pytest.mark.tonio

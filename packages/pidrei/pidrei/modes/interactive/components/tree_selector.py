@@ -24,6 +24,7 @@ from pidrei_utils import clock
 from pidrei_utils.timers import Timeout
 
 from ....core.tools.render_utils import format_read_line_range
+from ....utils.paths import shorten_home_path
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import format_key_text, key_hint
@@ -849,10 +850,7 @@ class TreeList:
 
     def _format_tool_call(self, name: str, args: dict) -> str:
         def shorten(p: str) -> str:
-            home = os.environ.get("HOME") or ""
-            if home and p.startswith(home):
-                return f"~{p[len(home) :]}"
-            return p
+            return shorten_home_path(p, os.environ.get("HOME") or "")
 
         args = args or {}
         if name == "read":
@@ -1308,6 +1306,10 @@ class TreeSelectorComponent(Container):
         self._label_input_container.clear()
         self._tree_container.clear()
         self._tree_container.add_child(self._tree_list)
+
+    @property
+    def captures_viewport_input(self) -> bool:
+        return self._label_input is None
 
     def handle_input(self, key_data: str) -> None:
         if self._label_input is not None:

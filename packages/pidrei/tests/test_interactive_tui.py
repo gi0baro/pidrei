@@ -475,7 +475,7 @@ async def test_drops_the_fullscreen_selection_when_session_entries_are_re_render
     )
     ui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
     # pi calls the prototype method with `{ renderer, renderSessionItems }` as `this`.
-    context = SimpleNamespace(_renderer=ui, _render_session_items=lambda _items, _options: None)
+    context = SimpleNamespace(_renderer=ui, _render_session_items=lambda _items, _meta, _options: None)
 
     await ui.start()
     try:

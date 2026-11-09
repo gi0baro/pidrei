@@ -17,7 +17,7 @@ from pidrei_tui import Box, Container, Spacer, Text
 from ....modes.interactive.components.diff import render_diff
 from ..edit_diff import Edit, EditDiffError, EditDiffResult, compute_edits_diff
 from ..render_utils import render_tool_path, str_or_none
-from .types import ToolRenderers
+from .types import ToolRenderers, detail_field
 
 
 class EditCallRenderComponent(Box):
@@ -136,15 +136,6 @@ def _result_details(result):
     return result.get("details") if isinstance(result, dict) else getattr(result, "details", None)
 
 
-def _details_get(details, key: str, snake_key: str | None = None):
-    # Detail records may be dataclasses (live results) or camelCase dicts.
-    if details is None:
-        return None
-    if isinstance(details, dict):
-        return details.get(key)
-    return getattr(details, snake_key or key, None)
-
-
 def _format_edit_result(args: dict | None, preview, result, theme, is_error: bool) -> str | None:
     preview_diff = preview.diff if preview is not None and not _preview_is_error(preview) else None
     preview_error = preview.error if preview is not None and _preview_is_error(preview) else None
@@ -155,7 +146,7 @@ def _format_edit_result(args: dict | None, preview, result, theme, is_error: boo
         return theme.fg("error", error_text)
 
     details = _result_details(result)
-    result_diff = _details_get(details, "diff")
+    result_diff = detail_field(details, "diff")
     if result_diff and result_diff != preview_diff:
         raw_path = str_or_none((args or {}).get("file_path", (args or {}).get("path")))
         return render_diff(result_diff, {"filePath": raw_path})
@@ -203,7 +194,7 @@ def _render_result(result, _options, theme, context):
         else None
     )
     details = _result_details(result)
-    result_diff = _details_get(details, "diff") if not context["isError"] else None
+    result_diff = detail_field(details, "diff") if not context["isError"] else None
     changed = False
     if call_component is not None:
         if isinstance(result_diff, str):
@@ -212,7 +203,7 @@ def _render_result(result, _options, theme, context):
                     call_component,
                     EditDiffResult(
                         diff=result_diff,
-                        first_changed_line=_details_get(details, "firstChangedLine", "first_changed_line"),
+                        first_changed_line=detail_field(details, "first_changed_line"),
                     ),
                     args_key,
                 )

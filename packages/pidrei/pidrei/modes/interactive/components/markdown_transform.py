@@ -10,20 +10,34 @@ rule. They run inside ``Markdown.render()``, once per render (every streaming
 update and every width change), where there is nothing to await into.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 
 __all__ = ["create_markdown_transform"]
 
 
-def create_markdown_transform(message_type: str, is_streaming: bool, transformers) -> Any:
-    """Build the ``(markdown, available_width) -> str`` callable a Markdown takes."""
+def create_markdown_transform(
+    message_type: str,
+    is_streaming: Callable[[], bool],
+    transformers,
+    message_id: str | None = None,
+    timestamp: str | None = None,
+) -> Any:
+    """Build the ``(markdown, available_width) -> str`` callable a Markdown takes.
+
+    ``is_streaming`` is read per transform, so a reused component sees a stream
+    end. ``message_id`` and ``timestamp`` are the persisted session entry's id
+    and ISO timestamp; None for live messages and live rendering.
+    """
 
     def transform(markdown: str, available_width: int) -> str:
         context = {
             "messageType": message_type,
-            "isStreaming": is_streaming,
+            "isStreaming": is_streaming(),
             "availableWidth": available_width,
+            "messageId": message_id,
+            "timestamp": timestamp,
         }
         return _apply_markdown_transformers(markdown, context, transformers)
 

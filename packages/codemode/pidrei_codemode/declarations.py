@@ -438,6 +438,8 @@ class RenderedTool:
     output_type: str
     # Keyword parameters, None for `**args: Any`.
     parameters: tuple[CodemodeParameter, ...] | None
+    # Whether `output_type` names `TypedDict`s of `definitions`, so the type alone does not show its fields.
+    output_names_definitions: bool = False
 
     @property
     def sample(self) -> str:
@@ -485,12 +487,14 @@ def _render_tool(tool: CodemodeTool, identifier: str, names: _Names, input_max_c
             parameters = None
             lines = None
 
+    output_names_definitions = False
     if tool.output_schema is None:
         output_type = "Any"
     else:
         renderer = _SchemaRenderer(names, tool.output_schema)
         output_type = renderer.render(tool.output_schema, f"{base}Result")
         definitions.extend(renderer.definitions)
+        output_names_definitions = bool(renderer.definitions)
 
     if lines is None:
         method = f"{INDENT}async def {identifier}(self, **args: Any) -> {output_type}: ..."
@@ -509,6 +513,7 @@ def _render_tool(tool: CodemodeTool, identifier: str, names: _Names, input_max_c
         method=method,
         output_type=output_type,
         parameters=parameters,
+        output_names_definitions=output_names_definitions,
     )
 
 

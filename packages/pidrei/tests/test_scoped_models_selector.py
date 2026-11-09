@@ -63,6 +63,23 @@ async def create_selector(harnesses: list, models: list[dict]) -> ScopedModelsSe
     )
 
 
+# #5916
+@pytest.mark.tonio
+async def test_shows_model_names_that_differ_from_the_id(harnesses):
+    selector = await create_selector(
+        harnesses,
+        [
+            {"id": "model-a", "name": "Model A", "enabled": True},
+            {"id": "model-b", "name": "Renamed B", "enabled": True},
+        ],
+    )
+    provider = harnesses[0].models[0].provider
+
+    rows = [line[4:].rstrip() for line in render(selector).split("\n")]
+    assert f"model-a [{provider}]" in rows
+    assert f"model-b (Renamed B) [{provider}]" in rows
+
+
 @pytest.mark.tonio
 async def test_marks_every_model_after_enabling_all(harnesses):
     models = [

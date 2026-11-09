@@ -229,6 +229,11 @@ whatever interface is active. Honor the interaction's cancel token during
 network requests. `pidrei_ai.auth.oauth` has the built-in flows to read as
 prior art.
 
+Press Enter (`tui.select.confirm`) to open the device-login URL and copy the
+code, or log in manually. Providers can disable either action with
+`open_browser_on_confirm: False` or `copy_code_on_confirm: False` in the
+`on_device_code` info or native `AuthEvent` notifications.
+
 Credentials are stored in `~/.pidrei/agent/auth.json` at mode `0600` and
 refreshed automatically when they expire.
 

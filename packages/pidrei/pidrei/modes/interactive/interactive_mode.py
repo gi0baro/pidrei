@@ -31,7 +31,7 @@ from types import SimpleNamespace
 from typing import Protocol, runtime_checkable
 
 import tonio.colored as tonio
-from tonio.colored import fs, signals as tonio_signals
+from tonio.colored import fs
 
 from pidrei_ai.auth.types import AuthOperationOptions, LoginOptions
 from pidrei_ai.registry import ModelsRefreshOptions
@@ -122,9 +122,9 @@ from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
 from ...utils.image_process import convert_image_to_png_base64
-from ...utils.paths import get_cwd_relative_path
+from ...utils.paths import get_cwd_relative_path, shorten_home_path
 from ...utils.process import probe_tmux_hyperlinks, run_command
-from ...utils.shell import kill_tracked_detached_children
+from ...utils.shell import SignalDispatcher, kill_tracked_detached_children
 from ...utils.temp_file_writer import discard_temp_file
 from ...utils.tools_manager import ensure_tool
 from ...utils.version_check import RELEASES_URL, check_for_new_version
@@ -562,7 +562,7 @@ class ExtensionUIContext:
 
         mode = self._mode
         if isinstance(theme_or_name, ThemeClass):
-            return mode._theme_controller.set_theme_instance(theme_or_name)
+            return await mode._theme_controller.set_theme_instance(theme_or_name)
         result = await mode._theme_controller.set_theme_name(theme_or_name)
         if result["success"] and mode.settings_manager.get_theme() != theme_or_name:
             mode.settings_manager.set_theme(theme_or_name)
@@ -597,11 +597,19 @@ class InteractiveMode:
 
     ``startupDiagnostics`` are the diagnostics collected before the TUI was
     initialized, replayed into the transcript. ``terminal`` is the terminal
-    implementation; it defaults to the current process terminal."""
+    implementation; it defaults to the current process terminal.
 
-    def __init__(self, runtime_host, options: dict | None = None) -> None:
+    ``signal_dispatcher`` is the process's signal receiver; the mode installs
+    its signal handlers on it at init."""
+
+    def __init__(
+        self, runtime_host, options: dict | None = None, *, signal_dispatcher: SignalDispatcher | None = None
+    ) -> None:
         options = options or {}
         self.runtime_host = runtime_host
+        self._signal_dispatcher = signal_dispatcher
+        # Set while suspended (Ctrl+Z): the SIGCONT handler sets it to resume.
+        self._suspend_resumed: tonio.Event | None = None
         set_capability_overrides(self.settings_manager.get_terminal_capability_overrides())
         tui_mode = options.get("tuiMode") or self.settings_manager.get_tui_mode()
         self._options = {**options, "tuiMode": tui_mode}
@@ -704,11 +712,6 @@ class InteractiveMode:
         # shutdown: they run on different tasks (spawned key actions, the
         # signal watcher, /quit, extensions, the crash guard).
         self._shutdown_guard = threading.Lock()
-        # Bumped on unregister so stale signal watchers turn inert. tonio's
-        # signal receiver cannot be cancelled from outside while blocked, but
-        # every unregister call site exits the process right after, so an
-        # inert watcher never outlives anything that matters.
-        self._signal_watch_generation = 0
         self._changelog_markdown: str | None = None
         self._startup_notices_shown = False
         self._anthropic_subscription_warning_shown = False
@@ -743,7 +746,6 @@ class InteractiveMode:
 
         # Agent subscription unsubscribe function
         self._unsubscribe = None
-        self._signal_cleanup_handlers: list = []
 
         # Track if editor is in bash mode (text starts with !)
         self._is_bash_mode = False
@@ -967,7 +969,7 @@ class InteractiveMode:
             {
                 "name": cmd.invocation_name,
                 "description": self._prefix_autocomplete_description(cmd.description, cmd.source_info),
-                "getArgumentCompletions": getattr(cmd, "get_argument_completions", None),
+                "getArgumentCompletions": cmd.get_argument_completions,
             }
             for cmd in self.session.extension_runner.get_registered_commands()
             if cmd.name not in builtin_command_names
@@ -1149,23 +1151,12 @@ class InteractiveMode:
         # Load changelog (only show new entries, skip for resumed sessions)
         self._changelog_markdown = await self._get_changelog_for_display()
 
-        if self.session.scoped_models and self._should_show_startup_details():
-            model_parts = []
-            for sm in self.session.scoped_models:
-                model = sm["model"] if isinstance(sm, dict) else sm.model
-                thinking_level = (
-                    sm.get("thinkingLevel") if isinstance(sm, dict) else getattr(sm, "thinking_level", None)
-                )
-                thinking_str = f":{thinking_level}" if thinking_level else ""
-                model_parts.append(f"{model.id}{thinking_str}")
-            model_list = ", ".join(model_parts)
-            cycle_keys = self._keybindings.get_keys("app.model.cycleForward")
-            cycle_hint = (
-                theme.fg("muted", f" ({format_key_text('/'.join(cycle_keys), {'capitalize': True})} to cycle)")
-                if cycle_keys
-                else ""
-            )
-            write_stdout(theme.fg("dim", f"Model scope: {model_list}{cycle_hint}") + "\n")
+        # Fullscreen renders on the alternate screen, so text printed to stdout here would stay in the shell
+        # after exit. Fullscreen shows the notice in the header instead (pi #11508).
+        if self._renderer.mode != "fullscreen":
+            model_scope_notice = self._get_model_scope_notice()
+            if model_scope_notice:
+                write_stdout(model_scope_notice + "\n")
 
         # Keep one component tree and remount it when changing renderers.
         self._render_widgets()  # Initialize with default spacer
@@ -1306,6 +1297,8 @@ class InteractiveMode:
         with self.ui.state_lock:
             for child in header_children:
                 self._header_container.add_child(child)
+            if self._renderer.mode == "fullscreen":
+                self._show_fullscreen_model_scope_notice()
             self.ui.request_render()
 
         # Resolve fd and rg after mounting the TUI (pi also downloads them
@@ -1548,14 +1541,7 @@ class InteractiveMode:
     # =========================================================================
 
     def _format_display_path(self, p: str) -> str:
-        home = os.path.expanduser("~")
-        result = p
-
-        # Replace home directory with ~
-        if result.startswith(home):
-            result = f"~{result[len(home) :]}"
-
-        return result
+        return shorten_home_path(p)
 
     def _format_extension_display_path(self, path: str) -> str:
         # pi strips its directory entry (`index.ts`/`index.js`); ours is `__init__.py`.
@@ -1577,6 +1563,30 @@ class InteractiveMode:
     def _should_show_startup_header(self) -> bool:
         """Startup header (logo, version, key hints). Hidden only by quietStartup: true."""
         return self._options.get("verbose") is True or self.settings_manager.get_quiet_startup() is not True
+
+    def _get_model_scope_notice(self) -> str | None:
+        if not self.session.scoped_models or not self._should_show_startup_details():
+            return None
+        model_parts = []
+        for sm in self.session.scoped_models:
+            model = sm["model"] if isinstance(sm, dict) else sm.model
+            thinking_level = sm.get("thinkingLevel") if isinstance(sm, dict) else getattr(sm, "thinking_level", None)
+            thinking_str = f":{thinking_level}" if thinking_level else ""
+            model_parts.append(f"{model.id}{thinking_str}")
+        model_list = ", ".join(model_parts)
+        cycle_keys = self._keybindings.get_keys("app.model.cycleForward")
+        cycle_hint = (
+            theme.fg("muted", f" ({format_key_text('/'.join(cycle_keys), {'capitalize': True})} to cycle)")
+            if cycle_keys
+            else ""
+        )
+        return theme.fg("dim", f"Model scope: {model_list}{cycle_hint}")
+
+    def _show_fullscreen_model_scope_notice(self) -> None:
+        if not self._get_model_scope_notice():
+            return
+        self._header_container.add_child(ThemedText(lambda: self._get_model_scope_notice() or "", 1, 0))
+        self._header_container.add_child(Spacer(1))
 
     def _should_show_startup_details(self) -> bool:
         """Startup details (model scope, loaded resources). Hidden by quietStartup: true or "header"."""
@@ -2037,7 +2047,7 @@ class InteractiveMode:
                     self._loaded_resources_container.add_child(
                         ThemedText(
                             lambda: (
-                                f"{theme.fg('warning', '[Skill conflicts]')}\n"
+                                f"{theme.fg('warning', '[Skill warnings]')}\n"
                                 f"{self._format_diagnostics(skill_diagnostics, source_infos)}"
                             ),
                             0,
@@ -2134,8 +2144,8 @@ class InteractiveMode:
                 target_id,
                 {
                     "summarize": options.get("summarize"),
-                    "custom_instructions": options.get("customInstructions"),
-                    "replace_instructions": options.get("replaceInstructions"),
+                    "custom_instructions": options.get("custom_instructions"),
+                    "replace_instructions": options.get("replace_instructions"),
                     "label": options.get("label"),
                 },
             )
@@ -2877,8 +2887,11 @@ class InteractiveMode:
             # Save text from current editor before switching
             current_text = self.editor.get_text()
 
-            self._dispose_active_selector()
-            self._editor_container.clear()
+            # An open extension dialog keeps the editor slot; the new editor is shown when the last dialog closes.
+            dialog_open = len(self._extension_dialogs) > 0
+            if not dialog_open:
+                self._dispose_active_selector()
+                self._editor_container.clear()
 
             if factory is not None:
                 # Create the custom editor with tui, theme, and keybindings
@@ -2942,7 +2955,8 @@ class InteractiveMode:
                 self._default_editor.set_text(current_text)
                 self.editor = self._default_editor
 
-            self._editor_container.add_child(self.editor)
+            if not dialog_open:
+                self._editor_container.add_child(self.editor)
             if self._active_status_indicator is not None:
                 self._status_container.clear()
                 self._active_working_indicator_embedded = self._set_editor_working_status_indicator(
@@ -2950,7 +2964,8 @@ class InteractiveMode:
                 )
                 if not self._active_working_indicator_embedded:
                     self._status_container.set_children([self._active_status_indicator])
-            self.ui.set_focus(self.editor)
+            if not dialog_open:
+                self.ui.set_focus(self.editor)
             self.ui.request_render()
 
     def _show_extension_notify(self, message: str, type=None) -> None:
@@ -3021,7 +3036,12 @@ class InteractiveMode:
                 if on_handle is not None:
                     on_handle(guard_overlay_handle(self.ui, state["overlay_handle"]))
             else:
-                self._push_extension_dialog(component)
+                # `"blocked": {"kind", "message"}` reports pidrei as blocked while the component is visible;
+                # overlays are not on the dialog stack and ignore it.
+                blocked = options.get("blocked")
+                self._push_extension_dialog(
+                    component, BlockedStatus(blocked["kind"], blocked["message"]) if blocked else None
+                )
 
         with self.ui.state_lock:
             state["editor_text"] = self.editor.get_text()
@@ -3446,7 +3466,7 @@ class InteractiveMode:
 
         self._unsubscribe = session.subscribe(apply_event)
 
-    def _handle_event(self, event) -> None:  # noqa: C901
+    def _handle_event(self, event) -> None:
         # pi lazily awaits init() here; pidrei always subscribes after init.
         if not self._is_initialized:
             return
@@ -3933,6 +3953,8 @@ class InteractiveMode:
                             self._get_markdown_theme_with_settings(),
                             self._output_pad,
                             self._get_markdown_transformers(),
+                            options.get("messageId"),
+                            options.get("timestamp"),
                         )
                         self._chat_container.add_child(user_component)
                 else:
@@ -3941,6 +3963,8 @@ class InteractiveMode:
                         self._get_markdown_theme_with_settings(),
                         self._output_pad,
                         self._get_markdown_transformers(),
+                        options.get("messageId"),
+                        options.get("timestamp"),
                     )
                     self._chat_container.add_child(user_component)
                 if options.get("populateHistory"):
@@ -3953,6 +3977,8 @@ class InteractiveMode:
                 self._hidden_thinking_label,
                 self._output_pad,
                 self._get_markdown_transformers(),
+                options.get("messageId"),
+                options.get("timestamp"),
             )
             self._chat_container.add_child(assistant_component)
         elif role == "toolResult":
@@ -3960,8 +3986,14 @@ class InteractiveMode:
             # separately
             pass
 
-    def _render_session_items(self, items: list, options: dict | None = None) -> None:
+    def _render_session_items(
+        self, items: list, message_meta: dict[int, dict] | None = None, options: dict | None = None
+    ) -> None:
+        """``message_meta`` maps ``id()`` of a message in ``items`` to its
+        session entry's ``{"id", "timestamp"}`` (pi: a Map keyed by the
+        message); ``items`` keeps the messages alive meanwhile."""
         options = options or {}
+        message_meta = message_meta or {}
         self._pending_tools.clear()
         rendered_pending_tools: dict = {}
         # Cache misses are not persisted, unlike successful cache-warming
@@ -3991,7 +4023,8 @@ class InteractiveMode:
             message = item
             # Assistant messages need special handling for tool calls
             if message.role == "assistant":
-                self._add_message_to_chat(message)
+                meta = message_meta.get(id(message), {})
+                self._add_message_to_chat(message, {"messageId": meta.get("id"), "timestamp": meta.get("timestamp")})
                 # Render tool call components
                 for content in message.content:
                     if content.type == "toolCall":
@@ -4048,7 +4081,10 @@ class InteractiveMode:
                     rendered_pending_tools.pop(message.tool_call_id, None)
             else:
                 # All other messages use standard rendering
-                self._add_message_to_chat(message, options)
+                meta = message_meta.get(id(message), {})
+                self._add_message_to_chat(
+                    message, {**options, "messageId": meta.get("id"), "timestamp": meta.get("timestamp")}
+                )
 
         for tool_call_id, component in rendered_pending_tools.items():
             self._pending_tools[tool_call_id] = component
@@ -4088,15 +4124,18 @@ class InteractiveMode:
         if isinstance(self._renderer, TuiAltScreen):
             self._renderer.reset_text_selection()
         items: list = []
+        message_meta: dict[int, dict] = {}
         for entry in entries:
             if entry.get("type") == "custom" or (entry.get("type") == "usage" and entry.get("kind") == "cache_warm"):
                 items.append(entry)
                 continue
             messages = session_entry_to_context_messages(entry)
+            for message in messages:
+                message_meta[id(message)] = {"id": entry.get("id"), "timestamp": entry.get("timestamp")}
             items.extend(messages)
             if entry.get("type") in ("compaction", "branch_summary") and entry.get("usage") and messages:
                 items.append({"type": "compaction_cost", "kind": entry["type"], "usage": entry["usage"]})
-        self._render_session_items(items, options)
+        self._render_session_items(items, message_meta, options)
 
     def _add_cache_warming_usage(self, entry: dict) -> None:
         if not self.settings_manager.get_show_cache_miss_notices():
@@ -4347,7 +4386,6 @@ class InteractiveMode:
     def _emergency_terminal_exit(self) -> None:
         with self._shutdown_guard:
             self._is_shutting_down = True
-        self._unregister_signal_handlers()
         kill_tracked_detached_children()
         # The terminal is gone. Do not run normal shutdown because TUI and
         # extension cleanup can write restore sequences and re-trigger EIO.
@@ -4375,8 +4413,6 @@ class InteractiveMode:
             self._is_shutting_down = True
         if already_shutting_down:
             hard_exit(1)
-        with contextlib.suppress(Exception):
-            self._unregister_signal_handlers()
         with contextlib.suppress(Exception):
             kill_tracked_detached_children()
         with contextlib.suppress(Exception):
@@ -4411,33 +4447,36 @@ class InteractiveMode:
         converts into _emergency_terminal_exit (see pi #4144, #5080).
 
         Deviation: pi prepends process listeners and hooks stdout/stderr
-        "error" events plus uncaughtException; here a tonio signal receiver
-        feeds a background watcher, write errors surface at the write site,
-        and the run loop's crash guard covers _uncaught_crash.
+        "error" events plus uncaughtException; here the handlers go on the
+        process's signal dispatcher once, at init, write errors surface at the
+        write site, and the run loop's crash guard covers _uncaught_crash.
+        A signal during a shutdown already under way does nothing: `shutdown`
+        returns for every call after the first.
+
+        SIGWINCH asks for a frame (the terminal size is read fresh on every
+        frame); a stopped TUI ignores the request. SIGCONT resumes a
+        suspended TUI (see `_handle_ctrl_z`) and does nothing otherwise.
         """
-        self._unregister_signal_handlers()
-        with self._shutdown_guard:
-            generation = self._signal_watch_generation
+        if self._signal_dispatcher is None:
+            return
 
-        async def watch_signals() -> None:
-            try:
-                with tonio_signals.signal_receiver(signal.SIGTERM, signal.SIGHUP) as receiver:
-                    async for _sig in receiver:
-                        with self._shutdown_guard:
-                            superseded = self._signal_watch_generation != generation
-                        if superseded:
-                            return
-                        kill_tracked_detached_children()
-                        await self.shutdown({"fromSignal": True})
-            except ValueError, RuntimeError:
-                # Signals can only be watched from the main thread (tests).
-                return
+        async def on_shutdown_signal(_signum: int) -> None:
+            kill_tracked_detached_children()
+            await self.shutdown({"fromSignal": True})
 
-        tonio.spawn.without_tracking(watch_signals())
+        async def on_resize(_signum: int) -> None:
+            self.ui.request_render()
 
-    def _unregister_signal_handlers(self) -> None:
-        with self._shutdown_guard:
-            self._signal_watch_generation += 1
+        async def on_continue(_signum: int) -> None:
+            resumed = self._suspend_resumed
+            if resumed is not None:
+                self._suspend_resumed = None
+                resumed.set()
+
+        self._signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
+        self._signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
+        self._signal_dispatcher.set_handler(signal.SIGWINCH, on_resize)
+        self._signal_dispatcher.set_handler(signal.SIGCONT, on_continue)
 
     async def _handle_ctrl_z(self) -> None:
         """Suspend to background (Ctrl+Z): the suspend action's work, which
@@ -4450,35 +4489,30 @@ class InteractiveMode:
         (spec/ui-island.md).
 
         Deviations: Python processes stay alive without pi's event-loop
-        keep-alive timer, and SIGCONT is awaited through a tonio signal
-        receiver instead of process.once. SIGINT is ignored while suspended
-        so Ctrl+C in the terminal does not kill the backgrounded process.
+        keep-alive timer, and SIGCONT reaches the resume through the
+        `_suspend_resumed` event the mode's SIGCONT handler sets, instead of
+        process.once. pi's SIGINT listener while suspended is not ported: the
+        runtime delivers no SIGINT to pidrei's code.
         """
+        resumed = tonio.Event()
+        # Published before the suspend: the SIGCONT of the resume finds it.
+        self._suspend_resumed = resumed
         try:
-            previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        except ValueError:
-            previous_sigint = None
-
-        # Undone here if the suspend fails, else by the resume.
-        with contextlib.ExitStack() as suspended:
-            if previous_sigint is not None:
-                suspended.callback(signal.signal, signal.SIGINT, previous_sigint)
-            sigcont = suspended.enter_context(tonio_signals.signal_receiver(signal.SIGCONT))
-
             # Stop the TUI (restore terminal to normal mode)
             await self.ui.stop()
 
             # Send SIGTSTP to the process group (pid 0 means all
             # processes in the group)
             os.kill(0, signal.SIGTSTP)
+        except BaseException:
+            self._suspend_resumed = None
+            raise
 
-            self._spawn_flow(self._resume_after_suspend(sigcont, suspended.pop_all()))
+        self._spawn_flow(self._resume_after_suspend(resumed))
 
-    async def _resume_after_suspend(self, sigcont, suspended: contextlib.ExitStack) -> None:
-        with suspended:
-            # Stopped until `fg`; SIGCONT wakes the receiver.
-            async for _sig in sigcont:
-                break
+    async def _resume_after_suspend(self, resumed) -> None:
+        # Stopped until `fg`; its SIGCONT sets the event.
+        await resumed.wait()
         await self.ui.start()
         self.ui.request_render(True)
 
@@ -4622,6 +4656,8 @@ class InteractiveMode:
             result = await edit_in_external_editor({"command": editor_cmd, "content": content})
             if result["status"] == "complete":
                 self._set_editor_text(result["content"])
+            else:
+                self.show_status(result["message"])
         finally:
             await self.ui.start()
             self.ui.request_render(True)
@@ -5857,7 +5893,7 @@ class InteractiveMode:
 
     async def _handle_resume_session(self, session_path: str, options: dict | None = None) -> dict:
         self._clear_status_indicator()
-        with_session = options.get("withSession") if options else None
+        with_session = options.get("with_session") if options else None
         try:
             result = await self.runtime_host.switch_session(
                 session_path,
@@ -6464,7 +6500,14 @@ class InteractiveMode:
             if event.type == "auth_url":
                 dialog.show_auth(event.url, event.instructions)
             elif event.type == "device_code":
-                dialog.show_device_code({"verificationUri": event.verification_uri, "userCode": event.user_code})
+                dialog.show_device_code(
+                    {
+                        "verificationUri": event.verification_uri,
+                        "userCode": event.user_code,
+                        "openBrowserOnConfirm": event.open_browser_on_confirm,
+                        "copyCodeOnConfirm": event.copy_code_on_confirm,
+                    }
+                )
                 dialog.show_waiting("Waiting for authentication...")
             elif event.type == "info":
                 dialog.show_info(event.message, event.links)
@@ -7336,4 +7379,3 @@ class InteractiveMode:
         # fds again from here.
         detach_terminal()
         await self.ui.close()
-        self._unregister_signal_handlers()

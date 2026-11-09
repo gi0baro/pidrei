@@ -52,6 +52,13 @@ def test_rewrites_apple_terminal_return_to_csi_u_shift_enter_when_shift_pressed(
     assert normalize_apple_terminal_input("\r", True, True) == "\x1b[13;2u"
 
 
+def test_rewrites_esc_cr_to_csi_u_shift_enter_when_shift_is_pressed():
+    # #11559
+    assert normalize_apple_terminal_input("\x1b\r", True, True) == "\x1b[13;2u"
+    assert normalize_apple_terminal_input("\x1b\r", True, False) == "\x1b\r"
+    assert normalize_apple_terminal_input("\x1b\r", False, True) == "\x1b\r"
+
+
 def test_leaves_apple_terminal_return_unchanged_when_shift_not_pressed():
     assert normalize_apple_terminal_input("\r", True, False) == "\r"
 
@@ -351,6 +358,19 @@ def test_writes_a_valid_osc_9_4_clear_sequence():
     terminal.set_progress(False)
 
     assert writes == ["\x1b]9;4;0\x07"]
+
+
+# ProcessTerminal title
+
+
+def test_replaces_control_characters_so_the_title_cannot_end_the_osc_sequence():
+    terminal = ProcessTerminal()
+    writes: list[str] = []
+    terminal.write_sync = writes.append
+
+    terminal.set_title("pi - work\x07\x1b]52;c;Zm9v\x07\x9b2J - repo")
+
+    assert writes == ["\x1b]0;pi - work ]52;c;Zm9v 2J - repo\x07"]
 
 
 # ProcessTerminal dimensions

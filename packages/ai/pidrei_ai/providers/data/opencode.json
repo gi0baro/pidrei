@@ -5,7 +5,7 @@
       "name": "Claude Fable 5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -19,14 +19,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true
-      },
       "thinkingLevelMap": {
         "off": null,
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -45,7 +45,7 @@
       "name": "Claude Fable 5.1",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -59,14 +59,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true
-      },
       "thinkingLevelMap": {
         "off": null,
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -85,7 +85,7 @@
       "name": "Claude Haiku 4.5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -116,7 +116,7 @@
       "name": "Claude Haiku 5.5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -139,14 +139,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -165,7 +165,7 @@
       "name": "Claude Opus 4.5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -196,7 +196,7 @@
       "name": "Claude Opus 4.6",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -233,7 +233,7 @@
       "name": "Claude Opus 4.7",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -272,7 +272,7 @@
       "name": "Claude Opus 4.8",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -286,14 +286,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -312,7 +312,7 @@
       "name": "Claude Opus 5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -326,14 +326,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -352,7 +352,7 @@
       "name": "Claude Opus 5.5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -366,14 +366,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -392,7 +392,7 @@
       "name": "Claude Sonnet 4.5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -432,7 +432,7 @@
       "name": "Claude Sonnet 4.6",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -469,7 +469,7 @@
       "name": "Claude Sonnet 5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -507,7 +507,7 @@
       "name": "Claude Sonnet 5.5",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -521,14 +521,14 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsMidConvoSystemMessages": true,
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
         "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsMidConvoSystemMessages": true
       },
       "inputLimits": {
         "images": {
@@ -547,7 +547,7 @@
       "name": "Qwen3.5 Plus",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -578,7 +578,7 @@
       "name": "Qwen3.6 Plus",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -609,7 +609,7 @@
       "name": "Qwen3.8 Flash",
       "api": "anthropic-messages",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference",
+      "baseUrl": "https://opencode.ai/inference/anthropic",
       "reasoning": true,
       "input": [
         "text",
@@ -645,17 +645,8 @@
       "name": "Gemini 3 Flash",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -668,6 +659,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -685,17 +685,8 @@
       "name": "Gemini 3.1 Pro Preview",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -717,6 +708,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -734,17 +734,8 @@
       "name": "Gemini 3.5 Flash",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -757,6 +748,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -774,17 +774,8 @@
       "name": "Gemini 3.5 Flash Lite",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -797,6 +788,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -814,17 +814,8 @@
       "name": "Gemini 3.6 Flash",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -837,6 +828,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -854,17 +854,8 @@
       "name": "Gemini 3.7 Flash",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -877,6 +868,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -894,17 +894,8 @@
       "name": "Gemini 3.8 Flash",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -917,6 +908,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -934,17 +934,8 @@
       "name": "Gemini 4 Argon",
       "api": "google-generative-ai",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/google/v1beta",
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -957,6 +948,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -976,7 +976,7 @@
       "name": "Beam Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -987,14 +987,14 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 1048576,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1011,7 +1011,7 @@
       "name": "Big Pickle",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1022,50 +1022,13 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 200000,
+      "maxTokens": 32000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
-      },
-      "contextWindow": 200000,
-      "maxTokens": 32000,
-      "type": "chat"
-    },
-    "chat:deepseek-v4-flash": {
-      "id": "deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash",
-      "api": "openai-completions",
-      "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.14,
-        "output": 0.28,
-        "cacheRead": 0.028,
-        "cacheWrite": 0
-      },
-      "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false,
-        "supportsStrictMode": true,
-        "maxTokensField": "max_tokens",
-        "supportsLongCacheRetention": false,
-        "requiresReasoningContentOnAssistantMessages": true
-      },
-      "contextWindow": 1000000,
-      "maxTokens": 384000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": null,
-        "high": "high",
-        "xhigh": null,
-        "max": "max"
       },
       "type": "chat"
     },
@@ -1074,7 +1037,7 @@
       "name": "DeepSeek V4 Pro",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1085,6 +1048,8 @@
         "cacheRead": 0.145,
         "cacheWrite": 0
       },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -1093,8 +1058,6 @@
         "supportsLongCacheRetention": false,
         "requiresReasoningContentOnAssistantMessages": true
       },
-      "contextWindow": 1000000,
-      "maxTokens": 384000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1111,7 +1074,7 @@
       "name": "DeepSeek V4.1 Flash",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1123,15 +1086,16 @@
         "cacheRead": 0.006,
         "cacheWrite": 0
       },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens",
+        "supportsLongCacheRetention": false,
         "requiresReasoningContentOnAssistantMessages": true
       },
-      "contextWindow": 1000000,
-      "maxTokens": 384000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1158,7 +1122,7 @@
       "name": "DeepSeek V4.1 Flash Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1170,6 +1134,8 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 200000,
+      "maxTokens": 32000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -1177,8 +1143,6 @@
         "maxTokensField": "max_tokens",
         "requiresReasoningContentOnAssistantMessages": true
       },
-      "contextWindow": 200000,
-      "maxTokens": 32000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1205,7 +1169,7 @@
       "name": "Flint 40B Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1216,14 +1180,14 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 262144,
+      "maxTokens": 65536,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 262144,
-      "maxTokens": 65536,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1240,7 +1204,7 @@
       "name": "GLM-5",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1251,14 +1215,14 @@
         "cacheRead": 0.2,
         "cacheWrite": 0
       },
+      "contextWindow": 204800,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 204800,
-      "maxTokens": 131072,
       "type": "chat"
     },
     "chat:glm-5.1": {
@@ -1266,7 +1230,7 @@
       "name": "GLM-5.1",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1277,14 +1241,14 @@
         "cacheRead": 0.26,
         "cacheWrite": 0
       },
+      "contextWindow": 204800,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 204800,
-      "maxTokens": 131072,
       "type": "chat"
     },
     "chat:glm-5.2": {
@@ -1292,7 +1256,7 @@
       "name": "GLM-5.2",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1303,14 +1267,14 @@
         "cacheRead": 0.26,
         "cacheWrite": 0
       },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 1000000,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1327,7 +1291,7 @@
       "name": "GLM-5.3",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1338,14 +1302,14 @@
         "cacheRead": 0.26,
         "cacheWrite": 0
       },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 1000000,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1362,7 +1326,7 @@
       "name": "GLM-5.3-Flash",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1374,14 +1338,14 @@
         "cacheRead": 0.03,
         "cacheWrite": 0
       },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 1000000,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1408,7 +1372,7 @@
       "name": "GLM-5.3-Flash Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1420,14 +1384,14 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 200000,
+      "maxTokens": 32000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 200000,
-      "maxTokens": 32000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1449,12 +1413,84 @@
       },
       "type": "chat"
     },
+    "chat:iceman-free": {
+      "id": "iceman-free",
+      "name": "Iceman Free",
+      "api": "openai-completions",
+      "provider": "opencode",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
+        "maxTokensField": "max_tokens"
+      },
+      "type": "chat"
+    },
+    "chat:inkling-2-small-free": {
+      "id": "inkling-2-small-free",
+      "name": "Inkling 2 Small Free",
+      "api": "openai-completions",
+      "provider": "opencode",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
+        "maxTokensField": "max_tokens"
+      },
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:kimi-k2.5": {
       "id": "kimi-k2.5",
       "name": "Kimi K2.5",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1466,6 +1502,8 @@
         "cacheRead": 0.1,
         "cacheWrite": 0
       },
+      "contextWindow": 262144,
+      "maxTokens": 65536,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -1473,8 +1511,6 @@
         "maxTokensField": "max_tokens",
         "supportsLongCacheRetention": false
       },
-      "contextWindow": 262144,
-      "maxTokens": 65536,
       "inputLimits": {
         "images": {
           "resize": {
@@ -1492,7 +1528,7 @@
       "name": "Kimi K2.6",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1504,6 +1540,8 @@
         "cacheRead": 0.16,
         "cacheWrite": 0
       },
+      "contextWindow": 262144,
+      "maxTokens": 65536,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -1513,8 +1551,6 @@
         "maxTokensField": "max_tokens",
         "supportsLongCacheRetention": false
       },
-      "contextWindow": 262144,
-      "maxTokens": 65536,
       "inputLimits": {
         "images": {
           "resize": {
@@ -1532,7 +1568,7 @@
       "name": "Kimi K2.7 Code",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1544,14 +1580,14 @@
         "cacheRead": 0.19,
         "cacheWrite": 0
       },
+      "contextWindow": 262144,
+      "maxTokens": 262144,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 262144,
-      "maxTokens": 262144,
       "inputLimits": {
         "images": {
           "resize": {
@@ -1569,7 +1605,7 @@
       "name": "Kimi K3",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1579,8 +1615,10 @@
         "input": 3,
         "output": 15,
         "cacheRead": 0.3,
-        "cacheWrite": 0
+        "cacheWrite": 3
       },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -1589,8 +1627,6 @@
         "supportsMidConvoSystemMessages": true,
         "supportsMidConvoToolAdditions": true
       },
-      "contextWindow": 1048576,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1617,7 +1653,7 @@
       "name": "MiMo-V2.6-Flash Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1629,14 +1665,14 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 200000,
+      "maxTokens": 32000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 200000,
-      "maxTokens": 32000,
       "inputLimits": {
         "images": {
           "resize": {
@@ -1654,7 +1690,7 @@
       "name": "MiniMax-M2.5",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1665,14 +1701,14 @@
         "cacheRead": 0.06,
         "cacheWrite": 0
       },
+      "contextWindow": 204800,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 204800,
-      "maxTokens": 131072,
       "type": "chat"
     },
     "chat:minimax-m2.7": {
@@ -1680,7 +1716,7 @@
       "name": "MiniMax-M2.7",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1691,6 +1727,8 @@
         "cacheRead": 0.06,
         "cacheWrite": 0
       },
+      "contextWindow": 204800,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -1698,8 +1736,6 @@
         "maxTokensField": "max_tokens",
         "supportsLongCacheRetention": false
       },
-      "contextWindow": 204800,
-      "maxTokens": 131072,
       "type": "chat"
     },
     "chat:minimax-m3": {
@@ -1707,7 +1743,7 @@
       "name": "MiniMax-M3",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1719,14 +1755,14 @@
         "cacheRead": 0.06,
         "cacheWrite": 0
       },
+      "contextWindow": 512000,
+      "maxTokens": 128000,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 512000,
-      "maxTokens": 128000,
       "inputLimits": {
         "images": {
           "resize": {
@@ -1744,7 +1780,7 @@
       "name": "Mistral Large 4",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1756,14 +1792,14 @@
         "cacheRead": 0.07,
         "cacheWrite": 0
       },
+      "contextWindow": 524288,
+      "maxTokens": 262144,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 524288,
-      "maxTokens": 262144,
       "thinkingLevelMap": {
         "off": "none",
         "minimal": null,
@@ -1785,38 +1821,12 @@
       },
       "type": "chat"
     },
-    "chat:nemotron-3-ultra-free": {
-      "id": "nemotron-3-ultra-free",
-      "name": "Nemotron 3 Ultra Free",
-      "api": "openai-completions",
-      "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false,
-        "supportsStrictMode": true,
-        "maxTokensField": "max_tokens"
-      },
-      "contextWindow": 1000000,
-      "maxTokens": 128000,
-      "type": "chat"
-    },
     "chat:nemotron-3.5-lightning-free": {
       "id": "nemotron-3.5-lightning-free",
       "name": "Nemotron 3.5 Lightning Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -1827,14 +1837,14 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 262144,
+      "maxTokens": 262144,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 262144,
-      "maxTokens": 262144,
       "type": "chat"
     },
     "chat:nemotron-3.5-super-vl-free": {
@@ -1842,7 +1852,7 @@
       "name": "Nemotron 3.5 Super VL Free",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1854,14 +1864,14 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 1048576,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": "none",
         "minimal": "minimal",
@@ -1888,7 +1898,7 @@
       "name": "Qwen3.8 Max",
       "api": "openai-completions",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1900,14 +1910,14 @@
         "cacheRead": 0.25,
         "cacheWrite": 2.5
       },
+      "contextWindow": 262144,
+      "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "maxTokensField": "max_tokens"
       },
-      "contextWindow": 262144,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1931,12 +1941,55 @@
     }
   },
   "openai-responses": {
+    "chat:crouton-alpha-free": {
+      "id": "crouton-alpha-free",
+      "name": "Crouton Alpha Free",
+      "api": "openai-responses",
+      "provider": "opencode",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 270000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession"
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:gpt-5": {
       "id": "gpt-5",
       "name": "GPT-5",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1948,12 +2001,12 @@
         "cacheRead": 0.107,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
@@ -1980,7 +2033,7 @@
       "name": "GPT-5 Codex",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -1992,12 +2045,12 @@
         "cacheRead": 0.107,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2024,7 +2077,7 @@
       "name": "GPT-5 Nano",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2036,12 +2089,12 @@
         "cacheRead": 0.005,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
@@ -2068,7 +2121,7 @@
       "name": "GPT-5.1",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2080,12 +2133,12 @@
         "cacheRead": 0.107,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2112,7 +2165,7 @@
       "name": "GPT-5.1 Codex",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2124,12 +2177,12 @@
         "cacheRead": 0.107,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2156,7 +2209,7 @@
       "name": "GPT-5.1 Codex Max",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2168,12 +2221,12 @@
         "cacheRead": 0.125,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2200,7 +2253,7 @@
       "name": "GPT-5.1 Codex Mini",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2212,12 +2265,12 @@
         "cacheRead": 0.025,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2244,7 +2297,7 @@
       "name": "GPT-5.2",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2256,12 +2309,12 @@
         "cacheRead": 0.175,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2288,7 +2341,7 @@
       "name": "GPT-5.2 Codex",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2300,12 +2353,12 @@
         "cacheRead": 0.175,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2332,7 +2385,7 @@
       "name": "GPT-5.3 Codex",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2344,12 +2397,12 @@
         "cacheRead": 0.175,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2376,7 +2429,7 @@
       "name": "GPT-5.4",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2397,14 +2450,13 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 272000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2431,7 +2483,7 @@
       "name": "GPT-5.4 Mini",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2443,14 +2495,13 @@
         "cacheRead": 0.075,
         "cacheWrite": 0
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 400000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2477,7 +2528,7 @@
       "name": "GPT-5.4 Nano",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2489,12 +2540,12 @@
         "cacheRead": 0.02,
         "cacheWrite": 0
       },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2521,7 +2572,7 @@
       "name": "GPT-5.4 Pro",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2533,14 +2584,13 @@
         "cacheRead": 30,
         "cacheWrite": 0
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2567,7 +2617,7 @@
       "name": "GPT-5.5",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2588,14 +2638,13 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2622,7 +2671,7 @@
       "name": "GPT-5.5 Pro",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2634,12 +2683,12 @@
         "cacheRead": 30,
         "cacheWrite": 0
       },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsOpenAIGrammarTools": true
       },
-      "contextWindow": 1050000,
-      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2666,7 +2715,7 @@
       "name": "GPT-5.6 Luna",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2687,14 +2736,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2721,7 +2770,7 @@
       "name": "GPT-5.6 Sol",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2742,14 +2791,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2776,7 +2825,7 @@
       "name": "GPT-5.6 Terra",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2797,14 +2846,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2831,7 +2880,7 @@
       "name": "GPT-6 Astra",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2852,14 +2901,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -2886,7 +2935,7 @@
       "name": "GPT-6 Luna",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2907,14 +2956,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": "none",
         "minimal": null,
@@ -2941,7 +2990,7 @@
       "name": "GPT-6 Sol",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -2962,14 +3011,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": "none",
         "minimal": null,
@@ -2996,7 +3045,7 @@
       "name": "GPT-6.1 Sol",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3017,14 +3066,14 @@
           }
         ]
       },
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession",
-        "supportsOpenAIGrammarTools": true,
-        "supportsMidConvoSystemMessages": true,
-        "supportsAdditionalTools": true
-      },
       "contextWindow": 1050000,
       "maxTokens": 128000,
+      "compat": {
+        "sessionAffinityFormat": "openai-nosession",
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true,
+        "supportsOpenAIGrammarTools": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -3051,7 +3100,7 @@
       "name": "Grok 4.5",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3072,11 +3121,11 @@
           }
         ]
       },
+      "contextWindow": 500000,
+      "maxTokens": 500000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession"
       },
-      "contextWindow": 500000,
-      "maxTokens": 500000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -3103,7 +3152,7 @@
       "name": "Grok 4.6",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3124,11 +3173,11 @@
           }
         ]
       },
+      "contextWindow": 500000,
+      "maxTokens": 500000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession"
       },
-      "contextWindow": 500000,
-      "maxTokens": 500000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -3155,7 +3204,7 @@
       "name": "Grok 4.7",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3176,11 +3225,11 @@
           }
         ]
       },
+      "contextWindow": 500000,
+      "maxTokens": 500000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession"
       },
-      "contextWindow": 500000,
-      "maxTokens": 500000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -3207,7 +3256,7 @@
       "name": "Grok Build 0.1",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3219,12 +3268,12 @@
         "cacheRead": 0.2,
         "cacheWrite": 0
       },
+      "contextWindow": 256000,
+      "maxTokens": 256000,
       "compat": {
         "sessionAffinityFormat": "openai-nosession",
         "supportsReasoningEffort": false
       },
-      "contextWindow": 256000,
-      "maxTokens": 256000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -3248,7 +3297,7 @@
       "name": "Muse Spark 1.2",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3260,11 +3309,11 @@
         "cacheRead": 0.15,
         "cacheWrite": 0
       },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "sessionAffinityFormat": "openai-nosession"
       },
-      "contextWindow": 1048576,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
@@ -3291,7 +3340,7 @@
       "name": "Muse Spark 1.3",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3303,11 +3352,11 @@
         "cacheRead": 0.15,
         "cacheWrite": 0
       },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "sessionAffinityFormat": "openai-nosession"
       },
-      "contextWindow": 1048576,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
@@ -3334,7 +3383,7 @@
       "name": "Muse Wonder",
       "api": "openai-responses",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -3346,11 +3395,11 @@
         "cacheRead": 0.2,
         "cacheWrite": 0
       },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "sessionAffinityFormat": "openai-nosession"
       },
-      "contextWindow": 1048576,
-      "maxTokens": 131072,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
@@ -3380,7 +3429,7 @@
       "name": "Jev 1.13",
       "api": "typesafe-system-one",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/systemone/v1",
       "input": [
         "text"
       ],
@@ -3398,7 +3447,7 @@
       "name": "Jev 1.13 Free",
       "api": "typesafe-system-one",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/v1",
+      "baseUrl": "https://opencode.ai/inference/systemone/v1",
       "input": [
         "text"
       ],

@@ -20,14 +20,14 @@ exact reference for your setup; this page lists the built-ins.
 | Command | Description |
 |---------|-------------|
 | `/new` | Start a new session |
-| `/resume` | Switch to another saved session |
+| `/resume` | Resume another session |
 | `/name [name]` | Set the session display name; without one, show it |
 | `/session` | Session info and statistics |
 | `/tree` | Navigate the session tree |
 | `/fork` | New session from an earlier user message |
 | `/clone` | Duplicate the session at its current position |
 | `/compact [instructions]` | Compact the context, optionally with custom instructions |
-| `/import <path>` | Import and resume a JSONL session |
+| `/import <path>` | Import a JSONL session, preserving its ID and working directory |
 
 ## Export and share
 
@@ -50,6 +50,7 @@ the conversation.
 | Command | Description |
 |---------|-------------|
 | `/trust` | Save a project trust decision for future runs |
+| `/mcp` | Manage MCP servers: sign in, reconnect, enable or disable, and change exposure ([mcp.md](mcp.md)) |
 | `/reload` | Reload keybindings, extensions, skills, prompts, themes, and context files |
 | `/hotkeys` | Show active shortcuts ([keybindings.md](keybindings.md)) |
 | `/changelog` | Show pidrei's changelog |

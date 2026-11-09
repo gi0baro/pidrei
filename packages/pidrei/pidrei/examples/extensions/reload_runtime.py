@@ -1,7 +1,7 @@
 """Reload Runtime
 
 Demonstrates ctx.reload() from the extension command context and an
-LLM-callable tool that queues a follow-up command to trigger reload.
+LLM-callable tool that requests a reload once the agent has settled.
 
 Start pidrei with this extension:
     pidrei -e ./examples/extensions/reload_runtime.py
@@ -25,14 +25,18 @@ async def extension(pi):
     )
 
     # LLM-callable tool. Tools get the plain extension context, which has no
-    # reload(); only command handlers do. Instead, queue a follow-up user
-    # command that executes the command above. expandPromptTemplates makes the
-    # queued text dispatch as a command instead of going to the model as text.
+    # reload(), and pidrei cannot reload while the agent is running. The tool
+    # records the request and ends the run; the agent_settled handler then
+    # runs the command above.
+    reload_requested = False
+
     async def reload_runtime(_tool_call_id, _params, _cancel=None, _on_update=None, _ctx=None):
-        pi.send_user_message("/reload-runtime", {"deliverAs": "followUp", "expandPromptTemplates": True})
+        nonlocal reload_requested
+        reload_requested = True
         return AgentToolResult(
-            content=[TextContent(text="Queued /reload-runtime as a follow-up command.")],
+            content=[TextContent(text="Reload requested. pidrei reloads after this response.")],
             details={},
+            terminate=True,
         )
 
     pi.register_tool(
@@ -44,3 +48,15 @@ async def extension(pi):
             execute=reload_runtime,
         )
     )
+
+    async def on_agent_settled(_event, _ctx) -> None:
+        nonlocal reload_requested
+        if not reload_requested:
+            return
+        reload_requested = False
+        # Sent from agent_settled, the command runs after every settled handler
+        # finishes, while the agent is idle. expandPromptTemplates dispatches it
+        # as a command, not as model input.
+        pi.send_user_message("/reload-runtime", {"expandPromptTemplates": True})
+
+    pi.on("agent_settled", on_agent_settled)

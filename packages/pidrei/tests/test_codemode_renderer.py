@@ -7,6 +7,7 @@ import pytest
 from pidrei.extensions.codemode import CodemodeNestedCall, CodemodeToolDetails
 from pidrei.extensions.codemode.renderer import CODEMODE_RENDERERS
 from pidrei.modes.interactive.components import ToolExecutionComponent
+from pidrei.modes.interactive.components.keybinding_hints import key_hint, key_text
 from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_agent.types import AgentToolResult
@@ -40,6 +41,8 @@ def render(result, *, is_error=False, expanded=True, width=200) -> str:
         "isError": is_error,
         "durationMs": None,
         "outputPad": 1,
+        "keyText": key_text,
+        "keyHint": key_hint,
     }
     component = CODEMODE_RENDERERS.render_result(result, {"expanded": expanded, "isPartial": False}, theme, context)
     lines = [line.rstrip() for line in strip_ansi("\n".join(component.render(width))).split("\n")]

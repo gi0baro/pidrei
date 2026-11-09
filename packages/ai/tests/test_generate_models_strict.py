@@ -1,29 +1,28 @@
 """Mirror of pi's generate-models-strict.test.ts.
 
-pi spawns the generator in an isolated package copy with a mocked models.dev
-fetch and asserts the strict allowlist check fails before any generated file
-changes. pidrei's generator writes all artifacts after loading completes (and
-through temp files — see generate_models.py), so "fails before mutating" is
-structural; the mirror asserts the allowlist failure itself, in-process,
-against the same fixture catalog.
+pi spawns the generator in an isolated package copy with mocked upstream
+catalogs and asserts the strict allowlist check fails before any generated
+file changes. PiDrei's generator builds the whole catalog in memory before it
+writes anything (and writes through a staging directory, see
+`catalog/generate.py`), so "fails before mutating" is structural; the mirror
+asserts the allowlist failure itself, building in-process against the same
+mocked sources (`catalog_generation_utils`).
 """
-
-import importlib.util
-from pathlib import Path
 
 import pytest
 
-
-def _load_generate_models():
-    """Import the sibling generator script (not an installed module)."""
-    path = Path(__file__).parents[1] / "scripts" / "generate_models.py"
-    spec = importlib.util.spec_from_file_location("pidrei_ai_scripts_generate_models", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from tests.catalog_generation_utils import generate_chat_models
 
 
-generate_models = _load_generate_models()
+def _source_model(model_id: str, *, tools: bool = True) -> dict:
+    return {
+        "id": model_id,
+        "type": "chat",
+        "name": model_id,
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "capabilities": {"tools": {"supported": tools}, "reasoning": {"supported": False}},
+        "api": {},
+    }
 
 
 def test_fails_when_an_individual_model_loses_tool_support():
@@ -39,37 +38,25 @@ def test_fails_when_an_individual_model_loses_tool_support():
         "qwen3.8-max",
         "qwen3.8-max-preview",
     ]
-    catalog = {
-        "alibaba-token-plan": {
-            "models": {
-                model_id: {
-                    "id": model_id,
-                    "name": model_id,
-                    "tool_call": model_id != "deepseek-v4-flash-0731",
-                }
-                for model_id in model_ids
-            }
-        }
+    source_models = {
+        model_id: _source_model(model_id, tools=model_id != "deepseek-v4-flash-0731") for model_id in model_ids
     }
 
     with pytest.raises(RuntimeError) as excinfo:
-        generate_models._process_qwen_token_plan_models(catalog, lambda *_args: None)
+        generate_chat_models(
+            {"alibaba-token-plan": {"models": source_models}}, "qwen-token-plan-individual", strict=True
+        )
 
     assert "qwen-token-plan-individual model IDs do not match (missing: deepseek-v4-flash-0731)" in str(excinfo.value)
 
 
 def test_passes_when_the_individual_allowlist_matches():
-    catalog = {
-        "alibaba-token-plan": {
-            "models": {
-                model_id: {"id": model_id, "name": model_id, "tool_call": True}
-                for model_id in [*generate_models.QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS, "qwen3.8-max-preview"]
-            }
-        }
-    }
+    from catalog.providers.qwen_token_plan_individual import MODEL_IDS
 
-    models = generate_models._process_qwen_token_plan_models(catalog, lambda *_args: None)
+    source_models = {model_id: _source_model(model_id) for model_id in [*MODEL_IDS, "qwen3.8-max-preview"]}
 
-    individual = sorted(model["id"] for model in models if model["provider"] == "qwen-token-plan-individual")
-    assert individual == sorted(generate_models.QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS)
-    assert not any(model["id"] == "qwen3.8-max-preview" for model in models)
+    models = generate_chat_models(
+        {"alibaba-token-plan": {"models": source_models}}, "qwen-token-plan-individual", strict=True
+    )
+
+    assert sorted(models) == sorted(MODEL_IDS)

@@ -227,6 +227,32 @@ async def test_continues_past_undecided_handlers_and_returns_the_first_decision(
     assert errors == []
 
 
+@pytest.mark.tonio
+async def test_reports_a_handler_without_a_decision_and_asks_the_next_one(fx):
+    # pidrei-only: pi's `handlerResult.trusted` throws on undefined, which records the error.
+    silent = fx.write(
+        "silent.py",
+        '\nasync def handler(event, ctx):\n    return None\n\n\nasync def extension(pi):\n    pi.on("project_trust", handler)\n',
+    )
+    decided = fx.write(
+        "decided.py",
+        "\nasync def handler(event, ctx):\n"
+        '    return {"trusted": "yes", "remember": False}\n'
+        "\n\nasync def extension(pi):\n"
+        '    pi.on("project_trust", handler)\n',
+    )
+
+    extensions_result = await load_extensions([silent, decided], fx.root)
+    result, errors = await emit_project_trust_event(
+        extensions_result,
+        {"type": "project_trust", "cwd": fx.root},
+        {"cwd": fx.root, "mode": "tui", "has_ui": False},
+    )
+
+    assert result == {"trusted": "yes", "remember": False}
+    assert [error.extension_path for error in errors] == [silent]
+
+
 # -- shortcut conflicts ----------------------------------------------------------
 
 

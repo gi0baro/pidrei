@@ -6,6 +6,254 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.5.0.0] - 2026-11-09
+
+Tracks [Pi 1.5.0](https://github.com/earendil-works/pi/releases/tag/v1.5.0).
+
+### Added
+
+- GPT-6.1 Terra on the `openai`, `azure` and `openai-codex` providers, with
+  tool search, mid-conversation thinking-level changes and thinking `off`;
+  Codex offers a 500K context window.
+- `pi.exec()` takes `max_buffer`, which limits stdout and stderr combined
+  (default 256 MiB). Past the limit the command is terminated, and the result
+  has the new `truncated` field set and a nonzero exit code.
+- Device-code sign-in (for example GitHub Copilot) opens the verification
+  page and copies the code when you press Enter. Providers can turn either
+  off with `open_browser_on_confirm: False` or `copy_code_on_confirm: False`
+  in the device-code info.
+- Extension renderers can format the user's configured keybindings with
+  `key_text()` and `key_hint()` from the tool render context and the message
+  and entry renderer options.
+- The Markdown transform context has `messageId` and `timestamp` for saved
+  session entries; both are `None` for live rendering.
+- Inline `ctx.ui.custom()` components accept a `blocked` option, so approval
+  prompts and other custom dialogs can report that pidrei is waiting for
+  input. Overlays ignore it.
+- `Usage.cost.total_from_provider` tells billed totals from catalog
+  estimates; combined usage counts as provider-reported only when every part
+  is.
+- `pidrei mcp add --oauth-client-registration <mode>`, and the `auto` and
+  `dcr` values of an MCP server's `oauth.clientRegistration`. Both register a
+  client dynamically; `auto` is the default. A client registered before stays
+  in use while its redirect URI matches.
+- `pidrei_ai`: `StreamingJsonParser`, an incremental parser for JSON that
+  arrives in pieces, and `ToolCallArgumentsStream`, which every provider now
+  uses for streamed tool-call arguments.
+- `pidrei_tui`: `replace_control_characters()`, `get_select_page_index()`,
+  and `Component.captures_viewport_input`, which sends PageUp/PageDown to a
+  focused component instead of scrolling the fullscreen transcript.
+
+### Changed
+
+- **Breaking:** tool argument validation follows Pi's new rules. Failures
+  the model sees list Pi's messages (`- path: missing`, `- limit: expected
+  number, got string`, `- extra: unknown field`) instead of `jsonschema`'s,
+  one per failing keyword; tagged unions are reported by their tag, other
+  unions by the closest branch. Coercion follows TypeBox's conversion rules
+  first (`"1"` becomes `true` for a boolean, `"42.1"` becomes `42` for an
+  integer, `"7"` becomes `[7]`). A `$ref` that names nothing, including one
+  to an external document, now rejects only the arguments at its place, and
+  external documents are never fetched.
+- **Breaking:** `pidrei_ai`'s `append_grammar_tool_input_json_delta()` takes
+  the input delta instead of the whole input so far and no longer closes the
+  input; close it with the new `close_grammar_tool_input_json()`.
+- The default OpenAI model is `gpt-6.1-sol`, including after ChatGPT sign-in
+  when no model is selected.
+- The model catalog comes from models.dev's v2 catalog: realtime and
+  image-only models are no longer offered as chat models, and newer OpenAI
+  and Google chat models are included. Regenerated.
+- `/model` and `/scoped-models` show a model's name next to its ID when the
+  name adds words the ID lacks, such as a renamed `models.json` override.
+- A tighter system prompt.
+- Large tool calls stream faster: arguments are parsed incrementally, and
+  tool rows and streamed answers reuse their highlighting and rendered
+  Markdown instead of redoing it on every update.
+- The faux provider streams partial tool-call arguments.
+- Codemode scripts can import `annotationlib`, `decimal` and `fnmatch`.
+- Added the `fqdn`, `idna`, `isoduration`, `jsonpointer`, `rfc3339-validator`,
+  `rfc3986-validator` and `uri-template` dependencies (format checks for tool
+  argument validation).
+- Bumped the httpunk dependency to 0.5.0.
+- Bumped the punkreq dependency to 0.3.0.
+- Bumped the pydantic-monty dependency to 1.5.0.
+
+### Removed
+
+- `pidrei_ai`'s `parse_streaming_json()`, replaced by `StreamingJsonParser`,
+  and the `partial-json-parser` dependency.
+
+### Fixed
+
+- A saved "Do not trust" decision was ignored for projects without
+  trust-requiring resources, such as a folder with only `AGENTS.md`. A saved
+  decision now takes precedence; auto-trust applies only when none is saved.
+- `Shift+Enter` queued a follow-up instead of inserting a newline in Apple
+  Terminal setups that send `ESC` + Return.
+- The working status disappeared in Rex and iTerm2 during runs in regular
+  (non-fullscreen) mode: rendered messages wrote OSC 133 prompt markers,
+  which these terminals take for a new shell prompt.
+- Compaction, branch summaries and bug-report summaries in SDK sessions
+  passed the stored OAuth token to the model as an explicit API key.
+- Setting the same active tools in a different order rebuilt the system
+  prompt. Tools that stay active keep their order, new ones are appended.
+- `pi.exec()` never returned when a command ignored SIGTERM after a timeout
+  or cancellation; it now sends SIGKILL 5 seconds later. It also corrupted
+  UTF-8 characters split across output chunks, returned an empty `stderr`
+  when a command could not be started, and stayed pending while a background
+  process the command started kept its output open. A command ended by a
+  signal reported a negative exit code; it is 0, as in Pi.
+- MCP sign-in accepted authorization endpoints and other OAuth metadata URLs
+  that are not `http:` or `https:`, and passed them to the platform URL
+  handler. OAuth logins for GitHub Copilot, Kimi Coding and Meta check
+  server-supplied URLs the same way.
+- The login dialog opened sign-in URLs that are not web URLs, and printed
+  control characters from sign-in, device-code and info URLs to the
+  terminal.
+- `/model` search ranked letters scattered over an earlier part of an entry
+  above a real match, and `/resume` search matched scattered letters inside
+  session messages and IDs. Session names and working directories still
+  match fuzzily; IDs and message text match only as exact substrings.
+- HTML export showed a blank page for sessions with thousands of entries,
+  and left out the system prompt, the tools and later system updates.
+  `pidrei --export` includes them too.
+- Aborting a bash command on macOS sometimes ran the next command of a list
+  such as `long_step; next_step`.
+- Large streamed tool calls took CPU time and memory quadratic in their
+  size, and so did streamed responses arriving in large chunks or with very
+  long event lines.
+- `tui.select.pageUp`/`pageDown` were ignored in slash command and file
+  autocomplete, `/settings` and the model, scoped models, login, fork and
+  `/mcp` selectors. In fullscreen mode PageUp/PageDown now move an open list
+  instead of scrolling the transcript.
+- Tool output and `!` command output showed the parameters of control
+  sequences with a `<`, `=` or `>` prefix as text, such as `35;59;1M` from a
+  mouse report.
+- A temporary `-e git:<repo>@<branch>` package stayed on its first checkout;
+  it is now fetched and reset to the branch on each start and `/reload`. A
+  commit-hash ref already checked out is not fetched.
+- Paths next to the home directory were shown with a broken `~` prefix, such
+  as `/home/me2/project` shown as `~2/project` when home is `/home/me`.
+- `pidrei mcp login -l` and `pidrei mcp logout -l` failed with an unknown
+  option. With `-l` they now require a project server; unknown options are
+  reported as typed, and a mistyped server name gets a suggestion.
+- The external editor never opened. When it fails, a status message such as
+  `External editor exited with code 1; prompt unchanged` now says so.
+- `tool_search` and codemode's `search_tools()` ranked a tool below tools
+  that only mention its name in their descriptions, and found nothing for
+  Chinese, Japanese, Thai and other non-ASCII queries. Words in any script
+  now match, Chinese, Japanese, Thai and other text written without spaces
+  is split into characters, and canonically equivalent text matches.
+- Resized photos were sent as multi-megabyte PNGs when JPEG was much
+  smaller.
+- Skill validation warnings were labeled `[Skill conflicts]` without a name
+  collision; they are shown under `[Skill warnings]`.
+- Codemode tool declarations included whole union output types in every
+  request. Object unions now summarize their keys, and output types that
+  name TypedDicts point to `describe_tool()`.
+- The model-scope startup notice was left in the shell after exiting
+  fullscreen mode; it now appears in the fullscreen header.
+- Starting from a deleted working directory crashed; pidrei now asks to
+  change to an existing directory.
+- A failed session write left the entry in memory, so later entries pointed
+  to a missing parent and resumed sessions lost earlier history.
+- `/tree` branch summaries ignored the session's thinking level, and
+  included failed replies and content that context edits had hidden or
+  replaced.
+- Hidden thinking with an empty label still added blank rows.
+- Replacing an extension editor while a dialog was open hid the dialog and
+  left it unanswerable.
+- `grep` context lines were offset from the match line numbers in files with
+  a lone carriage return.
+- `--model <provider>/<id>` failed for provider IDs containing slashes.
+- Forking a session was slow on filesystems where opening files is
+  expensive.
+- A configured package that failed to install crashed startup. pidrei now
+  skips it, reports an extension warning and retries on the next start or
+  `/reload`.
+- The todo extension example crashed the TUI when a tool call failed
+  argument validation.
+- SIGTERM and SIGHUP killed interactive mode on the spot, without stopping
+  the TUI or emitting `session_shutdown`; print and RPC mode exited without
+  `session_shutdown`. Every mode now shuts down as on quit.
+- Suspending with Ctrl+Z and resuming with `fg` ended pidrei, and resizing
+  the terminal did not redraw the screen.
+- In RPC mode, extension dialogs ignored their `timeout` and `signal`
+  options, and `set_widget()` ignored `placement`. In interactive mode,
+  `ctx.navigate_tree()` ignored `custom_instructions` and
+  `replace_instructions`, and `with_session` was ignored when switching
+  sessions.
+- `ctx.ui.set_theme()` with a theme object did nothing.
+- A `project_trust` handler returning nothing ended the dispatch; the next
+  handler now decides.
+- A `tool_result` handler returning `{"content": []}` kept the original
+  content.
+- Extension command argument completions were never offered.
+- Resumed sessions showed `bash`, `find`, `ls` and `grep` results without
+  their truncation notice and full-output path.
+- Markdown link destinations with non-ASCII characters were shown
+  percent-encoded or punycoded; they are kept as written.
+- OpenRouter cost totals used catalog estimates instead of reported billing.
+- OpenCode Zen and OpenCode Go requests used shared endpoints instead of
+  their protocol-specific ones.
+- Zhipu/Z.ai usage-limit errors (code `1308`) were retried.
+- LiteLLM's `ContextWindowExceededError` was not recognized as context
+  overflow.
+- Gemini tool schemas sent unsupported `const` keywords; they are converted
+  to single-value `enum`s.
+- The faux provider counted simulated cache-write tokens as both input and
+  cache writes.
+- Orca terminals fell back to text for inline images.
+- Bare Markdown URLs swallowed following CJK punctuation and text.
+- Kitty-protocol F1–F12 shortcuts were not recognized, and F13+ and other
+  functional keys inserted invisible characters into the editor.
+- Interactive mode could exit with `ValueError: operation forbidden on
+  released memoryview object` while writing a large frame to the terminal,
+  most often on macOS. The cause is a CPython free-threading bug
+  (gh-155606); pidrei now works around it.
+- Kitty images in padded or colored boxes disappeared when their first row
+  scrolled above the fullscreen viewport.
+- Deeply nested Markdown blockquotes produced exponentially many lines.
+- Claude sessions failed with `role 'system' must precede an 'assistant'
+  message` after a system update followed by an empty or reasoning-only
+  reply, and mid-conversation thinking-level changes failed with `Invalid
+  effort level` on accounts that cap effort below `high`.
+- Kimi K3.1 Pro models on Kimi Coding, Moonshot and OpenCode Go used Kimi K2
+  request settings and pricing.
+- OpenCode DeepSeek V4.1 Flash requests failed with long cache retention.
+- GPT-5.4 and GPT-5.5 failed with `Missing namespace for function_call`
+  after switching from a model that had called tools.
+- Bedrock Claude requests failed when preferred strict tools exceeded the
+  provider's limits; they now retry once with preferred tools non-strict.
+- OpenRouter's `~anthropic/claude-*-latest` aliases lost earlier thinking
+  after tool calls.
+- Terminal titles containing control characters could inject escape
+  sequences.
+- Fullscreen double-click selection split paths and tokens at `~`, `.`, `\`
+  and `+`.
+- Display math wider than the content area was split apart by wrapping; it
+  falls back to raw LaTeX.
+- Styled words ending exactly at the wrap width added a leading space on the
+  next line, and strikethrough leaked into wrapped-line padding.
+
+### Not ported
+
+- Pi's extension update changelogs (`changelogPath`, `collapseChangelog`).
+- Pi's custom self-update command (`PI_SELF_UPDATE_COMMAND`,
+  `selfUpdateCommand`) and its other self-update fixes: pidrei has no
+  self-update machinery.
+- Pi's npm-only fixes (`package-lock.json` through a symlinked agent
+  directory, npm audit advice, stale registry metadata, `-e npm:` refresh)
+  and `fd`/`rg` download architectures: pidrei installs packages from git
+  and local paths and never downloads tools.
+- Windows and WSL fixes, including case-insensitive path comparison: pidrei
+  is POSIX-only.
+- Pi's dictionary-based word segmentation in tool search for Chinese,
+  Japanese, Thai and other scripts written without spaces: pidrei splits
+  them into single characters.
+- Pi's JavaScript dependency and TypeBox changes (`@earendil-works/pi-schema`,
+  `undici`, the Gondolin example).
+
 ## [1.4.0.0] - 2026-10-22
 
 Tracks [Pi 1.4.0](https://github.com/earendil-works/pi/releases/tag/v1.4.0).

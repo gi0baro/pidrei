@@ -15,24 +15,19 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 from pidrei_utils.timers import Timeout
 
-from ....utils.paths import canonicalize_path_blocking as _canonicalize_path_blocking
+from ....utils.paths import (
+    canonicalize_path_blocking as _canonicalize_path_blocking,
+    get_path_comparison_key,
+    shorten_home_path,
+)
 from ....utils.process import run_command
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, key_text
-from .session_selector_search import filter_and_sort_sessions, has_session_name
+from .session_selector_search import MessageTextCache, filter_and_sort_sessions, has_session_name
 
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def _shorten_path(path: str) -> str:
-    home = os.path.expanduser("~")
-    if not path:
-        return path
-    if path.startswith(home):
-        return f"~{path[len(home) :]}"
-    return path
 
 
 def format_session_date(date: datetime) -> str:
@@ -213,7 +208,7 @@ def build_canonical_path_map_blocking(sessions: list, *paths: str | None) -> dic
     canonical: dict[str, str] = {}
     for path in (*(p for session in sessions for p in (session.path, session.parent_session_path)), *paths):
         if path and path not in canonical:
-            canonical[path] = _canonicalize_path_blocking(path)
+            canonical[path] = get_path_comparison_key(_canonicalize_path_blocking(path))
     return canonical
 
 
@@ -318,6 +313,8 @@ class SessionList:
         # await, and `build_session_tree` falls back to resolving inline.
         self._canonical_by_path: dict[str, str] = {}
         self._filtered_sessions: list = []
+        # Lowercased message text for the search, reused across keystrokes.
+        self._message_text = MessageTextCache()
         self._selected_index = 0
         self._selection_touched = False
         self._set_sessions_guard = threading.Lock()
@@ -435,7 +432,7 @@ class SessionList:
             self._filtered_sessions = flatten_session_tree(roots)
         else:
             # Other modes or with search: flat list
-            filtered = filter_and_sort_sessions(name_filtered, query, self._sort_mode, "all")
+            filtered = filter_and_sort_sessions(name_filtered, query, self._sort_mode, "all", self._message_text)
             self._filtered_sessions = [
                 {"session": session, "depth": 0, "isLast": True, "ancestorContinues": []} for session in filtered
             ]
@@ -520,9 +517,9 @@ class SessionList:
             msg_count = str(session.message_count)
             right_part = f"{msg_count} {age}"
             if self._show_cwd and session.cwd:
-                right_part = f"{_shorten_path(session.cwd)} {right_part}"
+                right_part = f"{shorten_home_path(session.cwd)} {right_part}"
             if self._show_path:
-                right_part = f"{_shorten_path(session.path)} {right_part}"
+                right_part = f"{shorten_home_path(session.path)} {right_part}"
 
             # Cursor
             cursor = theme.fg("accent", "› ") if is_selected else "  "
@@ -874,6 +871,10 @@ class SessionSelectorComponent(Container):
         self._rename_input.focused = value
         if value and self._mode == "rename":
             self._rename_input.focused = True
+
+    @property
+    def captures_viewport_input(self) -> bool:
+        return self._mode != "rename"
 
     def handle_input(self, data: str) -> None:
         if self._mode == "rename":

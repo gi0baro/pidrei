@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .utils import replace_control_characters
+
 
 type ProgramStatusState = Literal["idle", "working", "blocked", "done", "error", "clear"]
 type ProgramStatusKind = Literal["permission", "question", "auth"]
@@ -35,7 +37,6 @@ PROGRAM_STATUS_QUERY = "\x1b]7501;?\x1b\\"
 # `\Z` is JavaScript's `$` (Python's also matches before a final "\n").
 _REPLY_RE = re.compile(r"^\x1b\]7501;\?[^\x07\x1b]*(?:\x07|\x1b\\)\Z")
 _APP_RE = re.compile(r"^[A-Za-z0-9_.+-]{1,32}\Z")
-_CONTROL_CHARACTERS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 # Decoded `msg` limit. Its base64 encoding stays under the 2732-byte encoded limit.
 _MAX_MESSAGE_BYTES = 2048
 
@@ -66,7 +67,7 @@ def format_program_status(status: ProgramStatus) -> str:
         pairs.append(f"app={status.app}")
     if status.state == "blocked" and status.kind:
         pairs.append(f"kind={status.kind}")
-    message = _truncate_utf8(_CONTROL_CHARACTERS_RE.sub(" ", status.message or "").strip(), _MAX_MESSAGE_BYTES)
+    message = _truncate_utf8(replace_control_characters(status.message or "").strip(), _MAX_MESSAGE_BYTES)
     if message:
         pairs.append(f"msg={base64.b64encode(_utf8(message)).decode('ascii')}")
     return f"\x1b]7501;{':'.join(pairs)}\x1b\\"

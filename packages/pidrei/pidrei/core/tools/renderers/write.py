@@ -8,10 +8,12 @@ tool output does not load the execution path or its parameter schema.
 unchanged.
 """
 
+from collections.abc import Sequence
+
 from pidrei_tui import Container, Text
 
 from ....modes.interactive.components.keybinding_hints import key_hint
-from ....modes.interactive.theme import get_language_from_path, highlight_code
+from ....modes.interactive.theme import CodeHighlighter, get_language_from_path, highlight_code
 from ..render_utils import normalize_display_text, render_tool_path, replace_tabs, str_or_none
 from .types import ToolRenderers
 
@@ -21,7 +23,12 @@ class WriteCallRenderComponent(Text):
 
     def __init__(self) -> None:
         super().__init__("", 0, 0)
+        # Line by line highlighting of a call whose content is still streaming.
         self.cache: dict | None = None
+        # A streamed call highlights its first lines on every delta, which stop changing once the file is longer, and
+        # a complete call highlights the whole file on every update and expand toggle. Either way the row reuses the
+        # last highlighting; it also holds the only copy of a complete call's displayed source.
+        self.highlighter = CodeHighlighter()
 
 
 WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50
@@ -32,12 +39,12 @@ def _highlight_single_line(line: str, lang: str) -> str:
     return highlighted[0] if highlighted else ""
 
 
-def _refresh_write_highlight_prefix(cache: dict) -> None:
+def _refresh_write_highlight_prefix(cache: dict, highlighter: CodeHighlighter) -> None:
     prefix_count = min(WRITE_PARTIAL_FULL_HIGHLIGHT_LINES, len(cache["normalizedLines"]))
     if prefix_count == 0:
         return
     prefix_source = "\n".join(cache["normalizedLines"][:prefix_count])
-    prefix_highlighted = highlight_code(prefix_source, cache["lang"])
+    prefix_highlighted = highlighter.highlight(prefix_source, cache["lang"])
     for i in range(prefix_count):
         if i < len(prefix_highlighted):
             cache["highlightedLines"][i] = prefix_highlighted[i]
@@ -61,16 +68,14 @@ def _rebuild_write_highlight_cache_full(raw_path: str | None, file_content: str)
 
 
 def _update_write_highlight_cache_incremental(
-    cache: dict | None, raw_path: str | None, file_content: str
+    cache: dict | None, raw_path: str | None, file_content: str, highlighter: CodeHighlighter
 ) -> dict | None:
     lang = get_language_from_path(raw_path) if raw_path else None
     if not lang:
         return None
     if cache is None:
         return _rebuild_write_highlight_cache_full(raw_path, file_content)
-    if cache["lang"] != lang or cache["rawPath"] != raw_path:
-        return _rebuild_write_highlight_cache_full(raw_path, file_content)
-    if not file_content.startswith(cache["rawContent"]):
+    if cache["lang"] != lang or cache["rawPath"] != raw_path or not file_content.startswith(cache["rawContent"]):
         return _rebuild_write_highlight_cache_full(raw_path, file_content)
     if len(file_content) == len(cache["rawContent"]):
         return cache
@@ -88,18 +93,20 @@ def _update_write_highlight_cache_incremental(
     for segment in segments[1:]:
         cache["normalizedLines"].append(segment)
         cache["highlightedLines"].append(_highlight_single_line(segment, cache["lang"]))
-    _refresh_write_highlight_prefix(cache)
+    _refresh_write_highlight_prefix(cache, highlighter)
     return cache
 
 
-def _trim_trailing_empty_lines(lines: list) -> list:
+def _trim_trailing_empty_lines(lines: Sequence[str]) -> Sequence[str]:
     end = len(lines)
     while end > 0 and lines[end - 1] == "":
         end -= 1
     return lines[:end]
 
 
-def _format_write_call(args: dict | None, options: dict, theme, cache: dict | None, cwd: str) -> str:
+def _format_write_call(
+    args: dict | None, options: dict, theme, cache: dict | None, highlighter: CodeHighlighter, cwd: str
+) -> str:
     args = args or {}
     raw_path = str_or_none(args.get("file_path", args.get("path")))
     file_content = str_or_none(args.get("content"))
@@ -114,7 +121,7 @@ def _format_write_call(args: dict | None, options: dict, theme, cache: dict | No
             rendered_lines = (
                 cache["highlightedLines"]
                 if cache is not None
-                else highlight_code(replace_tabs(normalize_display_text(file_content)), lang)
+                else highlighter.highlight(replace_tabs(normalize_display_text(file_content)), lang)
             )
         else:
             rendered_lines = normalize_display_text(file_content).split("\n")
@@ -159,19 +166,18 @@ def _render_call(args, theme, context):
         if isinstance(context.get("lastComponent"), WriteCallRenderComponent)
         else WriteCallRenderComponent()
     )
-    if file_content is not None:
-        if context["argsComplete"]:
-            component.cache = _rebuild_write_highlight_cache_full(raw_path, file_content)
-        else:
-            component.cache = _update_write_highlight_cache_incremental(component.cache, raw_path, file_content)
-    else:
-        component.cache = None
+    component.cache = (
+        _update_write_highlight_cache_incremental(component.cache, raw_path, file_content, component.highlighter)
+        if file_content is not None and not context["argsComplete"]
+        else None
+    )
     component.set_text(
         _format_write_call(
             args,
             {"expanded": context["expanded"], "isPartial": context["isPartial"]},
             theme,
             component.cache,
+            component.highlighter,
             context["cwd"],
         )
     )

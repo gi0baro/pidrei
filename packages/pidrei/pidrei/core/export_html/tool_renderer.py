@@ -6,6 +6,7 @@ renderers and converting the ANSI output to HTML.
 
 import re
 
+from ...modes.interactive.components.keybinding_hints import key_hint, key_text
 from .ansi_to_html import ansi_lines_to_html
 
 
@@ -69,6 +70,8 @@ class ToolHtmlRenderer:
             "isError": is_error,
             "durationMs": None,
             "outputPad": 1,
+            "keyText": key_text,
+            "keyHint": key_hint,
         }
 
     def render_call(self, tool_call_id: str, tool_name: str, args) -> str | None:

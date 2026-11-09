@@ -7,19 +7,24 @@ is a ``{"provider", "id"}`` record naming the persisted default.
 import tonio.colored as tonio
 
 from pidrei_ai.registry import models_are_equal
-from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings
+from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings, get_select_page_index
 from pidrei_utils.cancel import CancelToken
 from pidrei_utils.timers import Timeout
 
 from ..model_catalog_refresh import refresh_model_catalogs
-from ..model_search import get_model_selector_search_text
+from ..model_search import get_distinct_model_name, get_model_selector_search_text
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_display_text, key_hint
 
 
+_MAX_VISIBLE = 10
+
+
 class ModelSelectorComponent(Container):
     """Component that renders a model selector with search."""
+
+    captures_viewport_input = True
 
     def __init__(
         self,
@@ -296,12 +301,11 @@ class ModelSelectorComponent(Container):
         # render see the list container empty (see `Container.set_children`).
         rows: list = []
 
-        max_visible = 10
         start_index = max(
             0,
-            min(self._selected_index - max_visible // 2, len(self._filtered_models) - max_visible),
+            min(self._selected_index - _MAX_VISIBLE // 2, len(self._filtered_models) - _MAX_VISIBLE),
         )
-        end_index = min(start_index + max_visible, len(self._filtered_models))
+        end_index = min(start_index + _MAX_VISIBLE, len(self._filtered_models))
 
         # Show visible slice of filtered models
         for i in range(start_index, end_index):
@@ -313,8 +317,10 @@ class ModelSelectorComponent(Container):
             cursor = theme.fg("accent", "→ ") if is_selected else "  "
             current_marker = theme.fg("accent", "✓ ") if is_current else "  "
             model_text = theme.fg("accent", item["id"]) if is_selected else item["id"]
+            name = get_distinct_model_name(item["id"], item["model"].name)
+            name_text = theme.fg("muted", f" ({name})") if name else ""
             provider_badge = theme.fg("muted", f"[{item['provider']}]")
-            line = f"{cursor}{current_marker}{model_text} {provider_badge}{default_badge}"
+            line = f"{cursor}{current_marker}{model_text}{name_text} {provider_badge}{default_badge}"
 
             rows.append(Text(line, 0, 0))
 
@@ -351,6 +357,7 @@ class ModelSelectorComponent(Container):
 
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
+        page_index = get_select_page_index(kb, key_data, self._selected_index, len(self._filtered_models), _MAX_VISIBLE)
         if kb.matches(key_data, "tui.input.tab"):
             if self._scoped_model_items:
                 next_scope = "scoped" if self._scope == "all" else "all"
@@ -373,6 +380,12 @@ class ModelSelectorComponent(Container):
             self._selected_index = (
                 0 if self._selected_index == len(self._filtered_models) - 1 else self._selected_index + 1
             )
+            self._update_list()
+        # Page up/down
+        elif page_index is not None:
+            if not self._filtered_models:
+                return
+            self._selected_index = page_index
             self._update_list()
         # Enter
         elif kb.matches(key_data, "tui.select.confirm"):

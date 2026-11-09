@@ -92,6 +92,7 @@ class UsageCostBuilder:
     cache_read: float = 0.0
     cache_write: float = 0.0
     total: float = 0.0
+    total_from_provider: bool | None = None
 
     def freeze(self) -> UsageCost:
         return UsageCost(
@@ -100,6 +101,7 @@ class UsageCostBuilder:
             cache_read=self.cache_read,
             cache_write=self.cache_write,
             total=self.total,
+            total_from_provider=self.total_from_provider,
         )
 
 

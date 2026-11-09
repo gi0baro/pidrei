@@ -129,3 +129,20 @@ def test_allows_overriding_primary_truncation_while_preserving_description_align
 
     assert "…" in rendered[0]
     assert visible_index_of(rendered[0], "first") == visible_index_of(rendered[1], "second")
+
+
+def test_moves_by_one_visible_page_with_selection_page_keys():
+    # #7629
+    items = [{"value": f"item-{index}", "label": f"Item {index}"} for index in range(12)]
+    select_list = SelectList(items, 5, test_theme)
+    selections: list[str] = []
+    select_list.on_selection_change = lambda item: selections.append(item["value"])
+
+    for key in ["\x1b[6~", "\x1b[6~", "\x1b[6~", "\x1b[6~", "\x1b[5~"]:
+        select_list.handle_input(key)
+
+    assert selections == ["item-5", "item-10", "item-11", "item-6"]
+
+    select_list.set_filter("no match")
+    select_list.handle_input("\x1b[6~")
+    assert selections == ["item-5", "item-10", "item-11", "item-6"]

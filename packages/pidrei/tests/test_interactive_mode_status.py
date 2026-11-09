@@ -28,7 +28,7 @@ from pidrei.modes.interactive.components.status_indicator import (
 )
 from pidrei.modes.interactive.extension_tui import ExtensionTui
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import get_editor_theme, init_theme, theme
+from pidrei.modes.interactive.theme import get_editor_theme, get_theme_by_name, init_theme, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScreen, visible_width
 
@@ -202,8 +202,11 @@ class TestCreateExtensionUIContextSetTheme:
             fake.ui.request_render()
             return {"success": True}
 
+        async def set_theme_instance(_instance):
+            return {"success": True}
+
         fake._theme_controller = SimpleNamespace(
-            set_theme_instance=lambda instance: {"success": True},
+            set_theme_instance=set_theme_instance,
             set_theme_name=set_theme_name,
         )
 
@@ -235,8 +238,11 @@ class TestCreateExtensionUIContextSetTheme:
             set_theme_name_calls.append(name)
             return {"success": False, "error": "Theme not found"}
 
+        async def set_theme_instance(_instance):
+            return {"success": True}
+
         fake._theme_controller = SimpleNamespace(
-            set_theme_instance=lambda instance: {"success": True},
+            set_theme_instance=set_theme_instance,
             set_theme_name=set_theme_name,
         )
 
@@ -247,6 +253,25 @@ class TestCreateExtensionUIContextSetTheme:
         assert set_theme_name_calls == ["__missing_theme__"]
         assert set_theme_calls == []
         assert request_render_calls == []
+
+    @pytest.mark.tonio
+    async def test_applies_a_theme_instance(self):
+        # pidrei-only: the controller's instance path is async and must be awaited.
+        applied: list = []
+        fake = SimpleNamespace()
+
+        async def set_theme_instance(instance):
+            applied.append(instance)
+            return {"success": True}
+
+        fake._theme_controller = SimpleNamespace(set_theme_instance=set_theme_instance)
+        light = await get_theme_by_name("light")
+
+        ui_context = InteractiveMode._create_extension_ui_context(fake)
+        result = await ui_context.set_theme(light)
+
+        assert result == {"success": True}
+        assert applied == [light]
 
 
 # Inline custom components go through the extension dialog stack.
@@ -1094,7 +1119,7 @@ class TestShowLoadedResources:
         InteractiveMode._show_loaded_resources(fake, {"force": False, "showDiagnosticsWhenQuiet": True})
 
         output = render_all(fake._loaded_resources_container)
-        assert "[Skill conflicts]" in output
+        assert "[Skill warnings]" in output
         assert "[Skills]" not in output
 
 

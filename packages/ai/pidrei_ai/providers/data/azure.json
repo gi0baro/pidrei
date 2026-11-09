@@ -1,5 +1,36 @@
 {
   "azure-openai-responses": {
+    "chat:chat-latest": {
+      "id": "chat-latest",
+      "name": "Chat Latest",
+      "api": "azure-openai-responses",
+      "provider": "azure",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 5,
+        "output": 30,
+        "cacheRead": 0.5,
+        "cacheWrite": 0
+      },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:gpt-4": {
       "id": "gpt-4",
       "name": "GPT-4",
@@ -903,6 +934,45 @@
       },
       "type": "chat"
     },
+    "chat:gpt-5.6-cyber": {
+      "id": "gpt-5.6-cyber",
+      "name": "GPT-5.6 Cyber",
+      "api": "azure-openai-responses",
+      "provider": "azure",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 12.5,
+        "output": 75,
+        "cacheRead": 1.25,
+        "cacheWrite": 15.625
+      },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:gpt-5.6-luna": {
       "id": "gpt-5.6-luna",
       "name": "GPT-5.6 Luna",
@@ -1192,6 +1262,49 @@
       },
       "type": "chat"
     },
+    "chat:gpt-6.1-terra": {
+      "id": "gpt-6.1-terra",
+      "name": "GPT-6.1 Terra",
+      "api": "azure-openai-responses",
+      "provider": "azure",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1,
+        "output": 5,
+        "cacheRead": 0.05,
+        "cacheWrite": 1.25
+      },
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:gpt-daybreak-blue-latest": {
       "id": "gpt-daybreak-blue-latest",
       "name": "Daybreak Blue",
@@ -1242,37 +1355,6 @@
       },
       "contextWindow": 400000,
       "maxTokens": 128000,
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
-    "chat:gpt-realtime-2.1": {
-      "id": "gpt-realtime-2.1",
-      "name": "GPT-Realtime-2.1",
-      "api": "azure-openai-responses",
-      "provider": "azure",
-      "baseUrl": "",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 4,
-        "output": 24,
-        "cacheRead": 0.4,
-        "cacheWrite": 0
-      },
-      "contextWindow": 128000,
-      "maxTokens": 32000,
       "inputLimits": {
         "images": {
           "resize": {

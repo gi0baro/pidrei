@@ -1,3 +1,6 @@
+import math
+import time
+
 import pytest
 
 from pidrei_ai.utils.sse import ServerSentEvent, iterate_sse_messages
@@ -100,6 +103,34 @@ async def test_event_without_explicit_type():
 
     assert events[0].event is None
     assert events[0].data == "[DONE]"
+
+
+async def _decode_seconds(*parts: bytes) -> float:
+    best = math.inf
+    for _ in range(2):
+        started = time.perf_counter()
+        await _collect(*parts)
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+@pytest.mark.tonio
+async def test_reads_a_large_chunk_and_a_long_line_in_time_linear_in_their_length():
+    # A buffered response arrives as one chunk; slicing the rest off per line copied it whole each time.
+    def events(count: int) -> bytes:
+        return b"".join(b'event: e\ndata: {"delta":"%d"}\n\n' % index for index in range(count))
+
+    assert len(await _collect(events(50_000))) == 50_000
+    assert await _decode_seconds(events(50_000)) / await _decode_seconds(events(5_000)) < 20
+
+    # One long data line arriving in many small chunks: appending each chunk to the line copied it whole.
+    def line(size: int) -> list[bytes]:
+        text = b"data: " + b"x" * size + b"\n\n"
+        return [text[index : index + 64] for index in range(0, len(text), 64)]
+
+    (event,) = await _collect(*line(200_000))
+    assert len(event.data) == 200_000
+    assert await _decode_seconds(*line(2_000_000)) / await _decode_seconds(*line(200_000)) < 20
 
 
 @pytest.mark.tonio

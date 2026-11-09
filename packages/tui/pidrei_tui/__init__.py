@@ -44,6 +44,7 @@ from .keybindings import (
     TUI_KEYBINDINGS,
     KeybindingsManager,
     get_keybindings,
+    get_select_page_index,
     set_keybindings,
 )
 from .keys import (
@@ -117,6 +118,7 @@ from .tui_alt_screen import TuiAltScreen
 from .tui_main_screen import TuiMainScreen
 from .utils import (
     get_osc8_link_at_column,
+    replace_control_characters,
     slice_by_column,
     strip_terminal_sequences,
     truncate_to_width,
@@ -196,6 +198,7 @@ __all__ = [
     "get_keybindings",
     "get_osc8_link_at_column",
     "get_png_dimensions",
+    "get_select_page_index",
     "get_terminal_color_mode",
     "get_webp_dimensions",
     "hyperlink",
@@ -222,6 +225,7 @@ __all__ = [
     "render_fake_cursor",
     "render_image",
     "render_latex",
+    "replace_control_characters",
     "reset_capabilities_cache",
     "retarget_mouse_event",
     "rgb_color",

@@ -4,11 +4,13 @@ Port deviations (documented once here):
 
 - pi drives input through node's `process.stdin` data events; here `start()`
   spawns a tonio input reader (`tonio.io.register` + `arm_r` over a
-  non-blocking stdin fd, incremental UTF-8 decode) and a SIGWINCH resize
-  watcher inside a tonio scope, so `start`/`stop` are async. The resize
-  watcher needs the runtime created with `tonio.run(..., signals=
-  [signal.SIGWINCH])`; without it resize events never fire (SIGWINCH's
-  default disposition is to be ignored, so nothing breaks).
+  non-blocking stdin fd, incremental UTF-8 decode) inside a tonio scope, so
+  `start`/`stop` are async.
+- pi listens for `process.stdout` "resize" events here; `ProcessTerminal`
+  does not watch SIGWINCH. The application owns the process's signals and
+  asks the TUI for a frame on SIGWINCH (pidrei's interactive mode), and the
+  size is read fresh on every frame. `start()`'s `on_resize` is for
+  terminals that report resizes themselves.
 - Raw mode is entered with termios mirroring libuv's TTY_MODE_RAW (the mode
   behind node's `setRawMode(true)`): input flags BRKINT/ICRNL/INPCK/ISTRIP/
   IXON off, CS8 on, ECHO/ICANON/IEXTEN/ISIG off, VMIN=1/VTIME=0 — output
@@ -62,14 +64,13 @@ import contextlib
 import math
 import os
 import re
-import signal as signal_module
 import sys
 import termios
 import threading
 from typing import Any, Protocol
 
 import tonio.colored as tonio
-from tonio.colored import io as tonio_io, signals as tonio_signals
+from tonio.colored import io as tonio_io
 from tonio.colored.sync import channel as tonio_channel
 
 from pidrei_utils import clock
@@ -78,6 +79,7 @@ from pidrei_utils.timers import Interval
 from .keys import set_kitty_protocol_active
 from .program_status import PROGRAM_STATUS_QUERY, ProgramStatus, format_program_status, is_program_status_reply
 from .stdin_buffer import StdinBuffer
+from .utils import replace_control_characters
 
 
 TERMINAL_PROGRESS_KEEPALIVE_MS = 1000
@@ -122,8 +124,13 @@ def is_apple_terminal_session() -> bool:
     return sys.platform == "darwin" and os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
 
 
+# Some Apple Terminal setups send ESC+CR (Alt+Enter) for Shift+Enter (#11559).
+def _is_native_shift_enter_candidate(data: str) -> bool:
+    return data in ("\r", "\x1b\r")
+
+
 def normalize_apple_terminal_input(data: str, is_apple_terminal: bool, is_shift_pressed: bool) -> str:
-    if is_apple_terminal and data == "\r" and is_shift_pressed:
+    if is_apple_terminal and _is_native_shift_enter_candidate(data) and is_shift_pressed:
         return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE
     return data
 
@@ -314,7 +321,6 @@ class ProcessTerminal:
         # start: the consumer outlives stop/start until `close()`.
         self._items_tx = None
         self._items_rx = None
-        self._resize_handler = None
         # The negotiation state and protocol flags: the reader and the
         # protocol teardown (`drain_input`, `stop`).
         self._protocol_lock = threading.RLock()
@@ -410,7 +416,8 @@ class ProcessTerminal:
         self._reply_handler = on_reply
         # Kept after `stop()`: the consumer may still be finishing an item.
         self._error_handler = on_error
-        self._resize_handler = on_resize
+        # `on_resize` is unused: this terminal does not watch SIGWINCH (see the
+        # module docstring).
 
         # The input side runs inside an armed window (the reader needs the
         # non-blocking fd); a caller that did not arm gets it here.
@@ -422,8 +429,8 @@ class ProcessTerminal:
         # Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
         self.write_sync("\x1b[?2004h")
 
-        # Set up the resize watcher and the input reader; the reader plays the
-        # role of node's process.stdin "data" listener.
+        # Set up the input reader; it plays the role of node's process.stdin
+        # "data" listener.
         # One registration per fd: a pty test (and a caller passing the same
         # fd for both sides) shares the output pump's.
         self._sio = self._out_sio if self._input_fd == self._output_fd else tonio_io.register(self._input_fd)
@@ -433,10 +440,6 @@ class ProcessTerminal:
         self._set_input_handler(on_input)
         self._scope = tonio.scope()
         await self._scope.__aenter__()
-        if self._resize_handler is not None:
-            # `None` means the caller has no interest in resize events (tests
-            # exercising the pumps); skip the SIGWINCH machinery entirely.
-            self._scope.spawn(self._resize_watcher())
 
         # Query Kitty keyboard protocol and fall back to modifyOtherKeys when DA confirms no Kitty response.
         # See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
@@ -653,7 +656,7 @@ class ProcessTerminal:
         return min(pending) if pending else None
 
     def _forward_input_sequence(self, sequence: str) -> None:
-        is_apple_terminal = sequence == "\r" and is_apple_terminal_session()
+        is_apple_terminal = _is_native_shift_enter_candidate(sequence) and is_apple_terminal_session()
         input_ = normalize_apple_terminal_input(
             sequence,
             is_apple_terminal,
@@ -746,14 +749,6 @@ class ProcessTerminal:
                     raise
                 on_error(error)
 
-    async def _resize_watcher(self) -> None:
-        with tonio_signals.signal_receiver(signal_module.SIGWINCH) as receiver:
-            async for _sig in receiver:
-                handler = self._resize_handler
-                if handler is None:
-                    break  # stop() requested; exit through the receiver's cleanup
-                handler()
-
     def _disable_keyboard_protocols(self) -> None:
         with self._protocol_lock:
             should_disable_kitty_protocol = self._keyboard_protocol_pushed or self._kitty_protocol_active
@@ -812,12 +807,6 @@ class ProcessTerminal:
         # on input handling, which may be what is stopping the terminal.
         self._set_input_handler(None)
         self._reply_handler = None
-        # No nudge needed for the resize watcher: the scope cancel below
-        # unwinds it through `signal_receiver.__exit__` (sync `with` cleanup
-        # runs on cancellation), which removes the SIGWINCH registration. A
-        # self-sent SIGWINCH here would also blow up any runtime that is not
-        # listening for signals (the pytest runtime, by design).
-        self._resize_handler = None
 
         # Stop the reader before touching termios so buffered input (e.g.,
         # Ctrl+D) cannot be re-interpreted after raw mode is disabled (pi
@@ -912,8 +901,9 @@ class ProcessTerminal:
         self.write_sync("\x1b[2J\x1b[H")  # Clear screen and move to home (1,1)
 
     def set_title(self, title: str) -> None:
-        # OSC 0;title BEL - set terminal window title
-        self.write_sync(f"\x1b]0;{title}\x07")
+        # OSC 0;title BEL - set terminal window title. A BEL or ESC in the title would end the sequence early and
+        # send the rest to the terminal as escape sequences (session names come from session files).
+        self.write_sync(f"\x1b]0;{replace_control_characters(title)}\x07")
 
     def set_program_status(self, status: ProgramStatus) -> None:
         # Under the lock the reader confirms support with, so a confirmation
@@ -1021,13 +1011,21 @@ class ProcessTerminal:
                 done.set()
                 return
             try:
-                buffer = memoryview(data.encode("utf-8"))
-                while buffer and not broken:
+                payload = data.encode("utf-8")
+                offset = 0
+                while offset < len(payload) and not broken:
                     if (waiter := sio.arm_w()) is not None:
                         await waiter
                         continue
                     try:
-                        written = os.write(fd, buffer)
+                        # A fresh view per attempt: a memoryview must never
+                        # outlive an await. CPython 3.14t counts buffer exports
+                        # non-atomically (gh-155606), and a view made on one
+                        # worker is freed on that worker, later, when dropped
+                        # from another, so two views on one buffer race.
+                        # Remove once a CPython with gh-127716 is the minimum
+                        # (gi0baro/pidrei#14).
+                        offset += os.write(fd, memoryview(payload)[offset:])
                     except BlockingIOError:
                         # Tick-guarded: a writable edge landing between the
                         # failed write and this clear must survive, or the
@@ -1042,7 +1040,6 @@ class ProcessTerminal:
                         # no writer waits forever; the bytes have nowhere to go.
                         broken = True
                         break
-                    buffer = buffer[written:]
                 if log_path and data:
                     await tonio.spawn_blocking(_append_write_log_blocking, log_path, data)
             except Exception as error:

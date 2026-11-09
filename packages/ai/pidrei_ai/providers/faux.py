@@ -60,6 +60,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.estimate import _tool_json_shape
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_utils import clock
 
@@ -314,12 +315,15 @@ async def _stream_with_deltas(
 
         partial.content = [*partial.content, ToolCallBuilder(id=block.id, name=block.name, arguments={})]
         stream.push(ToolCallStartEvent(content_index=index, partial=replace(partial)))
+        # Partial arguments come from the same parser real providers use, so consumers see them grow.
+        tool_arguments = ToolCallArgumentsStream()
         arguments_json = json.dumps(block.arguments, separators=(",", ":"), ensure_ascii=False)
         for chunk in _split_string_by_token_size(arguments_json, min_token_size, max_token_size):
             await _schedule_chunk(chunk, tokens_per_second)
             if aborted_now():
                 emit_aborted()
                 return
+            partial.content[index].arguments = tool_arguments.append(chunk)
             stream.push(ToolCallDeltaEvent(content_index=index, delta=chunk, partial=replace(partial)))
         partial.content[index].arguments = block.arguments
         stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=replace(partial)))
@@ -441,10 +445,11 @@ class FauxCore:
                 if previous_prompt:
                     cached_chars = _common_prompt_prefix_length(previous_prompt, prompt)
                     cache_read = math.ceil(cached_chars / 4)
-                    cache_write = math.ceil((prompt_length - cached_chars) / 4)
-                    input_tokens = max(0, prompt_tokens - cache_read)
+                    cache_write = max(0, prompt_tokens - cache_read)
                 else:
                     cache_write = prompt_tokens
+                # Every prompt token is either read from or written to the simulated cache.
+                input_tokens = 0
                 self._prompt_cache[session_id] = prompt
 
         return replace(

@@ -102,7 +102,10 @@ These bindings take precedence over the editor's, so in fullscreen mode
 `pageUp` and `pageDown` drive the transcript and their `ctrl` variants
 (`ctrl+pageUp`, `ctrl+pageDown`) drive the editor. In regular mode, both
 variants drive the editor. `home` and `end` move the editor cursor in every
-mode.
+mode. While an overlay or a scrollable list such as autocomplete, `/settings`
+or the model selector has focus, the scrolling and prompt-jump actions go to
+it instead of the transcript, so `tui.select.pageUp` and `tui.select.pageDown`
+move the list selection. Transcript search actions keep working.
 
 The routing is just action bindings, so it is configurable:
 `"tui.altScreen.pageUp": "ctrl+pageUp"` gives `pageUp` back to the editor, and

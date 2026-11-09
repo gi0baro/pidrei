@@ -11,9 +11,9 @@ import tonio.colored as tonio
 
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.frontmatter import parse_frontmatter
-from ..utils.paths import canonicalize_path_blocking, resolve_path
+from ..utils.paths import is_path_within, resolve_path
 from .diagnostics import ResourceCollision, ResourceDiagnostic
-from .source_info import SourceInfo, create_synthetic_source_info
+from .source_info import SourceInfo, create_synthetic_source_info, get_resource_path_key_blocking
 
 
 # Max name length per spec
@@ -342,10 +342,7 @@ def format_skills_for_prompt(skills: list[Skill], file_read_tool: str = "read") 
     lines = [
         "\n\nThe following skills provide specialized instructions for specific tasks.",
         load_hint,
-        (
-            "When a skill file references a relative path, resolve it against the skill directory "
-            "(parent of SKILL.md / dirname of the path) and use that absolute path in tool commands."
-        ),
+        "Resolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.",
         "",
         "<available_skills>",
     ]
@@ -360,14 +357,6 @@ def format_skills_for_prompt(skills: list[Skill], file_read_tool: str = "read") 
     lines.append("</available_skills>")
 
     return "\n".join(lines)
-
-
-def _is_under_path(target: str, root: str) -> bool:
-    normalized_root = os.path.abspath(root)
-    if target == normalized_root:
-        return True
-    prefix = normalized_root if normalized_root.endswith(os.sep) else f"{normalized_root}{os.sep}"
-    return target.startswith(prefix)
 
 
 def load_skills(
@@ -410,7 +399,7 @@ def _load_skills_blocking(
         all_diagnostics.extend(result.diagnostics)
         for skill in result.skills:
             # Resolve symlinks to detect duplicate files
-            real_path = canonicalize_path_blocking(skill.file_path)
+            real_path = get_resource_path_key_blocking(skill.file_path)
 
             # Skip silently if we've already loaded this exact file (via symlink)
             if real_path in real_path_set:
@@ -444,9 +433,9 @@ def _load_skills_blocking(
 
     def get_source(resolved_path: str) -> str:
         if not include_defaults:
-            if _is_under_path(resolved_path, user_skills_dir):
+            if is_path_within(user_skills_dir, resolved_path):
                 return "user"
-            if _is_under_path(resolved_path, project_skills_dir):
+            if is_path_within(project_skills_dir, resolved_path):
                 return "project"
         return "path"
 

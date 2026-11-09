@@ -110,8 +110,8 @@ async def test_reconstructs_an_exact_historical_marker_prefix_and_appends_the_cu
     ]
     assert second_payload["messages"][: len(first_payload["messages"])] == first_payload["messages"]
     assert second_payload["messages"][-1] == {"role": "system", "content": [], "output_config": {"effort": "high"}}
-    assert first_payload["output_config"] == {"effort": "high"}
-    assert second_payload["output_config"] == {"effort": "high"}
+    assert first_payload["output_config"] == {"effort": "low"}
+    assert second_payload["output_config"] == {"effort": "low"}
     assert second_payload["thinking"] == {
         "type": "adaptive",
         "display": "summarized",

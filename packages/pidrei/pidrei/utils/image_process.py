@@ -182,10 +182,11 @@ def resize_image(
 
             while True:
                 resized = image.resize((max(1, current_width), max(1, current_height)), Image.LANCZOS)
-                candidates = [_encode(resized, "PNG")]
-                for quality in quality_steps:
-                    candidates.append(_encode(resized, "JPEG", quality))
-                for data, encoded_size, candidate_mime in candidates:
+                png = _encode(resized, "PNG")
+                jpeg, *lower_quality_jpegs = (_encode(resized, "JPEG", quality) for quality in quality_steps)
+                # Prefer the smaller of PNG and JPEG at the configured quality; lower JPEG quality only if neither fits.
+                preferred = [jpeg, png] if jpeg[1] < png[1] else [png, jpeg]
+                for data, encoded_size, candidate_mime in [*preferred, *lower_quality_jpegs]:
                     if encoded_size < opts.max_bytes:
                         return ResizedImage(
                             data=data,

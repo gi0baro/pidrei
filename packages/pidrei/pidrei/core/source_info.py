@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from ..utils.paths import canonicalize_path_blocking, get_path_comparison_key
+
 
 type SourceScope = str  # "user" | "project" | "temporary"
 type SourceOrigin = str  # "package" | "top-level"
@@ -42,6 +44,12 @@ def get_synthetic_path_source(path: str) -> str | None:
 
 def is_synthetic_path(path: str) -> bool:
     return path.startswith((BUILTIN_PATH_PREFIX, "<"))
+
+
+def get_resource_path_key_blocking(path: str) -> str:
+    """Key for deduplicating resource paths: synthetic paths as-is, file
+    paths via realpath and `get_path_comparison_key`."""
+    return path if is_synthetic_path(path) else get_path_comparison_key(canonicalize_path_blocking(path))
 
 
 def create_source_info(path: str, metadata: PathMetadata) -> SourceInfo:

@@ -38,15 +38,22 @@ at call time.
 ``tonio.colored.fs`` performs its I/O in Rust, so correct code is invisible here
 and produces no findings.
 
+Calls made by ``traceback``/``linecache`` (source lines for a formatted stack),
+``ssl`` (the trust store behind a default context) and the import machinery are
+not PiDrei's I/O and are not reported; see ``_EXEMPT_STDLIB_FILES``.
+
 Audit hooks cannot be uninstalled, so this is opt-in: set ``PIDREI_FS_DETECT=1``.
 """
 
 from __future__ import annotations
 
+import linecache
 import os
 import pathlib
+import ssl
 import sys
 import threading
+import traceback
 
 
 _local = threading.local()
@@ -56,6 +63,14 @@ _installed = False
 # Frames in these trees are never the culprit we want to report.
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PACKAGES = str(_REPO_ROOT / "packages")
+
+# Stdlib modules whose filesystem access is not PiDrei's I/O (AGENTS.md): source
+# lines read for traceback formatting, the trust store `ssl` loads for a default
+# context, and the import machinery reading modules. A call is exempt when one
+# of them sits between it and the first `packages/` frame, so a module body
+# doing its own I/O at import time is still reported.
+_EXEMPT_STDLIB_FILES = frozenset(module.__file__ for module in (linecache, ssl, traceback))
+_IMPORT_MACHINERY_PREFIX = "<frozen importlib._bootstrap"
 
 # Audited events worth reporting. `open` covers reads and writes; the rest are
 # the directory/mutation calls that do raise audit events.
@@ -93,8 +108,15 @@ def _on_runtime_worker() -> bool:
     return thread.name.startswith("Dummy-")
 
 
+def _is_exempt_stdlib_frame(filename: str) -> bool:
+    return filename in _EXEMPT_STDLIB_FILES or filename.startswith(_IMPORT_MACHINERY_PREFIX)
+
+
 def _blame() -> tuple[str, int, str, bool] | None:
     """First frame inside `packages/`, preferring shipped code over tests.
+
+    None when the call comes from one of the exempt stdlib modules: an exempt
+    frame between the filesystem call and the first `packages/` frame.
 
     The fourth element says whether the **outermost** `packages/` frame is test
     code — i.e. whether a test drove this rather than production code. Asking
@@ -106,9 +128,13 @@ def _blame() -> tuple[str, int, str, bool] | None:
     shipped = None
     test_frame = None
     outermost_is_test = False
+    in_packages = False
     while frame is not None:
         filename = frame.f_code.co_filename
+        if not in_packages and _is_exempt_stdlib_frame(filename):
+            return None
         if filename.startswith(_PACKAGES):
+            in_packages = True
             is_test = "/tests/" in filename or "/conftest.py" in filename
             outermost_is_test = is_test
             if not is_test:

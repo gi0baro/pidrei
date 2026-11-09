@@ -49,6 +49,8 @@ from markdown_it import MarkdownIt
 from markdown_it.common.utils import isMdAsciiPunct, isPunctChar
 from markdown_it.rules_inline.state_inline import Delimiter
 
+from ..utils import cjk_punctuation_regex
+
 
 __all__ = ["lex", "trim_partial_closing_fences"]
 
@@ -56,6 +58,56 @@ _md = MarkdownIt("commonmark", {"linkify": True}).enable(["strikethrough", "tabl
 # Keep text_special tokens (escapes/entities) separate so escape tokens can be
 # emitted like marked does.
 _md.disable("text_join")
+# marked keeps a link's destination and an autolink's text as written; markdown-it percent-encodes
+# destinations and punycodes hosts (and decodes both again for display). Keep them as written, so a
+# non-ASCII URL reaches the OSC 8 hyperlink and the screen unchanged, as in pi.
+_md.normalizeLink = lambda url: url
+_md.normalizeLinkText = lambda url: url
+
+
+class _BareUrlLinkify:
+    """linkify-it with pi's bare-URL rule: a bare URL stops at CJK punctuation.
+
+    pi re-runs marked's URL tokenizer on the text before the first CJK punctuation mark, so the
+    usual trailing-punctuation trimming applies to the shortened URL. Explicit links and angle
+    autolinks have their own rules and keep these characters. Both of markdown-it's linkify rules
+    (protocol links inline, `www.` and email links in the core pass) read matches from here.
+    """
+
+    def __init__(self, linkify) -> None:
+        self._linkify = linkify
+
+    def pretest(self, text: str) -> bool:
+        return self._linkify.pretest(text)
+
+    def test(self, text: str) -> bool:
+        return self._linkify.test(text)
+
+    def match(self, text: str):
+        matches = self._linkify.match(text)
+        if not matches:
+            return matches
+        kept = [cut for cut in (self._stop_at_cjk_punctuation(match) for match in matches) if cut is not None]
+        return kept or None
+
+    def match_at_start(self, text: str):
+        match = self._linkify.match_at_start(text)
+        return None if match is None else self._stop_at_cjk_punctuation(match)
+
+    def _stop_at_cjk_punctuation(self, match):
+        punctuation = cjk_punctuation_regex.search(match.raw)
+        if punctuation is None:
+            return match
+        shortened = self._linkify.match(match.raw[: punctuation.start()])
+        if not shortened or shortened[0].index != 0:
+            return None
+        cut = shortened[0]
+        cut.index += match.index
+        cut.last_index += match.index
+        return cut
+
+
+_md.linkify = _BareUrlLinkify(_md.linkify)
 
 _TASK_MARKER_RE = re.compile(r"^\[[ xX]\] +")
 _FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})")

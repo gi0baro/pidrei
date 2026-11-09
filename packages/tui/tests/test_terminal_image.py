@@ -91,6 +91,7 @@ _TUI = _FakeTui()
 _ENV_KEYS = (
     "TERM",
     "TERM_PROGRAM",
+    "ORCA_IMAGE_PROTOCOL",
     "TERMINAL_EMULATOR",
     "COLORTERM",
     "TMUX",
@@ -423,6 +424,19 @@ def test_enables_hyperlinks_and_kitty_images_for_rex():
         assert caps["trueColor"] is True
     with clean_env({"TERM_PROGRAM": "rex", "PIDREI_HYPERLINKS": "0"}):
         assert detect_capabilities()["hyperlinks"] is False
+
+
+def test_keeps_images_disabled_for_orca_without_an_image_capability_signal():
+    with clean_env({"TERM_PROGRAM": "Orca"}):
+        assert detect_capabilities()["images"] is None
+
+
+def test_enables_images_and_hyperlinks_for_orca_advertising_kitty_support():
+    with clean_env({"TERM_PROGRAM": "Orca", "ORCA_IMAGE_PROTOCOL": "kitty"}):
+        caps = detect_capabilities()
+        assert caps["images"] == "kitty"
+        assert caps["trueColor"] is True
+        assert caps["hyperlinks"] is True
 
 
 def test_enables_hyperlinks_for_ghostty():

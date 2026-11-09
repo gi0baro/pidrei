@@ -42,6 +42,7 @@ from .types import (
     OAuthDiscoveryState,
     OAuthServerInfo,
     OAuthTokens,
+    is_http_url,
     parse_client_information,
     parse_oauth_tokens,
 )
@@ -225,6 +226,9 @@ def start_authorization(
         url = parse_url(metadata["authorization_endpoint"])
     else:
         url = parse_url("/authorize", authorization_server_url)
+    # Callers open this URL with the platform URL handler, which also launches files and custom protocols.
+    if not is_http_url(url):
+        raise RuntimeError(f"Invalid authorization endpoint {url.href}")
     pkce = generate_pkce()
     url = url.with_search_param("response_type", "code")
     url = url.with_search_param("client_id", client_information["client_id"])

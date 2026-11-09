@@ -490,6 +490,54 @@ def strip_terminal_sequences(s: str) -> str:
     return "".join(result)
 
 
+def _extract_ansi_codes(s: str) -> str:
+    result: list[str] = []
+    i = s.find("\x1b")
+    while i != -1:
+        length = _ansi_code_length(s, i)
+        if length > 0:
+            result.append(s[i : i + length])
+            i += length
+        else:
+            i += 1
+        i = s.find("\x1b", i)
+    return "".join(result)
+
+
+def _is_whitespace_token(token: str) -> bool:
+    """Whether a token's visible text is only whitespace.
+
+    Codes closing a styled word attach to the following space, e.g. "\\x1b[22m ", so they are
+    skipped. Stops at the first visible non-whitespace text without allocating a stripped copy,
+    because styled words reach this check on every wrap. ASCII whitespace is `String.prototype.trim()`'s
+    (space, tab to carriage return); beyond ASCII it is `re`'s `\\s`.
+    """
+    i = 0
+    length = len(token)
+    while i < length:
+        char = token[i]
+        if char == "\x1b":
+            code_length = _ansi_code_length(token, i)
+            if code_length == 0:
+                return False  # A lone ESC is visible text
+            i += code_length
+        elif char == " " or "\t" <= char <= "\r":
+            i += 1
+        elif char < "\x80" or _WHITESPACE_RE.match(char) is None:
+            return False
+        else:
+            i += 1
+    return True
+
+
+_CONTROL_CHARACTERS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def replace_control_characters(s: str) -> str:
+    """Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space."""
+    return _CONTROL_CHARACTERS_RE.sub(" ", s)
+
+
 def get_grapheme_cell_range(line: str, column: int) -> tuple[int, int] | None:
     """Return the terminal-cell range ``(start, end)`` of the grapheme at a visible column."""
     current_col = 0
@@ -943,13 +991,15 @@ class AnsiCodeTracker:
     def get_line_end_reset(self) -> str:
         """Get reset codes for attributes that need to be turned off at line end.
 
-        Underline must be closed to prevent bleeding into padding. Active OSC 8
-        hyperlinks must be closed and re-opened on the next line. Returns empty
-        string if no attributes need closing.
+        Underline and strikethrough must be closed to prevent bleeding into
+        padding. Active OSC 8 hyperlinks must be closed and re-opened on the
+        next line. Returns empty string if no attributes need closing.
         """
         result = ""
         if self._underline:
             result += "\x1b[24m"  # Underline off only
+        if self._strikethrough:
+            result += "\x1b[29m"  # Strikethrough off only, re-opened at line start via get_active_codes()
         if self._active_hyperlink:
             result += _format_osc8_close(self._active_hyperlink["terminator"])  # Re-opened via get_active_codes()
         return result
@@ -1094,11 +1144,13 @@ def _wrap_single_line(line: str, width: int) -> list[str]:
 
     for token in tokens:
         token_visible_length = visible_width(token)
-        is_whitespace = token.strip() == ""
+        is_whitespace = _is_whitespace_token(token)
 
         # Token itself is too long - break it character by character
         if token_visible_length > width and not is_whitespace:
             if current_line:
+                # Trim before adding the reset, which would otherwise block the final rstrip()
+                current_line = current_line.rstrip()
                 # Add specific reset for underline only (preserves background)
                 line_end_reset = tracker.get_line_end_reset()
                 if line_end_reset:
@@ -1120,6 +1172,11 @@ def _wrap_single_line(line: str, width: int) -> list[str]:
         if total_needed > width and current_visible_length > 0:
             # Trim trailing whitespace, then add underline reset (not full reset, to preserve background)
             line_to_wrap = current_line.rstrip()
+            if is_whitespace:
+                # The dropped space may carry codes (e.g. closing a styled word). Keep them on the wrapped line so
+                # the style ends there and is not re-opened on the next line.
+                line_to_wrap += _extract_ansi_codes(token)
+                _update_tracker_from_text(token, tracker)
             line_end_reset = tracker.get_line_end_reset()
             if line_end_reset:
                 line_to_wrap += line_end_reset
@@ -1128,9 +1185,13 @@ def _wrap_single_line(line: str, width: int) -> list[str]:
                 # Don't start new line with whitespace
                 current_line = tracker.get_active_codes()
                 current_visible_length = 0
-            else:
-                current_line = tracker.get_active_codes() + token
-                current_visible_length = token_visible_length
+                continue
+            current_line = tracker.get_active_codes() + token
+            current_visible_length = token_visible_length
+        elif is_whitespace and total_needed > width and "\x1b" in token:
+            # Whitespace wider than an empty line. Plain spaces are removed by the final rstrip(), but codes after
+            # them (e.g. a trailing reset) would block that and leave the line wider than width. Keep only the codes.
+            current_line += _extract_ansi_codes(token)
         else:
             # Add to current line
             current_line += token

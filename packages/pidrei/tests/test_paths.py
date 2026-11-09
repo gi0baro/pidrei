@@ -9,8 +9,11 @@ from pidrei.utils.paths import (
     canonicalize_path_blocking,
     get_cwd_relative_path,
     is_local_path,
+    is_path_within,
     normalize_path,
+    paths_equal,
     resolve_path,
+    shorten_home_path,
 )
 
 
@@ -108,6 +111,30 @@ class TestIsLocalPath:
 
     def test_returns_false_for_https_protocol(self):
         assert is_local_path("https://example.com") is False
+
+
+class TestPathComparison:
+    """pi's Windows cases (case folding, drive letters, UNC) are not ported."""
+
+    def test_keeps_casing_on_case_sensitive_platforms(self):
+        assert paths_equal("/home/me", "/home/Me") is False
+        assert is_path_within("/home/me", "/home/Me/project") is False
+
+    def test_is_path_within_matches_whole_path_segments(self):
+        assert is_path_within("/home/me", "/home/me") is True
+        assert is_path_within("/home/me", "/home/me/project") is True
+        assert is_path_within("/home/me/", "/home/me/project") is True
+        assert is_path_within("/home/me", "/home/me2") is False
+        assert is_path_within("/", "/home") is True
+
+    def test_shorten_home_path_replaces_only_a_leading_home_directory(self):
+        assert shorten_home_path("/home/me", "/home/me") == "~"
+        assert shorten_home_path("/home/me/project", "/home/me") == "~/project"
+        assert shorten_home_path("/home/me2/project", "/home/me") == "/home/me2/project"
+        assert shorten_home_path("/home/Me/project", "/home/me") == "/home/Me/project"
+        assert shorten_home_path("/etc/passwd", "/") == "~/etc/passwd"
+        assert shorten_home_path("home/me/project", "/home/me") == "home/me/project"
+        assert shorten_home_path("/home/me/project", "") == "/home/me/project"
 
 
 class TestFileUrlBase:

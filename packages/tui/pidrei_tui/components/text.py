@@ -24,6 +24,9 @@ class Text:
         self._cache: tuple[str, int, list[str]] | None = None
 
     def set_text(self, text: str) -> None:
+        # Renderers often set the same text on every update; keep the wrapped lines then.
+        if text == self._text:
+            return
         self._text = text
         self.invalidate()
 

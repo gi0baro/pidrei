@@ -14,7 +14,7 @@ from typing import Any
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
-from pidrei_ai.auth.oauth.urls import http_or_https_url
+from pidrei_ai.auth.oauth.urls import trusted_http_url
 from pidrei_ai.auth.types import (
     AuthEvent,
     LoginOptions,
@@ -91,16 +91,13 @@ async def _start_device_authorization(oauth_host: str, cancel: CancelToken) -> _
     body = response.json_object()
     device_code = body.get("device_code") if body else None
     user_code = body.get("user_code") if body else None
-    verification_uri = body.get("verification_uri") if body else None
-    verification_uri_complete = body.get("verification_uri_complete") if body else None
+    verification_uri = trusted_http_url(body.get("verification_uri") if body else None)
+    verification_uri_complete = trusted_http_url(body.get("verification_uri_complete") if body else None)
     if (
         not isinstance(device_code, str)
         or not isinstance(user_code, str)
-        or not isinstance(verification_uri, str)
-        or not isinstance(verification_uri_complete, str)
-        # The verification URI is opened in the user's browser; only http(s) URLs are trusted.
-        or http_or_https_url(verification_uri_complete) is None
-        or http_or_https_url(verification_uri) is None
+        or not verification_uri
+        or not verification_uri_complete
     ):
         raise RuntimeError(f"Invalid Kimi Code device authorization response: {_stringify(body)}")
 

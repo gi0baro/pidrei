@@ -43,6 +43,44 @@ class TestTokenize:
     def test_splits_camel_case_and_snake_case_drops_stop_words_and_folds_plurals(self):
         assert tokenize("listIssues for the GitHub_repo") == ["list", "issue", "git", "hub", "repo"]
         assert tokenize("searches queries HTTPServer") == ["search", "query", "http", "server"]
+        assert tokenize("repo.issues/search:queries") == ["repo", "issue", "search", "query"]
+
+    # pi's Intl.Segmenter gives dictionary words for Chinese, Japanese and
+    # Thai; PiDrei gives one token per character (recipe `tool-search-unigrams`).
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("搜索仓库问题", ["搜", "索", "仓", "库", "问", "题"]),
+            ("文書を検索", ["文", "書", "を", "検", "索"]),
+            ("문서 검색", ["문서", "검색"]),
+            ("ค้นหาเอกสาร", ["ค้", "น", "ห", "า", "เ", "อ", "ก", "ส", "า", "ร"]),
+            ("Поиск документов", ["поиск", "документов"]),
+            ("البحث عن الملفات", ["البحث", "عن", "الملفات"]),
+            ("फ़ाइल खोजें", ["फ़ाइल", "खोजें"]),
+            ("Éléments cafés", ["éléments", "cafés"]),
+        ],
+    )
+    def test_segments_unicode_words(self, text, expected):
+        assert tokenize(text) == expected
+
+    def test_preserves_non_ascii_words_and_splits_mixed_language_identifiers(self):
+        # pi keeps `搜索` as one word; here it is one token per character.
+        assert tokenize("搜索GitHub_repoIssues résumé cafés") == [
+            "搜",
+            "索",
+            "git",
+            "hub",
+            "repo",
+            "issue",
+            "résumé",
+            "cafés",
+        ]
+
+    def test_normalizes_canonically_equivalent_unicode_text(self):
+        assert tokenize("CAFÉ café") == ["café", "café"]
+
+    def test_ignores_whitespace_punctuation_and_emoji(self):
+        assert tokenize(" \t，。!? 😀 ") == []
 
 
 RANKED_TOOLS = (
@@ -70,12 +108,126 @@ class TestBm25Ranker:
         # Property names and descriptions are searchable.
         assert [match.name for match in ranker.rank("closed", DOCUMENTS, 8)] == ["mcp__github__list_issues"]
 
+    @pytest.mark.parametrize(
+        ("description", "query"),
+        [
+            ("搜索仓库问题", "问题"),
+            ("文書を検索", "検索"),
+            ("문서 검색", "검색"),
+            ("ค้นหาเอกสาร", "เอกสาร"),
+            ("Поиск документов", "документов"),
+            ("البحث عن الملفات", "الملفات"),
+            ("फ़ाइल खोजें", "खोजें"),
+            ("Rechercher un café", "café"),
+        ],
+    )
+    def test_matches_unicode_queries(self, description, query):
+        localized = create_tool_search_document(tool("localized", description))
+        matches = Bm25Ranker().rank(query, [*DOCUMENTS, localized], 8)
+        assert [match.name for match in matches] == ["localized"]
+        assert isinstance(matches[0].score, float)
+
     def test_returns_nothing_for_unknown_or_empty_queries(self):
         ranker = Bm25Ranker()
         assert ranker.rank("kubernetes", DOCUMENTS, 8) == []
         assert ranker.rank("the", DOCUMENTS, 8) == []
         # Known v1 limit: no synonyms, so "tickets" does not find "issues".
         assert ranker.rank("tickets", DOCUMENTS, 8) == []
+
+    # https://github.com/earendil-works/pi/issues/11331
+    def test_ranks_a_tool_first_when_the_query_is_its_name(self):
+        named = [
+            create_tool_search_document(entry)
+            for entry in (
+                tool("mcp__app__queue_read", "Read a queued message of this thread."),
+                tool(
+                    "mcp__dev-app__thread_read",
+                    "Read durable state and a paginated timeline from any thread. The default view returns user "
+                    "messages, assistant messages and plans. Continue with afterPosition until hasMore is false.",
+                ),
+            )
+        ]
+        ranker = Bm25Ranker()
+        for query in (
+            "thread_read",
+            "dev_app__thread_read",
+            "mcp__dev-app__thread_read",
+            "Thread_Read",
+            "thread read",
+        ):
+            assert [match.name for match in ranker.rank(query, named, 1)] == ["mcp__dev-app__thread_read"]
+        # Partial names still rank by BM25.
+        assert [match.name for match in ranker.rank("read", named, 1)] == ["mcp__app__queue_read"]
+
+    # https://github.com/earendil-works/pi/issues/11331
+    def test_ranks_a_name_match_above_mentions_in_descriptions(self):
+        documents = [
+            create_tool_search_document(entry)
+            for entry in (
+                tool("mcp__ci__status", "Deploy status: last deploy, deploy log, deploy errors."),
+                tool(
+                    "mcp__ci__deploy_release",
+                    "Start a release of the current branch to an environment, run the migrations, switch traffic "
+                    "over, and wait until the new version is live and healthy.",
+                ),
+            )
+        ]
+        assert [match.name for match in Bm25Ranker().rank("deploy", documents, 1)] == ["mcp__ci__deploy_release"]
+
+    # https://github.com/earendil-works/pi/issues/11331
+    def test_ranks_a_tool_first_when_the_query_contains_its_whole_name(self):
+        peekaboo = ToolNamespace(name="mcp__peekaboo", instructions="Peekaboo controls macOS apps by app name.")
+        entries = (
+            tool("mcp__peekaboo__see", "Capture the app window of the peekaboo app and describe the app."),
+            tool("mcp__peekaboo__menu", "Click a menu item of an app."),
+            tool(
+                "mcp__peekaboo__app",
+                "Launch, quit, relaunch, focus, hide, or switch applications. Targets an application by name, "
+                "bundle identifier, or process ID, and can wait until it is ready.",
+            ),
+            tool("mcp__app__queue_read", "Read a queued message of this thread."),
+            tool(
+                "mcp__dev-app__thread_read",
+                "Read durable state and a paginated timeline from any thread. The default view returns user "
+                "messages, assistant messages and plans.",
+            ),
+        )
+        documents = [
+            create_tool_search_document(entry, peekaboo if entry.name.startswith("mcp__peekaboo__") else None)
+            for entry in entries
+        ]
+        ranker = Bm25Ranker()
+
+        def first(query: str) -> list[str]:
+            return [match.name for match in ranker.rank(query, documents, 1)]
+
+        assert first("peekaboo app") == ["mcp__peekaboo__app"]
+        assert first("open the peekaboo app tool") == ["mcp__peekaboo__app"]
+        assert first("read thread_read state") == ["mcp__dev-app__thread_read"]
+        # Without the whole name, mentions in descriptions decide.
+        assert first("describe window") == ["mcp__peekaboo__see"]
+
+    # https://github.com/earendil-works/pi/issues/11331
+    def test_ranks_a_tool_matching_more_query_terms_first_whatever_the_scores(self):
+        documents = [
+            create_tool_search_document(entry)
+            for entry in (
+                tool("mcp__peekaboo__app", "Launch, quit, focus, or switch applications by name or bundle identifier."),
+                tool("mcp__peekaboo__see", "Capture the app window and describe the UI elements of the app."),
+                tool("mcp__peekaboo__window", "Move, resize, or close a window of an app."),
+                tool("mcp__peekaboo__image", "Take a screenshot of the screen, an app, or a window."),
+            )
+        ]
+        ranker = Bm25Ranker()
+
+        def first(query: str) -> list[str]:
+            return [match.name for match in ranker.rank(query, documents, 1)]
+
+        # `window` and `app` are whole names, but each covers one of the two terms.
+        assert first("screenshot window") == ["mcp__peekaboo__image"]
+        assert first("describe app") == ["mcp__peekaboo__see"]
+        # An exact name still ranks first.
+        assert first("window") == ["mcp__peekaboo__window"]
 
     def test_includes_the_namespace_in_the_search_text(self):
         document = create_tool_search_document(

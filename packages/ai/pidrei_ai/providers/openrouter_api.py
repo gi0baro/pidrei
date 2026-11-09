@@ -2,7 +2,7 @@
 
 OpenRouter's model listing shapes (`GET /models` and `GET /models/user`) and
 the conversion of its per-token prices to a model cost. Shared by the catalog
-generator (`scripts/generate_models.py`) and the per-key catalog in
+generator (`scripts/catalog/sources/openrouter.py`) and the per-key catalog in
 `providers/openrouter.py`. Costs are returned in pi's catalog JSON shape
 (camelCase keys); `models_generated.parse_cost` turns one into a `ModelCost`.
 """

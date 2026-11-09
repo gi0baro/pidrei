@@ -15,7 +15,12 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, Protocol
 
-from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import (
+    get_json_schema_tool_parameters,
+    is_strict_tool_limit_error_message,
+    prefers_json_schema_strict_sampling,
+    resolve_json_schema_strict_sampling,
+)
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
 from pidrei_ai.api.transform_messages import split_error_tool_result_images, transform_messages
@@ -77,11 +82,13 @@ from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.identity import set_default_identity_headers
-from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json, parse_tool_call_arguments
+from pidrei_ai.utils.json_parse import parse_json_with_repair
+from pidrei_ai.utils.openrouter_cost import apply_openrouter_reported_cost, is_openrouter_model
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import (
     get_current_tools,
@@ -686,10 +693,11 @@ def stream(
     out_stream.partial = output
 
     async def _run() -> None:
-        # Streaming scratch (pi keeps these on the blocks and strips them later;
-        # slotted dataclasses keep them out-of-band instead).
+        # Stream state per open Anthropic block index, kept off the content
+        # blocks so it never reaches partials: the content index, and a tool
+        # call's arguments.
         anthropic_index_to_content: dict[int, int] = {}
-        partial_json: dict[int, str] = {}
+        tool_arguments: dict[int, ToolCallArgumentsStream] = {}
 
         usage_model = model
         input_transformations: list[dict[str, Any]] | None = None
@@ -845,7 +853,7 @@ def stream(
                         )
                         content_index = len(blocks) - 1
                         anthropic_index_to_content[index] = content_index
-                        partial_json[content_index] = ""
+                        tool_arguments[content_index] = ToolCallArgumentsStream()
                         out_stream.push(ToolCallStartEvent(content_index=content_index, partial=output))
                 elif event_type == "content_block_delta":
                     delta = event.get("delta") or {}
@@ -867,9 +875,9 @@ def stream(
                                 )
                             )
                     elif delta_type == "input_json_delta":
-                        if block is not None and block.type == "toolCall":
-                            partial_json[content_index] += delta.get("partial_json", "")
-                            block.arguments = parse_streaming_json(partial_json[content_index])
+                        arguments = tool_arguments.get(content_index) if content_index is not None else None
+                        if block is not None and block.type == "toolCall" and arguments is not None:
+                            block.arguments = arguments.append(delta.get("partial_json", ""))
                             out_stream.push(
                                 ToolCallDeltaEvent(
                                     content_index=content_index,
@@ -880,7 +888,7 @@ def stream(
                     elif delta_type == "signature_delta" and block is not None and block.type == "thinking":
                         block.thinking_signature = (block.thinking_signature or "") + delta.get("signature", "")
                 elif event_type == "content_block_stop":
-                    content_index = anthropic_index_to_content.get(event.get("index"))
+                    content_index = anthropic_index_to_content.pop(event.get("index"), None)
                     block = blocks[content_index] if content_index is not None else None
                     if block is not None:
                         if block.type == "text":
@@ -891,10 +899,8 @@ def stream(
                             out_stream.push(
                                 ThinkingEndEvent(content_index=content_index, content=block.thinking, partial=output)
                             )
-                        elif block.type == "toolCall":
-                            block.arguments, block.arguments_error = parse_tool_call_arguments(
-                                partial_json.pop(content_index, "")
-                            )
+                        elif block.type == "toolCall" and content_index in tool_arguments:
+                            block.arguments, block.arguments_error = tool_arguments.pop(content_index).finish()
                             out_stream.push(
                                 ToolCallEndEvent(content_index=content_index, tool_call=block, partial=output)
                             )
@@ -935,6 +941,10 @@ def stream(
                         output.usage.input + output.usage.output + output.usage.cache_read + output.usage.cache_write
                     )
                     calculate_cost(usage_model, output.usage)
+                    if is_openrouter_model(model) and isinstance(usage, dict):
+                        # OpenRouter adds billing fields to streamed message_delta usage at runtime,
+                        # although its OpenAPI schema and the Anthropic SDK do not type those fields.
+                        apply_openrouter_reported_cost(output.usage, usage)
 
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
@@ -1055,7 +1065,9 @@ def _convert_messages(
     params: list[dict[str, Any]] = []
     assistant_levels: dict[int, AnthropicEffort] = {}
     # Later system messages are held back and emitted directly before the next assistant
-    # message (or at the end of the transcript). Anthropic requires `tool_result` blocks to
+    # message that is sent (or at the end of the transcript). Assistant messages that convert to
+    # no blocks are dropped, so holding past them keeps an update from landing before a user
+    # message (#11091). Anthropic requires `tool_result` blocks to
     # immediately follow their `tool_use`, so a system message between them is rejected; this
     # also mirrors where the managed-effort system messages are inserted. As a result an
     # update placed before a user message in the transcript lands after it on the wire.
@@ -1106,7 +1118,6 @@ def _convert_messages(
                 if blocks:
                     params.append({"role": "user", "content": blocks})
         elif msg.role == "assistant":
-            flush_pending_system_messages()
             blocks = []
             for block in msg.content:
                 if block.type == "text":
@@ -1149,6 +1160,7 @@ def _convert_messages(
                         }
                     )
             if blocks:
+                flush_pending_system_messages()
                 message_index = len(params)
                 params.append({"role": "assistant", "content": blocks})
                 if (
@@ -1314,7 +1326,7 @@ def _convert_tools(
     for index, tool in enumerate(tools):
         strict = (
             None
-            if disable_preferred_strict_tools and _is_preferred_strict(tool)
+            if disable_preferred_strict_tools and prefers_json_schema_strict_sampling(tool)
             else resolve_json_schema_strict_sampling(
                 tool, supports_strict_tools, _is_anthropic_strict_unsupported_keyword
             )
@@ -1342,28 +1354,13 @@ def _convert_tools(
     return converted
 
 
-_STRICT_TOOL_LIMIT_MESSAGES = (
-    "The compiled grammar is too large",
-    "Too many strict tools (",
-    "Schemas contains too many parameters with union types (",
-)
-
-
 def _is_strict_tool_limit_error(error: AnthropicApiError) -> bool:
     """A 400 `invalid_request_error` rejecting the strict tool set for its size or unions."""
     body_error = (error.error or {}).get("error")
     error_type = body_error.get("type") if isinstance(body_error, dict) else None
     return (
-        error.status == 400
-        and error_type == "invalid_request_error"
-        and any(message in str(error) for message in _STRICT_TOOL_LIMIT_MESSAGES)
+        error.status == 400 and error_type == "invalid_request_error" and is_strict_tool_limit_error_message(str(error))
     )
-
-
-def _is_preferred_strict(tool: Tool) -> bool:
-    config = tool.constrained_sampling
-    # `False` opts the tool out of constrained sampling: not a preferred-strict tool.
-    return config is not None and config is not False and config.type == "json_schema" and config.strict == "prefer"
 
 
 def _find_fallback_cost(model: Model, served_model: str) -> ModelCost | None:
@@ -1411,7 +1408,7 @@ def _build_params(
             disable_preferred_strict_tools,
         )
         if any(
-            definition.get("strict") is True and _is_preferred_strict(tool)
+            definition.get("strict") is True and prefers_json_schema_strict_sampling(tool)
             for definition, tool in zip(definitions, tools, strict=True)
         ):
             has_preferred_strict_tools = True
@@ -1510,7 +1507,10 @@ def _build_params(
             "display": options.thinking_display or "summarized",
             "block_binding": {"prefix_mismatch_behavior": "drop_block"},
         }
-        params["output_config"] = {"effort": "high"}
+        # Effort markers set the level for every reply. The top-level effort is part of the cached
+        # prompt, so it stays fixed. It is "low" because organizations can cap effort and reject
+        # requests containing any level above the cap.
+        params["output_config"] = {"effort": "low"}
     elif model.reasoning and options.thinking_enabled:
         # Default "summarized" so Opus 4.7/Mythos Preview behave like older
         # Claude 4 models (whose API default is also "summarized").

@@ -94,7 +94,7 @@ _MODEL_DEFINITION = {
     },
 }
 
-# pi's `Type.Partial(ModelCostSchema)`: every rate optional.
+# pi's `PartialModelCostSchema`: `ModelCostSchema` without `required`, every rate optional.
 _PARTIAL_MODEL_COST = {key: value for key, value in MODEL_COST_SCHEMA.items() if key != "required"}
 
 _MODEL_OVERRIDE = {

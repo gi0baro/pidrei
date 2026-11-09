@@ -472,6 +472,36 @@ async def test_forwards_parsed_provider_stream_events_in_order():
     assert event_models == [model, model, model, model, model, model]
 
 
+# Regression test for #9980.
+@pytest.mark.tonio
+async def test_uses_the_total_reported_by_openrouters_anthropic_messages_endpoint():
+    events = minimal_anthropic_events()
+    delta = json.loads(events[4][1])
+    # These fields were captured from a production OpenRouter stream even though its
+    # MessagesDeltaEvent OpenAPI schema and the Anthropic SDK omit them.
+    delta["usage"] = {
+        **delta["usage"],
+        "cost": 0.004,
+        "is_byok": False,
+        "cost_details": {"upstream_inference_cost": 0.003},
+    }
+    events[4] = (events[4][0], json.dumps(delta))
+
+    model = get_builtin_model("openrouter", "anthropic/claude-haiku-4.5")
+    assert model is not None
+    model = replace(model, provider="openrouter-work")
+    result = await stream_anthropic(
+        model,
+        normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)])),
+        AnthropicOptions(client=FakeClient(sse_body(events))),
+    ).result()
+
+    assert result.usage.cost.total == 0.004
+    assert result.usage.cost.total_from_provider is True
+    cost = result.usage.cost
+    assert cost.input + cost.output + cost.cache_read + cost.cache_write != cost.total
+
+
 @pytest.mark.tonio
 async def test_keeps_signed_thinking_replayable_when_a_proxy_relabels_the_model():
     # Regression test for earendil-works/pi#9188.

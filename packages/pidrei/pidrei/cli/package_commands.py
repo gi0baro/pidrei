@@ -42,10 +42,10 @@ from ..config import APP_NAME, CONFIG_DIR_NAME, get_agent_dir, get_auth_path, ge
 from ..core.output_guard import write_stderr, write_stdout
 from ..core.package_manager import DefaultPackageManager
 from ..core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
-from ..core.resource_loader import is_builtin_extension
+from ..core.resource_loader import format_package_install_warning, is_builtin_extension
 from ..core.settings_manager import SettingsManager
 from ..core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources_blocking
-from ..utils.colors import bold, dim, green, red
+from ..utils.colors import bold, dim, green, red, yellow
 
 
 PACKAGE_COMMANDS = ("install", "remove", "uninstall", "update", "list")
@@ -607,6 +607,12 @@ async def handle_config_command(args: list[str], *, extension_factories: list[An
         if settings_manager.is_project_trusted()
         else global_paths
     )
+    install_warnings = dict.fromkeys(
+        format_package_install_warning(failure)
+        for failure in [*global_paths.install_failures, *project_paths.install_failures]
+    )
+    for warning in install_warnings:
+        write_stderr(yellow(f"Warning: {warning}") + "\n")
 
     # lazy: core <-> modes import cycle (see modes/__init__.py)
     from .config_selector import select_config

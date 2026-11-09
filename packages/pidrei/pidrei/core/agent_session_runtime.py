@@ -9,7 +9,7 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import fs, sync
 
-from ..utils.paths import resolve_path
+from ..utils.paths import paths_equal, resolve_path
 from .agent_session import AgentSession
 from .agent_session_services import AgentSessionRuntimeDiagnostic, AgentSessionServices
 from .extensions.runner import emit_session_shutdown_event
@@ -395,7 +395,7 @@ class AgentSessionRuntime:
             await fs.Path(session_dir).mkdir(parents=True, exist_ok=True)
 
         destination_path = os.path.join(session_dir, os.path.basename(resolved_path))
-        source_already_stored = resolve_path(destination_path) == resolved_path
+        source_already_stored = paths_equal(destination_path, resolved_path)
         if not source_already_stored:
             name, ext = os.path.splitext(os.path.basename(destination_path))
             suffix = 1

@@ -1,7 +1,7 @@
 """Mirror of pi's image-model-data.test.ts.
 
 Covers `build_openrouter_catalog` from the catalog generator, the function pi's
-spec imports from `scripts/openrouter-catalog.ts`.
+spec imports from `catalog/sources/openrouter.ts`.
 """
 
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from generate_models import build_openrouter_catalog
+from catalog.sources.openrouter import build_openrouter_catalog
 
 
 IMAGE_ONLY = {

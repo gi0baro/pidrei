@@ -6,22 +6,7 @@
       "api": "openai-completions",
       "provider": "xiaomi-token-plan-cn",
       "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsReasoningEffort": false,
-        "requiresReasoningContentOnAssistantMessages": true,
-        "thinkingFormat": "deepseek"
-      },
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": "off",
-        "minimal": null,
-        "low": null,
-        "medium": null,
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -34,6 +19,21 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsReasoningEffort": false,
+        "requiresReasoningContentOnAssistantMessages": true,
+        "thinkingFormat": "deepseek"
+      },
+      "thinkingLevelMap": {
+        "off": "off",
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {
@@ -52,22 +52,7 @@
       "api": "openai-completions",
       "provider": "xiaomi-token-plan-cn",
       "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsReasoningEffort": false,
-        "requiresReasoningContentOnAssistantMessages": true,
-        "thinkingFormat": "deepseek"
-      },
       "reasoning": true,
-      "thinkingLevelMap": {
-        "off": "off",
-        "minimal": null,
-        "low": null,
-        "medium": null,
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
       "input": [
         "text",
         "image"
@@ -80,6 +65,21 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsReasoningEffort": false,
+        "requiresReasoningContentOnAssistantMessages": true,
+        "thinkingFormat": "deepseek"
+      },
+      "thinkingLevelMap": {
+        "off": "off",
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "inputLimits": {
         "images": {
           "resize": {

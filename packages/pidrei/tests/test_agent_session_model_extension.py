@@ -348,6 +348,41 @@ async def test_allows_extension_tool_result_handlers_to_modify_tool_results(harn
 
 
 @pytest.mark.tonio
+async def test_lets_tool_result_handlers_replace_the_content_with_nothing(harnesses):
+    # pidrei-only: pi's `hookResult?.content ?? result.content` keeps an empty list.
+    async def execute(_tool_call_id, params, *_rest):
+        return AgentToolResult(content=[TextContent(text="secret")], details=None)
+
+    echo_tool = ToolDefinition(
+        name="echo",
+        label="Echo",
+        description="Echo text back",
+        parameters={"type": "object", "properties": {}},
+        execute=execute,
+    )
+
+    async def factory(pi) -> None:
+        async def on_tool_result(_event, _ctx):
+            return {"content": []}
+
+        pi.on("tool_result", on_tool_result)
+
+    harness = await create_harness(tools=[echo_tool], extension_factories=[factory])
+    harnesses.append(harness)
+    harness.set_responses(
+        [
+            faux_assistant_message([faux_tool_call("echo", {})], stop_reason="toolUse"),
+            faux_assistant_message("done"),
+        ]
+    )
+
+    await harness.session.prompt("hi")
+
+    tool_result = next(m for m in harness.session.messages if getattr(m, "role", None) == "toolResult")
+    assert tool_result.content == []
+
+
+@pytest.mark.tonio
 async def test_allows_extension_context_handlers_to_modify_messages_before_the_llm_call(harnesses):
     async def factory(pi) -> None:
         async def on_context(event, _ctx):

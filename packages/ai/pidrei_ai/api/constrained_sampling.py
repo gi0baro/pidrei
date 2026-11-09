@@ -3,10 +3,11 @@
 import copy
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pidrei_ai.types import Tool
+from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 
 
 class UnsupportedStrictJsonSchemaError(Exception):
@@ -133,6 +134,27 @@ def make_strict_json_schema(
     return cloned
 
 
+def prefers_json_schema_strict_sampling(tool: Tool) -> bool:
+    """True for a tool that asks for strict JSON-schema sampling only when possible (`strict: "prefer"`)."""
+    config = tool.constrained_sampling
+    # `False` opts the tool out of constrained sampling: not a preferred-strict tool.
+    return config is not None and config is not False and config.type == "json_schema" and config.strict == "prefer"
+
+
+# Claude rejects (on the Anthropic API and on Bedrock) a request whose strict tools exceed its limits with one of these
+# messages. Observed limits: 20 strict tools, and 16 optional or union-typed parameters across all strict tools.
+_STRICT_TOOL_LIMIT_ERROR_MESSAGES = (
+    "The compiled grammar is too large",
+    "Too many strict tools (",
+    "Schemas contains too many parameters with union types (",
+)
+
+
+def is_strict_tool_limit_error_message(message: str) -> bool:
+    """True when a provider error message says the request's strict tools exceed the provider's limits."""
+    return any(limit_message in message for limit_message in _STRICT_TOOL_LIMIT_ERROR_MESSAGES)
+
+
 def get_json_schema_tool_parameters(tool: Tool, strict: bool | None) -> dict:
     return make_strict_json_schema(tool.parameters) if strict is True else tool.parameters
 
@@ -173,9 +195,30 @@ class GrammarConstrainedSampling:
 
 @dataclass(slots=True)
 class GrammarToolInputJsonBuffer:
-    input: str = ""
+    """A streaming grammar tool input, re-encoded as the JSON arguments text of its call.
+
+    The input is kept in pieces, so appending costs the piece, never the input
+    so far. `arguments` is what the call's partial arguments show,
+    `{property: input}`: pi rebuilds it from the whole input on every delta,
+    which is free with JavaScript's rope strings; here it is read back from
+    the JSON pieces through a `ToolCallArgumentsStream`, so the preview of a
+    large input lags a little behind instead of costing the whole input per
+    delta (see `pidrei_ai.utils.streaming_json`). Once closed it is exact.
+    """
+
     started: bool = False
     closed: bool = False
+    arguments: dict[str, Any] = field(default_factory=dict)
+    _parts: list[str] = field(default_factory=list)
+    _json: ToolCallArgumentsStream = field(default_factory=ToolCallArgumentsStream)
+
+    @property
+    def input(self) -> str:
+        """The raw input so far."""
+        parts = self._parts
+        if len(parts) > 1:
+            parts[:] = ["".join(parts)]
+        return parts[0] if parts else ""
 
 
 def get_grammar_tool_input(tool_name: str, arguments: dict, input_property: str) -> str:
@@ -186,34 +229,53 @@ def get_grammar_tool_input(tool_name: str, arguments: dict, input_property: str)
 
 
 def append_grammar_tool_input_json_delta(
-    buffer: GrammarToolInputJsonBuffer,
-    input_property: str,
-    next_input: str,
-    close: bool,
+    buffer: GrammarToolInputJsonBuffer, input_property: str, input_delta: str
 ) -> str | None:
-    """Incrementally re-encode a grammar tool's raw input as a JSON object delta."""
+    """Append `input_delta` to a streaming grammar tool input and return the matching
+    piece of its JSON arguments text, or `None` for an empty delta.
+
+    Costs time linear in the delta, never in the input so far.
+    """
     if buffer.closed:
-        if close and next_input == buffer.input:
+        raise ValueError(f'grammar tool input for property "{input_property}" changed after it was closed')
+    if not input_delta:
+        return None
+    buffer._parts.append(input_delta)
+    delta = _grammar_tool_input_json_start(buffer, input_property) + json.dumps(input_delta, ensure_ascii=False)[1:-1]
+    buffer.arguments = buffer._json.append(delta)
+    return delta
+
+
+def close_grammar_tool_input_json(
+    buffer: GrammarToolInputJsonBuffer, input_property: str, final_input: str | None
+) -> str | None:
+    """Close a streaming grammar tool input and return the rest of its JSON arguments text.
+
+    `final_input` is the complete input when the provider sends one; it must
+    continue the input streamed so far. Closing again with the same input
+    returns `None`.
+    """
+    if buffer.closed:
+        if final_input is None or final_input == buffer.input:
             return None
         raise ValueError(f'grammar tool input for property "{input_property}" changed after it was closed')
-    if not next_input.startswith(buffer.input):
+    current = buffer.input
+    if final_input is not None and not final_input.startswith(current):
         raise ValueError(f'grammar tool input for property "{input_property}" changed non-monotonically')
+    rest = "" if final_input is None else final_input[len(current) :]
+    if final_input is not None:
+        buffer._parts[:] = [final_input]
+    buffer.closed = True
+    buffer.arguments = {input_property: buffer.input}
+    return f'{_grammar_tool_input_json_start(buffer, input_property)}{json.dumps(rest, ensure_ascii=False)[1:-1]}"}}'
 
-    input_delta = next_input[len(buffer.input) :]
-    if not close and not input_delta:
-        return None
 
-    delta = ""
-    if not buffer.started:
-        delta += f'{{{json.dumps(input_property)}:"'
-        buffer.started = True
-    delta += json.dumps(input_delta, ensure_ascii=False)[1:-1]
-    buffer.input = next_input
-
-    if close:
-        delta += '"}'
-        buffer.closed = True
-    return delta
+def _grammar_tool_input_json_start(buffer: GrammarToolInputJsonBuffer, input_property: str) -> str:
+    """The opening of the JSON arguments text, once."""
+    if buffer.started:
+        return ""
+    buffer.started = True
+    return f'{{{json.dumps(input_property)}:"'
 
 
 def _infer_grammar_input_property(tool: Tool) -> str:

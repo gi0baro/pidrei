@@ -109,9 +109,13 @@ def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     if term_program == "herdr":
         return {"images": "kitty", "trueColor": has_true_color_hint, "hyperlinks": True}
 
-    # Rex supports OSC 8 hyperlinks and only partially implements the Kitty graphics protocol
-    # (no Unicode placeholders), but enough to support PiDrei.
     if term_program == "rex":
+        return {"images": "kitty", "trueColor": True, "hyperlinks": True}
+
+    # Orca supports Kitty graphics but only advertises it through ORCA_IMAGE_PROTOCOL. Require
+    # both signals so Orca releases predating that advertisement keep the text fallback instead
+    # of reserving image rows that nothing renders.
+    if term_program == "orca" and os.environ.get("ORCA_IMAGE_PROTOCOL") == "kitty":
         return {"images": "kitty", "trueColor": True, "hyperlinks": True}
 
     if os.environ.get("KITTY_WINDOW_ID") or term_program == "kitty":
@@ -374,6 +378,10 @@ def encode_iterm2(
 _kitty_image_metadata: dict[int, dict] = {}
 _kitty_image_metadata_lock = threading.Lock()
 _kitty_transmission_generation = 0
+# Tallest registered image. Bounds backward searches for image lines above a
+# viewport: no image line further up than this can reach into it. A high-water
+# mark (eviction never lowers it), written with the registry under its lock.
+_max_kitty_image_rows = 0
 
 _KITTY_CONTROLS_RE = re.compile(r"\x1b_G([^;]*);")
 _KITTY_IMAGE_ID_RE = re.compile(r"(?:^|,)i=(\d+)(?:,|$)")
@@ -382,9 +390,10 @@ _KITTY_CROP_CONTROL_RE = re.compile(r"^[yhr]=")
 
 
 def register_kitty_image_metadata(metadata: dict) -> None:
-    global _kitty_transmission_generation
+    global _kitty_transmission_generation, _max_kitty_image_rows
     with _kitty_image_metadata_lock:
         _kitty_transmission_generation += 1
+        _max_kitty_image_rows = max(_max_kitty_image_rows, metadata["rows"])
         _kitty_image_metadata.pop(metadata["imageId"], None)
         _kitty_image_metadata[metadata["imageId"]] = {
             **metadata,
@@ -394,6 +403,12 @@ def register_kitty_image_metadata(metadata: dict) -> None:
             oldest_image_id = next(iter(_kitty_image_metadata), None)
             if oldest_image_id is not None:
                 del _kitty_image_metadata[oldest_image_id]
+
+
+def get_max_kitty_image_rows() -> int:
+    """Return the row height of the tallest Kitty image registered so far."""
+    with _kitty_image_metadata_lock:
+        return _max_kitty_image_rows
 
 
 def _get_registered_kitty_image_metadata_from_controls(controls: str) -> dict | None:

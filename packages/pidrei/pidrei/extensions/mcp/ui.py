@@ -97,7 +97,13 @@ class McpManagerView:
         self._content = _frame(theme, "MCP servers", [Text(theme.fg("muted", "Loading…"), 1, 1)])
         self._input_handler: Callable[[str], None] | None = None
         self._input_target: Any = None
+        self._captures_viewport_input = False
         self._focused = False
+
+    @property
+    def captures_viewport_input(self) -> bool:
+        """A shown list receives fullscreen viewport keys (PageUp/PageDown page it)."""
+        return self._captures_viewport_input
 
     @property
     def focused(self) -> bool:
@@ -110,7 +116,12 @@ class McpManagerView:
             self._input_target.focused = value
 
     def _set_content(
-        self, content: Container, input_handler: Callable[[str], None] | None = None, input_target: Any = None
+        self,
+        content: Container,
+        input_handler: Callable[[str], None] | None = None,
+        input_target: Any = None,
+        *,
+        captures_viewport_input: bool = False,
     ) -> None:
         """Under the UI lock."""
         if self._input_target is not None:
@@ -118,6 +129,7 @@ class McpManagerView:
         self._content = content
         self._input_handler = input_handler
         self._input_target = input_target
+        self._captures_viewport_input = captures_viewport_input
         if input_target is not None:
             input_target.focused = self._focused
         self._tui.request_render()
@@ -168,7 +180,11 @@ class McpManagerView:
             select_list.on_select = lambda item: answer.settle(item["value"])
             select_list.on_cancel = lambda: answer.settle(None)
             body.append(select_list)
-            self._set_content(_frame(theme, menu.title, body, footer), select_list.handle_input)
+            self._set_content(
+                _frame(theme, menu.title, body, footer),
+                select_list.handle_input,
+                captures_viewport_input=select_list.captures_viewport_input,
+            )
 
         self._tui.apply(render)
         unsubscribe = subscribe(lambda: self._tui.apply(render)) if subscribe is not None else None

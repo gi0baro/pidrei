@@ -21,7 +21,7 @@ from ...core.tools.render_utils import get_text_output, replace_tabs, start_tool
 from ...core.tools.renderers.types import ToolRenderers
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.components.visual_truncate import VisualLinePreview
-from ...modes.interactive.theme import highlight_code, theme
+from ...modes.interactive.theme import CodeHighlighter, theme
 
 
 _CODE_PREVIEW_LINES = 10
@@ -109,7 +109,12 @@ def _render_call(args, _theme, context):
         return component
     component.add_child(Text(title, 0, 0))
     if code:
-        highlighted = "\n".join(highlight_code(replace_tabs(code.replace("\r", "").rstrip()), "python"))
+        # Progress, timer ticks and expanding redraw the call, so the row keeps the script's highlighting.
+        state = context["state"]
+        highlighter = state.get("scriptHighlighter")
+        if highlighter is None:
+            highlighter = state["scriptHighlighter"] = CodeHighlighter()
+        highlighted = "\n".join(highlighter.highlight(replace_tabs(code.replace("\r", "").rstrip()), "python"))
         component.add_child(
             Text(highlighted, 0, 0)
             if context["expanded"]

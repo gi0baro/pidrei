@@ -1,26 +1,17 @@
 """Mirror of pi's model-cost-tiers.test.ts.
 
-pi's helpers live in scripts/ai-gateway-pricing.ts and
-scripts/openrouter-catalog.ts; pidrei consolidates both into
-scripts/generate_models.py, so the cases import the generator script.
+pi's helpers live in catalog/sources/vercel-ai-gateway.ts and
+catalog/sources/openrouter.ts, as do PiDrei's (scripts/catalog/sources/).
 """
 
-import importlib.util
+import sys
 from pathlib import Path
 
 
-def _load_generate_models():
-    """Import the sibling generator script (not an installed module)."""
-    path = Path(__file__).parents[1] / "scripts" / "generate_models.py"
-    spec = importlib.util.spec_from_file_location("pidrei_ai_scripts_generate_models", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-
-generate_models = _load_generate_models()
-get_ai_gateway_cost = generate_models.get_ai_gateway_cost
-build_openrouter_catalog = generate_models.build_openrouter_catalog
+from catalog.sources.openrouter import build_openrouter_catalog
+from catalog.sources.vercel_ai_gateway import get_ai_gateway_cost
 
 
 def open_router_chat_cost(pricing):

@@ -24,6 +24,7 @@ from pidrei.core.session_manager import SessionManager
 from pidrei.modes.rpc import rpc_mode
 from pidrei_ai.types import DoneEvent, Model, ModelCost, StartEvent
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils.cancel import CancelToken
 
 from .agent_session_helpers import create_agent_session, create_assistant_message
 from .test_agent_session_compaction import _make_llm_stream_fn
@@ -719,5 +720,59 @@ class TestRpcMode:
             session_info_entries = [e for e in entries if e["type"] == "session_info"]
             assert len(session_info_entries) == 1
             assert session_info_entries[0]["name"] == "my-test-session"
+        finally:
+            await harness.stop()
+
+
+def _ui_requests(harness: _RpcHarness, method: str) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in harness.records()
+        if record.get("type") == "extension_ui_request" and record.get("method") == method
+    ]
+
+
+class TestRpcExtensionUi:
+    """pidrei-only: the extension UI options reach the RPC client and bound the wait."""
+
+    @pytest.mark.tonio
+    async def test_a_dialog_timeout_is_sent_and_ends_the_wait(self, tmp_path):
+        harness = _RpcHarness()
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
+        await harness.start(host)
+        try:
+            ui = host.session.extension_runner.get_ui_context()
+            answer = await ui.select("Pick", ["a", "b"], {"timeout": 50})
+
+            assert answer is None
+            assert _ui_requests(harness, "select")[0]["timeout"] == 50
+        finally:
+            await harness.stop()
+
+    @pytest.mark.tonio
+    async def test_a_cancelled_signal_ends_the_wait(self, tmp_path):
+        harness = _RpcHarness()
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
+        await harness.start(host)
+        try:
+            ui = host.session.extension_runner.get_ui_context()
+            signal = CancelToken()
+            handle = ui.confirm("Sure?", "Really?", {"signal": signal})
+            await harness.until(lambda: len(_ui_requests(harness, "confirm")) == 1)
+            signal.cancel()
+
+            assert await handle is False
+        finally:
+            await harness.stop()
+
+    @pytest.mark.tonio
+    async def test_widget_placement_is_sent(self, tmp_path):
+        harness = _RpcHarness()
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
+        await harness.start(host)
+        try:
+            host.session.extension_runner.get_ui_context().set_widget("w", ["line"], {"placement": "belowEditor"})
+
+            assert _ui_requests(harness, "setWidget")[0]["widgetPlacement"] == "belowEditor"
         finally:
             await harness.stop()

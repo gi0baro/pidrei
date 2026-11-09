@@ -9,8 +9,8 @@ import os
 from pidrei_tui import Container, Input, Spacer, get_keybindings, matches_key, truncate_to_width, visible_width
 
 from ....config import CONFIG_DIR_NAME
-from ....core.source_info import BUILTIN_PATH_PREFIX
-from ....utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
+from ....core.source_info import BUILTIN_PATH_PREFIX, get_resource_path_key_blocking
+from ....utils.paths import is_local_path, resolve_path, shorten_home_path
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, raw_key_hint
@@ -27,16 +27,7 @@ RESOURCE_TYPE_LABELS = {
 
 
 def _format_base_dir(base_dir: str) -> str:
-    home_dir = os.path.expanduser("~")
-
-    if base_dir == home_dir:
-        display_path = "~"
-    elif base_dir.startswith(home_dir):
-        # Replace home prefix with ~
-        display_path = f"~{base_dir[len(home_dir) :]}"
-    else:
-        display_path = base_dir
-
+    display_path = shorten_home_path(base_dir)
     return display_path if display_path.endswith("/") else f"{display_path}/"
 
 
@@ -143,7 +134,7 @@ def build_canonical_path_map_blocking(resolved_paths: dict) -> dict[str, str]:
         for resource_type in RESOURCE_TYPES:
             for res in getattr(resolved, resource_type):
                 if res.path not in canonical:
-                    canonical[res.path] = canonicalize_path_blocking(res.path)
+                    canonical[res.path] = get_resource_path_key_blocking(res.path)
     return canonical
 
 

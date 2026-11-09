@@ -53,3 +53,22 @@ async def test_keeps_space_as_a_change_shortcut_before_a_search_query_is_entered
     settings_list.handle_input(" ")
 
     assert changes == [{"id": "tui-mode", "value": "fullscreen"}]
+
+
+def test_moves_by_one_visible_page_with_selection_page_keys():
+    # #7629
+    settings_list = SettingsList(
+        [{"id": f"setting-{index}", "label": f"Setting {index}", "currentValue": str(index)} for index in range(12)],
+        5,
+        TEST_THEME,
+        lambda *args: None,
+        lambda: None,
+    )
+
+    settings_list.handle_input("\x1b[6~")
+    assert re.search("> Setting 5", "\n".join(settings_list.render(80)))
+    settings_list.handle_input("\x1b[6~")
+    settings_list.handle_input("\x1b[6~")
+    assert re.search("> Setting 11", "\n".join(settings_list.render(80)))
+    settings_list.handle_input("\x1b[5~")
+    assert re.search("> Setting 6", "\n".join(settings_list.render(80)))

@@ -20,6 +20,7 @@ from ..messages import (
     create_compaction_summary_message,
     create_custom_message,
 )
+from ..session_manager import project_context_entry
 from .compaction import complete_summarization, estimate_tokens, get_summarization_failure
 from .utils import (
     SUMMARIZATION_SYSTEM_PROMPT,
@@ -109,16 +110,24 @@ def collect_entries_for_branch_summary(
     return CollectEntriesResult(entries=entries, common_ancestor_id=common_ancestor_id)
 
 
-def _get_message_from_entry(entry: dict[str, Any]) -> Any:
-    """Extract an agent message from a session entry. Similar to the compaction
-    variant but also handles compaction entries."""
+def _projected(entry: dict[str, Any], edit: dict[str, Any]) -> Any:
+    messages = project_context_entry(entry, edit)
+    return messages[0] if messages else None
+
+
+def _get_message_from_entry(entry: dict[str, Any], edit: dict[str, Any] | None = None) -> Any:
+    """Extract an agent message from a session entry, with its latest context
+    edit applied. Similar to the compaction variant but also handles
+    compaction entries."""
     entry_type = entry.get("type")
     if entry_type == "message":
         # Skip tool results - context is in assistant's tool call
         if getattr(entry.get("message"), "role", None) == "toolResult":
             return None
-        return entry.get("message")
+        return _projected(entry, edit) if edit is not None else entry.get("message")
     if entry_type == "custom_message":
+        if edit is not None:
+            return _projected(entry, edit)
         return create_custom_message(
             entry.get("customType"),
             entry.get("content"),
@@ -161,9 +170,12 @@ def prepare_branch_entries(entries: list[dict[str, Any]], token_budget: int = 0)
                 # Modified files go into edited for proper deduplication
                 file_ops.edited.update(modified_files)
 
+    # Context edits hide or replace earlier entries in model context; honor the latest edit per target.
+    edits = {entry.get("targetId"): entry for entry in entries if entry.get("type") == "context_edit"}
+
     # Second pass: walk from newest to oldest, adding messages until token budget
     for entry in reversed(entries):
-        message = _get_message_from_entry(entry)
+        message = _get_message_from_entry(entry, edits.get(entry.get("id")))
         if message is None:
             continue
 
@@ -230,6 +242,7 @@ async def generate_branch_summary(
     api_key: str | None = None,
     headers: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
+    thinking_level: str | None = None,
     custom_instructions: str | None = None,
     replace_instructions: bool | None = None,
     reserve_tokens: int = 16384,
@@ -237,7 +250,10 @@ async def generate_branch_summary(
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
 ) -> BranchSummaryResult:
-    """Generate a summary of abandoned branch entries."""
+    """Generate a summary of abandoned branch entries.
+
+    ``thinking_level`` is sent as ``reasoning`` for reasoning-capable models.
+    """
     # Token budget = context window minus reserved space for prompt + response
     context_window = model.context_window or 128000
     token_budget = context_window - reserve_tokens
@@ -270,6 +286,8 @@ async def generate_branch_summary(
     # transient stream drops reuse the configured retry policy.
     context = normalize_context(Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages))
     request_options = SimpleStreamOptions(api_key=api_key, headers=headers, env=env, cancel=cancel)
+    if model.reasoning and thinking_level and thinking_level != "off":
+        request_options.reasoning = thinking_level
     response = await complete_summarization(model, context, request_options, stream_fn, retry, callbacks)
 
     # Check if aborted or errored
