@@ -56,7 +56,9 @@ jobs:
         uv venv .venv
         uv sync --group test
     - name: Test
-      timeout-minutes: 3
+      # macOS runners vary up to 2x on the same tree (93-183 s for 1.5.0.0's
+      # suite), so the hang guard sits higher than on Linux.
+      timeout-minutes: 5
       run: |
         # -s: no capture — see the linux job.
         make test PYTEST_ARGS=-s
