@@ -1011,13 +1011,21 @@ class ProcessTerminal:
                 done.set()
                 return
             try:
-                buffer = memoryview(data.encode("utf-8"))
-                while buffer and not broken:
+                payload = data.encode("utf-8")
+                offset = 0
+                while offset < len(payload) and not broken:
                     if (waiter := sio.arm_w()) is not None:
                         await waiter
                         continue
                     try:
-                        written = os.write(fd, buffer)
+                        # A fresh view per attempt: a memoryview must never
+                        # outlive an await. CPython 3.14t counts buffer exports
+                        # non-atomically (gh-155606), and a view made on one
+                        # worker is freed on that worker, later, when dropped
+                        # from another, so two views on one buffer race.
+                        # Remove once a CPython with gh-127716 is the minimum
+                        # (gi0baro/pidrei#14).
+                        offset += os.write(fd, memoryview(payload)[offset:])
                     except BlockingIOError:
                         # Tick-guarded: a writable edge landing between the
                         # failed write and this clear must survive, or the
@@ -1032,7 +1040,6 @@ class ProcessTerminal:
                         # no writer waits forever; the bytes have nowhere to go.
                         broken = True
                         break
-                    buffer = buffer[written:]
                 if log_path and data:
                     await tonio.spawn_blocking(_append_write_log_blocking, log_path, data)
             except Exception as error:

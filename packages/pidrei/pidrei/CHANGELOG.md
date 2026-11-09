@@ -70,9 +70,13 @@ Tracks [Pi 1.5.0](https://github.com/earendil-works/pi/releases/tag/v1.5.0).
   tool rows and streamed answers reuse their highlighting and rendered
   Markdown instead of redoing it on every update.
 - The faux provider streams partial tool-call arguments.
+- Codemode scripts can import `annotationlib`, `decimal` and `fnmatch`.
 - Added the `fqdn`, `idna`, `isoduration`, `jsonpointer`, `rfc3339-validator`,
   `rfc3986-validator` and `uri-template` dependencies (format checks for tool
   argument validation).
+- Bumped the httpunk dependency to 0.5.0.
+- Bumped the punkreq dependency to 0.3.0.
+- Bumped the pydantic-monty dependency to 1.5.0.
 
 ### Removed
 
@@ -203,6 +207,10 @@ Tracks [Pi 1.5.0](https://github.com/earendil-works/pi/releases/tag/v1.5.0).
 - Bare Markdown URLs swallowed following CJK punctuation and text.
 - Kitty-protocol F1–F12 shortcuts were not recognized, and F13+ and other
   functional keys inserted invisible characters into the editor.
+- Interactive mode could exit with `ValueError: operation forbidden on
+  released memoryview object` while writing a large frame to the terminal,
+  most often on macOS. The cause is a CPython free-threading bug
+  (gh-155606); pidrei now works around it.
 - Kitty images in padded or colored boxes disappeared when their first row
   scrolled above the fullscreen viewport.
 - Deeply nested Markdown blockquotes produced exponentially many lines.

@@ -2388,7 +2388,10 @@ async def test_gives_viewport_keys_back_to_the_transcript_when_editor_autocomple
     await terminal.wait_for_render()
 
     await terminal.send_input("/")
+    # pi waits for the render: the suggestions land on their own task, which
+    # publishes the menu before the frame that shows it (and moves the viewport).
     assert await terminal.until(editor.is_showing_autocomplete)
+    assert await _wait_for_viewport_text(terminal, "command-0")
     top_with_menu = tui.viewport_top
     since = terminal.frames
     await terminal.send_input("\x1b[6~")  # PageDown pages the menu
