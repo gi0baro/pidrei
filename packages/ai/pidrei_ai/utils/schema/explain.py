@@ -368,21 +368,21 @@ class _Walk:
 
     def _walk_unevaluated(self, node: dict, b: Scope, v: Any, path: str, out: list[ValidationError]) -> None:
         rest = {k: x for k, x in node.items() if k not in ("unevaluatedProperties", "unevaluatedItems")}
-        if isinstance(v, dict) and "unevaluatedProperties" in node:
+        a = self._engine.annotations(rest, b, v)
+        if isinstance(v, dict) and "unevaluatedProperties" in node and not a.all_props:
             unevaluated = node["unevaluatedProperties"]
-            evaluated = self._engine.evaluated_keys(rest, b, v)
             for k, x in v.items():
-                if k in evaluated:
+                if k in a.props:
                     continue
                 if unevaluated is False:
                     out.append(ValidationError(pointer(path, k), "unevaluatedProperties", "unknown field"))
                 else:
                     self._walk_in(unevaluated, b, x, pointer(path, k), out)
-        if isinstance(v, list) and "unevaluatedItems" in node:
+        if isinstance(v, list) and "unevaluatedItems" in node and not a.all_items:
             unevaluated = node["unevaluatedItems"]
-            evaluated = self._engine.evaluated_items(rest, b, v)
-            for i, x in enumerate(v):
-                if i in evaluated:
+            for i in range(a.items, len(v)):
+                x = v[i]
+                if i in a.indexes:
                     continue
                 if unevaluated is False:
                     out.append(ValidationError(f"{path}/{i}", "unevaluatedItems", "unexpected item"))

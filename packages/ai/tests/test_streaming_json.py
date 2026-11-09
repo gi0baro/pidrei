@@ -872,6 +872,22 @@ def test_keeps_a_very_large_open_string_linear_by_letting_its_preview_lag():
     assert parser.snapshot() == json.loads(text)
 
 
+def test_keeps_a_very_long_open_number_linear_by_not_showing_it():
+    # PiDrei-only: Python strings are not ropes, so an oversized number is measured before it is joined.
+    def stream_number(digits: int) -> Any:
+        text = f'{{"x":0.{"7" * digits}}}'
+        parser = StreamingJsonParser()
+        for index in range(0, len(text), 32):
+            parser.append(text[index : index + 32])
+            parser.snapshot()
+        return parser.snapshot()
+
+    assert stream_number(400_000) == {"x": 0.7777777777777778}
+    small_seconds = cpu_seconds(lambda: stream_number(40_000))
+    large_seconds = cpu_seconds(lambda: stream_number(400_000))
+    assert large_seconds / small_seconds < 20
+
+
 def test_reads_deep_nesting_without_recursion_and_in_linear_time():
     depth = 200_000
     text = f"{'[' * depth}1{']' * depth}"

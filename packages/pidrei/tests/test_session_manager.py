@@ -4,10 +4,13 @@ save-entry,migration,custom-session-id,file-operations,labels}.test.ts."""
 import json
 import os
 import re
+import threading
 from dataclasses import replace
 
 import pytest
+import tonio.colored as tonio
 
+from pidrei.core import session_manager as session_manager_module
 from pidrei.core.session_manager import (
     SessionContextModel,
     SessionManager,
@@ -1608,6 +1611,36 @@ class TestSessionFileCreation:
         with pytest.raises(OSError):
             await session.append_label_change(first_id, "lost")
         assert session.get_label(first_id) == "kept"
+
+    @pytest.mark.tonio
+    async def test_keeps_an_entry_whose_write_lands_after_its_append_is_cancelled(self, tmp_path, monkeypatch):
+        # PiDrei: cancelling the caller only stops it waiting; the append still
+        # finishes, so memory holds what the file holds.
+        session = await SessionManager(str(tmp_path), str(tmp_path))
+        first_id = await session.append_message(user_msg("first question"))
+        file = session.get_session_file()
+        write_blocking = session_manager_module._write_session_bytes_blocking
+        written = threading.Event()
+        release = threading.Event()
+
+        def gated_write_blocking(path, mode, payload):
+            write_blocking(path, mode, payload)
+            written.set()
+            release.wait(5)
+
+        monkeypatch.setattr(session_manager_module, "_write_session_bytes_blocking", gated_write_blocking)
+        async with tonio.scope() as scope:
+            scope.spawn(session.append_message(assistant_msg("first answer")))
+            assert await tonio.spawn_blocking(written.wait, 5)
+            scope.cancel()
+        release.set()
+        # FIFO behind `_io_lock`: returns once the cancelled append has finished.
+        third_id = await session.append_message(user_msg("second question"))
+
+        second_id = session.get_entry(third_id)["parentId"]
+        assert session.get_entry(second_id)["parentId"] == first_id
+        reopened = await SessionManager(session_dir=str(tmp_path), session_file=file)
+        assert [entry["id"] for entry in reopened.get_branch()] == [first_id, second_id, third_id]
 
 
 class TestLabels:

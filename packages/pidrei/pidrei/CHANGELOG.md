@@ -71,12 +71,18 @@ Tracks [Pi 1.5.0](https://github.com/earendil-works/pi/releases/tag/v1.5.0).
   Markdown instead of redoing it on every update.
 - The faux provider streams partial tool-call arguments.
 - Codemode scripts can import `annotationlib`, `decimal` and `fnmatch`.
+- A package whose `[tool.pidrei]` table declares no resource lists loads the
+  resources in its conventional directories, as a package without the table
+  does.
+- Clipboard tools and the browser launcher start from `/`, so a clipboard
+  daemon no longer keeps the project directory in use.
 - Added the `fqdn`, `idna`, `isoduration`, `jsonpointer`, `rfc3339-validator`,
   `rfc3986-validator` and `uri-template` dependencies (format checks for tool
   argument validation).
 - Bumped the httpunk dependency to 0.5.0.
 - Bumped the punkreq dependency to 0.3.0.
 - Bumped the pydantic-monty dependency to 1.5.0.
+- Bumped the tonio dependency to 0.10.7.
 
 ### Removed
 

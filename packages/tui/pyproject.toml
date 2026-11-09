@@ -27,7 +27,7 @@ dependencies = [
     "linkify-it-py~=2.1",
     "markdown-it-py~=4.2",
     "pidrei-utils==1.5.0.0",
-    "tonio~=0.10.5",
+    "tonio~=0.10.7",
     "uniseg~=0.10.1",
 ]
 

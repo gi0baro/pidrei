@@ -33,13 +33,14 @@ pi's 10-way concurrency bound.
 
 import codecs
 import dataclasses
+import functools
 import json
 import math
 import os
 import re
 import threading
 import uuid as uuid_module
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -583,6 +584,40 @@ def _write_session_bytes_blocking(path: str, mode: str, payload: str) -> None:
     """
     with open(path, mode, encoding="utf-8", newline="") as handle:
         handle.write(payload)
+
+
+def _completes_when_cancelled[**P, T](
+    transaction: Callable[P, Coroutine[Any, Any, T]],
+) -> Callable[P, Coroutine[Any, Any, T]]:
+    """Run an `_io_lock` transaction (an append, a branched-session write) as
+    a spawned coroutine, and wait for it.
+
+    A spawned coroutine is not cancelled with its caller, so a cancelled
+    caller only stops waiting: the transaction still finishes. Its write
+    lands or fails, memory keeps or rolls back the entry to match, and
+    `_io_lock` is released only then. Cancelling the write instead would
+    leave the outcome unknown: the pool job may already have written the
+    entry, or created the file and written nothing.
+    """
+
+    @functools.wraps(transaction)
+    async def run(*args: P.args, **kwargs: P.kwargs) -> T:
+        operation = transaction(*args, **kwargs)
+
+        async def settle() -> tuple[bool, Any]:
+            try:
+                return False, await operation
+            except Exception as error:
+                # Returned, not raised: once the caller is cancelled nobody
+                # awaits the handle, and a raise would go unretrieved.
+                return True, error
+
+        failed, outcome = await tonio.spawn(settle())
+        if failed:
+            raise outcome
+        return outcome
+
+    return run
 
 
 def _load_wire_entries_from_file_blocking(file_path: str) -> list[dict[str, Any]]:
@@ -1249,7 +1284,9 @@ class SessionManager:
 
         Keeps memory in line with the file: when the write fails, the entry
         is taken back out and the leaf moved back, in one `_lock` section,
-        then the error propagates. An entry that was not written must not
+        then the error propagates. The transaction runs to completion even
+        when its caller is cancelled (`_completes_when_cancelled`), so a
+        failure here is the write's own. An entry that was not written must not
         become the parent of later entries, or the file would hold entries
         pointing to a missing parent (pi #11460). `restore` undoes an
         append's other in-memory effects (a label's). A writer that only
@@ -1281,6 +1318,7 @@ class SessionManager:
 
     # -- appends -----------------------------------------------------------------
 
+    @_completes_when_cancelled
     async def append_message(self, message: Any) -> str:
         """Append a message as child of current leaf, then advance leaf. Returns entry id.
         Does not allow writing CompactionSummaryMessage and BranchSummaryMessage directly:
@@ -1293,6 +1331,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def append_thinking_level_change(self, thinking_level: str) -> str:
         async with self._io_lock:
             with self._lock:
@@ -1302,6 +1341,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def append_model_change(self, provider: str, model_id: str) -> str:
         async with self._io_lock:
             with self._lock:
@@ -1312,6 +1352,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def append_usage(
         self, kind: str, provider: str, model: str, usage: Any, note: str | None = None
     ) -> dict[str, Any]:
@@ -1330,6 +1371,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry
 
+    @_completes_when_cancelled
     async def append_compaction(
         self,
         summary: str,
@@ -1363,6 +1405,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def append_custom_entry(self, custom_type: str, data: Any = None) -> str:
         """Append a custom entry (for extensions) as child of current leaf."""
         async with self._io_lock:
@@ -1375,6 +1418,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def append_session_info(self, name: str) -> str:
         """Append a session info entry (e.g., display name). Returns entry id."""
         async with self._io_lock:
@@ -1398,6 +1442,7 @@ class SessionManager:
                     return (raw_name.strip() if isinstance(raw_name, str) else "") or None
             return None
 
+    @_completes_when_cancelled
     async def append_custom_message_entry(
         self, custom_type: str, content: Any, display: bool, details: Any = None
     ) -> str:
@@ -1414,6 +1459,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def append_context_edit(self, target_id: str, replacement: dict[str, Any] | None) -> str:
         """Append a branch-local edit to an earlier model-visible entry.
 
@@ -1477,6 +1523,7 @@ class SessionManager:
         with self._lock:
             return self._labels_by_id.get(entry_id)
 
+    @_completes_when_cancelled
     async def append_label_change(self, target_id: str, label: str | None) -> str:
         """Set or clear a label on an entry. Labels are user-defined markers for
         bookmarking/navigation. Pass None or empty string to clear the label."""
@@ -1610,6 +1657,7 @@ class SessionManager:
         with self._lock:
             self._leaf_id = None
 
+    @_completes_when_cancelled
     async def branch_with_summary(
         self,
         branch_from_id: str | None,
@@ -1643,6 +1691,7 @@ class SessionManager:
             await self._persist_appended(entry, previous_leaf_id)
             return entry["id"]
 
+    @_completes_when_cancelled
     async def create_branched_session(self, leaf_id: str) -> str | None:
         """Create a new session file containing only the path from root to the given
         leaf. Returns the new session file path, or None if not persisting."""

@@ -217,6 +217,7 @@ class StreamingJsonParser:
         "_path_cost",
         "_root",
         "_scalar",
+        "_scalar_length",
         "_scalar_slot",
         "_snapshot",
         "_stack",
@@ -229,6 +230,8 @@ class StreamingJsonParser:
         self._stack: list[_Frame] = []
         self._string: _OpenString | None = None
         self._scalar: list[str] = []
+        # The length of the joined `_scalar`, known without joining it.
+        self._scalar_length = 0
         self._scalar_slot: _Slot | None = None
         # Sum of `size + 1` over the open path: what a fresh snapshot copies.
         self._path_cost = 0
@@ -321,6 +324,7 @@ class StreamingJsonParser:
         end = len(text) if delimiter is None else delimiter.start()
         if end > start:
             self._scalar.append(text[start:end])
+            self._scalar_length += end - start
             if self._scalar_slot is not None:
                 self._dirty = True
         if delimiter is not None:
@@ -349,6 +353,7 @@ class StreamingJsonParser:
                 frame.phase = "value" if frame.is_array else "key"
         else:
             self._scalar = [char]
+            self._scalar_length = 1
             self._scalar_slot = self._value_slot()
             if self._scalar_slot is not None:
                 self._dirty = True
@@ -482,6 +487,7 @@ class StreamingJsonParser:
         token = "".join(self._scalar)
         slot = self._scalar_slot
         self._scalar = []
+        self._scalar_length = 0
         self._scalar_slot = None
         value = _scalar_value(token)
         if value is not NO_VALUE:
@@ -494,13 +500,13 @@ class StreamingJsonParser:
     def _pending_scalar(self) -> tuple[_Slot, Any] | None:
         """The value of the unterminated scalar at the end of the text, if it shows."""
         slot = self._scalar_slot
-        if slot is None or not self._scalar:
+        # The length first, as pi: joining an oversized number on every snapshot
+        # would copy it whole each time, quadratic in its length.
+        if slot is None or not self._scalar or self._scalar_length > MAX_PENDING_SCALAR_LENGTH:
             return None
         if len(self._scalar) > 1:
             self._scalar[:] = ["".join(self._scalar)]
         token = self._scalar[0]
-        if len(token) > MAX_PENDING_SCALAR_LENGTH:
-            return None
         value = _pending_scalar_value(token)
         return None if value is NO_VALUE else (slot, value)
 

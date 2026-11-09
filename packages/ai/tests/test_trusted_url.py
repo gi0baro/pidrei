@@ -26,3 +26,18 @@ def test_percent_encodes_control_characters_in_the_path_query_and_fragment():
 
 def test_rejects_a_host_containing_a_control_character():
     assert trusted_http_url("https://x\x1b.test/") is None
+
+
+def test_percent_encodes_the_userinfo_and_lowercases_only_the_host():
+    assert trusted_http_url("https://U\x1bc:p\x07w@Example.TEST/") == "https://U%1Bc:p%07w@example.test/"
+    assert trusted_http_url("https://u:@x.test/") == "https://u@x.test/"
+
+
+def test_drops_the_default_port():
+    assert trusted_http_url("https://x.test:443/") == "https://x.test/"
+    assert trusted_http_url("http://[::1]:8080/") == "http://[::1]:8080/"
+
+
+def test_rejects_a_url_that_does_not_parse():
+    assert trusted_http_url("https://[invalid/") is None
+    assert trusted_http_url("https://x.test:99999/") is None

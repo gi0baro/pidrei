@@ -55,6 +55,12 @@ async def test_runs_commands_outside_pidreis_process_group():
 
 
 @pytest.mark.tonio
+async def test_runs_commands_from_the_filesystem_root():
+    cwd = await run_clipboard_command(sys.executable, ["-c", "import os, sys; sys.stdout.write(os.getcwd())"])
+    assert cwd == b"/"
+
+
+@pytest.mark.tonio
 async def test_rejects_output_above_the_buffer_limit():
     assert (
         await run_clipboard_command(

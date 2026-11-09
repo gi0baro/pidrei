@@ -21,6 +21,9 @@ differs from pi's compiler answered as pi does:
 - `multipleOf`: exact for decimals, as pi's `isMultiple`;
 - draft 7's array `items` (a tuple), `additionalItems` and `dependencies`,
   which pi's compiler also reads under draft 2020-12;
+- `unevaluatedProperties`/`unevaluatedItems`: on pi's annotations (see
+  `_annotate`), which follow nested `$id` scopes and tuple `items`;
+- `required`: entries that are not strings are ignored;
 - number-valued keywords whose value is not a number (draft 4's boolean
   `exclusiveMinimum`) and applicators whose value has the wrong shape are
   ignored, as pi's compiler ignores them.
@@ -36,11 +39,13 @@ there, raised when a value reaches it); formats follow the Python checkers
 `jsonschema` does; `$dynamicRef` resolves as `jsonschema` resolves it.
 """
 
+import math
+import re
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from jsonschema import Draft7Validator, Draft202012Validator, FormatChecker, validators
-from jsonschema._utils import find_evaluated_item_indexes_by_schema, find_evaluated_property_keys_by_schema
 from jsonschema.exceptions import ValidationError as EngineError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
@@ -114,6 +119,265 @@ def _items(validator, items, instance, schema) -> Iterator[EngineError]:
     yield from keyword(validator, items, instance, schema)
 
 
+def _required(validator, required, instance, schema) -> Iterator[EngineError]:
+    # pi's compiler keeps the string entries of a list and ignores the rest.
+    if isinstance(required, list):
+        keys = [key for key in required if isinstance(key, str)]
+        yield from _DRAFT["required"](validator, keys, instance, schema)
+
+
+def _enter(node: Any, scope: Scope) -> Scope:
+    if isinstance(node, dict) and isinstance(node.get("$id"), str):
+        return scope.in_subresource(DRAFT202012.create_resource(node))
+    return scope
+
+
+def _resolve(ref: str, scope: Scope) -> tuple[Any, Scope] | None:
+    try:
+        resolved = scope.lookup(ref)
+    except Unresolvable:
+        return None
+    return resolved.contents, resolved.resolver
+
+
+def _passes(validator, node: Any, scope: Scope, value: Any) -> bool:
+    try:
+        return next(validator.descend(value, node, resolver=scope), None) is None
+    except Unresolvable:
+        return False
+
+
+def _passes_in(validator, child: Any, scope: Scope, value: Any) -> bool:
+    return _passes(validator, child, _enter(child, scope), value)
+
+
+# --- Annotations: what a schema evaluates, for `unevaluatedProperties`/`unevaluatedItems` -------------------------
+# pi's annotating checks (packages/schema/src/annotations.ts and the compiler's `annotating`), walked here instead of
+# compiled. `jsonschema`'s own annotation helpers resolve a reference below a nested `$id` against the outer
+# resource, and read a draft 7 tuple `items` as evaluating the whole array.
+
+# The keywords an annotating check handles itself; the others are checked as a plain schema first.
+_ANNOTATING = frozenset(
+    {
+        "properties",
+        "patternProperties",
+        "additionalProperties",
+        "prefixItems",
+        "items",
+        "additionalItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "if",
+        "then",
+        "else",
+        "$ref",
+        "$dynamicRef",
+        "dependentSchemas",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+    }
+)
+_UNEVALUATED = ("unevaluatedProperties", "unevaluatedItems")
+
+
+@dataclass(slots=True)
+class Annotations:
+    """What a schema evaluated: property names (or all of them), the evaluated item prefix, items matched by
+    `contains` (or all items)."""
+
+    props: set[str] = field(default_factory=set)
+    all_props: bool = False
+    items: int = 0
+    all_items: bool = False
+    indexes: set[int] = field(default_factory=set)
+
+    def merge(self, other: Annotations) -> None:
+        self.props |= other.props
+        self.all_props = self.all_props or other.all_props
+        self.items = max(self.items, other.items)
+        self.all_items = self.all_items or other.all_items
+        self.indexes |= other.indexes
+
+
+def _annotate(validator, node: Any, scope: Scope, value: Any, annotations: Annotations) -> bool:
+    """Whether `value` passes `node` (whose scope is `scope`), recording into `annotations` what it evaluates."""
+    if not isinstance(node, dict):
+        return node is not False
+    if not any(keyword in _ANNOTATING for keyword in node):
+        return _passes(validator, node, scope, value)
+    if not _passes(validator, {k: x for k, x in node.items() if k not in _ANNOTATING}, scope, value):
+        return False
+    if not any(keyword in node for keyword in _UNEVALUATED):
+        return _annotate_parts(validator, node, scope, value, annotations)
+    # `unevaluated*` sees only the annotations of its own schema, never those of its siblings in the parent.
+    own = Annotations()
+    if not _annotate_parts(validator, node, scope, value, own):
+        return False
+    annotations.merge(own)
+    return True
+
+
+def _annotate_in(validator, child: Any, scope: Scope, value: Any, annotations: Annotations) -> bool:
+    return _annotate(validator, child, _enter(child, scope), value, annotations)
+
+
+def _annotate_parts(validator, node: dict, scope: Scope, value: Any, annotations: Annotations) -> bool:
+    if ("properties" in node or "patternProperties" in node or "additionalProperties" in node) and not (
+        _annotate_object(validator, node, scope, value, annotations)
+    ):
+        return False
+    if ("prefixItems" in node or "items" in node or "contains" in node) and not (
+        _annotate_array(validator, node, scope, value, annotations)
+    ):
+        return False
+    if isinstance(node.get("allOf"), list):
+        for branch in node["allOf"]:
+            if not _annotate_in(validator, branch, scope, value, annotations):
+                return False
+    for keyword, exactly_one in (("anyOf", False), ("oneOf", True)):
+        if not isinstance(node.get(keyword), list):
+            continue
+        # Every passing branch contributes its annotations.
+        passed = 0
+        for branch in node[keyword]:
+            own = Annotations()
+            if _annotate_in(validator, branch, scope, value, own):
+                passed += 1
+                annotations.merge(own)
+        if passed != 1 if exactly_one else passed == 0:
+            return False
+    if "if" in node:
+        # A passing `if` contributes its annotations even without `then`.
+        own = Annotations()
+        if _annotate_in(validator, node["if"], scope, value, own):
+            annotations.merge(own)
+            if "then" in node and not _annotate_in(validator, node["then"], scope, value, annotations):
+                return False
+        elif "else" in node and not _annotate_in(validator, node["else"], scope, value, annotations):
+            return False
+    for keyword in ("$ref", "$dynamicRef"):
+        if isinstance(node.get(keyword), str):
+            target = _resolve(node[keyword], scope)
+            if target is None or not _annotate(validator, *target, value, annotations):
+                return False
+    if isinstance(node.get("dependentSchemas"), dict) and isinstance(value, dict):
+        for key, dependent in node["dependentSchemas"].items():
+            if key in value and not _annotate_in(validator, dependent, scope, value, annotations):
+                return False
+    if "unevaluatedProperties" in node and isinstance(value, dict) and not annotations.all_props:
+        unevaluated = node["unevaluatedProperties"]
+        for key, item in value.items():
+            if key not in annotations.props and not _passes_in(validator, unevaluated, scope, item):
+                return False
+        annotations.all_props = True
+    if "unevaluatedItems" in node and isinstance(value, list) and not annotations.all_items:
+        unevaluated = node["unevaluatedItems"]
+        for index in range(annotations.items, len(value)):
+            if index not in annotations.indexes and not _passes_in(validator, unevaluated, scope, value[index]):
+                return False
+        annotations.all_items = True
+    return True
+
+
+def _annotate_object(validator, node: dict, scope: Scope, value: Any, annotations: Annotations) -> bool:
+    """`properties`, `patternProperties` and `additionalProperties`."""
+    if not isinstance(value, dict):
+        return True
+    properties = node["properties"] if isinstance(node.get("properties"), dict) else {}
+    patterns = node["patternProperties"] if isinstance(node.get("patternProperties"), dict) else {}
+    seen: list[str] = []
+    for key, schema in properties.items():
+        if key not in value:
+            continue
+        if not _passes_in(validator, schema, scope, value[key]):
+            return False
+        seen.append(key)
+    for key, item in value.items():
+        matched = key in properties
+        for pattern, schema in patterns.items():
+            if re.search(pattern, key):
+                if not _passes_in(validator, schema, scope, item):
+                    return False
+                matched = True
+                seen.append(key)
+        if not matched and "additionalProperties" in node:
+            if not _passes_in(validator, node["additionalProperties"], scope, item):
+                return False
+            seen.append(key)
+    annotations.props.update(seen)
+    return True
+
+
+def _annotate_array(validator, node: dict, scope: Scope, value: Any, annotations: Annotations) -> bool:
+    """`prefixItems` (or a draft 7 tuple `items`), the rest of the items, and `contains` with its bounds."""
+    if not isinstance(value, list):
+        return True
+    items = node.get("items")
+    tuple_items = isinstance(items, list)
+    prefix = node["prefixItems"] if isinstance(node.get("prefixItems"), list) else items if tuple_items else []
+    rest_keyword = "additionalItems" if tuple_items else "items"
+    evaluated = min(len(value), len(prefix))
+    for index in range(evaluated):
+        if not _passes_in(validator, prefix[index], scope, value[index]):
+            return False
+    if rest_keyword in node:
+        rest = node[rest_keyword]
+        for index in range(len(prefix), len(value)):
+            if not _passes_in(validator, rest, scope, value[index]):
+                return False
+        annotations.all_items = True
+    annotations.items = max(annotations.items, evaluated)
+    if "contains" in node:
+        contained = 0
+        for index, item in enumerate(value):
+            if _passes_in(validator, node["contains"], scope, item):
+                contained += 1
+                annotations.indexes.add(index)
+        min_contains = node["minContains"] if is_number(node.get("minContains")) else 1
+        max_contains = node["maxContains"] if is_number(node.get("maxContains")) else math.inf
+        if contained < min_contains or contained > max_contains:
+            return False
+    return True
+
+
+def _rest_annotations(validator, schema: dict, scope: Scope, value: Any) -> Annotations:
+    """What the keywords of `schema` other than `unevaluated*` evaluate, as far as `value` passes them."""
+    annotations = Annotations()
+    rest = {k: x for k, x in schema.items() if k not in _UNEVALUATED}
+    _annotate(validator, rest, scope, value, annotations)
+    return annotations
+
+
+def _unevaluated_properties(validator, unevaluated, instance, schema) -> Iterator[EngineError]:
+    if not isinstance(instance, dict):
+        return
+    scope = validator._resolver
+    annotations = _rest_annotations(validator, schema, scope, instance)
+    if annotations.all_props:
+        return
+    for key, item in instance.items():
+        if key not in annotations.props and not _passes_in(validator, unevaluated, scope, item):
+            yield EngineError(f"unevaluated property {key!r} is not allowed")
+            return
+
+
+def _unevaluated_items(validator, unevaluated, instance, schema) -> Iterator[EngineError]:
+    if not isinstance(instance, list):
+        return
+    scope = validator._resolver
+    annotations = _rest_annotations(validator, schema, scope, instance)
+    if annotations.all_items:
+        return
+    for index in range(annotations.items, len(instance)):
+        if index not in annotations.indexes and not _passes_in(validator, unevaluated, scope, instance[index]):
+            yield EngineError(f"unevaluated item {index} is not allowed")
+            return
+
+
 def _when(accepts: Callable[[Any], bool], keyword: Keyword) -> Keyword:
     def check(validator, value, instance, schema) -> Iterator[EngineError]:
         if accepts(value):
@@ -142,7 +406,7 @@ _NUMERIC = (
     "minProperties",
     "maxProperties",
 )
-_LISTS = ("required", "enum", "allOf", "prefixItems")
+_LISTS = ("enum", "allOf", "prefixItems")
 _MAPS = ("properties", "patternProperties", "dependentRequired", "dependentSchemas")
 
 # Keywords that check a value through subschemas.
@@ -190,6 +454,9 @@ _Validator = validators.create(
         "anyOf": _when(_is_list, _any_of),
         "oneOf": _when(_is_list, _one_of),
         "items": _items,
+        "required": _required,
+        "unevaluatedProperties": _unevaluated_properties,
+        "unevaluatedItems": _unevaluated_items,
         "additionalItems": _LEGACY["additionalItems"],
         "dependencies": _when(_is_dict, _LEGACY["dependencies"]),
         **{name: _when(is_number, _DRAFT[name]) for name in _NUMERIC},
@@ -288,24 +555,15 @@ class Engine:
         """Whether `value` passes `node`, whose scope is `scope`."""
         if node is self.schema and scope is self.root_scope:
             return self._root.is_valid(value)
-        try:
-            return next(self._root.descend(value, node, resolver=scope), None) is None
-        except Unresolvable:
-            return False
+        return _passes(self._root, node, scope, value)
 
     def enter(self, node: Any, scope: Scope) -> Scope:
         """The scope of `node`, a subschema of the node whose scope is `scope`."""
-        if isinstance(node, dict) and isinstance(node.get("$id"), str):
-            return scope.in_subresource(DRAFT202012.create_resource(node))
-        return scope
+        return _enter(node, scope)
 
     def resolve(self, ref: str, scope: Scope) -> tuple[Any, Scope] | None:
         """The schema `ref` names from `scope`, with its scope; None when it names nothing."""
-        try:
-            resolved = scope.lookup(ref)
-        except Unresolvable:
-            return None
-        return resolved.contents, resolved.resolver
+        return _resolve(ref, scope)
 
     def conforms(self, value: str, format_name: str) -> bool | None:
         """Whether `value` has the format; None when the format is not checked."""
@@ -313,12 +571,8 @@ class Engine:
             return None
         return self._formats.conforms(value, format_name)
 
-    def evaluated_keys(self, node: dict, scope: Scope, value: dict) -> set[str]:
-        """The keys of `value` that `node` evaluates (`unevaluatedProperties`)."""
-        validator = self._root.evolve(schema=node, _resolver=scope)
-        return set(find_evaluated_property_keys_by_schema(validator, value, node))
-
-    def evaluated_items(self, node: dict, scope: Scope, value: list) -> set[int]:
-        """The indexes of `value` that `node` evaluates (`unevaluatedItems`)."""
-        validator = self._root.evolve(schema=node, _resolver=scope)
-        return set(find_evaluated_item_indexes_by_schema(validator, value, node))
+    def annotations(self, node: dict, scope: Scope, value: Any) -> Annotations:
+        """What `node` evaluates of `value`, as far as `value` passes it (pi: `compiler.annotating(node, base)`)."""
+        annotations = Annotations()
+        _annotate(self._root, node, scope, value, annotations)
+        return annotations

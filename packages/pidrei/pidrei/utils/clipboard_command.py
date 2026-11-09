@@ -37,6 +37,9 @@ async def run_clipboard_command(
             # Detach so the daemon leaves PiDrei's process group and Ctrl+Z suspend
             # (SIGTSTP to the group) does not stop the clipboard owner (pi #11179).
             start_new_session=True,
+            # Clipboard tools ignore the cwd, so run from /: this also keeps
+            # daemons from pinning PiDrei's cwd.
+            cwd="/",
             timeout=(timeout_ms if timeout_ms is not None else _DEFAULT_TIMEOUT_MS) / 1000,
             kill_signal=signal.SIGKILL,
             max_output_bytes=max_buffer_bytes if max_buffer_bytes is not None else _DEFAULT_MAX_BUFFER_BYTES,

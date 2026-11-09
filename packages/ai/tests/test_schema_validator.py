@@ -85,7 +85,34 @@ def test_follows_ref_into_the_referenced_schema():
     assert validator.errors([{"x": 1}, {}]) == [error("/1/x", "required", "missing")]
 
 
+# PiDrei: pi's annotating compiler gives each node its own base and reads a draft 7 tuple `items` as a prefix;
+# the engine's annotations do the same.
+def test_unevaluated_properties_sees_properties_evaluated_through_a_reference_inside_a_nested_id():
+    validator = compile(
+        {
+            "allOf": [
+                {"$id": "https://example.com/sub", "$defs": {"x": {"properties": {"a": True}}}, "$ref": "#/$defs/x"}
+            ],
+            "unevaluatedProperties": False,
+        }
+    )
+    assert validator.check({"a": 1}) is True
+    assert validator.errors({"a": 1, "b": 2}) == [error("/b", "unevaluatedProperties", "unknown field")]
+
+
+def test_unevaluated_items_sees_only_the_prefix_a_tuple_items_evaluates():
+    validator = compile({"items": [{"type": "number"}], "unevaluatedItems": False})
+    assert validator.check([1]) is True
+    assert validator.errors([1, 2]) == [error("/1", "unevaluatedItems", "unexpected item")]
+
+
 # values
+
+
+def test_ignores_required_entries_that_are_not_strings():
+    validator = compile({"required": [42, "x"]})
+    assert validator.check({"x": 1}) is True
+    assert validator.errors({}) == [error("/x", "required", "missing")]
 
 
 def test_does_not_accept_every_value_for_a_type_the_draft_does_not_define():

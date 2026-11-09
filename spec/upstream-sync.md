@@ -1349,8 +1349,9 @@ tokenizer is hand-rolled:
   run, each Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar and Tibetan
   character is its own token, with its following combining marks
   (`M*`) attached. Other scripts stay as runs (they write word spaces).
-- camelCase splitting, stop words and stemming apply to ASCII words only,
-  as in pi.
+- As in pi, camelCase splitting runs on the whole text before the split (its
+  boundaries are ASCII, so `cafeFoó` gives `cafe`, `foó`), stop words drop
+  from every word, and stemming applies to ASCII words only.
 - **Deviation to keep**: unigrams where pi gives dictionary words. Queries
   and documents tokenise alike, so non-ASCII queries find their tools.
 - **Upstream diffs**: changes to ranking, weighting and the ASCII path port

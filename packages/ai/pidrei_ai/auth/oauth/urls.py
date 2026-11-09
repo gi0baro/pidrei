@@ -7,8 +7,9 @@ from getting `open`/`xdg-open` to launch something that is not a web page. The
 normalization is the fiddly half: `urlsplit` is far more permissive than the
 URL constructor and encodes nothing, so a URL carrying terminal escapes would
 otherwise reach the user's terminal and browser verbatim. As the URL
-constructor does, control characters are percent-encoded in the path, query
-and fragment, and a host containing one does not parse. The rest of the URL
+constructor does, control characters are percent-encoded in the userinfo,
+path, query and fragment, a host containing one or an invalid port does not
+parse, and the host is lowercased and a default port dropped. The rest of the URL
 spec's host parsing (IDNA, forbidden host code points other than controls and
 spaces) is not replicated.
 """
@@ -22,8 +23,11 @@ from urllib.parse import urlsplit, urlunsplit
 _PATH_ESCAPES = frozenset('" <>`{}')
 _QUERY_ESCAPES = frozenset("\" #<>'")  # the special-query set
 _FRAGMENT_ESCAPES = frozenset('" <>`')
-# Schemes for which the URL constructor requires a host.
-_SPECIAL_SCHEMES = frozenset({"ftp", "http", "https", "ws", "wss"})
+# The userinfo set, minus the `:` and `@` delimiters, which are peeled off below.
+_USERINFO_ESCAPES = frozenset('" #<>?`{}/;=[\\]^|')
+# Schemes for which the URL constructor requires a host, with their default ports.
+_DEFAULT_PORTS = {"ftp": 21, "http": 80, "https": 443, "ws": 80, "wss": 443}
+_SPECIAL_SCHEMES = frozenset(_DEFAULT_PORTS)
 
 
 def _percent_encode(text: str, escapes: frozenset[str]) -> str:
@@ -36,6 +40,27 @@ def _percent_encode(text: str, escapes: frozenset[str]) -> str:
     return "".join(encoded)
 
 
+def _authority(netloc: str, scheme: str, port: int | None) -> str:
+    """The URL constructor's serialization of `netloc`: the username and password
+    percent-encoded and kept as written (an empty password, or both empty, is
+    dropped), the host lowercased, and the port dropped when it is empty or the
+    scheme's default."""
+    userinfo, at, host_port = netloc.rpartition("@")
+    username, _, password = userinfo.partition(":")
+    credentials = _percent_encode(username, _USERINFO_ESCAPES)
+    if password:
+        credentials += ":" + _percent_encode(password, _USERINFO_ESCAPES)
+    # The port starts after the `]` of an IPv6 literal, else at the first `:`.
+    if host_port.startswith("["):
+        host = host_port[: host_port.find("]") + 1]
+    else:
+        host = host_port.partition(":")[0]
+    authority = host.lower()
+    if port is not None and port != _DEFAULT_PORTS.get(scheme):
+        authority += f":{port}"
+    return f"{credentials}@{authority}" if at and credentials else authority
+
+
 def normalized_url(value: object) -> tuple[str, str] | None:
     """`(scheme, href)` for a parseable absolute URL, else None.
 
@@ -44,24 +69,30 @@ def normalized_url(value: object) -> tuple[str, str] | None:
     """
     if not isinstance(value, str) or not value:
         return None
-    split = urlsplit(value.strip())
+    try:
+        split = urlsplit(value.strip())
+        # Out of range or not a number: the URL does not parse.
+        port = split.port
+    except ValueError:
+        return None
     if not split.scheme:
         return None
-    if split.scheme in _SPECIAL_SCHEMES and not split.netloc:
+    scheme = split.scheme.lower()
+    if scheme in _SPECIAL_SCHEMES and not split.netloc:
         return None
     # A control character or space is a forbidden host code point: the URL does not parse.
     if any(ord(character) <= 0x20 or ord(character) == 0x7F for character in split.hostname or ""):
         return None
     href = urlunsplit(
         (
-            split.scheme.lower(),
-            split.netloc.lower(),
+            scheme,
+            _authority(split.netloc, scheme, port),
             _percent_encode(split.path, _PATH_ESCAPES) or ("/" if split.netloc else ""),
             _percent_encode(split.query, _QUERY_ESCAPES),
             _percent_encode(split.fragment, _FRAGMENT_ESCAPES),
         )
     )
-    return split.scheme.lower(), href
+    return scheme, href
 
 
 def https_url(value: object) -> str | None:

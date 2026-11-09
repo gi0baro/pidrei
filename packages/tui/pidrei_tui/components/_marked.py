@@ -87,7 +87,21 @@ class _BareUrlLinkify:
         matches = self._linkify.match(text)
         if not matches:
             return matches
-        kept = [cut for cut in (self._stop_at_cjk_punctuation(match) for match in matches) if cut is not None]
+        kept = []
+        for match in matches:
+            punctuation = cjk_punctuation_regex.search(match.raw)
+            if punctuation is None:
+                kept.append(match)
+                continue
+            cut = self._stop_at_cjk_punctuation(match)
+            if cut is not None:
+                kept.append(cut)
+            # pi's lexer goes on after the shortened URL, so a link in the rest of the match is still found.
+            rest_start = match.index + punctuation.start()
+            for later in self.match(text[rest_start : match.last_index]) or ():
+                later.index += rest_start
+                later.last_index += rest_start
+                kept.append(later)
         return kept or None
 
     def match_at_start(self, text: str):

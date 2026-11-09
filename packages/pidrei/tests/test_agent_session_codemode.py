@@ -323,13 +323,15 @@ async def test_summarizes_union_and_named_output_types_instead_of_inlining_them(
         },
     )
     count = output_tool("count", {"type": "number"})
+    # PiDrei: `describe_tool()` takes the script identifier.
+    listed = output_tool("list-entries", entries.output_schema)
 
     async def register(pi) -> None:
-        for definition in (process, entries, count):
+        for definition in (process, entries, count, listed):
             pi.register_tool(definition)
 
     harness = await setup(harnesses, [register])
-    harness.session.set_active_tools_by_name(["process", "entries", "count", "codemode"])
+    harness.session.set_active_tools_by_name(["process", "entries", "count", "list-entries", "codemode"])
 
     def description(name: str) -> str:
         return next((tool.description for tool in harness.session.agent.state.tools if tool.name == name), "")
@@ -344,6 +346,10 @@ async def test_summarizes_union_and_named_output_types_instead_of_inlining_them(
         " shows its type."
     )
     assert description("count") == f"count tool\n\nCodemode: `await tools.count(...)` {call} `float`."
+    assert description("list-entries") == (
+        f"list-entries tool\n\nCodemode: `await tools.list_entries(...)` {call} a value;"
+        " `await describe_tool('list_entries')` shows its type."
+    )
 
 
 # #10343

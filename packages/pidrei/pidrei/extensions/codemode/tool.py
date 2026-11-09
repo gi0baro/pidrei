@@ -521,7 +521,8 @@ def _describe_output(rendered: RenderedTool) -> str:
         return fields
     if not rendered.output_names_definitions:
         return f"`{rendered.output_type}`"
-    return f"a value; `await describe_tool({rendered.tool.name!r})` shows its type"
+    # The identifier, which is what `describe_tool()` takes (pi's also accepts the tool name).
+    return f"a value; `await describe_tool({rendered.identifier!r})` shows its type"
 
 
 def _describe_script_call(tool: AgentTool, rendered: RenderedTool) -> str:

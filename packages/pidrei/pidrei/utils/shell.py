@@ -10,6 +10,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+import tonio.colored as tonio
 from tonio.colored import signals as tonio_signals
 
 from ..config import get_bin_dir
@@ -130,9 +131,14 @@ async def _ignore_signal(_signum: int) -> None:
 class SignalDispatcher:
     """The process's one receiver for every signal the runtime is created
     with (`runtime_options.HANDLED_SIGNALS`): `watch()` runs for the whole
-    process and calls the handler installed for each signal it receives,
-    one at a time. Handlers start as no-ops; whoever installs one decides
-    in it what the signal does."""
+    process and starts the handler installed for each signal it receives.
+    Handlers start as no-ops; whoever installs one decides in it what the
+    signal does.
+
+    Each handler runs detached, as pi's `process.on` listeners do: a handler
+    still awaiting (a shutdown disposing the runtime) never holds back the
+    next signal, so a second SIGTERM reaches its "already shutting down,
+    exit now" branch."""
 
     __slots__ = ("_handlers",)
 
@@ -145,7 +151,7 @@ class SignalDispatcher:
     async def watch(self) -> None:
         with tonio_signals.signal_receiver(*HANDLED_SIGNALS) as receiver:
             async for signum in receiver:
-                await self._handlers[signum](signum)
+                tonio.spawn.without_tracking(self._handlers[signum](signum))
 
 
 def kill_process_tree(pid: int) -> None:

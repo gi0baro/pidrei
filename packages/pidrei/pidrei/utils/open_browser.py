@@ -26,6 +26,8 @@ def open_browser(target: str) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                # The target is a URL, so no launcher needs PiDrei's cwd.
+                cwd="/",
             )
         except OSError:
             pass

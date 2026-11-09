@@ -1419,10 +1419,10 @@ class DefaultPackageManager:
             return True
 
         manifest = read_pidrei_manifest_blocking(os.path.join(package_root, "pyproject.toml"))
-        # `is not None`, not truthiness: a manifest whose resource fields are all
-        # absent or malformed is still a manifest, and a package that declares one
-        # never falls back to auto-discovery (pi's `{}` object is truthy).
-        if manifest is not None:
+        # Only declared resource lists replace auto-discovery (pi's
+        # `hasManifestResourceFields`): an empty `[tool.pidrei]`, or one whose
+        # resource fields are all malformed, still discovers by convention.
+        if manifest is not None and any(manifest.get(resource_type) is not None for resource_type in RESOURCE_TYPES):
             for resource_type in RESOURCE_TYPES:
                 self._add_manifest_entries_blocking(
                     manifest.get(resource_type), package_root, resource_type, accumulator[resource_type], metadata

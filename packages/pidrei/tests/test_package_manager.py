@@ -487,6 +487,18 @@ async def test_handles_directories_with_an_auto_discovery_layout(dirs):
 
 
 @pytest.mark.tonio
+async def test_still_auto_discovers_resources_when_the_manifest_declares_no_resource_fields(dirs):
+    # pi's "pi manifest only declares changelogPath" case; changelogPath is not ported.
+    package_dir = os.path.join(dirs.root, "metadata-only-pkg")
+    extension_path = write(os.path.join(package_dir, "extensions", "index.py"), EXTENSION_SOURCE)
+    write_manifest(package_dir, {})
+
+    result = await dirs.manager.resolve_extension_sources([package_dir])
+
+    assert extension_path in paths_of(result.extensions)
+
+
+@pytest.mark.tonio
 async def test_stops_recursing_when_a_package_skill_directory_contains_skill_md(dirs):
     package_dir = os.path.join(dirs.root, "skill-root-pkg")
     root_skill = write_skill(os.path.join(package_dir, "skills", "root-skill", "SKILL.md"), "root-skill")

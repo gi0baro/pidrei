@@ -1358,6 +1358,14 @@ def test_should_stop_bare_urls_at_cjk_punctuation_and_preserve_the_following_tex
             assert strip_ansi(_OSC8_RE.sub("", output)).rstrip() == source
 
 
+def test_should_link_a_bare_url_that_follows_cjk_punctuation_after_another(capabilities_reset):
+    # PiDrei: markdown-it finds the `www.` links of a text in one match; pi's lexer goes on after the shortened URL.
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    output = "".join(Markdown("www.one.com/foo，www.two.com/bar", 0, 0, default_markdown_theme).render(160))
+    assert "\x1b]8;;http://www.one.com/foo\x1b\\" in output
+    assert "\x1b]8;;http://www.two.com/bar\x1b\\" in output
+
+
 def test_should_preserve_chinese_characters_without_punctuation_in_bare_urls(capabilities_reset):
     set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
     for url in [
