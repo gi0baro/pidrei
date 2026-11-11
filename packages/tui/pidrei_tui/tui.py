@@ -1885,7 +1885,10 @@ class TuiBase(Container, ABC):
         for i, line in enumerate(lines):
             finished = previous.get(line)
             if finished is None:
-                finished = line if is_image_line(line) else normalize_terminal_output(line) + reset
+                # Cursor markers are internal render metadata and must never reach terminal output.
+                finished = (
+                    line if is_image_line(line) else normalize_terminal_output(line.replace(CURSOR_MARKER, "")) + reset
+                )
             memo[line] = finished
             lines[i] = finished
         self._line_reset_memo = memo
@@ -1912,8 +1915,9 @@ class TuiBase(Container, ABC):
                 before_marker = line[:marker_index]
                 col = visible_width(before_marker)
 
-                # Strip marker from the line
-                lines[row] = line[:marker_index] + line[marker_index + len(CURSOR_MARKER) :]
+                # Strip all markers from the selected line. The first marker determines the
+                # hardware cursor position; any others are stale internal sentinels.
+                lines[row] = line.replace(CURSOR_MARKER, "")
 
                 return {"row": row, "col": col}
         return None

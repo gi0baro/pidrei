@@ -64,13 +64,24 @@ class ExtensionSelectorComponent(Container):
 
     def _update_list(self) -> None:
         self._list_container.clear()
-        for i, option in enumerate(self._options):
+
+        max_visible = 10
+        # Center the window on the selection, then clamp it to the list boundaries.
+        start_index = max(0, min(self._selected_index - max_visible // 2, len(self._options) - max_visible))
+        end_index = min(start_index + max_visible, len(self._options))
+
+        for i in range(start_index, end_index):
+            option = self._options[i]
             is_selected = i == self._selected_index
             if is_selected:
                 text = theme.fg("accent", "→ ") + theme.fg("accent", option)
             else:
                 text = f"  {theme.fg('text', option)}"
             self._list_container.add_child(Text(text, 1, 0))
+
+        if start_index > 0 or end_index < len(self._options):
+            scroll_info = theme.fg("muted", f"  ({self._selected_index + 1}/{len(self._options)})")
+            self._list_container.add_child(Text(scroll_info, 0, 0))
 
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()

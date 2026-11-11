@@ -100,6 +100,7 @@ _ENV_KEYS = (
     "WEZTERM_PANE",
     "ITERM_SESSION_ID",
     "WT_SESSION",
+    "ALACRITTY_WINDOW_ID",
     "CMUX_WORKSPACE_ID",
     "WARP_SESSION_ID",
     "WARP_TERMINAL_SESSION_UUID",
@@ -506,6 +507,13 @@ def test_enables_hyperlinks_for_iterm2():
 def test_enables_hyperlinks_for_vscode():
     with clean_env({"TERM_PROGRAM": "vscode"}):
         assert detect_capabilities()["hyperlinks"] is True
+
+
+def test_enables_hyperlinks_for_alacritty_without_term_program():
+    with clean_env({"TERM": "alacritty", "COLORTERM": "truecolor"}):
+        assert detect_capabilities() == {"images": None, "trueColor": True, "hyperlinks": True}
+    with clean_env({"TERM": "xterm-256color", "COLORTERM": "truecolor", "ALACRITTY_WINDOW_ID": "1"}):
+        assert detect_capabilities() == {"images": None, "trueColor": True, "hyperlinks": True}
 
 
 def test_enables_alacritty_capabilities_for_zed():

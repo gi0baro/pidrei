@@ -30,6 +30,7 @@ from .types import (
     ExtensionRuntime,
     ExtensionShortcut,
     LoadExtensionsResult,
+    MarkdownTransformerRegistration,
     RegisteredTool,
     ResolvedCommand,
     ToolRenderers,
@@ -106,6 +107,17 @@ def _snapshot_event_handlers(extensions: list[Extension], event: str) -> list[tu
     """Every extension's handlers for `event`, copied before dispatch starts, so a handler
     added or removed mid-dispatch does not affect the dispatch in progress."""
     return [(ext, list(ext.handlers.get(event, ()))) for ext in extensions]
+
+
+def _markdown_transformer_for(registration: MarkdownTransformerRegistration) -> Callable[[str, dict], str]:
+    """The registration's transformer, leaving Markdown of the surfaces it did not register unchanged."""
+    transformer = registration.transformer
+    message_types = registration.message_types
+
+    def transform(markdown: str, context: dict) -> str:
+        return transformer(markdown, context) if context["messageType"] in message_types else markdown
+
+    return transform
 
 
 def _same_messages(left: list[Any], right: list[Any]) -> bool:
@@ -1032,8 +1044,16 @@ class ExtensionRunner:
                 return renderer
         return None
 
-    def get_markdown_transformers(self) -> list[Any]:
-        return [ext.markdown_transformer for ext in self._extensions if ext.markdown_transformer is not None]
+    def get_markdown_transformers(self) -> list[Callable[[str, dict], str]]:
+        """Markdown transformers in extension load order; each one leaves Markdown of unregistered surfaces
+        unchanged."""
+        transformers: list[Callable[[str, dict], str]] = []
+        for ext in self._extensions:
+            registration = ext.markdown_transformer
+            if registration is None:
+                continue
+            transformers.append(_markdown_transformer_for(registration))
+        return transformers
 
     def resolve_tool_renderers(self, tool_name: str, base: Callable[[], Any]) -> ToolRenderers | Any | None:
         """Renderers of calls to `tool_name`: extension resolvers in load order, then `base`."""

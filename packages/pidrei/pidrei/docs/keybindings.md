@@ -33,7 +33,8 @@ if you want them.
 
 Under WSL the Windows terminal swallows several of these chords, so the
 defaults shift there: `alt+p` cycles to the previous model, `ctrl+q` queues a
-follow-up and `alt+q` restores queued messages, `alt+v` pastes an image,
+follow-up and `alt+q` restores queued messages, `alt+v` pastes an image
+(`ctrl+v` stays bound too, for terminals that pass it through),
 `alt+z` undoes an edit (leaving `ctrl+z` free to suspend), and in the
 alternate screen `ctrl+f` searches while `ctrl+up`/`ctrl+down` jump between
 marked messages. Every one of them is still just a binding, so

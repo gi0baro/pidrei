@@ -58,6 +58,8 @@ from .types import (
     ExtensionShortcut,
     ExtensionVirtualModel,
     LoadExtensionsResult,
+    MarkdownMessageType,
+    MarkdownTransformerRegistration,
     RegisteredCommand,
     RegisteredTool,
     ToolDefinition,
@@ -150,6 +152,9 @@ def _flag_value_type(value: Any) -> str:
     if isinstance(value, int | float):
         return "number"
     return type(value).__name__
+
+
+DEFAULT_MARKDOWN_MESSAGE_TYPES: tuple[MarkdownMessageType, ...] = ("user", "assistant", "assistant-thinking")
 
 
 class ExtensionAPI:
@@ -340,9 +345,17 @@ class ExtensionAPI:
         self._assert_active()
         self._extension.message_renderers[custom_type] = renderer
 
-    def register_markdown_transformer(self, transformer: Any) -> None:
+    def register_markdown_transformer(
+        self, transformer: Callable[[str, dict], str], options: dict | None = None
+    ) -> None:
+        """Register a transformer for Markdown before PiDrei renders it in interactive mode. By default it runs on
+        user, assistant and thinking Markdown; `options["messageTypes"]` selects the surfaces instead."""
         self._assert_active()
-        self._extension.markdown_transformer = transformer
+        message_types = None if options is None else options.get("messageTypes")
+        self._extension.markdown_transformer = MarkdownTransformerRegistration(
+            transformer=transformer,
+            message_types=frozenset(message_types if message_types is not None else DEFAULT_MARKDOWN_MESSAGE_TYPES),
+        )
 
     def register_entry_renderer(self, custom_type: str, renderer: Any) -> None:
         self._assert_active()

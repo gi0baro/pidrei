@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 
 from pidrei_tui import (
+    CURSOR_MARKER,
     Container,
     Input,
     Spacer,
@@ -1043,16 +1044,27 @@ class SearchLine:
     """Component that displays the current search query."""
 
     def __init__(self, tree_list: TreeList) -> None:
+        self.focused = False
         self._tree_list = tree_list
 
     def invalidate(self) -> None:
         pass
 
     def render(self, width: int) -> list:
+        if width <= 0:
+            return [""]
+
         query = self._tree_list.get_search_query()
-        if query:
-            return [truncate_to_width(f"  {theme.fg('muted', 'Type to search:')} {theme.fg('accent', query)}", width)]
-        return [truncate_to_width(f"  {theme.fg('muted', 'Type to search:')}", width)]
+        line = (
+            f"  {theme.fg('muted', 'Type to search:')} {theme.fg('accent', query)}"
+            if query
+            else f"  {theme.fg('muted', 'Type to search:')} "
+        )
+        if not self.focused:
+            return [truncate_to_width(line, width)]
+
+        content = truncate_to_width(line, max(0, width - 1))
+        return [f"{content}{CURSOR_MARKER}\x1b[7m \x1b[27m"]
 
     def handle_input(self, _key_data: str) -> None:
         pass
@@ -1244,6 +1256,7 @@ class TreeSelectorComponent(Container):
         self._tree_list.on_copy = on_copy
         self._tree_list.on_label_edit = self._show_label_input
         self.on_copy = None
+        self._search_line = SearchLine(self._tree_list)
 
         self._tree_container = Container()
         self._tree_container.add_child(self._tree_list)
@@ -1254,7 +1267,7 @@ class TreeSelectorComponent(Container):
         self.add_child(DynamicBorder())
         self.add_child(Text(theme.bold("  Session Tree"), 1, 0))
         self.add_child(TreeHelp())
-        self.add_child(SearchLine(self._tree_list))
+        self.add_child(self._search_line)
         self.add_child(DynamicBorder())
         self.add_child(Spacer(1))
         self.add_child(self._tree_container)
@@ -1269,8 +1282,8 @@ class TreeSelectorComponent(Container):
 
             Timeout(100, auto_cancel)
 
-    # Focusable implementation - propagate to label input when active for
-    # IME cursor positioning
+    # Focusable implementation - propagate to the active input for IME cursor
+    # positioning
     @property
     def focused(self) -> bool:
         return self._focused
@@ -1278,7 +1291,7 @@ class TreeSelectorComponent(Container):
     @focused.setter
     def focused(self, value: bool) -> None:
         self._focused = value
-        # Propagate to label input when it's active
+        self._search_line.focused = value and self._label_input is None
         if self._label_input is not None:
             self._label_input.focused = value
 
@@ -1294,8 +1307,8 @@ class TreeSelectorComponent(Container):
         self._label_input.on_submit = on_submit
         self._label_input.on_cancel = lambda: self._hide_label_input()
 
-        # Propagate current focused state to the new label input
-        self._label_input.focused = self._focused
+        # Propagate current focused state
+        self.focused = self._focused
 
         self._tree_container.clear()
         self._label_input_container.clear()
@@ -1303,6 +1316,7 @@ class TreeSelectorComponent(Container):
 
     def _hide_label_input(self) -> None:
         self._label_input = None
+        self.focused = self._focused
         self._label_input_container.clear()
         self._tree_container.clear()
         self._tree_container.add_child(self._tree_list)

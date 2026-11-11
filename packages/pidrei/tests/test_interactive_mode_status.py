@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 import tonio.colored as tonio
 
+from pidrei.core.agent_session import AgentSettledEvent
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.source_info import SourceInfo
 from pidrei.modes.interactive.components.custom_editor import CustomEditor
@@ -166,6 +167,7 @@ class TestSetToolsExpanded:
             _built_in_header=SimpleNamespace(set_expanded=header_calls.append),
             _loaded_resources_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=loaded_calls.append)]),
             _chat_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=chat_calls.append)]),
+            _pending_messages_container=SimpleNamespace(children=[]),
             ui=SimpleNamespace(request_render=lambda force=False: None, state_lock=threading.RLock()),
             show_status=status_calls.append,
         )
@@ -177,6 +179,87 @@ class TestSetToolsExpanded:
         assert loaded_calls == [True]
         assert chat_calls == [True]
         assert status_calls == ["Tool output: expanded"]
+
+
+# Regression tests for https://github.com/earendil-works/pi/issues/11875
+class TestPendingUserBashOutput:
+    class _PendingBashComponent:
+        def __init__(self) -> None:
+            self.expanded_calls: list = []
+
+        def render(self, _width=None) -> list:
+            return []
+
+        def invalidate(self) -> None:
+            pass
+
+        def set_expanded(self, expanded: bool) -> None:
+            self.expanded_calls.append(expanded)
+
+    def _create_context(self, pending_bash_components: list):
+        pending_messages_container = Container()
+        for component in pending_bash_components:
+            pending_messages_container.add_child(component)
+        noop = lambda *_args: None
+        fake = SimpleNamespace(
+            _is_initialized=True,
+            _tool_output_expanded=False,
+            _custom_header=None,
+            _built_in_header=None,
+            _loaded_resources_container=Container(),
+            _chat_container=Container(),
+            _pending_messages_container=pending_messages_container,
+            _pending_bash_components=pending_bash_components,
+            _compaction_queued_messages=[],
+            _compaction_queue_guard=threading.Lock(),
+            session=SimpleNamespace(get_steering_messages=lambda: ["steer"], get_follow_up_messages=list),
+            _footer=SimpleNamespace(invalidate=noop),
+            _program_status=SimpleNamespace(handle_event=noop),
+            ui=SimpleNamespace(request_render=lambda force=False: None, state_lock=threading.RLock()),
+            show_status=noop,
+            # pi's `checkShutdownRequested` mock: the spawned flow is recorded, not run.
+            _check_shutdown_requested=lambda: "check-shutdown",
+            _spawn_flow=noop,
+            _get_app_key_display=lambda _action: "alt+up",
+        )
+        for name in (
+            "set_tools_expanded",
+            "_update_pending_messages_display",
+            "_get_all_queued_messages",
+            "_flush_pending_bash_components",
+            "_handle_event",
+        ):
+            setattr(fake, name, partial(getattr(InteractiveMode, name), fake))
+        return fake
+
+    def test_ctrl_o_expands_user_bash_output_in_the_pending_area(self):
+        component = self._PendingBashComponent()
+        fake = self._create_context([component])
+
+        fake.set_tools_expanded(True)
+
+        assert component.expanded_calls == [True]
+
+    def test_queued_message_updates_keep_user_bash_output_in_the_pending_area(self):
+        component = self._PendingBashComponent()
+        fake = self._create_context([component])
+
+        fake._update_pending_messages_display()
+        fake.set_tools_expanded(True)
+
+        assert component in fake._pending_messages_container.children
+        assert "Steering: steer" in render_all(fake._pending_messages_container)
+        assert component.expanded_calls == [True]
+
+    def test_settling_the_agent_run_moves_user_bash_output_to_the_chat(self):
+        component = self._PendingBashComponent()
+        fake = self._create_context([component])
+
+        fake._handle_event(AgentSettledEvent(aborted=False))
+
+        assert component not in fake._pending_messages_container.children
+        assert fake._chat_container.children == [component]
+        assert fake._pending_bash_components == []
 
 
 class TestCreateExtensionUIContextSetTheme:
@@ -277,6 +360,7 @@ class TestCreateExtensionUIContextSetTheme:
 # Inline custom components go through the extension dialog stack.
 def _with_extension_dialog_state(fake):
     fake._extension_dialogs = []
+    fake._extension_overlays = {}
     fake._program_status = SimpleNamespace(set_blocked=lambda *_args: None)
     for name in ("_push_extension_dialog", "_remove_extension_dialog", "_show_top_extension_dialog"):
         setattr(fake, name, partial(getattr(InteractiveMode, name), fake))
@@ -411,6 +495,95 @@ async def test_closing_a_lower_overlay_custom_ui_removes_its_own_overlay_not_the
         closers["upper"]("upper closed")
         assert await upper_done == "upper closed"
         await flush_tui(ui, terminal)
+        assert ui.has_overlay() is False
+        assert editor.focused is True
+    finally:
+        await ui.stop()
+
+
+class _DisposableFocusableComponent(FakeFocusableComponent):
+    def __init__(self, label: str) -> None:
+        super().__init__(label)
+        self.dispose_calls = 0
+
+    def dispose(self) -> None:
+        self.dispose_calls += 1
+
+
+# Regression: reset hid only the topmost overlay, so lower extension overlays stayed and kept input.
+@pytest.mark.tonio
+async def test_reset_extension_ui_removes_every_extension_overlay_but_keeps_pidreis_own_overlays():
+    terminal = VirtualTerminal(80, 24)
+    ui = TuiMainScreen(terminal)
+    editor_container = Container()
+    editor = FakeFocusableComponent("EDITOR")
+    internal = FakeFocusableComponent("INTERNAL")
+    lower = _DisposableFocusableComponent("LOWER")
+    hidden = _DisposableFocusableComponent("HIDDEN")
+    upper = _DisposableFocusableComponent("UPPER")
+    noop = lambda *_args: None
+    fake = SimpleNamespace(
+        editor=editor,
+        _editor_container=editor_container,
+        _keybindings={},
+        ui=ui,
+        _extension_tui=ExtensionTui(ui),
+        _dispose_active_selector=noop,
+        # The rest of _reset_extension_ui is not under test here.
+        _clear_extension_terminal_input_listeners=noop,
+        _set_extension_footer=noop,
+        _set_extension_header=noop,
+        _clear_extension_widgets=noop,
+        _footer_data_provider=SimpleNamespace(clear_extension_statuses=noop),
+        _footer=SimpleNamespace(invalidate=noop),
+        _extension_registry_guard=threading.Lock(),
+        _set_custom_editor_component=noop,
+        _setup_autocomplete_provider=noop,
+        _default_editor=SimpleNamespace(),
+        _update_terminal_title=noop,
+        _set_working_indicator=noop,
+        _active_status_indicator=None,
+        _set_hidden_thinking_label=noop,
+    )
+    _with_extension_dialog_state(fake)
+
+    def show_overlay(component, on_handle=None):
+        options = {"overlay": True}
+        if on_handle is not None:
+            options["onHandle"] = on_handle
+        return InteractiveMode._show_extension_custom(
+            fake, lambda _tui, _theme, _keybindings, _done: component, options
+        )
+
+    editor_container.add_child(editor)
+    ui.add_child(editor_container)
+    ui.set_focus(editor)
+    await ui.start()
+    try:
+        # A pidrei-internal overlay (for example the header easter egg) opened below the extension overlays.
+        ui.show_overlay(internal)
+        show_overlay(lower)
+        show_overlay(hidden, lambda handle: handle.set_hidden(True))
+        show_overlay(upper)
+        await flush_tui(ui, terminal)
+        assert upper.focused is True
+
+        InteractiveMode._reset_extension_ui(fake)
+        await flush_tui(ui, terminal)
+
+        viewport = "\n".join(terminal.get_viewport())
+        assert "INTERNAL" in viewport
+        assert "LOWER" not in viewport
+        assert "UPPER" not in viewport
+        assert lower.dispose_calls == 1
+        assert hidden.dispose_calls == 1
+        assert upper.dispose_calls == 1
+        await terminal.send_input("x")
+        await flush_tui(ui, terminal)
+        assert internal.inputs == ["x"]
+        assert lower.inputs == []
+
+        ui.hide_overlay()
         assert ui.has_overlay() is False
         assert editor.focused is True
     finally:

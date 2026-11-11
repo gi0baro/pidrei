@@ -209,8 +209,14 @@ class ModelSelectorComponent(Container):
                     if not self._error_message:
                         self._refresh_status_message = "Model catalogs refreshed."
                         self._refresh_status_success = True
+                selected_model = (
+                    self._filtered_models[self._selected_index]["model"]
+                    if 0 <= self._selected_index < len(self._filtered_models)
+                    else None
+                )
                 self._load_models_from_snapshot()
-                self._filter_models(self._search_input.get_value())
+                # The user may have moved while the refresh was in flight, and the refresh can shift rows.
+                self._filter_models(self._search_input.get_value(), selected_model)
                 self._tui.request_render()
         finally:
             if self._refresh_timeout is not None:
@@ -267,7 +273,7 @@ class ModelSelectorComponent(Container):
         if self._scope_text is not None:
             self._scope_text.set_text(self._get_scope_text())
 
-    def _filter_models(self, query: str) -> None:
+    def _filter_models(self, query: str, preferred_model=None) -> None:
         if query:
 
             def search_text(item: dict) -> str:
@@ -289,10 +295,21 @@ class ModelSelectorComponent(Container):
                 self._filtered_models = filtered
         else:
             self._filtered_models = self._active_models
-        # When filtering by a query, move the selector to the top row so the best
-        # match is highlighted. When the query is cleared, keep the current position
-        # clamped to the (restored) list length.
-        self._selected_index = 0 if query else min(self._selected_index, max(0, len(self._filtered_models) - 1))
+        # Keep the preferred model selected if it is still listed. Otherwise, when filtering
+        # by a query, move the selector to the top row so the best match is highlighted.
+        # When the query is cleared, keep the current position clamped to the (restored) list length.
+        preferred_index = (
+            next(
+                (i for i, item in enumerate(self._filtered_models) if models_are_equal(preferred_model, item["model"])),
+                -1,
+            )
+            if preferred_model is not None
+            else -1
+        )
+        if preferred_index >= 0:
+            self._selected_index = preferred_index
+        else:
+            self._selected_index = 0 if query else min(self._selected_index, max(0, len(self._filtered_models) - 1))
         self._update_list()
 
     def _update_list(self) -> None:

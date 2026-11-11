@@ -141,7 +141,10 @@ def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     if os.environ.get("WT_SESSION"):
         return {"images": None, "trueColor": True, "hyperlinks": True}
 
-    if term_program in ("alacritty", "vscode", "zed"):
+    # Alacritty does not set TERM_PROGRAM. It sets TERM=alacritty when its terminfo entry is
+    # installed (otherwise xterm-256color) and ALACRITTY_WINDOW_ID on Unix and macOS.
+    is_alacritty = term_program == "alacritty" or term.startswith("alacritty") or os.environ.get("ALACRITTY_WINDOW_ID")
+    if is_alacritty or term_program in ("vscode", "zed"):
         return {"images": None, "trueColor": True, "hyperlinks": True}
 
     if terminal_emulator == "jetbrains-jediterm":

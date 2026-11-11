@@ -4,6 +4,7 @@ from pidrei_tui import Box, Container, Markdown, Spacer, Text
 
 from ..theme import get_markdown_theme, theme
 from .keybinding_hints import key_hint, key_text
+from .markdown_transform import create_markdown_transform
 
 
 class CustomMessageComponent(Container):
@@ -12,7 +13,16 @@ class CustomMessageComponent(Container):
     Uses distinct styling to differentiate from user messages.
     """
 
-    def __init__(self, message, custom_renderer=None, markdown_theme: dict | None = None, output_pad: int = 1) -> None:
+    def __init__(
+        self,
+        message,
+        custom_renderer=None,
+        markdown_theme: dict | None = None,
+        output_pad: int = 1,
+        markdown_transformers=(),
+        message_id: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
         super().__init__()
         self._message = message
         self._custom_renderer = custom_renderer
@@ -20,6 +30,9 @@ class CustomMessageComponent(Container):
         self._custom_component = None
         self._expanded = False
         self._output_pad = output_pad
+        self._markdown_transformers = markdown_transformers
+        self._message_id = message_id
+        self._timestamp = timestamp
 
         self.add_child(Spacer(1))
 
@@ -95,5 +108,10 @@ class CustomMessageComponent(Container):
                 0,
                 self._markdown_theme,
                 {"color": lambda t: theme.fg("customMessageText", t)},
+                {
+                    "transform": create_markdown_transform(
+                        "custom", lambda: False, self._markdown_transformers, self._message_id, self._timestamp
+                    )
+                },
             )
         )

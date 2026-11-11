@@ -706,6 +706,39 @@ async def test_gets_markdown_transformers_in_extension_load_order(fx):
 
 
 @pytest.mark.tonio
+async def test_runs_markdown_transformers_only_on_their_message_types(fx):
+    fx.write(
+        "markdown-default.py",
+        '\nasync def extension(pi):\n    pi.register_markdown_transformer(lambda markdown, context: markdown + " default")\n',
+    )
+    fx.write(
+        "markdown-opt-in.py",
+        """
+async def extension(pi):
+    pi.register_markdown_transformer(
+        lambda markdown, context: markdown + " opt-in",
+        {"messageTypes": ["assistant", "changelog"]},
+    )
+""",
+    )
+
+    runner = await make_runner(fx)
+    transformers = runner.get_markdown_transformers()
+
+    def apply(message_type: str) -> str:
+        markdown = "text"
+        for transformer in transformers:
+            markdown = transformer(markdown, {"messageType": message_type, "isStreaming": False, "availableWidth": 80})
+        return markdown
+
+    assert apply("user") == "text default"
+    assert apply("assistant-thinking") == "text default"
+    assert apply("assistant") == "text default opt-in"
+    assert apply("changelog") == "text opt-in"
+    assert apply("custom") == "text"
+
+
+@pytest.mark.tonio
 async def test_gets_message_renderer_by_type(fx):
     fx.write(
         "renderer.py",

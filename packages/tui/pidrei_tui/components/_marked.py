@@ -52,7 +52,7 @@ from markdown_it.rules_inline.state_inline import Delimiter
 from ..utils import cjk_punctuation_regex
 
 
-__all__ = ["lex", "trim_partial_closing_fences"]
+__all__ = ["lex", "remove_html_comment_blocks", "strip_html_comments", "trim_partial_closing_fences"]
 
 _md = MarkdownIt("commonmark", {"linkify": True}).enable(["strikethrough", "table", "linkify"])
 # Keep text_special tokens (escapes/entities) separate so escape tokens can be
@@ -383,6 +383,37 @@ def trim_partial_closing_fences(tokens: list[dict]) -> None:
         return
 
     token["text"] = re.sub(r"\n$", "", token["text"][: -len(last_line)])
+
+
+# An unclosed comment runs to the end of an HTML block, as in CommonMark, so streamed comments stay hidden.
+# (``\Z``: JS ``$`` without the ``m`` flag is the end of input only.)
+HTML_COMMENT_REGEX = re.compile(r"<!--[\s\S]*?(?:-->|\Z)")
+
+
+def strip_html_comments(html: str) -> str:
+    return HTML_COMMENT_REGEX.sub("", html)
+
+
+def remove_html_comment_blocks(tokens: list[dict]) -> None:
+    """Remove block HTML tokens that hold only comments, so they render no line. A removed comment between two
+    blank lines, or at the start or end, also drops a blank line, so it leaves no extra gap.
+    See https://github.com/earendil-works/pi/issues/11710."""
+    i = len(tokens) - 1
+    while i >= 0:
+        token = tokens[i]
+        if token["type"] == "list":
+            for item in token["items"]:
+                remove_html_comment_blocks(item["tokens"])
+        elif token["type"] == "blockquote":
+            remove_html_comment_blocks(token.get("tokens") or [])
+        elif token["type"] == "html" and strip_html_comments(token["raw"]).strip() == "":
+            del tokens[i]
+            if i < len(tokens) and tokens[i]["type"] == "space" and (i == 0 or tokens[i - 1]["type"] == "space"):
+                del tokens[i]
+            elif i == len(tokens) and i > 0 and tokens[i - 1]["type"] == "space":
+                i -= 1
+                del tokens[i]
+        i -= 1
 
 
 # =============================================================================

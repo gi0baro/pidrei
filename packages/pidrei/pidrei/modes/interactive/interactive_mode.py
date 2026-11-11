@@ -177,6 +177,7 @@ from .components import (
     load_earendil_image_base64,
     raw_key_hint,
 )
+from .components.markdown_transform import create_markdown_transform
 from .components.pi_logo import pi_logo_lines, pi_wordmark, supports_pi_logo
 from .components.themed_text import ThemedText
 from .extension_tui import ExtensionTui, guard_overlay_handle
@@ -807,6 +808,13 @@ class InteractiveMode:
         # (component, blocked status) under the UI state lock. The last entry is visible; see
         # `_push_extension_dialog`.
         self._extension_dialogs: list = []
+        # Numbers the program status sources of blocking overlays, so closing one keeps the others. Under the
+        # UI state lock (taken in the mount hold).
+        self._next_blocking_overlay_id = 0
+        # Open extension overlays (`custom` with `"overlay": True`) and the function that removes each, in
+        # opening order, keyed by the raw `OverlayHandle`. Reset removes only these, not pidrei's own overlays.
+        # Under the UI state lock.
+        self._extension_overlays: dict = {}
         self._extension_terminal_input_subscriptions: set = set()
 
         # Extension widgets (components rendered above/below the editor)
@@ -1058,9 +1066,7 @@ class InteractiveMode:
             else:
                 self._chat_container.add_child(ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0))
                 self._chat_container.add_child(Spacer(1))
-                self._chat_container.add_child(
-                    Markdown(self._changelog_markdown.strip(), 1, 0, self._get_markdown_theme_with_settings())
-                )
+                self._chat_container.add_child(self._create_changelog_markdown(self._changelog_markdown.strip(), 1, 0))
                 self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder())
 
@@ -2315,6 +2321,7 @@ class InteractiveMode:
             self._loaded_resources_container.clear()
             self._chat_container.clear()
             self._pending_messages_container.clear()
+            self._pending_bash_components = []
             with self._compaction_queue_guard:
                 self._compaction_queued_messages = []
             self._streaming_component = None
@@ -2334,6 +2341,19 @@ class InteractiveMode:
 
     def _get_markdown_transformers(self) -> list:
         return self.session.extension_runner.get_markdown_transformers()
+
+    def _create_changelog_markdown(
+        self, markdown: str, padding_x: int, padding_y: int, default_text_style: dict | None = None
+    ) -> Markdown:
+        """Markdown of a changelog or release note that runs the Markdown transformers of the `changelog` type."""
+        return Markdown(
+            markdown,
+            padding_x,
+            padding_y,
+            self._get_markdown_theme_with_settings(),
+            default_text_style,
+            {"transform": create_markdown_transform("changelog", lambda: False, self._get_markdown_transformers())},
+        )
 
     def _setup_extension_shortcuts(self, extension_runner) -> None:
         """Set up keyboard shortcuts registered by extensions."""
@@ -2577,7 +2597,10 @@ class InteractiveMode:
                         dispose()
                 self._extension_dialogs = []
                 self._show_top_extension_dialog()
-            self.ui.hide_overlay()
+            # Reload and session switches replace every extension without calling done(): remove their overlays,
+            # newest first, the same way done() does, but leave the waits pending as for inline dialogs.
+            for remove_overlay in reversed(list(self._extension_overlays.values())):
+                remove_overlay()
             self._set_extension_footer(None)
             self._set_extension_header(None)
             self._clear_extension_widgets()
@@ -2910,7 +2933,8 @@ class InteractiveMode:
             self._editor_component_factory = factory
 
             # Save text from current editor before switching
-            current_text = self.editor.get_text()
+            get_expanded = getattr(self.editor, "get_expanded_text", None)
+            current_text = get_expanded() if get_expanded is not None else self.editor.get_text()
 
             # An open extension dialog keeps the editor slot; the new editor is shown when the last dialog closes.
             dialog_open = len(self._extension_dialogs) > 0
@@ -3019,7 +3043,15 @@ class InteractiveMode:
         done = tonio.Event()
         # Written under the UI state lock (the mount hold and `close`); the
         # waiting handle reads `value` after `done`.
-        state: dict = {"component": None, "overlay_handle": None, "closed": False, "value": None, "editor_text": ""}
+        state: dict = {
+            "component": None,
+            "overlay_handle": None,
+            # An overlay stays blocked until its interaction ends, also while set_hidden() hides it.
+            "overlay_status_source": None,
+            "closed": False,
+            "value": None,
+            "editor_text": "",
+        }
 
         def restore_editor() -> None:
             if state["component"] is not None:
@@ -3027,23 +3059,36 @@ class InteractiveMode:
             self.editor.set_text(state["editor_text"])
             self.ui.request_render()
 
+        def dispose_component() -> None:
+            component = state["component"]
+            with contextlib.suppress(Exception):
+                if component is not None and getattr(component, "dispose", None) is not None:
+                    component.dispose()
+
+        # Shared by done() and `_reset_extension_ui()`. Removing the map entry first makes a second call a no-op.
+        def remove_overlay() -> None:
+            with self.ui.state_lock:
+                overlay_handle = state["overlay_handle"]
+                if overlay_handle is None or self._extension_overlays.pop(overlay_handle, None) is None:
+                    return
+                # Remove this overlay, not the topmost one: another overlay may have opened above it.
+                overlay_handle.hide()
+                if state["overlay_status_source"] is not None:
+                    self._program_status.set_blocked(state["overlay_status_source"], None)
+                dispose_component()
+
         def close(result=None) -> None:
             with self.ui.state_lock:
                 if state["closed"]:
                     return
                 state["closed"] = True
                 state["value"] = result
-                component = state["component"]
-                overlay_handle = state["overlay_handle"]
-                if not is_overlay:
+                if is_overlay:
+                    remove_overlay()
+                else:
+                    # Requests a render
                     restore_editor()
-                elif overlay_handle is not None:
-                    # Remove this overlay, not the topmost one: another overlay may have opened above it.
-                    overlay_handle.hide()
-                # Note: both branches above already request a render
-                with contextlib.suppress(Exception):
-                    if component is not None and getattr(component, "dispose", None) is not None:
-                        component.dispose()
+                    dispose_component()
             done.set()
 
         def mount(component) -> None:
@@ -3056,20 +3101,31 @@ class InteractiveMode:
                     width = getattr(component, "width", None)
                     resolved_options = {"width": width} if width else None
                 state["overlay_handle"] = self.ui.show_overlay(component, resolved_options)
+                self._extension_overlays[state["overlay_handle"]] = remove_overlay
+                # `"blocked": {"kind", "message"}` reports pidrei as blocked until done(). The source is
+                # numbered here, in the mount hold, where pi numbers it at call time: `custom()` callers run in
+                # parallel here.
+                blocked = options.get("blocked")
+                if blocked:
+                    state["overlay_status_source"] = f"extension-overlay:{self._next_blocking_overlay_id}"
+                    self._next_blocking_overlay_id += 1
+                    self._program_status.set_blocked(
+                        state["overlay_status_source"], BlockedStatus(blocked["kind"], blocked["message"])
+                    )
                 # Expose handle to caller for visibility control
                 on_handle = options.get("onHandle")
                 if on_handle is not None:
                     on_handle(guard_overlay_handle(self.ui, state["overlay_handle"]))
             else:
-                # `"blocked": {"kind", "message"}` reports pidrei as blocked while the component is visible;
-                # overlays are not on the dialog stack and ignore it.
+                # `"blocked": {"kind", "message"}` reports pidrei as blocked while the component is visible.
                 blocked = options.get("blocked")
                 self._push_extension_dialog(
                     component, BlockedStatus(blocked["kind"], blocked["message"]) if blocked else None
                 )
 
         with self.ui.state_lock:
-            state["editor_text"] = self.editor.get_text()
+            get_expanded = getattr(self.editor, "get_expanded_text", None)
+            state["editor_text"] = get_expanded() if get_expanded is not None else self.editor.get_text()
             try:
                 # Synchronous only: an `async def` factory is refused.
                 component = call_sync(lambda: factory(self._extension_tui, theme, self._keybindings, close))
@@ -3719,6 +3775,9 @@ class InteractiveMode:
             self.ui.request_render()
 
         elif event_type == "agent_settled":
+            # The session records deferred user bash results when the run settles; show them there too.
+            self._flush_pending_bash_components()
+            self.ui.request_render()
             self._spawn_flow(self._check_shutdown_requested())
 
         elif event_type == "compaction_start":
@@ -3937,21 +3996,37 @@ class InteractiveMode:
             if message.display:
                 renderer = self.session.extension_runner.get_message_renderer(message.custom_type)
                 component = CustomMessageComponent(
-                    message, renderer, self._get_markdown_theme_with_settings(), self._output_pad
+                    message,
+                    renderer,
+                    self._get_markdown_theme_with_settings(),
+                    self._output_pad,
+                    self._get_markdown_transformers(),
+                    options.get("messageId"),
+                    options.get("timestamp"),
                 )
                 component.set_expanded(self._tool_output_expanded)
                 self._chat_container.add_child(component)
         elif role == "compactionSummary":
             self._chat_container.add_child(Spacer(1))
             component = CompactionSummaryMessageComponent(
-                message, self._get_markdown_theme_with_settings(), self._output_pad
+                message,
+                self._get_markdown_theme_with_settings(),
+                self._output_pad,
+                self._get_markdown_transformers(),
+                options.get("messageId"),
+                options.get("timestamp"),
             )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "branchSummary":
             self._chat_container.add_child(Spacer(1))
             component = BranchSummaryMessageComponent(
-                message, self._get_markdown_theme_with_settings(), self._output_pad
+                message,
+                self._get_markdown_theme_with_settings(),
+                self._output_pad,
+                self._get_markdown_transformers(),
+                options.get("messageId"),
+                options.get("timestamp"),
             )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
@@ -3966,7 +4041,12 @@ class InteractiveMode:
                 if skill_block is not None:
                     # Render skill block (collapsible)
                     component = SkillInvocationMessageComponent(
-                        skill_block, self._get_markdown_theme_with_settings(), self._output_pad
+                        skill_block,
+                        self._get_markdown_theme_with_settings(),
+                        self._output_pad,
+                        self._get_markdown_transformers(),
+                        options.get("messageId"),
+                        options.get("timestamp"),
                     )
                     component.set_expanded(self._tool_output_expanded)
                     self._chat_container.add_child(component)
@@ -4662,7 +4742,11 @@ class InteractiveMode:
             active_header = self._custom_header if self._custom_header is not None else self._built_in_header
             if is_expandable(active_header):
                 active_header.set_expanded(expanded)
-            for container in (self._loaded_resources_container, self._chat_container):
+            for container in (
+                self._loaded_resources_container,
+                self._chat_container,
+                self._pending_messages_container,
+            ):
                 for child in container.children:
                     if is_expandable(child):
                         child.set_expanded(expanded)
@@ -4752,13 +4836,7 @@ class InteractiveMode:
             if note:
                 self._chat_container.add_child(Spacer(1))
                 self._chat_container.add_child(
-                    Markdown(
-                        note,
-                        1,
-                        0,
-                        self._get_markdown_theme_with_settings(),
-                        {"color": lambda text: theme.fg("muted", text)},
-                    )
+                    self._create_changelog_markdown(note, 1, 0, {"color": lambda text: theme.fg("muted", text)})
                 )
                 self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(ThemedText(changelog_line, 1, 0))
@@ -4825,6 +4903,9 @@ class InteractiveMode:
     def _update_pending_messages_display(self) -> None:
         with self.ui.state_lock:
             self._pending_messages_container.clear()
+            # User bash output shown while the agent works lives here until it moves to the chat.
+            for component in self._pending_bash_components:
+                self._pending_messages_container.add_child(component)
             queued = self._get_all_queued_messages()
             steering_messages = queued["steering"]
             follow_up_messages = queued["followUp"]
@@ -4851,7 +4932,13 @@ class InteractiveMode:
             if all_queued:
                 queued_text = "\n\n".join(all_queued)
                 explicit_text = options.get("currentText") if options else None
-                current_text = explicit_text if explicit_text is not None else self.editor.get_text()
+                get_expanded = getattr(self.editor, "get_expanded_text", None)
+                if explicit_text is not None:
+                    current_text = explicit_text
+                elif get_expanded is not None:
+                    current_text = get_expanded()
+                else:
+                    current_text = self.editor.get_text()
                 combined_text = "\n\n".join(t for t in (queued_text, current_text) if t.strip())
                 self.editor.set_text(combined_text)
                 self.ui.request_render()
@@ -4972,7 +5059,7 @@ class InteractiveMode:
 
     def _flush_pending_bash_components(self) -> None:
         """Move pending bash components from pending area to chat; under the UI
-        state lock (the submit handler)."""
+        state lock (the submit handler, the `agent_settled` apply)."""
         for component in self._pending_bash_components:
             self._pending_messages_container.remove_child(component)
             self._chat_container.add_child(component)
@@ -7123,14 +7210,16 @@ class InteractiveMode:
             else "No changelog entries found."
         )
 
-        self._append_to_chat(
-            Spacer(1),
-            DynamicBorder(),
-            ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0),
-            Spacer(1),
-            Markdown(changelog_markdown, 1, 1, self._get_markdown_theme_with_settings()),
-            DynamicBorder(),
-        )
+        # Built in the hold: the transformers come from the current session.
+        with self.ui.state_lock:
+            self._append_to_chat(
+                Spacer(1),
+                DynamicBorder(),
+                ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0),
+                Spacer(1),
+                self._create_changelog_markdown(changelog_markdown, 1, 1),
+                DynamicBorder(),
+            )
 
     def _get_app_key_display(self, action: str) -> str:
         """Get capitalized display string for an app keybinding action."""
@@ -7335,7 +7424,7 @@ class InteractiveMode:
             # Create UI component for display, show output and complete
             component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
             with self.ui.state_lock:
-                self._mount_bash_component(component, self.session.is_streaming)
+                self._mount_bash_component(component)
                 if result.get("output"):
                     component.append_output(result["output"])
                 component.set_complete(
@@ -7364,7 +7453,7 @@ class InteractiveMode:
         # (pi keeps the component in a field; a local, since two `!` commands
         # run concurrently here and each must keep its own output.)
         component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
-        self._mount_bash_component(component, self.session.is_streaming)
+        self._mount_bash_component(component)
         self.ui.request_render()
 
         def on_chunk(chunk: str) -> None:
@@ -7397,9 +7486,13 @@ class InteractiveMode:
 
         self.ui.request_render()
 
-    def _mount_bash_component(self, component, deferred: bool) -> None:
+    def _mount_bash_component(self, component) -> None:
+        # The expand state and the streaming flag are read in the mount hold: a ctrl+o toggle, or the
+        # `agent_settled` apply that moves pending output to the chat, lands before or after the mount, never
+        # between the read and the mount.
         with self.ui.state_lock:
-            if deferred:
+            component.set_expanded(self._tool_output_expanded)
+            if self.session.is_streaming:
                 # Show in pending area when agent is streaming
                 # (`_flush_pending_bash_components` moves the pending list)
                 self._pending_messages_container.add_child(component)

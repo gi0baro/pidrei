@@ -1779,10 +1779,8 @@ class TuiAltScreen(TuiBase):
             changed_rows[row] and (is_image_line(line) or is_image_line(self._previous_of(row)))
             for row, line in enumerate(screen)
         )
-        is_wezterm = bool(os.environ.get("WEZTERM_PANE")) or os.environ.get("TERM_PROGRAM", "").lower() == "wezterm"
         image_cells_need_redraw = (
             not image_anchors_need_redraw
-            and is_wezterm
             and self._image_protocol == "kitty"
             and any(changed_rows)
             and any(_placement_covers_changed_row(line, row, changed_rows) for row, line in enumerate(screen))
@@ -1812,14 +1810,12 @@ class TuiAltScreen(TuiBase):
                 buffer += delete_all_kitty_placements()
         buffer += evicted_image_deletion
 
-        # WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
-        # Draw image placements after every clear and text write so nothing later intersects them; preserve
-        # the existing interleaved output for text-only frames and every other terminal.
+        # Some terminals store Kitty images in the cells they cover (WezTerm, xterm.js's image addon in Orca),
+        # so clearing or writing a covered row erases that part of the image. Draw placements after every clear
+        # and text write so nothing later intersects them. Terminals that keep images on a separate layer
+        # (Kitty, Ghostty) render the same result; text-only frames keep the interleaved output.
         draw_kitty_images_last = (
-            redraw_images
-            and self._image_protocol == "kitty"
-            and any(is_image_line(line) for line in screen)
-            and is_wezterm
+            redraw_images and self._image_protocol == "kitty" and any(is_image_line(line) for line in screen)
         )
 
         def skip(row: int) -> bool:

@@ -1518,11 +1518,13 @@ def slice_with_width(line: str, start_col: int, length: int, strict: bool = Fals
     while i < len(line):
         ansi = extract_ansi_code(line, i)
         if ansi:
+            # APC sequences (cursor markers) are positional one-shot commands, not persistent style
+            # state, so codes before the range carry over only when they are not APC.
             if start_col <= current_col < end_col:
                 # Keep original order: codes from before the range must precede codes at the boundary
                 result += pending_ansi + ansi["code"]
                 pending_ansi = ""
-            elif current_col < start_col:
+            elif current_col < start_col and not ansi["code"].startswith("\x1b_"):
                 pending_ansi += ansi["code"]
             i += ansi["length"]
             continue

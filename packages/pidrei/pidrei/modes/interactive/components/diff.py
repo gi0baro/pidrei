@@ -33,14 +33,24 @@ def _replace_tabs(text: str) -> str:
 def _render_intra_line_diff(old_content: str, new_content: str) -> dict:
     """Word-level diff rendered with inverse on changed parts.
 
-    Strips leading whitespace from inverse to avoid highlighting indentation.
+    Separates common indentation before diffing so a leading insertion cannot consume it.
     """
-    old_tokens = _TOKEN_RE.findall(old_content)
-    new_tokens = _TOKEN_RE.findall(new_content)
+    common_indent_length = 0
+    while (
+        common_indent_length < len(old_content)
+        and common_indent_length < len(new_content)
+        and old_content[common_indent_length] == new_content[common_indent_length]
+        and old_content[common_indent_length].isspace()
+    ):
+        common_indent_length += 1
+
+    common_indent = old_content[:common_indent_length]
+    old_tokens = _TOKEN_RE.findall(old_content[common_indent_length:])
+    new_tokens = _TOKEN_RE.findall(new_content[common_indent_length:])
     matcher = difflib.SequenceMatcher(None, old_tokens, new_tokens, autojunk=False)
 
-    removed_line = ""
-    added_line = ""
+    removed_line = common_indent
+    added_line = common_indent
     is_first_removed = True
     is_first_added = True
 

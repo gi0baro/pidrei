@@ -40,3 +40,30 @@ def test_provides_output_padding_to_custom_renderers_and_updates_it():
 
     assert {"expanded": False, "outputPad": 0}.items() <= options_seen[-1].items()
     assert any(line.startswith("custom") for line in map(strip_ansi, component.render(40)))
+
+
+def test_runs_markdown_transformers_on_default_rendered_content():
+    contexts = []
+
+    def transformer(markdown, context):
+        contexts.append(context)
+        return markdown.replace("original", "transformed")
+
+    message = CustomMessage(
+        custom_type="test",
+        content="original",
+        display=True,
+        timestamp=int(time.time() * 1000),
+    )
+    component = CustomMessageComponent(message, None, None, 1, [transformer], "entry-1", "2025-01-15T10:30:00.000Z")
+
+    rendered = "\n".join(map(strip_ansi, component.render(40)))
+    assert "transformed" in rendered
+    assert "original" not in rendered
+    # pi's toMatchObject: a subset check.
+    assert {
+        "messageType": "custom",
+        "isStreaming": False,
+        "messageId": "entry-1",
+        "timestamp": "2025-01-15T10:30:00.000Z",
+    }.items() <= contexts[0].items()
