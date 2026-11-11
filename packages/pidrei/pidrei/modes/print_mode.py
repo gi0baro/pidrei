@@ -13,6 +13,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+import tonio.colored as tonio
+
 from ..core.agent_session import ExtensionBindings
 from ..core.json_wire import to_wire
 from ..core.output_guard import drain_output, write_raw_stdout, write_stderr
@@ -48,30 +50,52 @@ async def run_print_mode(
     session = runtime_host.session
     unsubscribe: Any = None
     unsubscribe_backpressure: Any = None
-    disposed = False
-    # The signal handler and the normal exit both dispose; the first one claims it.
+    disposing = False
+    # Set when the shared disposal has finished (or failed): callers after the first wait on it.
+    disposed = tonio.Event()
+    # SIGTERM/SIGHUP received so far. Only a repeated signal forces exit during disposal.
+    signal_count = 0
+    # The exit status of the signal that takes the exit once the disposal is done.
+    signal_exit: int | None = None
+    # The signal handlers and the normal exit decide under this: who disposes, how many
+    # signals came, and whether a signal took the exit.
     dispose_guard = threading.Lock()
 
     async def dispose_runtime() -> None:
-        nonlocal disposed
+        """Callers share one disposal, so a signal during the final disposal waits for it to finish."""
+        nonlocal disposing
         with dispose_guard:
-            if disposed:
-                return
-            disposed = True
-        if unsubscribe is not None:
-            unsubscribe()
-        if unsubscribe_backpressure is not None:
-            unsubscribe_backpressure()
-        await runtime_host.dispose()
+            first = not disposing
+            disposing = True
+        if not first:
+            await disposed.wait()
+            return
+        try:
+            if unsubscribe is not None:
+                unsubscribe()
+            if unsubscribe_backpressure is not None:
+                unsubscribe_backpressure()
+            await runtime_host.dispose()
+        finally:
+            disposed.set()
 
     async def on_shutdown_signal(signum: int) -> None:
-        # pi: kill the tracked children, then exit once the runtime is
-        # disposed, so extensions get session_shutdown. Once the normal exit
-        # has claimed the dispose, this exits at once (pi has removed its
-        # handlers there, and the signal's default action ends the process).
+        nonlocal signal_count, signal_exit
+        exit_status = signal_exit_status(signum)
+        with dispose_guard:
+            signal_count += 1
+            repeated = signal_count > 1
+            if signal_exit is None:
+                signal_exit = exit_status
         kill_tracked_detached_children()
-        await dispose_runtime()
-        hard_exit(signal_exit_status(signum))
+        if repeated:
+            hard_exit(exit_status)
+        # pi: exit once the runtime is disposed, so extensions get session_shutdown, even
+        # when the disposal fails.
+        try:
+            await dispose_runtime()
+        finally:
+            hard_exit(exit_status)
 
     if signal_dispatcher is not None:
         signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
@@ -184,5 +208,15 @@ async def run_print_mode(
         write_stderr(f"{error}\n")
         return 1
     finally:
+        # The signal handlers stay installed through the disposal: a signal during it waits
+        # for it instead of killing the process mid-dispose (for example during a pending MCP
+        # token refresh).
         await dispose_runtime()
+        with dispose_guard:
+            status = signal_exit
+        if status is not None:
+            # A signal came during the run or its disposal: its handler exits with the signal's
+            # status once the disposal is done, as in pi. Both wake from the disposal here, so
+            # this exits with that status too instead of returning the mode's own code.
+            hard_exit(status)
         await drain_output()

@@ -1758,8 +1758,11 @@ Request an orderly shutdown of pidrei.
 
 - **Interactive mode:** deferred until the agent is idle (after every queued
   steering and follow-up message has been processed).
-- **RPC mode:** deferred until the next idle state, once the current command
-  response is complete.
+- **RPC mode:** runs right away when the session is idle and no command is
+  being handled. Otherwise deferred until the current command finishes
+  (including its response) or the active run settles. (A request made while
+  an extension-started compaction is running waits for the next command or
+  run to finish.)
 - **Print and JSON modes:** no effect. The process exits by itself once every
   prompt has been processed.
 

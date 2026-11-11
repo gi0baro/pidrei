@@ -949,6 +949,11 @@ class ModelRuntime:
 
         await self._enqueue_credential_operation(provider_id, cancel, task)
 
+    def settle_credential_writes(self) -> Awaitable[None]:
+        """Wait until credential writes already in progress finish, such as an OAuth refresh started by a
+        background catalog refresh. Call before the process exits so a rotated token is not lost."""
+        return self._credentials.settled()
+
     def list_credentials(self, options: AuthOperationOptions | None = None) -> Awaitable[list[CredentialInfo]]:
         return self._credentials.list(options)
 

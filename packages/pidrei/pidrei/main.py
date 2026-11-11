@@ -19,7 +19,6 @@ import os
 import sys
 import traceback
 import warnings
-from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -79,6 +78,7 @@ from .core.session_cwd import (
     MissingSessionCwdError,
     format_missing_session_cwd_prompt,
     get_missing_session_cwd_issue,
+    get_missing_session_cwd_options,
 )
 from .core.session_manager import SessionManager, assert_valid_session_id
 from .core.settings_diagnostics import collect_settings_diagnostics, deduplicate_diagnostics
@@ -552,17 +552,6 @@ def _build_session_options(
     )
 
 
-def _prompt_for_missing_session_cwd(issue, settings_manager: SettingsManager) -> Awaitable[str | None]:
-    return show_startup_selector(
-        settings_manager,
-        format_missing_session_cwd_prompt(issue),
-        [
-            {"label": "Continue", "value": issue.fallback_cwd},
-            {"label": "Cancel", "value": None},
-        ],
-    )
-
-
 def _resolve_cli_paths(cwd: str, paths: list[str] | None) -> list[str] | None:
     if paths is None:
         return None
@@ -717,12 +706,21 @@ async def _main(
     missing_session_cwd_issue = await get_missing_session_cwd_issue(session_manager, cwd)
     if missing_session_cwd_issue:
         if app_mode == "interactive":
-            selected_cwd = await _prompt_for_missing_session_cwd(missing_session_cwd_issue, startup_settings_manager)
-            if not selected_cwd:
-                raise SystemExit(0)
-            session_manager = await SessionManager(
-                selected_cwd, session_dir, session_file=missing_session_cwd_issue.session_file
+            session_file = missing_session_cwd_issue.session_file
+            choice = await show_startup_selector(
+                startup_settings_manager,
+                format_missing_session_cwd_prompt(missing_session_cwd_issue),
+                get_missing_session_cwd_options(missing_session_cwd_issue),
             )
+            match choice:
+                case "continue":
+                    session_manager = await SessionManager(cwd, session_dir, session_file=session_file)
+                # Fork like `--session <id>` from another project, so the choice sticks without rewriting
+                # history (#11060).
+                case "fork":
+                    session_manager = await _fork_session_or_exit(session_file, cwd, session_dir)
+                case None:
+                    raise SystemExit(0)
         else:
             write_stderr(red(str(MissingSessionCwdError(missing_session_cwd_issue))) + "\n")
             raise SystemExit(1)

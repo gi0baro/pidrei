@@ -195,6 +195,37 @@ async def test_cycles_through_scoped_models_and_preserves_the_scoped_thinking_pr
     assert harness.session.thinking_level == "high"
 
 
+# Regression test for https://github.com/earendil-works/pi/issues/11806
+@pytest.mark.tonio
+async def test_cycles_to_the_only_scoped_model_and_to_the_first_scoped_model_from_outside_the_scope(harnesses):
+    harness = await create_harness(
+        models=[
+            {"id": "faux-1", "name": "One"},
+            {"id": "faux-2", "name": "Two"},
+            {"id": "faux-3", "name": "Three"},
+        ]
+    )
+    harnesses.append(harness)
+    model_two = harness.get_model("faux-2")
+    model_three = harness.get_model("faux-3")
+
+    harness.session.set_scoped_models([ScopedModel(model=model_two)])
+    result = await harness.session.cycle_model()
+    assert result is not None and result.model.id == "faux-2"
+    assert harness.session.model.id == "faux-2"
+    assert await harness.session.cycle_model() is None
+    assert harness.session.model.id == "faux-2"
+
+    await harness.session.set_model(harness.get_model("faux-1"))
+    harness.session.set_scoped_models([ScopedModel(model=model_two), ScopedModel(model=model_three)])
+    await harness.session.cycle_model()
+    assert harness.session.model.id == "faux-2"
+
+    await harness.session.set_model(harness.get_model("faux-1"))
+    await harness.session.cycle_model("backward")
+    assert harness.session.model.id == "faux-3"
+
+
 @pytest.mark.tonio
 async def test_clamps_thinking_levels_to_model_capabilities_and_cycles_available_levels(harnesses):
     harness = await create_harness(models=[{"id": "faux-1", "reasoning": False}])

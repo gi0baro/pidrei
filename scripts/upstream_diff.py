@@ -1826,9 +1826,10 @@ TEST_HOMES = {
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
     "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": (
-        "partial mirror: test_rpc_mode.py (TestRpcPromptResponseSemantics) holds the preflight failure and "
-        "success, queued-during-streaming and queue-clearing cases; the extension-command and intercepted-input "
-        "case is a PARITY GAP"
+        "partial mirror: test_rpc_mode.py holds the preflight failure and success, queued-during-streaming and "
+        "queue-clearing cases (TestRpcPromptResponseSemantics) and the 1.5.1 shutdown cases "
+        "(TestRpcExtensionShutdownRequests, TestRpcShutdownTriggers); the extension-command and "
+        "intercepted-input case is a PARITY GAP"
     ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": (

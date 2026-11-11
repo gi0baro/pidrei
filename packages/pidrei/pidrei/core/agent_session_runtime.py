@@ -413,7 +413,14 @@ class AgentSessionRuntime:
             await tonio.spawn_blocking(_copy_file_exclusive_blocking, resolved_path, destination_path)
 
         session_manager = await SessionManager(cwd_override, session_dir, session_file=destination_path)
-        await assert_session_cwd_exists(session_manager, self.cwd)
+        try:
+            await assert_session_cwd_exists(session_manager, self.cwd)
+        except Exception:
+            # The import did not happen; drop the copy so a retry with a cwd override or a fork leaves no
+            # stray file.
+            if not source_already_stored:
+                await fs.Path(destination_path).unlink(missing_ok=True)
+            raise
         await self._teardown_current("resume", session_manager.get_session_file())
         await self._rebind(
             await self._create_runtime(
@@ -430,10 +437,17 @@ class AgentSessionRuntime:
         return {"cancelled": False}
 
     async def dispose(self) -> None:
+        """Dispose the session for process exit. Also waits for credential writes in progress: an OAuth
+        refresh may already have spent the old single-use refresh token, so exiting before the new one
+        is saved would lose the login (#11692)."""
+        # Settle the active response first, so the interrupted turn (tool results included) is
+        # persisted before the session disconnects (#9124), as `_teardown_current` does.
+        await self.session.abort()
         await emit_session_shutdown_event(self.session.extension_runner, {"type": "session_shutdown", "reason": "quit"})
         if self._before_session_invalidate is not None:
             self._before_session_invalidate()
         self.session.dispose()
+        await self.services.model_runtime.settle_credential_writes()
 
 
 async def create_agent_session_runtime(

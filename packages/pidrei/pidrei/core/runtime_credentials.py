@@ -3,6 +3,8 @@
 import threading
 from collections.abc import Awaitable, Callable
 
+import tonio.colored as tonio
+
 from pidrei_ai.auth.types import ApiKeyCredential, AuthOperationOptions, Credential, CredentialInfo, CredentialStore
 
 
@@ -15,6 +17,11 @@ class RuntimeCredentials(CredentialStore):
         # readers pin one attribute read and take no lock; the guard
         # serializes writers only (spec/concurrency.md, configuration epochs).
         self._overrides: dict[str, str] = {}
+        # Modifications not yet written or failed, for example an OAuth refresh: one Event
+        # each, set when it ends. Also an immutable value swapped under the guard, so a
+        # modification starting while `settled()` takes its snapshot is either in it or
+        # started after it.
+        self._pending_modifications: tuple[tonio.Event, ...] = ()
         self._guard = threading.Lock()
 
     def set_runtime_api_key(self, provider_id: str, api_key: str) -> None:
@@ -46,13 +53,34 @@ class RuntimeCredentials(CredentialStore):
             entries[provider_id] = CredentialInfo(provider_id=provider_id, type="api_key")
         return list(entries.values())
 
-    def modify(
+    async def modify(
         self,
         provider_id: str,
         fn: Callable[[Credential | None], Awaitable[Credential | None]],
         options: AuthOperationOptions | None = None,
-    ) -> Awaitable[Credential | None]:
-        return self._store.modify(provider_id, fn, options)
+    ) -> Credential | None:
+        # Tracked from when it starts until it is written or failed (`settled()`).
+        pending = tonio.Event()
+        with self._guard:
+            self._pending_modifications = (*self._pending_modifications, pending)
+        try:
+            return await self._store.modify(provider_id, fn, options)
+        finally:
+            # Synchronous: also runs on a cancelled chain.
+            with self._guard:
+                self._pending_modifications = tuple(
+                    modification for modification in self._pending_modifications if modification is not pending
+                )
+            pending.set()
+
+    async def settled(self) -> None:
+        """Returns when every modification started so far is written or failed. An OAuth
+        refresh may already have spent the single-use refresh token, so exiting before its
+        result is written would leave only the spent token in auth.json."""
+        with self._guard:
+            pending = self._pending_modifications
+        for modification in pending:
+            await modification.wait()
 
     async def delete(self, provider_id: str, options: AuthOperationOptions | None = None) -> None:
         if options is not None and options.cancel is not None:

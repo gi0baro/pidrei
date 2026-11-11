@@ -13,9 +13,13 @@ import tonio.colored as tonio
 from pidrei.core.extensions import ToolDefinition
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
-from pidrei_ai.types import TextContent
+from pidrei_ai.types import ImageContent, TextContent
 
 from .harness import create_harness
+
+
+# Image processing omits images it cannot decode, so the fixture must be a real PNG.
+TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
 
 
 @pytest.fixture
@@ -97,6 +101,39 @@ async def test_runs_direct_steering_and_follow_up_messages_through_input_handler
     finally:
         tool_release.set()
     await prompt
+
+
+@pytest.mark.tonio
+async def test_removes_an_image_only_steering_message_after_delivery(harnesses):
+    harness, tool_release, tool_started = await _create_waiting_harness()
+    harnesses.append(harness)
+    saw_image: list[bool] = []
+
+    async def respond(context, *_rest):
+        user = next((message for message in reversed(context.messages) if message.role == "user"), None)
+        saw_image.append(
+            user is not None
+            and not isinstance(user.content, str)
+            and any(part.type == "image" for part in user.content)
+        )
+        return faux_assistant_message("done")
+
+    harness.set_responses([faux_assistant_message(faux_tool_call("wait", {}), stop_reason="toolUse"), respond])
+    prompt = tonio.spawn(harness.session.prompt("start"))
+
+    await tool_started.wait(5)
+    assert tool_started.is_set(), "the wait tool never started"
+    try:
+        await harness.session.steer("", [ImageContent(data=TINY_PNG_BASE64, mime_type="image/png")])
+        assert harness.session.pending_message_count == 1
+    finally:
+        tool_release.set()
+    await prompt
+
+    assert saw_image == [True]
+    # Awaited here: pi's `hasQueuedMessages()` is sync (agent-mailbox).
+    assert await harness.session.agent.has_queued_messages() is False
+    assert harness.session.pending_message_count == 0
 
 
 # pidrei-only: in pi the final queue check and the end of the run are one

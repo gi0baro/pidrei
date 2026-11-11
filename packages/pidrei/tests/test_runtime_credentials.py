@@ -3,6 +3,7 @@
 import time
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.runtime_credentials import RuntimeCredentials
@@ -89,6 +90,72 @@ async def test_enumeration_merges_overrides_without_exposing_keys():
         CredentialInfo(provider_id="anthropic", type="api_key"),
         CredentialInfo(provider_id="openai", type="api_key"),
     ]
+
+
+# #11692: shutdown waits for an OAuth refresh in progress so the rotated token is not lost.
+# pi sleeps, then asserts "not settled yet"; here settled() records whether the response had
+# been released when it returned.
+@pytest.mark.tonio
+async def test_settled_waits_until_pending_modifications_are_written():
+    storage = AuthStorage.in_memory({"anthropic": ApiKeyCredential(key="old")})
+    credentials = RuntimeCredentials(storage)
+    started = tonio.Event()
+    response = tonio.Event()
+
+    async def rotate(_current):
+        started.set()
+        await response.wait()
+        return ApiKeyCredential(key="rotated")
+
+    # pi's modify() starts at call time; here the modification starts when its coroutine runs.
+    modification = tonio.spawn(credentials.modify("anthropic", rotate))
+    await started.wait(5)
+    assert started.is_set(), "the modification never started"
+
+    settled_after_response: list[bool] = []
+    settling = tonio.Event()
+
+    async def settle() -> None:
+        settling.set()
+        await credentials.settled()
+        settled_after_response.append(response.is_set())
+
+    settled = tonio.spawn(settle())
+    await settling.wait(5)
+    assert settling.is_set()
+    response.set()
+    await settled
+    assert settled_after_response == [True]
+    assert await storage.read("anthropic") == ApiKeyCredential(key="rotated")
+    await modification
+
+
+@pytest.mark.tonio
+async def test_settled_resolves_after_a_pending_modification_fails():
+    credentials = RuntimeCredentials(AuthStorage.in_memory())
+    started = tonio.Event()
+    fail = tonio.Event()
+
+    async def refresh(_current):
+        started.set()
+        await fail.wait()
+        raise Exception("invalid_grant")
+
+    async def modify() -> Exception | None:
+        try:
+            await credentials.modify("anthropic", refresh)
+        except Exception as error:
+            return error
+        return None
+
+    failed = tonio.spawn(modify())
+    await started.wait(5)
+    assert started.is_set(), "the modification never started"
+    fail.set()
+
+    await credentials.settled()
+    error = await failed
+    assert error is not None and "invalid_grant" in str(error)
 
 
 @pytest.mark.tonio

@@ -104,7 +104,12 @@ from ...core.output_guard import (
     write_stdout,
 )
 from ...core.package_manager import DefaultPackageManager
-from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
+from ...core.session_cwd import (
+    MissingSessionCwdChoice,
+    MissingSessionCwdError,
+    format_missing_session_cwd_prompt,
+    get_missing_session_cwd_options,
+)
 from ...core.session_manager import SessionManager, session_entry_to_context_messages
 from ...core.slash_commands import BUILTIN_SLASH_COMMANDS
 from ...core.tools.renderers import with_built_in_renderers
@@ -2808,11 +2813,12 @@ class InteractiveMode:
             )
         )
 
-    async def _prompt_for_missing_session_cwd(self, error) -> str | None:
-        confirmed = await self._show_extension_confirm(
-            "Session cwd not found", format_missing_session_cwd_prompt(error.issue)
+    async def _prompt_for_missing_session_cwd(self, error) -> MissingSessionCwdChoice | None:
+        options = get_missing_session_cwd_options(error.issue)
+        label = await self._show_extension_selector(
+            format_missing_session_cwd_prompt(error.issue), [option["label"] for option in options]
         )
-        return error.issue.fallback_cwd if confirmed else None
+        return next((option["value"] for option in options if option["label"] == label), None)
 
     def _show_extension_input(self, title: str, placeholder=None, opts: dict | None = None):
         """Show a text input for extensions (see `_show_extension_selector`)."""
@@ -5936,22 +5942,41 @@ class InteractiveMode:
             self.show_status("Resumed session")
             return result
         except MissingSessionCwdError as error:
-            selected_cwd = await self._prompt_for_missing_session_cwd(error)
-            if not selected_cwd:
-                self.show_status("Resume cancelled")
-                return {"cancelled": True}
-            result = await self.runtime_host.switch_session(
-                session_path,
-                cwd_override=selected_cwd,
-                with_session=with_session,
-                project_trust_context_factory=lambda cwd: self._create_project_trust_context(cwd),
-            )
-            if result.get("cancelled"):
-                return result
-            self.show_status("Resumed session in current cwd")
-            return result
+            match await self._prompt_for_missing_session_cwd(error):
+                case "continue":
+                    result = await self.runtime_host.switch_session(
+                        session_path,
+                        cwd_override=error.issue.fallback_cwd,
+                        with_session=with_session,
+                        project_trust_context_factory=lambda cwd: self._create_project_trust_context(cwd),
+                    )
+                    if not result.get("cancelled"):
+                        self.show_status(f"Resumed session in {error.issue.fallback_cwd}")
+                    return result
+                case "fork":
+                    return await self._switch_to_forked_session(session_path, error.issue.fallback_cwd, with_session)
+                case _:
+                    self.show_status("Resume cancelled")
+                    return {"cancelled": True}
         except Exception as error:
             return await self._handle_fatal_runtime_error("Failed to resume session", error)
+
+    async def _switch_to_forked_session(self, source_path: str, cwd: str, with_session=None) -> dict:
+        """Fork a session whose stored cwd is gone into `cwd` and switch to the fork, like
+        `--session <id>` from another project (#11060)."""
+        fork = await SessionManager.fork_from(source_path, cwd, self.session_manager.get_session_dir())
+        fork_path = fork.get_session_file()
+        result = await self.runtime_host.switch_session(
+            fork_path,
+            with_session=with_session,
+            project_trust_context_factory=lambda cwd: self._create_project_trust_context(cwd),
+        )
+        if result.get("cancelled"):
+            # An extension vetoed the switch; drop the fork so cancelling leaves no copy behind.
+            await fs.Path(fork_path).unlink(missing_ok=True)
+            return result
+        self.show_status(f"Forked into new session {fork.get_session_id()} in {cwd}")
+        return result
 
     def get_login_provider_options(self, auth_type: str | None = None) -> list:
         options: list = []
@@ -6792,15 +6817,18 @@ class InteractiveMode:
                 return
             self.show_status(f"Session imported from: {input_path}")
         except MissingSessionCwdError as error:
-            selected_cwd = await self._prompt_for_missing_session_cwd(error)
-            if not selected_cwd:
-                self.show_status("Import cancelled")
-                return
-            result = await self.runtime_host.import_from_jsonl(input_path, selected_cwd)
-            if result.get("cancelled"):
-                self.show_status("Import cancelled")
-                return
-            self.show_status(f"Session imported from: {input_path}")
+            match await self._prompt_for_missing_session_cwd(error):
+                case "continue":
+                    result = await self.runtime_host.import_from_jsonl(input_path, error.issue.fallback_cwd)
+                    self.show_status(
+                        "Import cancelled" if result.get("cancelled") else f"Session imported from: {input_path}"
+                    )
+                case "fork":
+                    result = await self._switch_to_forked_session(input_path, error.issue.fallback_cwd)
+                    if result.get("cancelled"):
+                        self.show_status("Import cancelled")
+                case _:
+                    self.show_status("Import cancelled")
         except SessionImportFileNotFoundError as error:
             self.show_error(f"Failed to import session: {error}")
         except Exception as error:

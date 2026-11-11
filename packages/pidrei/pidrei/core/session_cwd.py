@@ -4,7 +4,7 @@ The existence checks are async (pi's are `existsSync`): everything doing I/O is.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from tonio.colored import fs
 
@@ -37,7 +37,20 @@ def format_missing_session_cwd_error(issue: SessionCwdIssue) -> str:
 
 
 def format_missing_session_cwd_prompt(issue: SessionCwdIssue) -> str:
-    return f"cwd from session file does not exist\n{issue.session_cwd}\n\ncontinue in current cwd\n{issue.fallback_cwd}"
+    return f"Session cwd does not exist: {issue.session_cwd}"
+
+
+# How to open a session whose stored cwd is missing: run it in the current cwd once, or fork it there.
+type MissingSessionCwdChoice = Literal["continue", "fork"]
+
+
+def get_missing_session_cwd_options(issue: SessionCwdIssue) -> list[dict[str, Any]]:
+    """Prompt options for a missing session cwd, naming the current cwd; a `None` value cancels."""
+    return [
+        {"label": f"Continue in {issue.fallback_cwd} (asks again next time)", "value": "continue"},
+        {"label": f"Fork into {issue.fallback_cwd} (new session ID, original kept)", "value": "fork"},
+        {"label": "Cancel", "value": None},
+    ]
 
 
 class MissingSessionCwdError(Exception):

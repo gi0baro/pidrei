@@ -290,10 +290,21 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
     # Pending extension UI requests waiting for response
     pending_extension_requests: dict[str, Any] = {}
 
-    # Shutdown request flag
+    # Extension shutdown requests (ctx.shutdown()) wait until input is attached, no command is
+    # being handled, and the session is idle. See check_shutdown_requested().
     shutdown_requested = False
     shutting_down = False
+    input_ready = False
+    active_commands = 0
+    # SIGTERM/SIGHUP received so far. Only a repeated signal forces exit during shutdown.
+    signal_count = 0
+    # The fields above are decided and claimed from the signal handler, stdin's end, every
+    # handled line, settling prompts and the session listener, in parallel: each decision
+    # and its action are one section under this (sync sections only).
     shutdown_guard = threading.Lock()
+    # Set when a started shutdown ends without exiting the process (its dispose raised): input
+    # that ended while it ran stops waiting for it.
+    shutdown_ended = tonio.Event()
 
     def create_dialog_promise(
         opts: dict[str, Any] | None, default_value: Any, request: dict[str, Any], parse_response
@@ -340,6 +351,53 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
     def create_extension_ui_context() -> _RpcExtensionUIContext:
         return _RpcExtensionUIContext(output, create_dialog_promise, pending_extension_requests)
 
+    # Shutdown handling. Defined before the session is bound: a session_start handler can
+    # request a shutdown synchronously.
+    def claim_shutdown() -> bool:
+        """pi's `shutdown()` runs once: the first caller claims it, later calls (stdin EOF
+        after a signal) do nothing. On a claim, its synchronous prefix runs here."""
+        nonlocal shutting_down
+        with shutdown_guard:
+            if shutting_down:
+                return False
+            shutting_down = True
+        begin_shutdown()
+        return True
+
+    def begin_shutdown() -> None:
+        """The part of pi's `shutdown()` before its first await, run by the claimer."""
+        if unsubscribe is not None:
+            unsubscribe()
+        if unsubscribe_backpressure is not None:
+            unsubscribe_backpressure()
+
+    async def finish_shutdown(exit_code: int = 0, signal_name: str | None = None) -> None:
+        """Dispose the runtime and exit: the rest of pi's `shutdown()`, after a claim."""
+        try:
+            await runtime_host.dispose()
+            if signal_name != "SIGTERM":
+                await drain_output()
+            hard_exit(exit_code)
+        finally:
+            shutdown_ended.set()
+
+    def check_shutdown_requested() -> None:
+        """Shut down if an extension requested it and nothing still needs the process: input is
+        attached, no command (including a prompt that has not settled) is being handled, and the
+        session is idle. Each of those ending calls this again. The decision and the claim are
+        one section under `shutdown_guard`."""
+        nonlocal shutting_down
+        with shutdown_guard:
+            if not shutdown_requested or shutting_down or not input_ready or active_commands > 0 or not session.is_idle:
+                return
+            shutting_down = True
+        # pi: `void shutdown()`.
+        begin_shutdown()
+        tonio.spawn.without_tracking(finish_shutdown())
+
+    async def check_shutdown_requested_later() -> None:
+        check_shutdown_requested()
+
     async def rebind_from_runtime(_session, swap) -> None:
         swap()
         await rebind_session()
@@ -378,7 +436,16 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
 
         def shutdown_handler() -> None:
             nonlocal shutdown_requested
-            shutdown_requested = True
+            with shutdown_guard:
+                shutdown_requested = True
+            # An idle session has no command response or agent_settled left to check the flag.
+            # pi checks on the next tick so the requesting handler finishes first. ctx.shutdown()
+            # is reachable from any extension handler, tool or timer, so there is no point here
+            # where the requesting invocation is known to complete: the check is spawned, and
+            # can begin the shutdown while that handler is still running the code after the
+            # call. A request from a command is still held until the command finishes (the
+            # command counts in `active_commands`).
+            tonio.spawn.without_tracking(check_shutdown_requested_later())
 
         def on_error(err) -> None:
             output(
@@ -415,7 +482,7 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
         def on_event(event) -> None:
             output(to_json_event(event))
             if getattr(event, "type", None) == "agent_settled":
-                tonio.spawn.without_tracking(check_shutdown_requested())
+                check_shutdown_requested()
 
         async def on_agent_event(*_args) -> None:
             await drain_output()
@@ -427,6 +494,7 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
 
     # Handle a single command
     async def handle_command(command: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal active_commands
         id = command.get("id")
         command_type = command.get("type")
 
@@ -447,6 +515,7 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
                     output(success(id, "prompt", {"disposition": disposition}))
 
                 async def run_prompt() -> None:
+                    nonlocal active_commands
                     try:
                         await session.prompt(
                             command.get("message"),
@@ -460,7 +529,15 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
                     except Exception as prompt_error:
                         if not preflight_succeeded:
                             output(error(id, "prompt", str(prompt_error)))
+                    finally:
+                        # Synchronous, so it also runs on a cancelled chain.
+                        with shutdown_guard:
+                            active_commands -= 1
+                        check_shutdown_requested()
 
+                # Extension commands run inside prompt(); defer shutdown requests until it settles.
+                with shutdown_guard:
+                    active_commands += 1
                 tonio.spawn.without_tracking(run_prompt())
                 return None
 
@@ -753,33 +830,8 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
             case _:
                 return error(id, str(command_type), f"Unknown command: {command_type}")
 
-    # Shutdown handling: called after handling each command and when stdin ends.
-    async def shutdown(exit_code: int = 0, signal_name: str | None = None) -> None:
-        nonlocal shutting_down
-        # Reached from the signal handler, the end of stdin and every handled
-        # line, in parallel: the first call claims the shutdown.
-        with shutdown_guard:
-            already_shutting_down = shutting_down
-            shutting_down = True
-        if already_shutting_down:
-            # pi removes its signal handlers when the shutdown starts: a
-            # signal from then on ends the process at once.
-            hard_exit(exit_code)
-        if unsubscribe is not None:
-            unsubscribe()
-        if unsubscribe_backpressure is not None:
-            unsubscribe_backpressure()
-        await runtime_host.dispose()
-        if signal_name != "SIGTERM":
-            await drain_output()
-        hard_exit(exit_code)
-
-    async def check_shutdown_requested() -> None:
-        if not shutdown_requested:
-            return
-        await shutdown()
-
     async def handle_input_line(line: str) -> None:
+        nonlocal active_commands
         try:
             parsed = json.loads(line)
         except Exception as parse_error:
@@ -795,32 +847,73 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
             return
 
         command = parsed if isinstance(parsed, dict) else {}
+        with shutdown_guard:
+            active_commands += 1
         try:
-            response = await handle_command(command)
+            try:
+                response = await handle_command(command)
+            except Exception as command_error:
+                response = error(command.get("id"), command.get("type"), str(command_error))
+                failed = True
+            else:
+                failed = False
             if response is not None:
                 output(response)
-                await drain_output()
-            await check_shutdown_requested()
-        except Exception as command_error:
-            output(error(command.get("id"), command.get("type"), str(command_error)))
+        finally:
+            # pi stops counting the command and writes its response in one synchronous step.
+            # Here a check can run on another coroutine in between, so the response is written
+            # first: a shutdown cannot exit ahead of it.
+            with shutdown_guard:
+                active_commands -= 1
+        if response is not None:
             await drain_output()
+        if not failed:
+            check_shutdown_requested()
 
     # Lines are handled fire-and-forget so a long prompt does not block
     # subsequent commands (pi: void handleInputLine(line)).
     def on_input_line(line: str) -> None:
         tonio.spawn.without_tracking(handle_input_line(line))
 
-    async def on_shutdown_signal(signum: int) -> None:
-        # pi: kill the tracked children, then shutdown(code, signal).
-        kill_tracked_detached_children()
-        await shutdown(signal_exit_status(signum), "SIGHUP" if signum == signal.SIGHUP else "SIGTERM")
+    async def on_input_end() -> None:
+        # pi: `void shutdown()`. The pump waits here, so the mode does not return while the
+        # shutdown runs (pi keeps the process alive with a promise that never settles); the
+        # shutdown exits the process.
+        if claim_shutdown():
+            await finish_shutdown()
+        else:
+            # A shutdown started by a signal or an extension request is running.
+            await shutdown_ended.wait()
 
-    # Installed once `shutdown` exists: a signal before this ends the process
-    # through the default handler.
+    async def on_shutdown_signal(signum: int) -> None:
+        nonlocal signal_count, shutting_down
+        exit_code = signal_exit_status(signum)
+        kill_tracked_detached_children()
+        # Count the signal, test, claim: one section, since signals are handled in parallel.
+        with shutdown_guard:
+            signal_count += 1
+            repeated = signal_count > 1
+            claimed = not shutting_down
+            shutting_down = True
+        if claimed:
+            begin_shutdown()
+            await finish_shutdown(exit_code, "SIGHUP" if signum == signal.SIGHUP else "SIGTERM")
+        elif repeated:
+            # Process managers often close stdin and send SIGTERM together, so one signal
+            # during shutdown is not a request to skip cleanup; a repeated one is.
+            hard_exit(exit_code)
+
+    # Installed once the shutdown exists, and kept until exit: without one, a signal during
+    # shutdown would kill the process before dispose() finishes. A signal before this ends
+    # the process through the default handler.
     if signal_dispatcher is not None:
         signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
         signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
-    await _pump_stdin_commands(on_input_line, shutdown)
+    with shutdown_guard:
+        input_ready = True
+    # Handle a shutdown requested during startup (e.g. from session_start).
+    check_shutdown_requested()
+    await _pump_stdin_commands(on_input_line, on_input_end)
 
 
 async def _pump_stdin_commands(on_line, on_end) -> None:

@@ -637,6 +637,15 @@ run in parallel, so every such decision shares a guard with its action.
   `_run_input_closed` unset, then runs `_start_run`. A prompt decides twice
   (`_admit_prompt`): before model/auth validation (queue or raise), and after
   it, claiming, because a run can start while auth is checked.
+- **Prompt preflight vs tree navigation**: in one `_state_guard` section a
+  prompt finds no compaction or navigation in progress (`_compaction_cancel`,
+  `_branch_summary_cancel`) and increments `_prompt_preflight_count`. A
+  synchronous decrement in a `finally` releases it after `_admit_prompt`
+  claimed the run, so there is no gap. Navigation decides under the same guard
+  (`_raise_if_tree_navigation_blocked` counts the preflight) and sets its
+  marker there; it compare-and-clears the marker under the guard before
+  `session_tree` and in its `finally`, so a navigation started from a
+  `session_tree` handler keeps its own.
 - **Run input**: input queued into a run (steering, follow-ups,
   `triggerTurn` messages while streaming) is posted under `_state_guard`
   while `_run_input_closed` is unset. The run closes its input
