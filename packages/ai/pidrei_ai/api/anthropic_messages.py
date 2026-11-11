@@ -9,20 +9,26 @@ carrier; pidrei uses punkreq through the seam instead. Tests inject a fake
 client via `AnthropicOptions.client` exactly like pi's suites do.
 """
 
+import hashlib
 import json
 import re
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
+import threading
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, Protocol
 
 from pidrei_ai.api.constrained_sampling import (
     get_json_schema_tool_parameters,
-    is_strict_tool_limit_error_message,
     prefers_json_schema_strict_sampling,
     resolve_json_schema_strict_sampling,
 )
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
+from pidrei_ai.api.strict_tool_limits import (
+    has_exceeded_strict_tool_limits,
+    is_strict_tool_limit_error_message,
+    mark_strict_tool_limits_exceeded,
+)
 from pidrei_ai.api.transform_messages import split_error_tool_result_images, transform_messages
 from pidrei_ai.auth.anthropic_federation import (
     OAUTH_API_BETA_HEADER,
@@ -87,6 +93,7 @@ from pidrei_ai.utils.openrouter_cost import apply_openrouter_reported_cost, is_o
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.session_resources import register_session_resource_cleanup
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
@@ -103,7 +110,7 @@ from pidrei_utils.cancel import CancelToken
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Stealth mode: mimic Claude Code's tool naming exactly.
-CLAUDE_CODE_VERSION = "2.1.280"
+CLAUDE_CODE_VERSION = "2.1.322"
 
 # Claude Code 2.x tool names (canonical casing).
 # Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -134,6 +141,7 @@ SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01"
 THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
 INLINE_TOOLS_BETA = "inline-tools-2026-09-15"
+MESSAGE_THREADS_BETA = "message-threads-2026-08-12"
 
 
 # Stable deferred tool declared whenever native tool changes are in use. Anthropic adds
@@ -223,6 +231,7 @@ class _ResolvedCompat:
     supports_strict_tools: bool
     supports_mid_convo_system_messages: bool
     supports_mid_convo_tool_changes: bool
+    supports_message_threads: bool
 
 
 def _get_compat(model: Model) -> _ResolvedCompat:
@@ -249,6 +258,277 @@ def _get_compat(model: Model) -> _ResolvedCompat:
             compat.supports_mid_convo_system_messages if compat else None, False
         ),
         supports_mid_convo_tool_changes=resolved(compat.supports_mid_convo_tool_changes if compat else None, False),
+        # Gateways that drop unknown request fields would silently turn a `continue` into a request
+        # without the earlier conversation, so the default is limited to Anthropic's own endpoint.
+        # Widen or remove this restriction once proxies generally forward the `thread` field.
+        supports_message_threads=resolved(
+            compat.supports_message_threads if compat else None,
+            model.provider == "anthropic" and "api.anthropic.com" in model.base_url,
+        ),
+    )
+
+
+# Message threads: the server keeps the conversation of a thread, so a request can continue
+# from the previous reply and send only the new messages. pidrei still builds the full request;
+# `_prepare_thread_request()` compares it with the previous request of the session and sends
+# only the new part when nothing earlier changed.
+#
+# The per-session state is process-wide and every worker running a `stream()` reads and writes
+# it, so it sits behind a thread lock that is never held across an await (pi relies on its single
+# thread to read, compare and delete an entry in one step).
+
+
+@dataclass(frozen=True, slots=True)
+class _ThreadEntry:
+    # Number of messages in the last full request as sent plus the converted reply.
+    prefix_count: int
+    # `_hash_thread_prefix()` of the request's settings and those messages.
+    prefix_hash: str
+    # Id of the reply to continue from.
+    reply_id: str
+
+
+# Per session: where the next request can continue, or "off" after the endpoint rejected threads.
+_thread_state: dict[str, _ThreadEntry | Literal["off"]] = {}
+_thread_state_guard = threading.Lock()
+MAX_THREAD_STATE_ENTRIES = 10_000
+
+# Rejections of a `continue` that a new thread fixes: expired, raced, or a fixed setting changed.
+_NEW_THREAD_ERRORS = frozenset(
+    (
+        "thread_not_found",
+        "thread_already_continued",
+        "thread_continue_in_flight",
+        "thread_fingerprint_mismatch",
+    )
+)
+
+
+def _set_thread_state(session_id: str, value: _ThreadEntry | Literal["off"]) -> None:
+    """Sets a session's thread state, keeping at most `MAX_THREAD_STATE_ENTRIES` sessions.
+
+    State is normally freed by `cleanup_session_resources(session_id)` when a session ends, as
+    the coding agent's session dispose does. The cap bounds memory for library users that never
+    call it, for example a server passing a new `session_id` per conversation. Dropping the least
+    recently updated session is cheap: its thread has most likely expired on the server already
+    (after a few minutes idle), and otherwise its next request just starts a new thread.
+    """
+    with _thread_state_guard:
+        # Re-insert so dict order stays oldest-first for the cap.
+        _thread_state.pop(session_id, None)
+        _thread_state[session_id] = value
+        if len(_thread_state) > MAX_THREAD_STATE_ENTRIES:
+            del _thread_state[next(iter(_thread_state))]
+
+
+def _cleanup_thread_state(session_id: str | None) -> None:
+    with _thread_state_guard:
+        # pi's `if (sessionId)`: an empty id clears every session, as no id does.
+        if session_id:
+            _thread_state.pop(session_id, None)
+        else:
+            _thread_state.clear()
+
+
+register_session_resource_cleanup(_cleanup_thread_state)
+
+
+def reset_thread_state() -> bool:
+    """Drop every session's thread state (tests); returns whether any was set."""
+    with _thread_state_guard:
+        had_state = bool(_thread_state)
+        _thread_state.clear()
+    return had_state
+
+
+def _normalize_thread_prefix_value(value: Any) -> Any:
+    """pi's `JSON.stringify` replacer for the hashed conversation, as a copy."""
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            # Cache markers don't change what a message means, but they move: pidrei puts one on the
+            # newest message, so the message that had it in the last request has none in this one.
+            # Extensions may add markers anywhere too.
+            if key == "cache_control":
+                continue
+            # To attach that marker, the newest user message's string content is sent as one text
+            # block; the next request sends the same message as a string: "hi" vs
+            # [{"type": "text", "text": "hi"}].
+            if key == "content" and isinstance(item, str):
+                normalized[key] = [{"type": "text", "text": item}]
+            else:
+                normalized[key] = _normalize_thread_prefix_value(item)
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_thread_prefix_value(item) for item in value]
+    return value
+
+
+def _hash_thread_prefix(model: Model, params: dict[str, Any], messages: list[Any]) -> str:
+    """Hash of everything a `continue` builds on: the settings that must stay the same within a
+    thread and the messages the server already holds.
+
+    - Settings, as sent: the endpoint (a thread exists on one endpoint only), and the fixed
+      request fields. A `continue` omits `system` and `tools` and the server keeps the thread's
+      own, so only this check can notice a change to them, including their cache markers. The
+      server rejects changes to the other fields with `thread_fingerprint_mismatch`; checking them
+      here saves that rejected request. A fixed field missing here costs only that rejection,
+      which also starts a new thread.
+    - Messages, normalized so messages that mean the same to the API hash the same.
+
+    The hash never leaves the process, so it is a stdlib digest rather than pi's `shortHash`.
+    """
+    settings = json.dumps(
+        [
+            model.provider,
+            model.base_url,
+            params.get("model"),
+            params.get("system"),
+            params.get("tools"),
+            params.get("thinking"),
+            params.get("output_config"),
+            params.get("tool_choice"),
+            params.get("betas"),
+            params.get("fallbacks"),
+        ]
+    )
+    conversation = json.dumps(_normalize_thread_prefix_value(messages))
+    return hashlib.sha256((settings + conversation).encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedThreadRequest:
+    session_id: str
+    body: dict[str, Any]
+
+
+def _create_thread_request(session_id: str, params: dict[str, Any]) -> _PreparedThreadRequest:
+    return _PreparedThreadRequest(session_id=session_id, body={**params, "thread": {"type": "create"}})
+
+
+def _prepare_thread_request(model: Model, session_id: str, params: dict[str, Any]) -> _PreparedThreadRequest | None:
+    with _thread_state_guard:
+        state = _thread_state.get(session_id)
+    if state == "off":
+        return None
+    messages = params["messages"]
+    # The prefix is hashed outside the lock (it serializes the conversation), so the entry is
+    # claimed afterwards, only if it is still the one compared.
+    if (
+        isinstance(state, _ThreadEntry)
+        and len(messages) > state.prefix_count
+        and _hash_thread_prefix(model, params, messages[: state.prefix_count]) == state.prefix_hash
+    ):
+        # Each reply can be continued once; claiming it also keeps a concurrent request from trying.
+        with _thread_state_guard:
+            claimed = _thread_state.get(session_id) is state
+            if claimed:
+                del _thread_state[session_id]
+        # A lost claim sends the full request as a new thread, as pi's second concurrent request does.
+        if claimed:
+            rest = {key: value for key, value in params.items() if key not in ("system", "tools")}
+            return _PreparedThreadRequest(
+                session_id=session_id,
+                body={
+                    **rest,
+                    "messages": messages[state.prefix_count :],
+                    "thread": {"type": "continue", "previous_message_id": state.reply_id},
+                },
+            )
+    return _create_thread_request(session_id, params)
+
+
+def _get_thread_error_code(error: AnthropicApiError) -> str | None:
+    """The `error_code` Anthropic puts in `error.details` of thread rejections."""
+    body_error = (error.error or {}).get("error")
+    details = body_error.get("details") if isinstance(body_error, dict) else None
+    code = details.get("error_code") if isinstance(details, dict) else None
+    return code if isinstance(code, str) else None
+
+
+async def _send_thread_request(
+    thread: _PreparedThreadRequest,
+    params: dict[str, Any],
+    send: Callable[[dict[str, Any]], Awaitable[AnthropicResponseLike]],
+    output: AssistantMessageBuilder,
+    cancel: CancelToken | None,
+) -> tuple[AnthropicResponseLike, _PreparedThreadRequest | None]:
+    """Sends a thread request. A rejection about the thread (never a started stream) is resent
+    once in full: as a new thread when the old one can't be continued, or without `thread` when
+    the endpoint can't use threads, which also turns threads off for the session. Other errors are
+    passed on. Returns the response and the thread request that produced it, if any.
+    """
+    try:
+        return await send(thread.body), thread
+    except AnthropicApiError as error:
+        if cancel is not None and cancel.cancelled:
+            raise
+        error_code = _get_thread_error_code(error)
+        start_new_thread = error_code is not None and error_code in _NEW_THREAD_ERRORS
+        # The endpoint can't use threads: it can't thread this request, or it doesn't know the
+        # `thread` field and rejects it without a code ("thread: Extra inputs are not permitted"),
+        # e.g. with an `anthropic-beta` header that lacks the threads beta.
+        threads_unsupported = error_code == "thread_unsupported_request" or (
+            error_code is None and error.status == 400 and "thread" in str(error)
+        )
+        # Any other error (prompt too long, unknown model, strict tool limits, ...) is not about the
+        # thread, and resending would only fail again.
+        if not start_new_thread and not threads_unsupported:
+            raise
+        # Recorded before the resend, so a failed resend keeps it.
+        append_assistant_message_diagnostic(
+            output,
+            AssistantMessageDiagnostic(
+                type="anthropic_thread_fallback",
+                timestamp=clock.now_ms(),
+                error=DiagnosticErrorInfo(message=str(error)),
+                details={"reason": error_code if error_code is not None else str(error.status)},
+            ),
+        )
+        if start_new_thread:
+            created = _create_thread_request(thread.session_id, params)
+            return await send(created.body), created
+        # With the threads beta, a request without `thread` is a normal request.
+        response = await send(params)
+        _set_thread_state(thread.session_id, "off")
+        return response, None
+
+
+def _record_thread_reply(
+    model: Model,
+    thread: _PreparedThreadRequest,
+    params: dict[str, Any],
+    output: AssistantMessageBuilder,
+    is_oauth: bool,
+    allow_empty_signature: bool,
+) -> None:
+    """Records where the session's next request can continue: after `output`, the clean reply to
+    the thread request `thread`, whose full request was `params`."""
+    # `response_model` is set only when a fallback model answered; the server does not store
+    # those replies, so they cannot be continued.
+    if output.response_id is None or output.response_model is not None:
+        return
+    # Convert the reply like the next request will, keeping only the assistant message
+    # (transform_messages adds placeholder results for trailing tool calls). The builder is
+    # frozen first: conversion reads complete values (freeze-at-seam).
+    reply = [
+        message
+        for message in _convert_messages(
+            transform_messages([output.freeze()], model, _normalize_tool_call_id),
+            is_oauth,
+            None,
+            allow_empty_signature,
+        ).messages
+        if message["role"] == "assistant"
+    ]
+    prefix = [*params["messages"], *reply]
+    _set_thread_state(
+        thread.session_id,
+        _ThreadEntry(
+            prefix_count=len(prefix),
+            prefix_hash=_hash_thread_prefix(model, params, prefix),
+            reply_id=output.response_id,
+        ),
     )
 
 
@@ -678,7 +958,8 @@ def stream(
 ) -> AssistantMessageEventStream:
     opts = _anthropic_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
-    normalized_context = resolve_transcript(context, _get_compat(model).supports_mid_convo_system_messages)
+    compat = _get_compat(model)
+    normalized_context = resolve_transcript(context, compat.supports_mid_convo_system_messages)
     current_tools = get_current_tools(normalized_context.messages)
 
     output = AssistantMessageBuilder(
@@ -703,6 +984,13 @@ def stream(
         input_transformations: list[dict[str, Any]] | None = None
 
         try:
+            cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
+            cache_session_id = None if cache_retention == "none" else opts.session_id
+            # Session whose requests may use threads; None when threads don't apply. Sessions where
+            # the endpoint rejected threads ("off") still send the threads beta, which the resend that
+            # turned them off was accepted with; `_prepare_thread_request()` just sends no `thread`.
+            thread_session_id = cache_session_id if compat.supports_message_threads else None
+
             if opts.client is not None:
                 client: AnthropicClient = opts.client
                 is_oauth = False
@@ -716,8 +1004,6 @@ def stream(
                     copilot_dynamic_headers = build_copilot_dynamic_headers(
                         normalized_context.messages, has_copilot_vision_input(normalized_context.messages)
                     )
-                cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
-                cache_session_id = None if cache_retention == "none" else opts.session_id
                 client, is_oauth = _create_client(
                     model,
                     api_key,
@@ -730,31 +1016,43 @@ def stream(
                     opts.identity,
                 )
 
-            disable_preferred_strict_tools = False
+            def send(body: dict[str, Any]) -> Awaitable[AnthropicResponseLike]:
+                return retry_provider_request(
+                    lambda: client.create({**body, "stream": True}, timeout_ms=opts.timeout_ms, cancel=opts.cancel),
+                    max_retries=opts.max_retries if opts.max_retries is not None else 0,
+                    max_retry_delay_ms=opts.max_retry_delay_ms,
+                    cancel=opts.cancel,
+                )
+
+            disable_preferred_strict_tools = has_exceeded_strict_tool_limits(opts.session_id)
+            # The thread request that produced the response; None when no `thread` was sent.
+            thread: _PreparedThreadRequest | None = None
             while True:
                 if opts.cancel is not None:
                     opts.cancel.raise_if_cancelled()
                 params, has_preferred_strict_tools, provider_thinking_level = _build_params(
-                    model, normalized_context, is_oauth, opts, disable_preferred_strict_tools
+                    model,
+                    normalized_context,
+                    is_oauth,
+                    opts,
+                    disable_preferred_strict_tools,
+                    message_threads=thread_session_id is not None,
                 )
                 if provider_thinking_level:
                     output.provider_thinking_level = provider_thinking_level
                 next_params = await maybe_call(opts.on_payload, params, model)
                 if next_params is not None:
                     params = next_params
-
-                async def _request(params=params):
-                    return await client.create(
-                        {**params, "stream": True}, timeout_ms=opts.timeout_ms, cancel=opts.cancel
-                    )
-
+                prepared = (
+                    _prepare_thread_request(model, thread_session_id, params)
+                    if thread_session_id is not None and opts.disable_continuation is not True
+                    else None
+                )
                 try:
-                    response = await retry_provider_request(
-                        _request,
-                        max_retries=opts.max_retries if opts.max_retries is not None else 0,
-                        max_retry_delay_ms=opts.max_retry_delay_ms,
-                        cancel=opts.cancel,
-                    )
+                    if prepared is not None:
+                        response, thread = await _send_thread_request(prepared, params, send, output, opts.cancel)
+                    else:
+                        response, thread = await send(params), None
                     break
                 except AnthropicApiError as error:
                     # Only downgrade a rejected request, never an already-started stream.
@@ -766,6 +1064,7 @@ def stream(
                     ):
                         raise
                     disable_preferred_strict_tools = True
+                    mark_strict_tool_limits_exceeded(opts.session_id)
                     append_assistant_message_diagnostic(
                         output,
                         AssistantMessageDiagnostic(
@@ -953,6 +1252,8 @@ def stream(
                 raise RuntimeError("Anthropic stream ended without a stop reason")
             if output.stop_reason in ("aborted", "error"):
                 raise RuntimeError(output.error_message or "An unknown error occurred")
+            if thread is not None:
+                _record_thread_reply(model, thread, params, output, is_oauth, compat.allow_empty_signature)
             if input_transformations:
                 _append_input_transformations_diagnostic(output, input_transformations)
 
@@ -1232,8 +1533,12 @@ def _get_beta_features(
     is_oauth_token: bool,
     native_tool_changes: bool,
     options: AnthropicOptions,
+    message_threads: bool = False,
 ) -> list[str]:
     """The `betas` request param (pi's SDK turns it into the `anthropic-beta` header).
+
+    `native_tool_changes`: tool changes are sent as native `tool_addition` / `tool_removal`
+    blocks. `message_threads`: the session uses message threads.
 
     An explicit `anthropic-beta` header on the model or the options replaces
     the computed list; `None` suppresses it."""
@@ -1267,6 +1572,8 @@ def _get_beta_features(
         features.extend([MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA])
     if native_tool_changes:
         features.append(INLINE_TOOLS_BETA)
+    if message_threads:
+        features.append(MESSAGE_THREADS_BETA)
     return list(dict.fromkeys(features))
 
 
@@ -1332,11 +1639,18 @@ def _convert_tools(
             )
         )
         schema = get_json_schema_tool_parameters(tool, strict) or {}
+        # Keep shared definitions so property $refs still resolve. Other root keywords stay out:
+        # Anthropic rejects root anyOf/oneOf/allOf with a 400.
         legacy_input_schema = {
             "type": "object",
             "properties": schema.get("properties") or {},
             "required": schema.get("required") or [],
         }
+        # Pi's `=== undefined`: a present key is kept, whatever its value.
+        if "$defs" in schema:
+            legacy_input_schema["$defs"] = schema["$defs"]
+        if "definitions" in schema:
+            legacy_input_schema["definitions"] = schema["definitions"]
         input_schema = {**schema, **legacy_input_schema} if strict is True else legacy_input_schema
 
         entry: dict[str, Any] = {
@@ -1378,8 +1692,13 @@ def _build_params(
     is_oauth_token: bool,
     options: AnthropicOptions,
     disable_preferred_strict_tools: bool = False,
+    message_threads: bool = False,
 ) -> tuple[dict[str, Any], bool, AnthropicEffort | None]:
     """`(params, has_preferred_strict_tools, provider_thinking_level)`.
+
+    `disable_preferred_strict_tools`: send `strict: "prefer"` tools without strict schemas, after
+    Anthropic rejected them in this request or session. `message_threads`: the session uses
+    message threads, so the threads beta is sent.
 
     `has_preferred_strict_tools`: whether a `strict: "prefer"` tool went out strict.
     `provider_thinking_level`: effort of the final effort marker, recorded on the reply so
@@ -1436,7 +1755,7 @@ def _build_params(
         convert_tool_definitions if native_tool_changes else None,
     )
     active_effort: AnthropicEffort = options.effort or "high"
-    beta_features = _get_beta_features(model, context, is_oauth_token, native_tool_changes, options)
+    beta_features = _get_beta_features(model, context, is_oauth_token, native_tool_changes, options, message_threads)
     params: dict[str, Any] = {
         "model": model.id,
         "messages": _insert_thinking_level_messages(converted, active_effort)

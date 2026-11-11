@@ -328,7 +328,8 @@ async def test_update_reconciles_each_configured_git_package(dirs):
 
     await dirs.manager.update()
 
-    assert [args[0] for _command, args, _cwd in dirs.commands] == ["fetch", "checkout"]
+    # The HEAD is read before and after, for the update's `result` event.
+    assert [args[0] for _command, args, _cwd in dirs.commands] == ["rev-parse", "fetch", "checkout", "rev-parse"]
 
 
 @pytest.mark.tonio

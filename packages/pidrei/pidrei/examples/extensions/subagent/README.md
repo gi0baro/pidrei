@@ -12,7 +12,7 @@ Delegate tasks to specialized subagents with isolated context windows.
   happen
 - **Parallel streaming**: All parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
-- **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
+- **Usage display**: Shows turns, tokens, cost, and context usage inside each subagent result
 - **Abort support**: Ctrl+C aborts the subagent sessions
 
 ## Structure
@@ -72,7 +72,7 @@ This tool runs an agent session with a delegated system prompt and tool/model co
 
 To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
 
-When running interactively, the tool prompts for confirmation before running project-local agents in untrusted projects. Trusted projects skip the additional prompt. Set `confirmProjectAgents: false` to disable confirmation.
+When running interactively, the tool prompts for confirmation before running project-local agents unless the session trust context reports trusted and the agents come from that session project's `.pidrei/agents` directory. Agents loaded from another task `cwd` still require confirmation. Set `confirmProjectAgents: false` to disable confirmation.
 
 ## Usage
 
@@ -122,8 +122,8 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 **Parallel mode streaming**:
 - Shows all tasks with live status (⏳ running, ✓ done, ✗ failed)
 - Updates as each task makes progress
-- Shows "2/3 done, 1 running" status
-- Returns each completed task's final output to the parent model, capped at 50 KB per task
+- Distinguishes pending, running, completed, failed, and aborted tasks
+- Returns each completed task summary to the parent model with its own 50 KB limit
 - Returns failure diagnostics from error messages when a task fails before producing output
 
 **Tool call formatting** (mimics built-in tools):
@@ -150,7 +150,7 @@ System prompt for the agent goes here.
 When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
 
 **Locations:**
-- `~/.pidrei/agent/agents/*.md` - User-level (always loaded)
+- `~/.pidrei/agent/agents/*.md` - User-level (with `agentScope: "user"` or `"both"`)
 - `.pidrei/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
 
 Project agents override user agents with the same name when `agentScope: "both"`.
@@ -174,16 +174,20 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 ## Error Handling
 
-- **stopReason "error"**: LLM error propagated with error message (pidrei tools signal failure by raising)
-- **stopReason "aborted"**: User abort (Ctrl+C) aborts the session, raises
-- **Unknown agent/model, missing cwd, no available models**: Task fails with a diagnostic message
-- **Chain mode**: Stops at first failing step, reports which step failed
+- **Session setup or run errors** (missing cwd, unknown agent or model, no available models, missing credentials): Tool returns an error with the diagnostic
+- **stopReason "error"**: LLM error is propagated with its error message
+- **Abort**: Ctrl+C aborts the subagent sessions and preserves partial details/usage; queued parallel tasks do not start
+- **Chain mode**: Stops at the first failing step and reports which step failed
+
+A failed subagent is a failed tool result for the parent model, with the child history kept in the tool details.
 
 ## Limitations
 
 - Output truncated to last 10 items in collapsed view (expand to see all)
-- Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
-- Agents discovered fresh on each invocation (allows editing mid-session)
+- Single and chain output is capped at 50 KB/2,000 lines; full results remain in tool details
+- Parallel output keeps a separate 50 KB budget per task, allowing up to roughly 400 KB across eight tasks
+- Child usage is displayed in tool details but is not added to the calling session's usage totals
+- Agents are snapshotted from each task's effective cwd when the tool invocation starts; relative task cwd values resolve from the session cwd
 - Parallel mode limited to 8 tasks; 4 run at once by default (`concurrency`
   raises or lowers that, clamped to the task cap — the sessions are cheap
   in-process, so the cap mainly guards the provider account's rate limits)

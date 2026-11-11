@@ -1,6 +1,8 @@
 """Mirror of pi mcp src/oauth/index.ts: the MCP OAuth client subset."""
 
+from .auth_provider import McpAuthProvider, create_mcp_auth_provider
 from .callback import OAuthCallback, OAuthCallbackPage, OAuthCallbackServer
+from .client_settings import McpClientMetadataDocuments, McpOAuthClientOptions, McpOAuthServerStore, McpOAuthSettings
 from .discovery import (
     build_authorization_server_discovery_urls,
     discover_authorization_server_metadata,
@@ -12,6 +14,7 @@ from .discovery import (
 )
 from .errors import (
     McpOAuthAuthorizationRequiredError,
+    McpRefreshLockBusyError,
     OAuthError,
     OAuthInsecureEndpointError,
     OAuthIssuerMismatchError,
@@ -34,7 +37,22 @@ from .flow import (
     start_authorization,
     step_up_scope,
 )
+from .loopback import (
+    McpLoopbackCallback,
+    listen_for_loopback_sign_in,
+    response_from_redirect_url,
+    wait_for_loopback_sign_in,
+)
 from .provider import McpOAuthProvider, McpOAuthState, McpOAuthStateStore, MemoryOAuthStateStore
+from .sign_in import (
+    McpAuthorizationResponse,
+    McpSignInCancelledError,
+    McpSignInOptions,
+    McpSignInRedirect,
+    McpSignInStart,
+    complete_mcp_sign_in,
+    start_mcp_sign_in,
+)
 from .types import (
     AuthorizationServerMetadata,
     OAuthChallenge,
@@ -54,10 +72,22 @@ __all__ = [
     "AuthorizationServerMetadata",
     "AuthorizationStart",
     "CredentialsKind",
+    "McpAuthProvider",
+    "McpAuthorizationResponse",
+    "McpClientMetadataDocuments",
+    "McpLoopbackCallback",
     "McpOAuthAuthorizationRequiredError",
+    "McpOAuthClientOptions",
     "McpOAuthProvider",
+    "McpOAuthServerStore",
+    "McpOAuthSettings",
     "McpOAuthState",
     "McpOAuthStateStore",
+    "McpRefreshLockBusyError",
+    "McpSignInCancelledError",
+    "McpSignInOptions",
+    "McpSignInRedirect",
+    "McpSignInStart",
     "MemoryOAuthStateStore",
     "OAuthCallback",
     "OAuthCallbackPage",
@@ -83,15 +113,21 @@ __all__ = [
     "adapt_oauth_provider",
     "authorize_mcp",
     "build_authorization_server_discovery_urls",
+    "complete_mcp_sign_in",
+    "create_mcp_auth_provider",
     "discover_authorization_server_metadata",
     "discover_oauth_server_info",
     "discover_protected_resource_metadata",
     "exchange_authorization_code",
+    "listen_for_loopback_sign_in",
     "parse_www_authenticate",
     "refresh_authorization",
     "register_client",
     "resource_url_from_server_url",
+    "response_from_redirect_url",
     "select_resource",
     "start_authorization",
+    "start_mcp_sign_in",
     "step_up_scope",
+    "wait_for_loopback_sign_in",
 ]

@@ -1,8 +1,9 @@
 """Changelog parsing and link rewriting.
 
-pi's changelog.test.ts covers only `normalizeChangelogLinks`; those two cases
-are mirrored here with our repository and base path substituted, since the
-module exists to rewrite links in *our* changelog.
+pi's changelog.test.ts covers `normalizeChangelogLinks` and `getNewEntries`.
+The two link cases are mirrored here with our repository and base path
+substituted, since the module exists to rewrite links in *our* changelog; the
+`getNewEntries` cases are mirrored with entries at build 0.
 
 The rest is pidrei-only and covers the fourth version segment. pidrei versions
 are `<pi version>.<our build>`, so the segment that moves between pi releases is
@@ -164,6 +165,54 @@ async def test_a_last_version_without_a_build_segment_reads_as_zero(tmp_path):
     path = write_changelog(tmp_path, "## [0.82.0.1] - 2026-08-01\n\nBody.\n")
 
     assert len(get_new_entries(await parse_changelog(path), "0.82.0")) == 1
+
+
+# ---------------------------------------------------------------------------
+# get_new_entries — pi's cases (entries carry build 0)
+# ---------------------------------------------------------------------------
+
+
+def _entry(major: int, minor: int, patch: int, build: int = 0) -> dict:
+    content = f"{major}.{minor}.{patch}" + (f".{build}" if build else "")
+    return {"major": major, "minor": minor, "patch": patch, "build": build, "content": content}
+
+
+_ENTRIES = [_entry(0, 1, 5), _entry(0, 1, 4)]
+
+
+def _new_content(last_version: str, entries: list = _ENTRIES) -> list | None:
+    new = get_new_entries(entries, last_version)
+    return None if new is None else [entry["content"] for entry in new]
+
+
+def test_ignores_prerelease_and_build_suffixes_of_the_last_seen_version():
+    # #11703
+    assert _new_content("0.1.5-20261020.7") == []
+    assert _new_content("0.1.5+build.3") == []
+    assert _new_content("0.1.4-beta.1") == ["0.1.5"]
+
+
+def test_compares_release_versions_numerically():
+    assert _new_content("0.1.5") == []
+    assert _new_content("0.1.3") == ["0.1.5", "0.1.4"]
+    assert len(get_new_entries([_entry(0, 10, 0)], "0.9.0")) == 1
+
+
+def test_returns_none_for_a_last_seen_version_without_major_minor_patch():
+    assert _new_content("latest") is None
+    assert _new_content("0.1") is None
+    assert _new_content("") is None
+
+
+def test_ignores_a_suffix_after_the_build_segment():
+    """pidrei-only: the same rule for four segments. The build segment is read
+    when present, and what follows it (PEP 440 `rc1`/`.dev3`, `+local`) is
+    ignored, as pi ignores what follows the patch."""
+    entries = [_entry(0, 1, 5, 1), _entry(0, 1, 5)]
+
+    assert _new_content("0.1.5.0rc1", entries) == ["0.1.5.1"]
+    assert _new_content("0.1.5.0.dev3", entries) == ["0.1.5.1"]
+    assert _new_content("0.1.5.1+local", entries) == []
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,10 @@ legacy-migration cases; `test_package_sources.py` covers the git and
 `npm:`-refusal behaviour that replaces them. Everything else in pi's file —
 resolution, metadata, `.agents` discovery, ignore files, pattern filtering,
 package dedupe and multi-file discovery — is mirrored here.
+
+The `result` events of pi's git-update.test.ts (the old and new commit of an
+updated package) are mirrored at the end, with git stubbed; the rest of that
+file is not mirrored.
 """
 
 import json
@@ -1167,6 +1171,69 @@ async def test_ignores_invalid_manifest_resource_fields_without_dropping_valid_f
 
     assert skill_path not in paths_of(result.skills)
     assert prompt_path in paths_of(result.prompts)
+
+
+# -- git update results (pi's git-update.test.ts) -----------------------------------
+#
+# pi's suite drives real git against a local remote; here `_run_command` is
+# stubbed with a checkout whose HEAD moves on `checkout`, so the cases pin the
+# `result` events the update reports from the HEAD before and after it.
+
+OLD_COMMIT = "a" * 40
+NEW_COMMIT = "b" * 40
+
+
+def stub_git_checkout(dirs, *, head_after_update: str) -> None:
+    head = OLD_COMMIT
+
+    async def run_command(_command: str, args: list[str], *, cwd: str | None = None) -> str:
+        nonlocal head
+        if args == ["rev-parse", "HEAD"]:
+            return f"{head}\n"
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return "main\n"
+        if args[0] == "checkout":
+            head = head_after_update
+        return ""
+
+    dirs.manager._run_command = run_command
+
+
+def collect_update_results(dirs) -> list[str]:
+    updated: list[str] = []
+
+    def on_progress(event) -> None:
+        if event.type == "result" and event.action == "update" and event.message:
+            updated.append(event.message)
+
+    dirs.manager.set_progress_callback(on_progress)
+    return updated
+
+
+@pytest.mark.tonio
+async def test_git_update_reports_no_result_when_already_up_to_date(dirs):
+    git_source = "git:github.com/user/repo"
+    os.makedirs(os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo"))
+    dirs.settings.set_packages([git_source])
+    stub_git_checkout(dirs, head_after_update=OLD_COMMIT)
+    updated = collect_update_results(dirs)
+
+    await dirs.manager.update()
+
+    assert updated == []
+
+
+@pytest.mark.tonio
+async def test_git_update_reports_the_old_and_new_commit_when_the_remote_has_new_commits(dirs):
+    git_source = "git:github.com/user/repo"
+    os.makedirs(os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo"))
+    dirs.settings.set_packages([git_source])
+    stub_git_checkout(dirs, head_after_update=NEW_COMMIT)
+    updated = collect_update_results(dirs)
+
+    await dirs.manager.update()
+
+    assert updated == [f"{git_source} {OLD_COMMIT[:7]} -> {NEW_COMMIT[:7]}"]
 
 
 # pidrei-only: pi's isOfflineModeEnabled accepts only 1/true/yes; any other value is online.

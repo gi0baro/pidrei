@@ -257,6 +257,59 @@ async def test_lists_openai_decisions_models_only_for_api_key_credentials():
     assert any(model.id == "gpt-6-luna" for model in await with_oauth.get_available("openai"))
 
 
+def _lower_headers(headers: dict[str, str]) -> dict[str, str]:
+    # pi reads them back through `Headers`, which ignores case.
+    return {key.lower(): value for key, value in headers.items()}
+
+
+@pytest.mark.tonio
+async def test_routes_github_copilot_microsoft_decision_1_to_the_accounts_v1_systemone_endpoint():
+    async def oauth(_current):
+        return OAuthCredential(
+            access="tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;",
+            refresh="refresh",
+            expires=clock.now_ms() + 3_600_000,
+            # The login records only picker models; classifiers stay listed.
+            extra={"availableModelIds": ["gpt-6-luna"]},
+        )
+
+    credentials = InMemoryCredentialStore()
+    await credentials.modify("github-copilot", oauth)
+    models = builtin_models(credentials=credentials)
+    decision = models.get_model_of_type("classifier", "github-copilot", "microsoft-decision-1")
+    assert decision is not None, "missing GitHub Copilot decision model"
+    assert (decision.api, decision.base_url, decision.input, decision.context_window) == (
+        "typesafe-system-one",
+        "https://api.individual.githubcopilot.com",
+        ["text"],
+        32768,
+    )
+    assert models.get_model("github-copilot", "microsoft-decision-1") is None
+    assert await models.get_available_of_type("classifier", "github-copilot") == [decision]
+
+    with stub_system_one(respond_json({"answers": {"approved": {"type": "noul", "noul": 0.8}}})) as requests:
+        result = await models.classify(decision, CONTEXT)
+
+    assert [request.url for request in requests] == ["https://api.enterprise.githubcopilot.com/v1/systemone"]
+    headers = _lower_headers(requests[0].headers)
+    assert headers["authorization"] == "Bearer tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;"
+    # Copilot rejects requests without an editor version.
+    assert headers.get("editor-version")
+    assert headers["copilot-integration-id"] == "vscode-chat"
+    assert result.stop_reason == "stop"
+    assert result.answers["approved"] == ClassifierBoolAnswer(probability=0.8)
+
+
+@pytest.mark.tonio
+async def test_adds_the_system_one_version_prefix_to_the_github_copilot_catalog_base_url():
+    models = builtin_models()
+    decision = models.get_model_of_type("classifier", "github-copilot", "microsoft-decision-1")
+    assert decision is not None, "missing GitHub Copilot decision model"
+    with stub_system_one(respond_json({"answers": {"approved": {"type": "noul", "noul": 0.8}}})) as requests:
+        await models.classify(decision, CONTEXT, ClassifierOptions(api_key="secret"))
+    assert [request.url for request in requests] == ["https://api.individual.githubcopilot.com/v1/systemone"]
+
+
 def test_routes_openrouter_classifier_models_through_the_system_one_api():
     models = builtin_models()
     for model in get_builtin_classifier_models("openrouter"):

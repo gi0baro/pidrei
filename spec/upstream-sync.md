@@ -303,7 +303,9 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Pi's experimental stack**: the durable harness runtime, Chord, the
   experimental coding agent (`coding-agent/src/experimental`,
   `cli/experimental`, `mini/`, facet plugins), session backends,
-  benchmarks. It is an unfinished rewrite the product does not run on;
+  benchmarks, and the apps built on it (`apps/`: p2, "Pi Mobile on Chord
+  v2", and p3's design docs, in the tree since Pi 1.5.1). It is an
+  unfinished rewrite the product does not run on;
   porting it would track churn on a moving target. Not porting it is a
   deferral, not a saving.
   - Pi 1.2.0 deleted its experimental server stack and the
@@ -335,6 +337,15 @@ Each has entries in the classifier's dropped tables, with the reason.
   Pi's TypeScript SDK examples and npm/wasm example extensions.
 - **MCP's conformance suite** (`test/mcp-conformance/`) and pi's MCP
   examples: pidrei's client mirrors pi's, which passes the suite.
+- **MCP's `PipeTransport`** (stdio over a program the caller started): its
+  only consumer is p2. The line framing it shares with the stdio transport
+  (`transports/lines.ts`) is ported.
+- **Code Pi moves into a package so p2 can share it** is still ported, to
+  the same place: PiDrei's packages mirror Pi's. Only what nothing but p2
+  uses is dropped.
+- **Preferred partner providers** (Pi 1.5.1: Radius and OpenRouter listed
+  first in `/login` and `/logout`, marked and drawn in brand colours). The
+  provider lists keep the order they had before it.
 
 ## 7. Diverged regions
 
@@ -626,6 +637,15 @@ run in parallel, so every such decision shares a guard with its action.
   `_run_input_closed` unset, then runs `_start_run`. A prompt decides twice
   (`_admit_prompt`): before model/auth validation (queue or raise), and after
   it, claiming, because a run can start while auth is checked.
+- **Prompt preflight vs tree navigation**: in one `_state_guard` section a
+  prompt finds no compaction or navigation in progress (`_compaction_cancel`,
+  `_branch_summary_cancel`) and increments `_prompt_preflight_count`. A
+  synchronous decrement in a `finally` releases it after `_admit_prompt`
+  claimed the run, so there is no gap. Navigation decides under the same guard
+  (`_raise_if_tree_navigation_blocked` counts the preflight) and sets its
+  marker there; it compare-and-clears the marker under the guard before
+  `session_tree` and in its `finally`, so a navigation started from a
+  `session_tree` handler keeps its own.
 - **Run input**: input queued into a run (steering, follow-ups,
   `triggerTurn` messages while streaming) is posted under `_state_guard`
   while `_run_input_closed` is unset. The run closes its input
@@ -808,17 +828,34 @@ the sessions run in parallel and a process buys nothing. The result-dict
 contract is the seam: `messages` stay camelCase wire dicts, so mode logic,
 params and rendering port side by side.
 
-- **Field renames**: `exitCode`/`stderr` don't exist. `exitCode !== 0` →
-  `is_failed_result(r)`; `exitCode === 0` → `not is_failed_result(r)`;
-  `exitCode === -1` (running) → `is_running_result(r)` / `"status":
-  "running"`; `stderr` → `errorMessage`.
+- **Fields**: `status` (`pending | running | completed | failed |
+  aborted`), `errorMessage`, `stopReason` and `isError` in the details are
+  pi's. `exitCode`, `stderr` and `terminationSignal` don't exist: the
+  `Signal:`/`stderr:` evidence and render lines are left out, and a hunk
+  keyed on them ports onto `status`/`errorMessage` or is dropped.
 - **Hunks in `runSingleAgent`** or the subprocess plumbing translate by
   intent into the in-process runner:
   - A new CLI flag becomes the matching `CreateAgentSessionOptions` field or
     construction argument.
-  - JSONL-parsing changes map onto the typed session events.
-  - Process and watchdog changes usually have no counterpart; cancellation
-    is `cancel.on_cancel` → a spawned `session.abort()`.
+  - JSONL-parsing changes map onto the typed session events (`message_end`
+    for user, assistant and tool result messages).
+  - Spawn errors and failed or signalled exits are an exception from session
+    setup or `session.prompt()`: one `except Exception` gives a `"failed"`
+    result whose `errorMessage` keeps an error the run already reported, else
+    `str(error)` (pi's `||=`). `CancelledError` passes.
+  - `signal.aborted` checks are `cancel.cancelled` at the same points.
+    Cancellation is `cancel.on_cancel` → a spawned `session.abort()`, under a
+    guard that ignores an abort once the run has ended (pi's `exited`
+    check); an aborted run returns its `"aborted"` result. An abort before
+    the session claimed its run is held and issued from
+    `PromptOptions.preflight_result("started")` (after the claim, before the
+    first request). A missing task cwd fails the task before setup (pi's
+    spawn `ENOENT`).
+  - SIGTERM/SIGKILL escalation, watchdogs, temp prompt files and the pi
+    binary lookup have no counterpart.
+- **Failures are results**: execute returns content plus details (pi's
+  `isError` comes from the `tool_result` hook reading `details.isError`),
+  never raises for a failed child.
 - **Divergences to keep**:
   - Subagent sessions load no extensions.
   - An unknown frontmatter `model:` fails the task.
@@ -832,8 +869,8 @@ params and rendering port side by side.
   `on_update`. Upstream hunks to `emitParallelUpdate` port into
   `emit_parallel_update`, per-child update hunks into `task_update`.
 - No tests (example extensions have none); Pi's subagent project-trust
-  regression is dropped, since it depends on a child process failing at
-  spawn.
+  regression and `subagent-extension.test.ts` with its child fixture are
+  dropped, since they drive a child process.
 
 ### `no-telemetry` (`first-time-setup.ts`, settings-manager analytics accessors, `settings-schema.ts`, `settings-defaults.ts`)
 
@@ -930,6 +967,39 @@ client, or a bump of pi's SDK pin that changes `lib/credentials`, land in
 that module and `_PunkreqAnthropicClient`, read against the SDK source at
 the version pi pins. The resolver half (`providers/anthropic.ts`,
 `get_anthropic_federation`, the env constants) ports 1:1.
+
+### `session-keyed-state` (`ai/src/api/anthropic-messages.ts`, `ai/src/api/strict-tool-limits.ts`)
+
+Pi keeps per-session adapter state in module-level `Map`s and `Set`s keyed by
+session id (Anthropic message threads; the sessions over Claude's strict tool
+limits, shared with Bedrock) and reads, compares and updates an entry in one
+synchronous step. Here any worker running a `stream()` touches the same
+state, so it follows the Codex adapter's session maps
+(`openai_codex_responses.py`):
+
+- Module state behind a module `threading.Lock`, never held across an await.
+  A `Map`/`Set` used for its insertion order (the 10,000-session caps) is an
+  insertion-ordered `dict`; pi's delete + set + evict-oldest, or `add` +
+  evict-oldest, is one hold (`setdefault` where pi's `Set.add` keeps an
+  existing member in place).
+- Cleanup registered at import with `utils/session_resources.py`, Pi's
+  `registerSessionResourceCleanup` callback body under the lock (`if
+  session_id:` mirrors pi's truthiness: an empty id clears everything).
+- Work Pi does inside the step that is heavy (hashing the request prefix
+  serialises the conversation) runs outside the lock: pin the entry, compute,
+  then claim under the lock only if the stored value is still the pinned one.
+  A lost claim takes pi's path for a missing entry (a full request starting a
+  new thread). The prefix hash never leaves the process and is a `hashlib`
+  digest, not pi's `shortHash`.
+- What is recorded is a value: the thread reply is converted from a frozen
+  snapshot of the builder (`freeze-at-seam`), never the builder itself.
+- Each piece of state has a `reset_*() -> bool` for the fail-loud conftest
+  guards in the ai and pidrei conftests; mirrors mirror pi's `afterEach`
+  `cleanupSessionResources()` as a module autouse fixture.
+- **Upstream diffs**: a hunk that changes what is stored, compared or sent
+  ports 1:1 inside the hold (or, for a heavy computation, between pin and
+  claim). New per-session module state in any adapter lands on the same
+  mechanism, with a cleanup registration and conftest guards.
 
 ### `codemode-python` (`codemode/src/runtime/prelude-source.ts`, `runtime/host.ts`, `declarations.ts`, `source.ts`, `coding-agent/src/extensions/codemode/tool.ts`, `execute.ts`, `docs/codemode.md`, the codemode tests)
 
@@ -1034,7 +1104,7 @@ session's loadout guard and sets what it returns (`None` sets nothing).
   registration, so their update rides on that `register_tools` call as
   `update_active` (see `mcp-extension`).
 
-### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`, `oauth/flow.ts`)
+### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`, `oauth/flow.ts`, `oauth/auth-provider.ts`, `oauth/client-settings.ts`, `oauth/sign-in.ts`, `oauth/loopback.ts`)
 
 Pi's MCP client leans on its single thread: listeners run inline, a `send()`
 is ordered by the call, and an `AbortController` stops a request at any
@@ -1052,6 +1122,11 @@ runtime layer from TonIO, httpunk and punkreq.
   message is its own exchange and nothing orders two of them, in pi either:
   a cancellation can reach the server before the request it cancels.
   A pi `await transport.send(...)` stays an await of the result.
+- **Stdio**: the framing is `transports/lines.py`'s `JsonRpcLineReader`,
+  each half driven by one reader coroutine (`read_stderr` awaits the async
+  `on_stderr`); the reaper calls `end()` once both pipes reached EOF. The
+  close ladder runs for any server not yet closed, one already reaped
+  included, and its group stays tracked until the pipes close.
 - **The client**: its state (transport, pending requests, incoming request
   tokens) is under one thread lock, and what readers see (`connection_state`,
   the session) is one published view. A pending request is settled exactly
@@ -1096,6 +1171,19 @@ runtime layer from TonIO, httpunk and punkreq.
   A cancelled refresh re-raises instead of falling back to a new
   authorization. A new Pi `signal` parameter on a flow step is covered by
   the wrapped fetch, not threaded separately.
+- **OAuth refresh** (`oauth/auth_provider.py`): one detached refresh per
+  provider, joined through an Event; `on_unauthorized` starts it at the
+  call, as pi's runs up to its first await there; `settings` is async; each
+  request is capped by the fetch's `timeout_ms` (`timed_fetch`). The
+  cross-process lock is the application's `with_refresh_lock`.
+- **Sign-in** (`oauth/sign_in.py`, `oauth/loopback.py`): pi's `signal` is
+  `McpSignInOptions.cancel`. `untilAborted` is the locked refresh run
+  detached, settling an Event, and the sign-in waiting on
+  `Waiter.any(done, cancel.event)`. `wait_for_loopback_sign_in` is a plain
+  function: its synchronous prefix registers the callback wait, so the
+  caller calls it before showing the authorization URL and awaits it after;
+  the pasted-URL racer starts when it is awaited. `McpSignInRedirect` is a
+  camelCase TypedDict (plain data an application persists).
 - **Closing the HTTP transport** sends its session `DELETE` with the token
   of the last request (`_last_token`) and never calls the auth provider, so
   a close never refreshes over the network.
@@ -1134,11 +1222,13 @@ awaits. Here those run on parallel coroutines.
   closes, is kept and closed by `close()`. `on_change` is
   async and awaited where the state changes; the extension re-checks the
   state before recording the stored-token snapshot.
-- **OAuth refresh**: one detached refresh per provider, joined through an
-  Event; each request capped by the fetch's `timeout_ms`; the cross-process
-  lock is `FileLock(stale=20, renew=True)` (proper-lockfile's renewal).
-  `on_unauthorized` starts the refresh at the call, as pi's runs up to its
-  first await there.
+- **OAuth**: the refresh and the sign-in are pidrei-mcp's (`mcp-client`).
+  `oauth.py` keeps the credential store, whose refresh lock is
+  `FileLock(stale=20, renew=True)` (proper-lockfile's renewal) and maps
+  `LockedError` to `McpRefreshLockBusyError`; the prompt; `_render_page`;
+  and PiDrei's client identity (`APP_NAME`, `PI_CLIENT_METADATA_DOCUMENTS`,
+  `_pi_settings` turning `auto` into `dcr`), handed to pidrei-mcp by thin
+  `create_mcp_auth_provider` / `sign_in_mcp_server` wrappers.
 - **I/O**: config loading and editing, the credential store's `tokens()`/
   `remove()`, settings that resolve `!command`/`${VAR}`, transport factories
   and the log are async. Every `mcp.json` edit runs under a `FileLock` on the
@@ -1164,8 +1254,9 @@ awaits. Here those run on parallel coroutines.
     tracked Events together with the closing connections.
 - **The manager** (`ui.py`) changes its view only through `tui.apply`; key
   handlers settle an Event the manage coroutine awaits.
-- **The CLI** reads a pasted redirect URL with `FdReader` under
-  `run_cancellable`, cancelled by the sign-in or `--timeout`.
+- **The CLI** reads a pasted redirect URL with `question_terminal`
+  (`utils/terminal_question.py`, shared with `pidrei auth login`), cancelled
+  by the sign-in or `--timeout`; end of input gives no URL, as in pi.
 - **Imports are eager**: `runtime.lazy.ts`/`cli.lazy.ts` are dropped, and the
   "MCP failed to load" reports they fed are not ported.
 - **Script API names in text** (`searchTools()`, `describeNamespace()`)
@@ -1175,7 +1266,8 @@ awaits. Here those run on parallel coroutines.
   `reaches_tools` and matches its words against server names
   (`_reaches_server`).
 - **Client ID Metadata Documents stay pi's**: `CLIENT_METADATA_BASE_URL` in
-  `oauth.py` is `https://pi.dev/oauth`, the one place where PiDrei presents
+  `oauth.py` (the `base_url` of `PI_CLIENT_METADATA_DOCUMENTS`) is
+  `https://pi.dev/oauth`, the one place where PiDrei presents
   itself as pi (ruled for 1.0.2: PiDrei has no document of its own). A
   rename pass must not change it, nor the document paths derived from it;
   dynamic registration keeps `APP_NAME`.
@@ -1325,6 +1417,23 @@ those model-visible rules into `pidrei_ai/utils/schema/` and keeps
 - **Engine differences, documented in `engine.py`**: `pattern` runs on
   Python `re`, not ECMAScript (`\p{L}` is an error there); format
   strictness follows the Python checkers, not TypeBox's regexes.
+- **TypeBox's JavaScript types** (pi 1.5.1, `af79b0c3`):
+  - `bigint` is a Python `int` (`checks.is_big_int`, `TYPE_CHECKS["bigint"]`):
+    TypeBox's TryBigInt converts to an `int` (`coerce._try_big_int`), the
+    number keywords apply as to any number, and two `int`s are compared
+    exactly in `is_multiple`. What cannot be kept is pi's distinction between
+    the number `5` and `5n`: an `int` passes `bigint`, `integer` and
+    `number`, an error calls it `integer`, and an `int` literal (`const`,
+    `enum`) converts as a number, since JSON has no bigint literal. Mirrors
+    write pi's bigint values as `int`s (pi's probe replacer writes `"12n"`,
+    the mirror `12`); a pi case that relies on the distinction is
+    re-specified with a float or not mirrored, and the docstring says which.
+  - `undefined` stays rejected: pi checks and converts to a key present and
+    set to undefined, which a Python dict cannot hold (absence is the only
+    undefined). `Type.Undefined` matches no value, TryUndefined has no
+    branch, and pi's present-but-undefined required property has no
+    counterpart. Mirrors keep PiDrei's outcome (the probes' `REJECT`) and
+    say so in the docstring.
 - **Upstream diffs**: commits to the not-ported files are nothing to port. A
   hunk in the ported files lands 1:1; one that changes how pi's compiler
   answers a check lands on the `jsonschema` call that answers it here.
@@ -1371,3 +1480,54 @@ Updates" block; the `collapseChangelog` setting keeps its current meaning.
   `docs/packages.md`. The rest of these files ports normally.
   `interactive-mode-extension-changelog.test.ts` is `DROPPED`.
 - A new upstream consumer of extension changelogs is skipped the same way.
+
+### `group-only-kill` (`coding-agent/src/utils/shell.ts`)
+
+Pi's `killProcessTree(pid)` signals the process group and, when that fails,
+the bare pid. Since Pi 1.5.1 it is also called after the shell has exited
+(a timeout or an abort while background processes still hold the shell's
+pipes). PiDrei's `kill_process_tree` (`utils/shell.py`) signals the group
+only:
+
+- Every caller passes a shell started with `start_new_session`, so the pid
+  leads its own group. While the shell is alive the group kill reaches it;
+  the group kill fails only when no member is left, and then the pid is
+  free and may already belong to another process.
+- The bash tool keeps the shell's pid tracked for the exit handlers until
+  its stdio has settled, as Pi does; the handlers' kill is the same
+  group-only kill, so a pid tracked past the shell's exit is safe.
+- **Upstream diffs**: hunks to the macOS stop-before-kill or to who calls
+  the function port 1:1. A hunk to the single-process fallback is dropped,
+  with its test cases (`test_shell_kill_process_tree.py` asserts that the
+  bare pid is never signalled).
+
+### `edit-diff-difflib` (`coding-agent/src/core/tools/edit-diff.ts`)
+
+Pi diffs with jsdiff: `diffLines` feeds the display diff
+(`formatDisplayDiff`), `createTwoFilesPatch`/`structuredPatch`/`formatPatch`
+build the unified patch, and `generateEditDiff` diffs only a window around
+each replacement, shifting each window's `structuredPatch` hunks to file
+line numbers. PiDrei has no jsdiff; `core/tools/edit_diff.py` builds both on
+stdlib `difflib`:
+
+- `diff_lines` is jsdiff's `diffLines`: `SequenceMatcher(autojunk=False)`
+  over newline-terminated line tokens, a replace emitted as the removed run
+  before the added run.
+- The unified patch is `_unified_patch_hunks`: the same matcher's
+  `get_grouped_opcodes(context)` (`difflib.unified_diff`'s grouping and
+  range format), numbered from a 0-based line offset of each side. Offset 0
+  is `generate_unified_patch`; a window passes its first old and new lines,
+  which is pi's hunk shift. A last line without a line feed is its own token
+  (it differs from the same text with one) and is followed by
+  `\ No newline at end of file`, as jsdiff writes it.
+- The window computation (`_get_diff_windows`, the margin, the merging of
+  overlapping windows) and `_format_display_diff` port line by line.
+- **Upstream diffs**: hunks to the windows, the display formatter, the
+  line-ending splice (`apply_replacements_to_original`) and matching port
+  1:1. A change to how pi calls jsdiff (options, hunk shifting, patch
+  headers) becomes a change to `diff_lines`, `_unified_patch_hunks` or
+  `_format_patch`. Pi's mirrored tests apply unchanged, with a hand-rolled
+  patch applier in place of jsdiff's `applyPatch`.
+- **Known difference**: where several minimal diffs exist (runs of repeated
+  lines), `SequenceMatcher` can align them differently from jsdiff. Both
+  describe the same edit, and the patch applies.

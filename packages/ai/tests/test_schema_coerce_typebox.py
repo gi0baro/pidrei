@@ -4,8 +4,10 @@ tests (MIT, (c) Haydn Paterson), on the conversion pass of the coercion
 
 pi builds the schemas with TypeBox and reads only their JSON structure; here
 `Type` emits that JSON. The cases pi skips (no JSON form) are not mirrored,
-nor are those whose value is `undefined` or a BigInt, which no JSON argument
-is. Values are compared through `json_stringify`, so `true` is never taken for
+nor are those whose value is `undefined` or a BigInt, or whose schema is a
+BigInt literal (`Type.Literal(100n)`), which no JSON argument or schema is
+(pi's `bigint` conversion itself is mirrored in test_schema_coerce.py).
+Values are compared through `json_stringify`, so `true` is never taken for
 `1`.
 """
 

@@ -38,7 +38,7 @@ from pidrei_tui.terminal_image import (
     reset_capabilities_cache,
     set_capabilities,
 )
-from pidrei_tui.tui import TuiMouseEventResult, render_fake_cursor
+from pidrei_tui.tui import CURSOR_MARKER, TuiMouseEventResult, render_fake_cursor
 from pidrei_tui.tui_alt_screen import TuiAltScreen
 
 from .themes import default_editor_theme
@@ -204,6 +204,29 @@ async def _wait_for_viewport_text(terminal: VirtualTerminal, needle: str, timeou
     `wait_for_render` observed.
     """
     return await terminal.until(lambda: any(needle in line for line in terminal.get_viewport()), timeout)
+
+
+@pytest.mark.tonio
+async def test_does_not_leak_cursor_markers_while_selecting_after_the_caret():
+    terminal = RecordingTerminal(20, 4)
+    tui = TuiAltScreen(terminal, None, None, copy_on_select=False)
+    # Regression for #9257 and #9332: selection slicing must not duplicate cursor markers.
+    tui.add_child(RenderComponent([f"ab{CURSOR_MARKER}cdefghij"]))
+
+    await tui.start()
+    await terminal.wait_for_render()
+    event_count = len(terminal.events)
+
+    await terminal.send_input("\x1b[<0;5;1M")
+    await terminal.send_input("\x1b[<32;7;1M")
+    # The frame reflecting the drag, not just any frame after the inputs.
+    assert await terminal.wait_for_write("\x1b[7m"), "dragged text should be highlighted"
+
+    output = "".join(event["data"] for event in terminal.events[event_count:] if event["type"] == "write")
+    assert "\x1b[7m" in output, "dragged text should be highlighted"
+    assert CURSOR_MARKER not in output, "internal cursor markers must not reach the terminal"
+    await terminal.send_input("\x1b[<0;7;1m")
+    await tui.stop()
 
 
 @pytest.mark.tonio
@@ -1207,10 +1230,8 @@ async def test_crops_a_kitty_image_whose_placeholder_rows_contain_text_when_its_
 
 
 @pytest.mark.tonio
-async def test_redraws_wezterm_kitty_images_after_writes_to_covered_rows(monkeypatch):
-    # Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
-    monkeypatch.delenv("TERM_PROGRAM", raising=False)
-    monkeypatch.setenv("WEZTERM_PANE", "1")
+async def test_redraws_kitty_images_after_writes_to_covered_rows():
+    # Regression test for #10319: in WezTerm, a scrollbar update below an unchanged image anchor erased its cells.
     with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
         terminal = RecordingTerminal(20, 4)
         image_id = 10319
@@ -1311,27 +1332,24 @@ async def test_retains_recently_offscreen_kitty_images_for_placement_only_reuse(
         await tui.stop()
 
 
-@pytest.mark.parametrize("wezterm", [True, False])
 @pytest.mark.tonio
-async def test_clears_rows_before_drawing_kitty_images_only_in_wezterm(monkeypatch, wezterm):
-    # pidrei-only: pi ships this fix (#9169) without a test. WezTerm erases image
-    # cells a later EL row clear intersects, so every clear must precede the images.
-    monkeypatch.delenv("TERM_PROGRAM", raising=False)
-    monkeypatch.delenv("WEZTERM_PANE", raising=False)
-    if wezterm:
-        monkeypatch.setenv("WEZTERM_PANE", "0")
+async def test_draws_kitty_images_after_clearing_the_rows_they_cover():
+    # Regression test for #11835: Orca's xterm.js image addon stores images in cells, so clearing
+    # the covered rows after the placement erased all but the first image row.
     with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
-        terminal = RecordingTerminal(20, 2)
+        terminal = RecordingTerminal(20, 5)
+        image_id = 11835
+        image_line = encode_kitty("AAAA", columns=2, rows=3, image_id=image_id, move_cursor=False)
+        register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 3, "widthPx": 100, "heightPx": 100})
         tui = TuiAltScreen(terminal)
-        image_id = 654
-        image_line = encode_kitty("AAAA", columns=2, rows=1, image_id=image_id, move_cursor=False)
-        register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 1, "widthPx": 100, "heightPx": 50})
-        tui.set_layout_root(_image_scroll_view([image_line, "after"]))
+        tui.set_layout_root(RenderComponent(["before", image_line, "", "", "after"]))
         await tui.start()
-        frames = await terminal.wait_for_write("\x1b_Ga=T")
-        assert frames
-        frame = frames[0]
-        assert ("\x1b[2K" in frame[frame.index("\x1b_Ga=T") :]) is not wezterm
+        assert await terminal.wait_for_write("\x1b_Ga=T")
+
+        writes = "".join(event["data"] for event in terminal.events if event["type"] == "write")
+        transmit_index = writes.index("\x1b_Ga=T")
+        assert transmit_index > writes.rfind("\x1b[4;1H\x1b[2K")
+        assert transmit_index > writes.index("after")
         await tui.stop()
 
 

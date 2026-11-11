@@ -15,14 +15,9 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei.core.auth_storage import InMemoryAuthStorageBackend
-from pidrei.extensions.mcp.oauth import (
-    McpOAuthCredentialStore,
-    McpOAuthSettings,
-    create_mcp_auth_provider,
-    sign_in_mcp_server,
-)
+from pidrei.extensions.mcp.oauth import McpOAuthCredentialStore, create_mcp_auth_provider, sign_in_mcp_server
 from pidrei_mcp import UnauthorizedContext, default_fetch
-from pidrei_mcp.oauth import OAuthIssuerMismatchError
+from pidrei_mcp.oauth import McpOAuthSettings, McpSignInCancelledError, OAuthIssuerMismatchError
 from pidrei_mcp.url import parse_url
 from pidrei_utils.cancel import CancelToken
 
@@ -106,6 +101,83 @@ async def test_refreshes_once_when_several_processes_find_the_same_token_rejecte
         for _, provider in processes:
             assert await provider.token() == "access-2"
         # The lock is released.
+        assert os.listdir(lock_dir) == []
+
+
+class _RecordingLockWait:
+    """The sign-in's store, recording its wait for the refresh lock: `waiting`
+    is set when it asks for the lock, `ended` when that run ends."""
+
+    def __init__(self, store) -> None:
+        self._store = store
+        self.waiting = tonio.Event()
+        self.ended = tonio.Event()
+
+    def load(self):
+        return self._store.load()
+
+    def save(self, state):
+        return self._store.save(state)
+
+    def with_refresh_lock(self, fn):
+        async def run():
+            try:
+                return await self._store.with_refresh_lock(fn)
+            finally:
+                self.ended.set()
+
+        self.waiting.set()
+        return run()
+
+
+@pytest.mark.tonio
+async def test_cancels_a_sign_in_that_waits_for_another_processs_refresh(monkeypatch, tmp_path):
+    """pi aborts after 200 ms; here the test cancels once the sign-in asked
+    for the lock another process holds."""
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server, lock_dir, process = await _signed_in(oauth_servers, tmp_path)
+        holding = tonio.Event()
+        release = tonio.Event()
+
+        async def hold() -> None:
+            holding.set()
+            await release.wait(_WAIT_S)
+
+        held = tonio.spawn(process()[0].with_refresh_lock(hold))
+        await holding.wait(_WAIT_S)
+        assert holding.is_set()
+        recording = _RecordingLockWait(process()[0])
+        cancel = CancelToken()
+
+        class _NoPrompt:
+            def show_authorization_url(self, url: str) -> None:
+                pass
+
+            async def prompt_for_redirect_url(self, cancel: CancelToken) -> str | None:
+                return None
+
+        sign_in = tonio.spawn(
+            sign_in_mcp_server(
+                server_url=server.url,
+                store=recording,
+                settings=McpOAuthSettings(),
+                prompt=_NoPrompt(),
+                cancel=cancel,
+            )
+        )
+        await recording.waiting.wait(_WAIT_S)
+        assert recording.waiting.is_set()
+        cancel.cancel()
+        with pytest.raises(BaseExceptionGroup) as caught:
+            await sign_in
+        assert caught.group_contains(McpSignInCancelledError)
+
+        release.set()
+        await held
+        # The cancelled sign-in takes the lock once it is free and releases it without refreshing.
+        await recording.ended.wait(_WAIT_S)
+        assert recording.ended.is_set()
+        assert [entry for entry in server.log if entry == "token refresh"] == []
         assert os.listdir(lock_dir) == []
 
 

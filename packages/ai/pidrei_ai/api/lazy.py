@@ -16,7 +16,7 @@ per event. A layer that returns a different stream (a provider that ignores
 
 import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent, Model, Usage
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -24,14 +24,16 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
 
-def _create_setup_error_message(model: Model, error: Any, timestamp: int) -> AssistantMessage:
+def _create_setup_error_message(
+    model: Model, error: Any, timestamp: int, stop_reason: Literal["error", "aborted"]
+) -> AssistantMessage:
     return AssistantMessage(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
         usage=Usage(),
-        stop_reason="error",
+        stop_reason=stop_reason,
         error_message=str(error),
         timestamp=timestamp,
     )
@@ -66,7 +68,7 @@ def lazy_stream(
     started_at = clock.now_ms()
     outer = into if into is not None else AssistantMessageEventStream()
     if outer.partial is None:
-        outer.partial = _create_setup_error_message(model, "Request was aborted", started_at)
+        outer.partial = _create_setup_error_message(model, "Request was aborted", started_at, "error")
 
     async def _run() -> None:
         try:
@@ -75,8 +77,11 @@ def lazy_stream(
                 return
             await _forward_stream(outer, inner)
         except Exception as error:
+            # A setup that fails on a request already cancelled (e.g. auth resolution after an
+            # abort during a tool call) reports the abort, not the failure it caused.
+            reason = "aborted" if cancel is not None and cancel.cancelled else "error"
             # The push rebinds the event's payload to the timed message; end with that one.
-            event = ErrorEvent(reason="error", error=_create_setup_error_message(model, error, started_at))
+            event = ErrorEvent(reason=reason, error=_create_setup_error_message(model, error, started_at, reason))
             outer.push(event)
             outer.end(event.error)
 

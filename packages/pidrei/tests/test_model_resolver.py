@@ -558,8 +558,8 @@ class TestDefaultModelSelection:
     def test_zai_minimax_cerebras_and_ant_ling_defaults_track_current_models(self):
         assert DEFAULT_MODEL_PER_PROVIDER["zai"] == "glm-5.3"
         assert DEFAULT_MODEL_PER_PROVIDER["zai-coding-cn"] == "glm-5.3"
-        assert DEFAULT_MODEL_PER_PROVIDER["minimax"] == "MiniMax-M2.7"
-        assert DEFAULT_MODEL_PER_PROVIDER["minimax-cn"] == "MiniMax-M2.7"
+        assert DEFAULT_MODEL_PER_PROVIDER["minimax"] == "MiniMax-M3"
+        assert DEFAULT_MODEL_PER_PROVIDER["minimax-cn"] == "MiniMax-M3"
         assert DEFAULT_MODEL_PER_PROVIDER["cerebras"] == "gpt-oss-120b"
         assert DEFAULT_MODEL_PER_PROVIDER["ant-ling"] == "Ring-2.6-1T"
 
@@ -575,13 +575,17 @@ class TestDefaultModelSelection:
             )
 
     def test_ai_gateway_default_tracks_current_model(self):
-        assert DEFAULT_MODEL_PER_PROVIDER["vercel-ai-gateway"] == "zai/glm-5.1"
+        assert DEFAULT_MODEL_PER_PROVIDER["vercel-ai-gateway"] == "zai/glm-5.3"
+
+    def test_anthropic_default_tracks_current_model(self):
+        assert DEFAULT_MODEL_PER_PROVIDER["anthropic"] == "claude-opus-5-5"
 
     def test_xai_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["xai"] == "grok-4.7"
 
     def test_qwen_token_plan_individual_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual"] == "qwen3.8-max"
+        assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual-cn"] == "qwen3.8-max"
 
     @pytest.mark.tonio
     async def test_find_initial_model_selects_ai_gateway_default_when_available(self):

@@ -114,6 +114,11 @@ class TestProviderRetryClassification:
     def test_matches_gateway_upstream_failure_wording(self, text):
         assert is_retryable_assistant_error(error_message(text)) is True
 
+    def test_matches_gateway_wording_for_a_stream_cut_short_mid_reply(self):
+        # Regression for #11879.
+        text = "Claude Code's stream from Anthropic was cut short after the reply had begun"
+        assert is_retryable_assistant_error(error_message(text)) is True
+
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):
         assert is_retryable_assistant_error(error_message(OPENAI_RESPONSES_EARLY_EOF_MESSAGE)) is True
 

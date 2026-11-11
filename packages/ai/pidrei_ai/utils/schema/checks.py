@@ -36,6 +36,11 @@ def is_number(v: Any) -> bool:
     return isinstance(v, int | float) and not isinstance(v, bool)
 
 
+def is_finite_number(v: Any) -> bool:
+    """`Number.isFinite(v)`: a number that is not NaN or ±Infinity. Every `int` is (and too large for `math.isfinite`)."""
+    return is_number(v) and (isinstance(v, int) or math.isfinite(v))
+
+
 def is_integer(v: Any) -> bool:
     """`Number.isInteger(v)`: a finite whole number (`1.0` included)."""
     if isinstance(v, bool):
@@ -45,16 +50,26 @@ def is_integer(v: Any) -> bool:
     return isinstance(v, float) and v.is_integer()
 
 
-#: The check of a `type` name. pi also has `bytes` (a Uint8Array), which no
-#: JSON value is; an unknown name, as there, checks nothing true.
+def is_big_int(v: Any) -> bool:
+    """`typeof v === "bigint"` (TypeBox's `Type.BigInt`): a Python `int` is the bigint, never a `bool`. JavaScript
+    tells the number `5` from `5n`; Python has one `int`, so an `int` is also a number and an integer here."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+#: The check of a `type` name. `bigint` (TypeBox's `Type.BigInt`) is an `int`
+#: (`is_big_int`). pi also has `bytes` (a Uint8Array) and `undefined`
+#: (TypeBox's `Type.Undefined`), which no JSON value is; they and an unknown
+#: name, as there, check nothing true. A `number` is finite, as in TypeBox:
+#: JSON has no NaN or Infinity, so only a value built in code can be one.
 TYPE_CHECKS: dict[str, Check] = {
     "string": lambda v: isinstance(v, str),
-    "number": is_number,
+    "number": is_finite_number,
     "integer": is_integer,
     "boolean": lambda v: isinstance(v, bool),
     "null": lambda v: v is None,
     "array": lambda v: isinstance(v, list),
     "object": is_object,
+    "bigint": is_big_int,
 }
 
 
@@ -116,7 +131,10 @@ def unique_check(v: list) -> bool:
 
 def is_multiple(v: float, d: float) -> bool:
     """Whether `v` is a multiple of `d`, exactly for decimals: 0.0075 / 0.0001
-    is 74.99999999999999 in floating point."""
+    is 74.99999999999999 in floating point. Two `int`s (pi's bigints) use
+    exact integer arithmetic, however large; nothing is a multiple of 0."""
+    if is_big_int(v) and is_big_int(d):
+        return d != 0 and v % d == 0
     try:
         q = v / d
     except ZeroDivisionError:

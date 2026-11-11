@@ -233,6 +233,34 @@ class _Names:
         self._taken = set(checkpoint)
 
 
+# A `%` that does not start a two-digit escape: `decodeURIComponent` throws on it, `unquote` leaves it.
+_MALFORMED_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def resolve_schema_ref(ref: str, root: Any) -> Any:
+    """The subschema a local `$ref` (`#`, `#/$defs/Item`) names in `root`, or None for remote references and
+    references that name nothing. Pointer segments are URI-decoded and JSON Pointer unescaped (`~1` is `/`, `~0` is
+    `~`)."""
+    if ref != "#" and not ref.startswith("#/"):
+        return None
+    current: Any = root
+    for segment in (part for part in ref[2:].split("/") if part):
+        # Schemas come from tools and MCP servers: a malformed escape names nothing instead of failing the caller.
+        # `unquote` never raises where `decodeURIComponent` does: a stray `%` is left in place (checked here), and an
+        # escape that is not UTF-8 raises only with `errors="strict"`.
+        if _MALFORMED_ESCAPE.search(segment):
+            return None
+        try:
+            decoded = urllib.parse.unquote(segment, errors="strict")
+        except UnicodeDecodeError:
+            return None
+        key = decoded.replace("~1", "/").replace("~0", "~")
+        if not _is_object(current) or key not in current:
+            return None
+        current = current[key]
+    return current if isinstance(current, bool) or _is_object(current) else None
+
+
 class _SchemaRenderer:
     """Renders one schema, collecting the `TypedDict`s it generates (nested ones first)."""
 
@@ -245,17 +273,6 @@ class _SchemaRenderer:
         self._expansions = 0
         self.definitions: list[str] = []
 
-    def _resolve_ref(self, ref: str) -> Any:
-        if ref != "#" and not ref.startswith("#/"):
-            return None
-        current: Any = self._root
-        for segment in (part for part in ref[2:].split("/") if part):
-            key = urllib.parse.unquote(segment).replace("~1", "/").replace("~0", "~")
-            if not _is_object(current) or key not in current:
-                return None
-            current = current[key]
-        return current if isinstance(current, bool) or _is_object(current) else None
-
     def render(self, schema: Any, hint: str) -> str:
         if schema is True:
             return "Any"
@@ -267,7 +284,7 @@ class _SchemaRenderer:
         if isinstance(ref, str):
             if ref in self._resolving or self._expansions >= _MAX_REF_EXPANSIONS:
                 return "Any"
-            target = self._resolve_ref(ref)
+            target = resolve_schema_ref(ref, self._root)
             if target is None:
                 return "Any"
             self._expansions += 1

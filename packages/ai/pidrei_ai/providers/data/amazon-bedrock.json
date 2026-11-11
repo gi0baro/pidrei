@@ -196,6 +196,46 @@
       },
       "type": "chat"
     },
+    "chat:anthropic.claude-fable-5-2": {
+      "id": "anthropic.claude-fable-5-2",
+      "name": "Claude Fable 5.2",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8,
+        "output": 40,
+        "cacheRead": 0.2,
+        "cacheWrite": 10
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:anthropic.claude-haiku-4-5-20251001-v1:0": {
       "id": "anthropic.claude-haiku-4-5-20251001-v1:0",
       "name": "Claude Haiku 4.5",
@@ -2069,6 +2109,46 @@
       },
       "type": "chat"
     },
+    "chat:global.anthropic.claude-fable-5-2": {
+      "id": "global.anthropic.claude-fable-5-2",
+      "name": "Claude Fable 5.2 (Global)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8,
+        "output": 40,
+        "cacheRead": 0.2,
+        "cacheWrite": 10
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:global.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
       "name": "Claude Haiku 4.5 (Global)",
@@ -2583,6 +2663,41 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:global.moonshotai.kimi-k3.1": {
+      "id": "global.moonshotai.kimi-k3.1",
+      "name": "Kimi K3.1 Pro Highspeed (Global)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 4,
+        "output": 20,
+        "cacheRead": 0.2,
+        "cacheWrite": 5
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStrictMode": true
       },
@@ -5419,6 +5534,46 @@
       },
       "type": "chat"
     },
+    "chat:us.anthropic.claude-fable-5-2": {
+      "id": "us.anthropic.claude-fable-5-2",
+      "name": "Claude Fable 5.2 (US)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8.8,
+        "output": 44,
+        "cacheRead": 0.22,
+        "cacheWrite": 11
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:us.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       "name": "Claude Haiku 4.5 (US)",
@@ -6121,6 +6276,41 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:us.moonshotai.kimi-k3.1": {
+      "id": "us.moonshotai.kimi-k3.1",
+      "name": "Kimi K3.1 Pro Highspeed (US)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 4.4,
+        "output": 22,
+        "cacheRead": 0.22,
+        "cacheWrite": 5.5
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStrictMode": true
       },

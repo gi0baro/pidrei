@@ -11,6 +11,7 @@ from catalog.sources.models_dev import ModelsDevModel
 # endpoints and API keys (sk-sp- prefix). models.dev lists them as
 # "alibaba-token-plan[-cn]".
 INTERNATIONAL_BASE_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+CN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 
 _COMPAT: dict[str, Any] = {
     "thinkingFormat": "qwen",

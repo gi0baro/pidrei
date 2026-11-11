@@ -162,13 +162,21 @@ class DynamicTestProvider:
     """pi's `testProvider({id, refreshModels})` double: a raw provider object
     with a scripted `refresh_models`."""
 
-    def __init__(self, id: str, refresh_models, auth: ProviderAuth | None = None, models: list | None = None):
+    def __init__(
+        self,
+        id: str,
+        refresh_models,
+        auth: ProviderAuth | None = None,
+        models: list | None = None,
+        refresh_models_auth: str | None = None,
+    ):
         self.id = id
         self.name = id
         self.base_url = None
         self.headers = None
         self.auth = auth if auth is not None else ProviderAuth(api_key=static_auth())
         self.filter_models = None
+        self.refresh_models_auth = refresh_models_auth
         self._refresh_models = refresh_models
         self._models = models if models is not None else []
 
@@ -736,6 +744,63 @@ async def test_refreshes_expired_oauth_before_refreshing_models():
     assert credential.type == "oauth" and credential.access == "fresh" and credential.refresh == "rotated"
     stored = await credentials.read("oauth-dynamic")
     assert stored is not None and stored.access == "fresh" and stored.refresh == "rotated"
+
+
+@pytest.mark.tonio
+async def test_refreshes_catalogs_that_need_only_configured_auth_without_refreshing_oauth():
+    credentials = InMemoryCredentialStore()
+
+    async def seed(_current):
+        return OAuthCredential(access="expired", refresh="revoked", expires=0)
+
+    await credentials.modify("catalog-oauth", seed)
+    oauth_refreshes: list = []
+
+    async def oauth_refresh(_credential, _cancel):
+        oauth_refreshes.append(_credential)
+        raise Exception("invalid_grant")
+
+    async def login(_interaction, _options=None):
+        raise RuntimeError("not used")
+
+    async def to_auth(credential):
+        return ModelAuth(api_key=credential.access)
+
+    network_credentials: list = []
+    unconfigured_refreshes = {"count": 0}
+
+    async def refresh_oauth_catalog(context) -> None:
+        if context.allow_network:
+            network_credentials.append(context.credential)
+
+    async def refresh_unconfigured_catalog(context) -> None:
+        if context.allow_network:
+            unconfigured_refreshes["count"] += 1
+
+    models = create_models(credentials=credentials)
+    models.set_provider(
+        DynamicTestProvider(
+            "catalog-oauth",
+            refresh_oauth_catalog,
+            auth=ProviderAuth(oauth=OAuthAuth(name="Test OAuth", login=login, refresh=oauth_refresh, to_auth=to_auth)),
+            refresh_models_auth="configured",
+        )
+    )
+    models.set_provider(
+        DynamicTestProvider(
+            "catalog-unconfigured",
+            refresh_unconfigured_catalog,
+            auth=unconfigured_auth(),
+            refresh_models_auth="configured",
+        )
+    )
+
+    assert (await models.refresh()).errors == {}
+    assert oauth_refreshes == []
+    assert network_credentials == [None]
+    assert unconfigured_refreshes["count"] == 0
+    stored = await credentials.read("catalog-oauth")
+    assert stored is not None and stored.access == "expired" and stored.refresh == "revoked"
 
 
 def _rotating_oauth_provider(controller: CancelToken) -> DynamicTestProvider:

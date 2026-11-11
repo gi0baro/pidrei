@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
+from pidrei_codemode import resolve_schema_ref
 
 from ...core.extensions.types import ToolDefinition, ToolExposure, ToolNamespace, ToolReach
 
@@ -176,22 +177,32 @@ def tokenize(text: str) -> list[str]:
     ]
 
 
-def _schema_text(schema: Any, parts: list[str]) -> None:
-    """Schema descriptions and property names, recursively."""
+def _schema_text(schema: Any, root: Any, parts: list[str], seen: set[int]) -> None:
+    """Schema descriptions and property names, recursively, following local
+    `$ref`s into `root`. `seen` holds the subschemas already reached through a
+    reference, so recursive and shared definitions are read once, and
+    definitions no property references are not read. pi's `Set` of schema
+    objects is keyed by `id()` here (dicts are unhashable); every subschema
+    stays alive in `root` while the walk runs."""
     if not isinstance(schema, dict):
         return
+    if isinstance(schema.get("$ref"), str):
+        target = resolve_schema_ref(schema["$ref"], root)
+        if isinstance(target, dict) and id(target) not in seen:
+            seen.add(id(target))
+            _schema_text(target, root, parts, seen)
     if isinstance(schema.get("description"), str):
         parts.append(schema["description"])
     if isinstance(schema.get("properties"), dict):
         for name, property_schema in schema["properties"].items():
             parts.append(name)
-            _schema_text(property_schema, parts)
-    _schema_text(schema.get("items"), parts)
+            _schema_text(property_schema, root, parts, seen)
+    _schema_text(schema.get("items"), root, parts, seen)
     for key in ("anyOf", "oneOf", "allOf"):
         variants = schema.get(key)
         if isinstance(variants, list):
             for variant in variants:
-                _schema_text(variant, parts)
+                _schema_text(variant, root, parts, seen)
 
 
 def create_tool_search_document(tool: Any, namespace: ToolNamespace | None = None) -> ToolSearchDocument:
@@ -200,7 +211,7 @@ def create_tool_search_document(tool: Any, namespace: ToolNamespace | None = Non
     names, and separately the namespace name, description, and instructions.
     The ranker reads the name from `name`."""
     parts = [tool.description]
-    _schema_text(tool.parameters, parts)
+    _schema_text(tool.parameters, tool.parameters, parts, {id(tool.parameters)})
     namespace_text = (
         " ".join([namespace.name, namespace.description or "", namespace.instructions or ""])
         if namespace is not None

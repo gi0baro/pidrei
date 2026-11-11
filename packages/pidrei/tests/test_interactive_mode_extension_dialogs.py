@@ -14,7 +14,7 @@ from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.program_status_reporter import BlockedStatus
 from pidrei.modes.interactive.theme import init_theme
-from pidrei_tui import Container, Text, set_keybindings
+from pidrei_tui import Container, OverlayHandle, Text, set_keybindings
 from pidrei_utils.cancel import CancelToken
 
 
@@ -46,16 +46,38 @@ def _create_context() -> _DialogContext:
         editor=_Editor(),
         focused=None,
         blocked_calls=blocked_calls,
+        overlays=[],
+        _next_blocking_overlay_id=0,
+        _extension_overlays={},
         _program_status=SimpleNamespace(set_blocked=lambda key, status: blocked_calls.append((key, status))),
         _dispose_active_selector=noop,
         _toggle_tool_output_expansion=noop,
         _extension_tui=None,
         _keybindings=None,
     )
+
+    def show_overlay(component, _options=None) -> OverlayHandle:
+        context.overlays.append(component)
+
+        def hide() -> None:
+            context.overlays = [overlay for overlay in context.overlays if overlay is not component]
+
+        return OverlayHandle(
+            hide=hide,
+            set_hidden=noop,
+            is_hidden=lambda: False,
+            focus=noop,
+            unfocus=noop,
+            is_focused=lambda: False,
+            get_bounds=lambda: None,
+        )
+
     context.ui = SimpleNamespace(
         state_lock=threading.RLock(),
         set_focus=lambda component: setattr(context, "focused", component),
         request_render=noop,
+        show_overlay=show_overlay,
+        apply=lambda fn: fn(),
     )
     return context
 
@@ -196,6 +218,64 @@ async def test_reports_blocked_status_for_an_inline_custom_component_that_opts_i
     assert context.blocked_calls[-1] == ("extension-dialog", None)
 
 
+# Regression for #11816: overlays ignored the blocked option.
+@pytest.mark.tonio
+async def test_reports_blocked_status_for_each_opted_in_overlay_until_it_is_done_also_while_hidden(dialog_setup):
+    context = _create_context()
+    dones: list = []
+    handles: list = []
+
+    def open_overlay(text: str, blocked: dict | None = None):
+        def factory(_tui, _theme, _keybindings, done):
+            dones.append(done)
+            return Text(text)
+
+        return context._show_extension_custom(
+            factory, {"overlay": True, "onHandle": handles.append, "blocked": blocked}
+        )
+
+    first = open_overlay("first", {"kind": "question", "message": "First?"})
+    assert len(context.overlays) == 1
+    assert context.blocked_calls[-1] == ("extension-overlay:0", BlockedStatus("question", "First?"))
+
+    second = open_overlay("second", {"kind": "question", "message": "Second?"})
+    assert len(context.overlays) == 2
+    assert context.blocked_calls[-1] == ("extension-overlay:1", BlockedStatus("question", "Second?"))
+
+    loader = open_overlay("loading")
+    assert len(context.overlays) == 3
+    dones[2]("loaded")
+    assert await loader == "loaded"
+
+    handles[0].set_hidden(True)
+    dones[1]("two")
+    assert await second == "two"
+    assert context.blocked_calls[-1] == ("extension-overlay:1", None)
+
+    dones[0]("one")
+    assert await first == "one"
+    assert context.blocked_calls[-1] == ("extension-overlay:0", None)
+    assert len(context.blocked_calls) == 4
+
+
+# Regression for #11816: /reload and session switches drop overlays without calling done().
+@pytest.mark.tonio
+async def test_clears_overlay_blocked_status_when_the_extension_ui_is_reset(dialog_setup):
+    context = _create_context()
+    _stub_the_rest_of_reset(context)
+    context._show_extension_custom(
+        lambda _tui, _theme, _keybindings, _done: Text("question"),
+        {"overlay": True, "blocked": {"kind": "question", "message": "Question?"}},
+    )
+    assert len(context.overlays) == 1
+    assert context.blocked_calls[-1] == ("extension-overlay:0", BlockedStatus("question", "Question?"))
+
+    context._reset_extension_ui()
+    assert context.blocked_calls[-1] == ("extension-overlay:0", None)
+    assert len(context._extension_overlays) == 0
+    assert len(context.overlays) == 0
+
+
 # Regression for #11431: replacing the editor while a dialog was open hid the dialog and left it unanswerable.
 @pytest.mark.tonio
 async def test_keeps_an_open_dialog_visible_when_the_editor_component_is_replaced(dialog_setup):
@@ -232,11 +312,9 @@ async def test_keeps_an_open_dialog_visible_when_the_editor_component_is_replace
     assert context._editor_container.children == [custom_editor]
 
 
-@pytest.mark.tonio
-async def test_reset_disposes_every_dialog_when_one_closes_itself_from_dispose(dialog_setup):
-    context = _create_context()
+def _stub_the_rest_of_reset(context: _DialogContext) -> None:
+    """The rest of `_reset_extension_ui` is not under test here."""
     noop = lambda *_args: None
-    context.ui.hide_overlay = noop
     for name in (
         "_clear_extension_terminal_input_listeners",
         "_set_custom_editor_component",
@@ -254,6 +332,12 @@ async def test_reset_disposes_every_dialog_when_one_closes_itself_from_dispose(d
     context._default_editor = context.editor
     context._footer = SimpleNamespace(invalidate=noop)
     context._active_status_indicator = None
+
+
+@pytest.mark.tonio
+async def test_reset_disposes_every_dialog_when_one_closes_itself_from_dispose(dialog_setup):
+    context = _create_context()
+    _stub_the_rest_of_reset(context)
     disposed: set = set()
 
     def open_custom(label: str):

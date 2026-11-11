@@ -35,6 +35,7 @@ INDIVIDUAL_TEXT_MODELS = [
     "deepseek-v4-pro",
     "deepseek-v4-pro-0813",
     "glm-5.2",
+    "glm-5.3",
     "qwen3.6-flash",
     "qwen3.7-max",
     "qwen3.7-plus",
@@ -46,7 +47,9 @@ IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-
 
 PROVIDERS = ["qwen-token-plan", "qwen-token-plan-cn"]
 
-ALL_PROVIDERS = [*PROVIDERS, "qwen-token-plan-individual"]
+ALL_PROVIDERS = [*PROVIDERS, "qwen-token-plan-individual", "qwen-token-plan-individual-cn"]
+
+INDIVIDUAL_PROVIDERS = ["qwen-token-plan-individual", "qwen-token-plan-individual-cn"]
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -74,6 +77,20 @@ def test_reuses_the_international_token_plan_environment_variable():
 
     assert find_env_keys("qwen-token-plan-individual", {"QWEN_TOKEN_PLAN_API_KEY": "test"}) == [
         "QWEN_TOKEN_PLAN_API_KEY"
+    ]
+
+
+def test_exposes_exactly_the_documented_individual_text_models_on_the_china_endpoint():
+    model_ids = sorted(model.id for model in get_builtin_models("qwen-token-plan-individual-cn"))
+
+    assert model_ids == sorted(INDIVIDUAL_TEXT_MODELS)
+
+
+def test_uses_the_china_token_plan_environment_variable():
+    from pidrei_ai.env_api_keys import find_env_keys
+
+    assert find_env_keys("qwen-token-plan-individual-cn", {"QWEN_TOKEN_PLAN_CN_API_KEY": "test"}) == [
+        "QWEN_TOKEN_PLAN_CN_API_KEY"
     ]
 
 
@@ -110,17 +127,18 @@ INDIVIDUAL_REASONING_EFFORT_MODELS = [
     "deepseek-v4-pro",
     "deepseek-v4-pro-0813",
     "glm-5.2",
+    "glm-5.3",
 ]
 
 # pi builds these as explicit {provider, modelId} case lists: the Individual
-# catalog carries a different model set, so it cannot be a second axis.
+# catalogs carry a different model set, so they cannot be a second axis.
 THINKING_MODEL_CASES = [(provider, model_id) for provider in PROVIDERS for model_id in THINKING_MODELS] + [
-    ("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_TEXT_MODELS
+    (provider, model_id) for provider in INDIVIDUAL_PROVIDERS for model_id in INDIVIDUAL_TEXT_MODELS
 ]
 
 REASONING_EFFORT_MODEL_CASES = [
     (provider, model_id) for provider in PROVIDERS for model_id in REASONING_EFFORT_MODELS
-] + [("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_REASONING_EFFORT_MODELS]
+] + [(provider, model_id) for provider in INDIVIDUAL_PROVIDERS for model_id in INDIVIDUAL_REASONING_EFFORT_MODELS]
 
 QWEN38_MODELS = ["qwen3.8-flash", "qwen3.8-max"]
 QWEN38_MODEL_CASES = [(provider, model_id) for provider in ALL_PROVIDERS for model_id in QWEN38_MODELS]
@@ -164,7 +182,27 @@ def test_exposes_qwen_reasoning_effort_levels(provider, model_id):
         model.thinking_level_map,
         {
             "minimal": None,
-            "low": None,
+            "low": "low" if model_id == "glm-5.3" else None,
+            "medium": None,
+            "high": "high",
+            "xhigh": None,
+            "max": "max",
+        },
+    )
+
+
+def test_exposes_glm_5_3_reasoning_effort_levels_for_qwen_token_plan_individual():
+    model = next(
+        (candidate for candidate in get_builtin_models("qwen-token-plan-individual") if candidate.id == "glm-5.3"), None
+    )
+    assert model is not None, "Missing model: qwen-token-plan-individual/glm-5.3"
+
+    assert model.base_url == "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+    _assert_matches(
+        model.thinking_level_map,
+        {
+            "minimal": None,
+            "low": "low",
             "medium": None,
             "high": "high",
             "xhigh": None,

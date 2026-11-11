@@ -223,6 +223,7 @@ class _ResolvedCompat:
     supports_developer_role: bool
     supports_mid_convo_system_messages: bool
     session_affinity_format: str
+    prompt_cache_key_mode: str
     supports_long_cache_retention: bool
     supports_strict_mode: bool
     supports_openai_grammar_tools: bool
@@ -245,6 +246,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
         session_affinity_format=pick(
             compat.session_affinity_format if compat else None, _detect_session_affinity_format(model)
         ),
+        prompt_cache_key_mode=pick(compat.prompt_cache_key_mode if compat else None, "auto"),
         supports_long_cache_retention=pick(compat.supports_long_cache_retention if compat else None, True),
         supports_strict_mode=pick(compat.supports_strict_mode if compat else None, False),
         supports_openai_grammar_tools=pick(compat.supports_openai_grammar_tools if compat else None, False),
@@ -323,7 +325,7 @@ def _create_client(
             headers["x-session-id"] = session_id
         else:
             if compat.session_affinity_format == "openai":
-                headers["session_id"] = session_id
+                headers["session-id"] = session_id
             headers["x-client-request-id"] = session_id
 
     if options_headers:
@@ -367,8 +369,9 @@ def build_params(
     )
 
     cache_retention = _resolve_cache_retention(options.cache_retention, options.env)
+    send_prompt_cache_key = cache_retention != "none" and compat.prompt_cache_key_mode != "disabled"
     params: dict[str, Any] = {"model": model.id, "input": messages, "stream": True, "store": False}
-    if cache_retention != "none":
+    if send_prompt_cache_key:
         cache_key = clamp_openai_prompt_cache_key(options.session_id)
         if cache_key is not None:
             params["prompt_cache_key"] = cache_key

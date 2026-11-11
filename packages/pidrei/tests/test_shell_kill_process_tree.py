@@ -53,16 +53,20 @@ def test_still_kills_the_group_when_stopping_fails(signals):
     assert recorder.calls == [(-1234, signal.SIGSTOP), (-1234, signal.SIGKILL)]
 
 
-def test_falls_back_to_killing_the_shell_when_the_group_kill_fails(signals):
+def test_never_signals_the_bare_pid_when_the_group_kill_fails(signals):
+    # pi: "falls back to killing the shell when the group kill fails". Recipe group-only-kill:
+    # the shell leads its group, so a failed group kill means the shell is gone and its pid may
+    # be another process's.
     recorder = signals(fail=lambda pid, sig: pid < 0 and sig == signal.SIGKILL)
     shell.kill_process_tree(1234)
-    assert recorder.calls == [(-1234, signal.SIGSTOP), (-1234, signal.SIGKILL), (1234, signal.SIGKILL)]
+    assert recorder.calls == [(-1234, signal.SIGSTOP), (-1234, signal.SIGKILL)]
 
 
-def test_tolerates_failure_of_both_group_signals_and_the_fallback(signals):
+def test_tolerates_failure_of_both_group_signals(signals):
+    # pi: "tolerates failure of both group signals and the fallback"; there is no fallback here.
     recorder = signals(fail=lambda pid, sig: True)
     shell.kill_process_tree(1234)
-    assert recorder.calls == [(-1234, signal.SIGSTOP), (-1234, signal.SIGKILL), (1234, signal.SIGKILL)]
+    assert recorder.calls == [(-1234, signal.SIGSTOP), (-1234, signal.SIGKILL)]
 
 
 def test_keeps_linux_group_termination_unchanged(signals):

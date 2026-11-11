@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from ..latex import render_latex
 from ..terminal_image import get_capabilities, hyperlink, is_image_line
 from ..utils import apply_background_to_line, visible_width, wrap_text_with_ansi
-from ._marked import lex, trim_partial_closing_fences
+from ._marked import lex, remove_html_comment_blocks, strip_html_comments, trim_partial_closing_fences
 
 
 __all__ = ["Markdown"]
@@ -137,6 +137,7 @@ class Markdown:
         # Parse markdown to marked-shaped tokens
         tokens = lex(normalized_text)
         trim_partial_closing_fences(tokens)
+        remove_html_comment_blocks(tokens)
 
         # Convert tokens to styled, wrapped, padded terminal lines — block by
         # block, so an unchanged block costs one dict lookup.
@@ -426,10 +427,10 @@ class Markdown:
                 lines.append("")  # Add spacing after horizontal rules (unless space token follows)
 
         elif token_type == "html":
-            # Render HTML as plain text (escaped for terminal)
+            # Render HTML as plain text (escaped for terminal), without its comments
             raw = token.get("raw")
             if isinstance(raw, str):
-                lines.append(self._apply_default_style(raw.strip()))
+                lines.append(self._apply_default_style(strip_html_comments(raw).strip()))
 
         elif token_type == "space":
             # Space tokens represent blank lines in markdown
@@ -454,7 +455,18 @@ class Markdown:
         def apply_text_with_newlines(text: str) -> str:
             return "\n".join(apply_text(segment) for segment in text.split("\n"))
 
-        for token in tokens:
+        # After a skipped HTML comment, drop the next text's leading space if the text before ended with one,
+        # so "a <!-- c --> b" renders as "a b".
+        drop_leading_space = False
+        for i, token in enumerate(tokens):
+            if (
+                drop_leading_space
+                and token["type"] == "text"
+                and not token.get("tokens")
+                and re.match(r"[ \t]", token.get("text") or "") is not None
+            ):
+                token = {**token, "text": re.sub(r"^[ \t]+", "", token["text"])}
+            drop_leading_space = False
             token_type = token["type"]
 
             if token_type == "latex":
@@ -519,9 +531,16 @@ class Markdown:
                 result += self._theme["strikethrough"](del_content) + style_prefix
 
             elif token_type == "html":
-                # Render inline HTML as plain text
-                raw = token.get("raw")
-                if isinstance(raw, str):
+                # Render inline HTML as plain text; comments are hidden
+                raw = token["raw"]
+                if raw.startswith("<!--"):
+                    # pi reads the previous token's raw. Inline tokens here carry raw only for escapes, LaTeX
+                    # and HTML, and only a text token's raw (its text here) can end in a space or tab.
+                    previous_text = ""
+                    if i > 0 and tokens[i - 1]["type"] == "text":
+                        previous_text = tokens[i - 1].get("text") or ""
+                    drop_leading_space = i == 0 or re.search(r"[ \t]\Z", previous_text) is not None
+                else:
                     result += apply_text_with_newlines(raw)
 
             else:

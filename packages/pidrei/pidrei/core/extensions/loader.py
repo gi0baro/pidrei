@@ -47,7 +47,7 @@ from pidrei.core.pidrei_manifest import read_pidrei_manifest_blocking
 from pidrei.core.source_info import create_synthetic_source_info, get_synthetic_path_source, is_synthetic_path
 from pidrei.core.timings import time as record_time
 from pidrei.core.virtual_models import VirtualModelDefinition
-from pidrei.utils.paths import paths_equal, resolve_path
+from pidrei.utils.paths import canonicalize_path_blocking, paths_equal, resolve_path
 
 from .types import (
     RUNTIME_NOT_INITIALIZED,
@@ -58,6 +58,8 @@ from .types import (
     ExtensionShortcut,
     ExtensionVirtualModel,
     LoadExtensionsResult,
+    MarkdownMessageType,
+    MarkdownTransformerRegistration,
     RegisteredCommand,
     RegisteredTool,
     ToolDefinition,
@@ -75,7 +77,7 @@ _extension_cache: dict[str, Any] = {}
 _extension_cache_cwd: str | None = None
 _extension_cache_generation = 0
 
-# Guards module execution in `_load_extension_module`. Held only on a blocking
+# Guards module execution in `_load_extension_module_blocking`. Held only on a blocking
 # pool thread, never across an await.
 _import_lock = threading.RLock()
 
@@ -150,6 +152,9 @@ def _flag_value_type(value: Any) -> str:
     if isinstance(value, int | float):
         return "number"
     return type(value).__name__
+
+
+DEFAULT_MARKDOWN_MESSAGE_TYPES: tuple[MarkdownMessageType, ...] = ("user", "assistant", "assistant-thinking")
 
 
 class ExtensionAPI:
@@ -340,9 +345,17 @@ class ExtensionAPI:
         self._assert_active()
         self._extension.message_renderers[custom_type] = renderer
 
-    def register_markdown_transformer(self, transformer: Any) -> None:
+    def register_markdown_transformer(
+        self, transformer: Callable[[str, dict], str], options: dict | None = None
+    ) -> None:
+        """Register a transformer for Markdown before PiDrei renders it in interactive mode. By default it runs on
+        user, assistant and thinking Markdown; `options["messageTypes"]` selects the surfaces instead."""
         self._assert_active()
-        self._extension.markdown_transformer = transformer
+        message_types = None if options is None else options.get("messageTypes")
+        self._extension.markdown_transformer = MarkdownTransformerRegistration(
+            transformer=transformer,
+            message_types=frozenset(message_types if message_types is not None else DEFAULT_MARKDOWN_MESSAGE_TYPES),
+        )
 
     def register_entry_renderer(self, custom_type: str, renderer: Any) -> None:
         self._assert_active()
@@ -591,7 +604,7 @@ def _import_module(resolved_path: str) -> Any:
     return module
 
 
-def _load_extension_module(resolved_path: str, cache_token: ExtensionCacheToken | None = None) -> Any:
+def _load_extension_module_blocking(resolved_path: str, cache_token: ExtensionCacheToken | None = None) -> Any:
     """Import an extension module and return its factory.
 
     Blocking: reads the source and lets CPython write `__pycache__`, so callers
@@ -611,7 +624,10 @@ def _load_extension_module(resolved_path: str, cache_token: ExtensionCacheToken 
             if cached is not None:
                 return cached
 
-        module = _import_module(resolved_path)
+        # The real path, so an entry reached through a symlink resolves its
+        # relative imports next to the real file (#8092). The cache key stays
+        # the path as given, as in pi.
+        module = _import_module(canonicalize_path_blocking(resolved_path))
         factory = getattr(module, FACTORY_ATTRIBUTE, None)
         if not callable(factory):
             return None
@@ -663,7 +679,7 @@ async def _load_extension(
     resolved_path = resolve_path(extension_path, cwd, normalize_unicode_spaces=True)
 
     try:
-        factory = await tonio.spawn_blocking(_load_extension_module, resolved_path, cache_token)
+        factory = await tonio.spawn_blocking(_load_extension_module_blocking, resolved_path, cache_token)
         record_time(f"{extension_path} module import", "extensions")
         if factory is None:
             return None, (f"Extension does not define a valid {FACTORY_ATTRIBUTE}() factory function: {extension_path}")

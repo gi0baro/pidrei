@@ -192,6 +192,19 @@ async def test_clamps_prompt_cache_key_to_openais_64_character_limit():
 
 
 @pytest.mark.tonio
+async def test_omits_prompt_cache_key_without_a_session_id():
+    # pidrei-only: pi's `undefined` never reaches the body, while a None here is sent as null.
+    with _stubbed_client():
+        await stream_azure(
+            model_fixture(),
+            CONTEXT,
+            AzureOpenAIResponsesOptions(api_key="test-api-key", azure_base_url="https://my-resource.openai.azure.com"),
+        ).result()
+
+    assert "prompt_cache_key" not in last_params[0]
+
+
+@pytest.mark.tonio
 async def test_disables_server_side_response_storage():
     with _stubbed_client():
         await stream_azure(

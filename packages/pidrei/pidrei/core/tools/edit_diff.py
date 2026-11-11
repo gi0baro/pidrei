@@ -3,15 +3,15 @@ computation utilities for the edit and similar tools, and the preview helpers
 (compute_edits_diff / compute_edit_diff).
 
 Diff engine decision (PLAN open decision 3, resolved here): pi uses the JS
-`diff` package (Myers). The port adapts stdlib `difflib` instead —
+`diff` package (Myers). The port adapts stdlib `difflib` instead:
 `SequenceMatcher(autojunk=False)` over newline-terminated line tokens produces
-jsdiff-shaped parts for the display diff, and `difflib.unified_diff` produces
-the unified patch. Both emit valid diffs; hunk content can differ from jsdiff
-only where multiple minimal diffs exist.
+jsdiff-shaped parts for the display diff, and its grouped opcodes produce the
+unified patch hunks (`_unified_patch_hunks`, which numbers them from a line
+offset where pi shifts jsdiff `structuredPatch` hunks). Both emit valid diffs;
+hunk content can differ from jsdiff only where multiple minimal diffs exist.
 
 Other approximations (documented): per-line `trimEnd` in fuzzy normalization
-uses `str.rstrip()` (a slight superset of JS WhiteSpace), and the
-"\\ No newline at end of file" marker is emitted for the common tail case.
+uses `str.rstrip()` (a slight superset of JS WhiteSpace).
 """
 
 import difflib
@@ -29,22 +29,68 @@ from ...utils.text import split_bom
 from .path_utils import resolve_to_cwd
 
 
-def detect_line_ending(content: str) -> Literal["\r\n", "\n"]:
-    crlf_idx = content.find("\r\n")
-    lf_idx = content.find("\n")
-    if lf_idx == -1:
-        return "\n"
-    if crlf_idx == -1:
-        return "\n"
-    return "\r\n" if crlf_idx < lf_idx else "\n"
-
-
 def normalize_to_lf(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def restore_line_endings(text: str, ending: Literal["\r\n", "\n"]) -> str:
-    return text.replace("\n", "\r\n") if ending == "\r\n" else text
+def apply_replacements_to_original(original_content: str, replacements: list[TextReplacement]) -> str:
+    """Apply replacements matched in `normalize_to_lf(original_content)` to `original_content` itself.
+
+    Text outside the replaced ranges keeps its bytes, including its line endings. Line breaks in
+    the new text get the line ending of the line where the replaced range starts. The result,
+    normalized to LF, equals the replacements applied to the normalized content.
+    """
+    # Only CRLF changes length when normalizing: the LF of the n-th CRLF (at original offset p) is at
+    # p - n in the normalized text. Adding the number of CRLFs before a normalized offset gives the
+    # original offset, and a range that covers that LF covers the whole CRLF.
+    crlf_before = 0
+    next_crlf = original_content.find("\r\n")
+
+    def to_original(offset: int) -> int:
+        nonlocal crlf_before, next_crlf
+        while next_crlf != -1 and next_crlf - crlf_before < offset:
+            crlf_before += 1
+            next_crlf = original_content.find("\r\n", next_crlf + 2)
+        return offset + crlf_before
+
+    parts: list[str] = []
+    ends_with_cr = False
+
+    def push(part: str) -> None:
+        nonlocal ends_with_cr
+        if not part:
+            return
+        # A CR before a seam and an LF after it would merge into one CRLF line break, for example a kept
+        # lone CR followed by inserted text that starts with LF, or both sides of a deleted range. Adding
+        # an LF turns the CR into a CRLF of its own, so the written file has the line breaks the diff shows.
+        if ends_with_cr and part[0] == "\n":
+            parts.append("\n")
+        parts.append(part)
+        ends_with_cr = part[-1] == "\r"
+
+    position = 0
+    for replacement in replacements:
+        start = to_original(replacement.match_index)
+        push(original_content[position:start])
+        ending = _get_line_ending_at(original_content, start)
+        push(replacement.new_text if ending == "\n" else replacement.new_text.replace("\n", ending))
+        position = to_original(replacement.match_index + replacement.match_length)
+    push(original_content[position:])
+    return "".join(parts)
+
+
+def _get_line_ending_at(content: str, offset: int) -> Literal["\r\n", "\n", "\r"]:
+    """Line ending of the line containing `offset`: its own LF or CRLF, or that of the line before
+    for an unterminated last line. A lone CR only counts in files without any LF (classic Mac
+    line endings); elsewhere it is more likely a control character inside a line.
+    """
+    line_feed = content.find("\n", offset)
+    if line_feed == -1:
+        line_feed = content.rfind("\n", 0, offset + 1)
+    if line_feed == -1:
+        return "\r" if "\r" in content else "\n"
+    # JS reads `content[-1]` as undefined; a Python index would wrap around.
+    return "\r\n" if line_feed > 0 and content[line_feed - 1] == "\r" else "\n"
 
 
 def normalize_for_fuzzy_match(text: str) -> str:
@@ -80,6 +126,8 @@ class _LineSpan:
 
 @dataclass(slots=True)
 class TextReplacement:
+    """Replacement of `match_length` characters at `match_index` with `new_text`."""
+
     match_index: int
     match_length: int
     new_text: str
@@ -129,20 +177,21 @@ def _apply_replacements(content: str, replacements: list[TextReplacement], offse
     return result
 
 
-def apply_replacements_preserving_unchanged_lines(
+def _widen_replacements_to_lines(
     original_content: str,
     base_content: str,
     replacements: list[TextReplacement],
-) -> str:
-    """Apply replacements matched against `base_content` to `original_content`
-    while preserving unchanged line blocks from the original.
+) -> list[TextReplacement]:
+    """Turn replacements matched against `base_content` into replacements of
+    `original_content` that keep unchanged line blocks from the original.
 
     Useful when `base_content` is a normalized view of the original. Each
-    replacement is widened to the lines it actually touches, those touched
-    lines are rewritten from the normalized base, and all other lines are
-    copied back from `original_content`.
+    replacement is widened to the lines it actually touches, and those touched
+    lines are rewritten from the normalized base; all other lines keep their
+    original text. The actual replacement ranges drive preservation so
+    duplicate normalized lines cannot be aligned to the wrong occurrence.
     """
-    original_lines = _split_lines_with_endings(original_content)
+    original_lines = _get_line_spans(original_content)
     base_lines = _get_line_spans(base_content)
     if len(original_lines) != len(base_lines):
         raise Exception("Cannot preserve unchanged lines because the base content has a different line count.")
@@ -163,22 +212,23 @@ def apply_replacements_preserving_unchanged_lines(
             continue
         groups.append(_Group(start_line=start_line, end_line=end_line, replacements=[replacement]))
 
-    original_line_index = 0
-    result = ""
+    widened: list[TextReplacement] = []
     for group in groups:
-        result += "".join(original_lines[original_line_index : group.start_line])
-
         group_start_offset = base_lines[group.start_line].start
         group_end_offset = base_lines[group.end_line - 1].end
-        result += _apply_replacements(
-            base_content[group_start_offset:group_end_offset],
-            group.replacements,
-            group_start_offset,
+        original_start = original_lines[group.start_line].start
+        widened.append(
+            TextReplacement(
+                match_index=original_start,
+                match_length=original_lines[group.end_line - 1].end - original_start,
+                new_text=_apply_replacements(
+                    base_content[group_start_offset:group_end_offset],
+                    group.replacements,
+                    group_start_offset,
+                ),
+            )
         )
-        original_line_index = group.end_line
-    result += "".join(original_lines[original_line_index:])
-
-    return result
+    return widened
 
 
 @dataclass(slots=True)
@@ -206,6 +256,8 @@ class Edit:
 class AppliedEditsResult:
     base_content: str
     new_content: str
+    # Sorted replacements of `base_content` that turn it into `new_content`
+    replacements: list[TextReplacement]
 
 
 def fuzzy_find_text(content: str, old_text: str) -> FuzzyMatchResult:
@@ -344,16 +396,17 @@ def apply_edits_to_normalized_content(normalized_content: str, edits: list[Edit]
             )
 
     base_content = normalized_content
-    new_content = (
-        apply_replacements_preserving_unchanged_lines(normalized_content, replacement_base_content, matched_edits)
+    replacements: list[TextReplacement] = (
+        _widen_replacements_to_lines(normalized_content, replacement_base_content, matched_edits)
         if used_fuzzy_match
-        else _apply_replacements(replacement_base_content, matched_edits)
+        else matched_edits
     )
+    new_content = _apply_replacements(base_content, replacements)
 
     if base_content == new_content:
         raise _no_change_error(path, len(normalized_edits))
 
-    return AppliedEditsResult(base_content=base_content, new_content=new_content)
+    return AppliedEditsResult(base_content=base_content, new_content=new_content, replacements=replacements)
 
 
 # --- diff generation ----------------------------------------------------------
@@ -386,38 +439,66 @@ def diff_lines(old_content: str, new_content: str) -> list[DiffPart]:
     return parts
 
 
+def _format_range_unified(start: int, stop: int) -> str:
+    """A unified hunk range from 0-based `[start, stop)`, as `difflib.unified_diff` writes it."""
+    beginning = start + 1
+    length = stop - start
+    if length == 1:
+        return f"{beginning}"
+    if not length:
+        beginning -= 1
+    return f"{beginning},{length}"
+
+
+def _patch_lines(prefix: str, token: str) -> list[str]:
+    # Only the last line of a text can lack its line feed: jsdiff marks it, and it differs from the
+    # same text with one (a line feed added or removed at the end of the file is a change).
+    if token.endswith("\n"):
+        return [prefix + token]
+    return [f"{prefix}{token}\n", "\\ No newline at end of file\n"]
+
+
+def _unified_patch_hunks(
+    old_text: str, new_text: str, context_lines: int, old_line_offset: int = 0, new_line_offset: int = 0
+) -> list[str]:
+    """Hunk lines of the unified patch from `old_text` to `new_text`, numbered as if the texts
+    started after `old_line_offset` and `new_line_offset` lines: what pi gets by shifting jsdiff
+    `structuredPatch` hunks. The grouping is `difflib.unified_diff`'s; the matcher is the display
+    diff's (`diff_lines`), so the patch and the display diff describe the same alignment.
+    """
+    old_tokens = _split_lines_with_endings(old_text)
+    new_tokens = _split_lines_with_endings(new_text)
+    matcher = difflib.SequenceMatcher(None, old_tokens, new_tokens, autojunk=False)
+    lines: list[str] = []
+    for group in matcher.get_grouped_opcodes(context_lines):
+        first, last = group[0], group[-1]
+        old_range = _format_range_unified(first[1] + old_line_offset, last[2] + old_line_offset)
+        new_range = _format_range_unified(first[3] + new_line_offset, last[4] + new_line_offset)
+        lines.append(f"@@ -{old_range} +{new_range} @@\n")
+        for tag, old_start, old_end, new_start, new_end in group:
+            if tag == "equal":
+                for token in old_tokens[old_start:old_end]:
+                    lines.extend(_patch_lines(" ", token))
+                continue
+            if tag in ("replace", "delete"):
+                for token in old_tokens[old_start:old_end]:
+                    lines.extend(_patch_lines("-", token))
+            if tag in ("replace", "insert"):
+                for token in new_tokens[new_start:new_end]:
+                    lines.extend(_patch_lines("+", token))
+    return lines
+
+
+def _format_patch(path: str, hunk_lines: list[str]) -> str:
+    """The patch text with file headers only (pi: `formatPatch` with `FILE_HEADERS_ONLY`)."""
+    if not hunk_lines:
+        return ""
+    return f"--- {path}\n+++ {path}\n" + "".join(hunk_lines)
+
+
 def generate_unified_patch(path: str, old_content: str, new_content: str, context_lines: int = 4) -> str:
     """Generate a standard unified patch (pi: jsdiff `createTwoFilesPatch` with file headers only)."""
-    old_tokens = _split_lines_with_endings(old_content)
-    new_tokens = _split_lines_with_endings(new_content)
-    old_missing_newline = bool(old_tokens) and not old_tokens[-1].endswith("\n")
-    new_missing_newline = bool(new_tokens) and not new_tokens[-1].endswith("\n")
-    old_last = old_tokens[-1] + "\n" if old_missing_newline else (old_tokens[-1] if old_tokens else "")
-    new_last = new_tokens[-1] + "\n" if new_missing_newline else (new_tokens[-1] if new_tokens else "")
-    if old_missing_newline:
-        old_tokens[-1] += "\n"
-    if new_missing_newline:
-        new_tokens[-1] += "\n"
-
-    lines = list(difflib.unified_diff(old_tokens, new_tokens, fromfile=path, tofile=path, n=context_lines))
-
-    if old_missing_newline or new_missing_newline:
-        annotated: list[str] = []
-        for index, line in enumerate(lines):
-            annotated.append(line)
-            is_last_of_kind = all(other != line for other in lines[index + 1 :])
-            if not is_last_of_kind:
-                continue
-            if (
-                old_missing_newline
-                and line in (f"-{old_last}", f" {old_last}")
-                or new_missing_newline
-                and line in (f"+{new_last}", f" {new_last}")
-            ):
-                annotated.append("\\ No newline at end of file\n")
-        lines = annotated
-
-    return "".join(lines)
+    return _format_patch(path, _unified_patch_hunks(old_content, new_content, context_lines))
 
 
 def generate_diff_string(old_content: str, new_content: str, context_lines: int = 4) -> tuple[str, int | None]:
@@ -425,16 +506,34 @@ def generate_diff_string(old_content: str, new_content: str, context_lines: int 
 
     Returns (diff string, first changed line number in the new file).
     """
-    parts = diff_lines(old_content, new_content)
+    line_num_width = len(str(max(_count_lines(old_content), _count_lines(new_content))))
+    output, first_changed_line = _format_display_diff(
+        diff_lines(old_content, new_content), 1, 1, line_num_width, context_lines
+    )
+    return "\n".join(output), first_changed_line
+
+
+def _count_lines(text: str) -> int:
+    """Number of lines as `text.split("\\n")` counts them, without building the list."""
+    return _count_line_feeds(text, 0, len(text)) + 1
+
+
+def _count_line_feeds(text: str, start: int, end: int) -> int:
+    return text.count("\n", start, end)
+
+
+def _format_display_diff(
+    parts: list[DiffPart],
+    old_start_line: int,
+    new_start_line: int,
+    line_num_width: int,
+    context_lines: int,
+) -> tuple[list[str], int | None]:
+    """Format diff line parts as display diff lines, numbering from the given 1-based old and new lines."""
     output: list[str] = []
 
-    old_lines = old_content.split("\n")
-    new_lines = new_content.split("\n")
-    max_line_num = max(len(old_lines), len(new_lines))
-    line_num_width = len(str(max_line_num))
-
-    old_line_num = 1
-    new_line_num = 1
+    old_line_num = old_start_line
+    new_line_num = new_start_line
     last_was_change = False
     first_changed_line: int | None = None
 
@@ -517,7 +616,123 @@ def generate_diff_string(old_content: str, new_content: str, context_lines: int 
 
             last_was_change = False
 
-    return "\n".join(output), first_changed_line
+    return output, first_changed_line
+
+
+@dataclass(frozen=True, slots=True)
+class EditDiff:
+    """Display diff and unified patch of an edit, as returned in the edit tool's details."""
+
+    diff: str
+    patch: str
+    first_changed_line: int | None
+
+
+# Unchanged lines diffed on each side of a replacement. Well above the 4 context lines shown, so the
+# matcher aligns a change within its window as it would over the whole file.
+DIFF_WINDOW_MARGIN_LINES = 32
+
+
+def generate_edit_diff(
+    path: str,
+    base_content: str,
+    new_content: str,
+    replacements: list[TextReplacement],
+    context_lines: int = 4,
+) -> EditDiff:
+    """Diff an edit only around its replacements, so time and memory follow the size of the change
+    instead of the file. The result matches generate_diff_string and generate_unified_patch over the
+    whole contents, except that the matcher may align runs of repeated lines differently within a window.
+    """
+    line_num_width = len(str(max(_count_lines(base_content), _count_lines(new_content))))
+    skip_marker = f" {''.rjust(line_num_width)} ..."
+    output: list[str] = []
+    hunk_lines: list[str] = []
+    first_changed_line: int | None = None
+    for window in _get_diff_windows(base_content, replacements):
+        old_text = base_content[window.old_start : window.old_end]
+        new_text = new_content[window.new_start : window.new_end]
+        shown, shown_first_changed_line = _format_display_diff(
+            diff_lines(old_text, new_text),
+            window.old_line + 1,
+            window.new_line + 1,
+            line_num_width,
+            context_lines,
+        )
+        if first_changed_line is None:
+            first_changed_line = shown_first_changed_line
+        # Both windows around a run of unchanged lines mark it as skipped; the whole-file diff shows one marker.
+        if output and output[-1] == skip_marker and shown and shown[0] == skip_marker:
+            shown.pop(0)
+        output.extend(shown)
+        hunk_lines.extend(_unified_patch_hunks(old_text, new_text, context_lines, window.old_line, window.new_line))
+    return EditDiff(
+        diff="\n".join(output), patch=_format_patch(path, hunk_lines), first_changed_line=first_changed_line
+    )
+
+
+@dataclass(slots=True)
+class _DiffWindow:
+    """Matching ranges of the old and new contents around one or more replacements: offsets and 0-based first lines."""
+
+    old_start: int
+    old_end: int
+    old_line: int
+    new_start: int
+    new_end: int
+    new_line: int
+
+
+def _line_start_before(text: str, offset: int) -> int:
+    """Start of the line that contains `offset`."""
+    return 0 if offset == 0 else text.rfind("\n", 0, offset) + 1
+
+
+def _get_diff_windows(base_content: str, replacements: list[TextReplacement]) -> list[_DiffWindow]:
+    """Whole-line windows with margin around the replacements, which are sorted and disjoint; overlapping windows merge."""
+    windows: list[_DiffWindow] = []
+    # Offset and line deltas of the replacements before the current one, and a line-counting cursor.
+    offset_delta = 0
+    line_delta = 0
+    cursor_offset = 0
+    cursor_line = 0
+    for replacement in replacements:
+        match_end = replacement.match_index + replacement.match_length
+        start = _line_start_before(base_content, replacement.match_index)
+        for _ in range(DIFF_WINDOW_MARGIN_LINES):
+            if start <= 0:
+                break
+            start = _line_start_before(base_content, start - 1)
+        end = match_end
+        for i in range(DIFF_WINDOW_MARGIN_LINES + 1):
+            if end >= len(base_content):
+                break
+            line_feed = base_content.find("\n", max(match_end - 1, replacement.match_index) if i == 0 else end)
+            end = len(base_content) if line_feed == -1 else line_feed + 1
+        replacement_offset_delta = len(replacement.new_text) - replacement.match_length
+        replacement_line_delta = _count_line_feeds(
+            replacement.new_text, 0, len(replacement.new_text)
+        ) - _count_line_feeds(base_content, replacement.match_index, match_end)
+        previous = windows[-1] if windows else None
+        if previous is not None and start <= previous.old_end:
+            previous.old_end = max(previous.old_end, end)
+            previous.new_end = previous.old_end + offset_delta + replacement_offset_delta
+        else:
+            cursor_line += _count_line_feeds(base_content, cursor_offset, start)
+            cursor_offset = start
+            windows.append(
+                _DiffWindow(
+                    old_start=start,
+                    old_end=end,
+                    old_line=cursor_line,
+                    new_start=start + offset_delta,
+                    new_end=end + offset_delta + replacement_offset_delta,
+                    new_line=cursor_line + line_delta,
+                )
+            )
+        offset_delta += replacement_offset_delta
+        line_delta += replacement_line_delta
+    return windows
 
 
 @dataclass(slots=True)
@@ -560,8 +775,8 @@ async def compute_edits_diff(path: str, edits: list[Edit], cwd: str) -> EditDiff
         applied = apply_edits_to_normalized_content(normalized_content, edits, path)
 
         # Generate the diff
-        diff, first_changed_line = generate_diff_string(applied.base_content, applied.new_content)
-        return EditDiffResult(diff=diff, first_changed_line=first_changed_line)
+        edit_diff = generate_edit_diff(path, applied.base_content, applied.new_content, applied.replacements)
+        return EditDiffResult(diff=edit_diff.diff, first_changed_line=edit_diff.first_changed_line)
     except Exception as error:
         return EditDiffError(error=str(error))
 

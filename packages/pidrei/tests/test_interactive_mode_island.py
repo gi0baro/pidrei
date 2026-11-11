@@ -149,7 +149,7 @@ def test_extension_state_registered_after_a_reset_survives_it():
     )
     noop = lambda *args, **kwargs: None
     fake = SimpleNamespace(
-        ui=SimpleNamespace(state_lock=threading.RLock(), hide_overlay=noop),
+        ui=SimpleNamespace(state_lock=threading.RLock()),
         _autocomplete_provider_wrappers=(lambda current: SimpleNamespace(stale=current),),
         _extension_registry_guard=threading.Lock(),
         _editor_component_factory=None,
@@ -159,6 +159,7 @@ def test_extension_state_registered_after_a_reset_survives_it():
         _clear_extension_terminal_input_listeners=noop,
         _footer_data_provider=SimpleNamespace(clear_extension_statuses=noop),
         _extension_dialogs=[],
+        _extension_overlays={},
         _set_extension_footer=noop,
         _set_extension_header=noop,
         _clear_extension_widgets=noop,
@@ -292,6 +293,7 @@ def test_tools_expansion_applies_the_flag_and_the_children_together():
         _built_in_header=None,
         _loaded_resources_container=SimpleNamespace(children=[]),
         _chat_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=expanded_children.append)]),
+        _pending_messages_container=SimpleNamespace(children=[]),
         ui=SimpleNamespace(state_lock=threading.RLock()),
         show_status=_noop,
     )
@@ -342,11 +344,10 @@ async def test_concurrent_bash_commands_keep_their_own_output():
         _pending_messages_container=Container(),
         _pending_bash_components=[],
         _output_pad=1,
+        _tool_output_expanded=False,
         show_error=_noop,
     )
-    fake._mount_bash_component = lambda component, deferred: InteractiveMode._mount_bash_component(
-        fake, component, deferred
-    )
+    fake._mount_bash_component = lambda component: InteractiveMode._mount_bash_component(fake, component)
 
     with manual_ui_timers():
         async with tonio.scope() as scope:

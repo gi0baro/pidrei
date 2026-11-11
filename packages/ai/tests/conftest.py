@@ -4,6 +4,7 @@ import warnings
 
 import pytest
 
+from pidrei_ai.api import anthropic_messages, strict_tool_limits
 from pidrei_ai.auth import anthropic_federation, google_adc
 from pidrei_http import http
 
@@ -40,6 +41,40 @@ def _anthropic_federation_cache_guard():
     if anthropic_federation.reset_federation_token_cache():
         warnings.warn(
             "test left the Anthropic federation token cache set (reset_federation_token_cache was not called); reset",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _anthropic_thread_state_guard():
+    """Fail-loud reset of the Anthropic adapter's process-wide message thread state.
+
+    A request with a session id on a threads endpoint records where that
+    session's next request can continue; an entry left behind turns a later
+    test's request with the same session id into a `continue` without `system`
+    and `tools`. The warning names the polluting test (it did not call
+    `cleanup_session_resources`); the reset keeps the entry from leaking further.
+    """
+    yield
+    if anthropic_messages.reset_thread_state():
+        warnings.warn(
+            "test left Anthropic message thread state set (cleanup_session_resources was not called); reset",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _strict_tool_limit_sessions_guard():
+    """Fail-loud reset of the process-wide set of sessions over Claude's strict
+    tool limits (shared by the Anthropic and Bedrock adapters). A session left
+    marked sends a later test's `strict: "prefer"` tools non-strict from the
+    first request. The warning names the polluting test (it did not call
+    `cleanup_session_resources`); the reset keeps the mark from leaking further.
+    """
+    yield
+    if strict_tool_limits.reset_sessions_over_strict_tool_limits():
+        warnings.warn(
+            "test left sessions marked over the strict tool limits (cleanup_session_resources was not called); reset",
             stacklevel=1,
         )
 

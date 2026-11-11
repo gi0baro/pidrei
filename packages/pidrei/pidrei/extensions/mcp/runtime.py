@@ -60,20 +60,19 @@ from pidrei_mcp import (
     StreamableHttpTransport,
     Tool,
 )
-from pidrei_mcp.oauth import McpOAuthAuthorizationRequiredError, OAuthChallenge
+from pidrei_mcp.oauth import (
+    McpOAuthAuthorizationRequiredError,
+    McpOAuthSettings,
+    McpSignInCancelledError,
+    OAuthChallenge,
+)
 from pidrei_utils.cancel import CancelToken
 
 from ...config import VERSION
 from ...core.resolve_config_value import resolve_config_value_or_throw, resolve_headers_or_throw
 from .config import McpServerEntry
 from .log import McpServerLog
-from .oauth import (
-    McpOAuthCredentialStore,
-    McpOAuthSettings,
-    McpSignInCancelledError,
-    create_mcp_auth_provider,
-    sign_in_mcp_server,
-)
+from .oauth import McpOAuthCredentialStore, create_mcp_auth_provider, sign_in_mcp_server
 
 
 __all__ = [

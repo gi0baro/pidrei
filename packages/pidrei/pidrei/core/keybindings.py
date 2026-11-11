@@ -83,7 +83,7 @@ KEYBINDINGS = {
         "description": "Restore queued messages",
     },
     "app.clipboard.pasteImage": {
-        "defaultKeys": "alt+v" if _WINDOWS_KEYBINDINGS else "ctrl+v",
+        "defaultKeys": ["alt+v", "ctrl+v"] if _WINDOWS_KEYBINDINGS else "ctrl+v",
         "description": "Paste files on macOS, images, or text from clipboard",
     },
     "app.session.new": {"defaultKeys": [], "description": "Start a new session"},

@@ -51,6 +51,7 @@ class ProviderDouble:
         self.base_url = None
         self.headers = None
         self.filter_models = None
+        self.refresh_models_auth = None
         self._model = make_model(id)
         self._refresh_models = refresh_models
 
@@ -272,6 +273,25 @@ async def test_does_not_run_network_refresh_inside_the_credential_operation_chai
         assert runtime.has_configured_auth("local-only") is True
     finally:
         network_release.set()
+
+
+@pytest.mark.tonio
+async def test_applies_the_runtimes_network_switch_to_a_refresh_that_names_no_allow_network():
+    # pidrei-only: pi's `options.allowNetwork ?? this.modelNetworkEnabled`. The suite runs offline
+    # (PIDREI_OFFLINE=1), so the runtime's switch is off.
+    seen: list[bool] = []
+
+    async def refresh_models(context):
+        seen.append(context.allow_network)
+
+    runtime = await runtime_with_provider(ProviderDouble("one", refresh_models=refresh_models))
+    await runtime.set_runtime_api_key("one", "one-key")
+    seen.clear()
+
+    await runtime.refresh(ModelsRefreshOptions(providers=["one"]))
+
+    assert seen
+    assert not any(seen)
 
 
 @pytest.mark.tonio

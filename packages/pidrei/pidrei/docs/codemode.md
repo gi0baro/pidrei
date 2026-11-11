@@ -2,13 +2,17 @@
 
 The `codemode` tool lets the model write a Python script that calls pidrei's other tools and runs non-LLM models, such as classifiers and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
 
-pi's codemode scripts are JavaScript. pidrei's are Python, run on [Monty](https://github.com/pydantic/monty), so everything below differs from pi's codemode where Python does.
+Scripts run on [Monty](https://github.com/pydantic/monty), a sandboxed Python interpreter.
 
 ## Scripts
 
 The tool input is raw Python source, not JSON and not a markdown code fence. It runs in a sandboxed interpreter: top-level `await` works, and if the last line is an expression, its value is added to the output. Scripts have no third-party packages, file system, network, environment, subprocesses, or sleep; they reach the outside world only through tools and `models`.
 
-The interpreter supports a subset of Python. Not supported: `yield`, `del`, class inheritance (so no custom exception classes), method decorators, `async with` and `async for`, `asyncio.create_task`, and `asyncio.gather(return_exceptions=True)` (use `all_settled()`). These standard library modules can be imported, each in part: `annotationlib`, `asyncio`, `base64`, `binascii`, `bisect`, `collections`, `copy`, `csv`, `dataclasses`, `datetime`, `decimal`, `fnmatch`, `functools`, `hashlib`, `itertools`, `json`, `math`, `os` (with `os.path`), `pathlib`, `random`, `re`, `sys`, `time`, `tomllib`, `typing`, and `unicodedata`. Operations that would reach the system, such as reading a file, the environment, or `time.sleep()`, raise an error.
+The interpreter supports a subset of Python. Not supported: `yield`, `del`, class inheritance (so no custom exception classes), method decorators, `async with` and `async for`, `asyncio.create_task`, and `asyncio.gather(return_exceptions=True)` (use `all_settled()`).
+
+Standard library modules that can be imported, each in part: `annotationlib`, `asyncio`, `base64`, `binascii`, `bisect`, `collections`, `copy`, `csv`, `dataclasses`, `datetime`, `decimal`, `fnmatch`, `functools`, `hashlib`, `itertools`, `json`, `math`, `os` (with `os.path`), `pathlib`, `random`, `re`, `sys`, `time`, `tomllib`, `typing`, and `unicodedata`. No other module is available.
+
+Operations that would reach the system, such as reading a file, the environment, or `time.sleep()`, raise an error.
 
 Every script is type-checked against the declarations of the tools and globals before it runs, and a script that fails the check does not run: the result lists the problems and says that no tool calls were made. The checker is strict. For example, a value that may be `None` must be checked before it is used:
 
@@ -25,7 +29,7 @@ A script may start with an options line. It must be the first line; an options l
 # @options: {"max_output_tokens": 2000, "timeout_ms": 60000}
 ```
 
-- `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()` and `image()` calls; write large data to a file with a tool instead.
+- `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16,777,216 characters (16 Mi) of text and base64 image data, or 100,000 `text()` and `image()` calls; write large data to a file with a tool instead.
 - `timeout_ms` is a hard deadline for the whole script, time spent waiting on tools included. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
 
 The result starts with `Script completed` or `Script failed`, the wall time, and the output. Text and image items appear in order, each on its own line. When the output has more than one text item (from `text()` or the final expression line), each starts with a `==> text N/M <==` line. `print` calls follow in one `<console_output>` block with one line per call. A failed script keeps its partial output, followed by `Script error:` and the error, which for an exception is a Python traceback with the script's line numbers. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, including calls that were never awaited.
@@ -80,15 +84,13 @@ for result in results:
         text(f"failed: {result['reason']}")
 ```
 
-The `codemode` description lists tools with their Python declarations, grouped by namespace (for example one MCP server). Tools with `deferred` exposure, which includes MCP tools with the default `codemode` exposure, are not listed, so the description stays the same while MCP servers connect. Listed declarations share a budget of 3000 estimated tokens (`codemode.inlineBudget`). Scripts find the other tools with `search_tools()`, `describe_tool()`, `describe_namespace()`, or by filtering `ALL_TOOLS`.
-
-While `codemode` is active, `codemode.mode` decides how the other tools are presented. With `on` (default) declared tools stay declared, and their descriptions say how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts. Tool declarations in the `codemode` description, `describe_tool()`, and `ALL_TOOLS` carry the tools' prompt guidelines, since the system prompt rules only cover declared tools.
+The `codemode` description lists tools with their Python declarations, grouped by namespace (for example one MCP server); which tools it lists and how much room they get is set in [Settings](#settings). Tools with `deferred` exposure, which includes MCP tools with the default `codemode` exposure, are never listed, so the description stays the same while MCP servers connect. Scripts find unlisted tools with `search_tools()`, `describe_tool()`, `describe_namespace()`, or by filtering `ALL_TOOLS`. Tool declarations in the description, `describe_tool()`, and `ALL_TOOLS` carry the tools' prompt guidelines, since the system prompt rules only cover declared tools.
 
 ## Store values
 
 `store(key, value)` keeps a JSON value under a string key for later `codemode` calls; `store(key, None)` deletes the key. `load(key)` returns the value, or `None`. Writes are kept only when the script succeeds: each successful script that stores values appends a `codemode-store` custom entry to the session, so resumed sessions keep the values and each branch sees only the values written on its path.
 
-The store is for small state such as IDs, cursors, or summaries. One value may have at most 262144 characters of JSON and all values together at most 1048576. Do not store image data; show images with `image()`, which also saves them to a temp file.
+The store is for small state such as IDs, cursors, or summaries. One value may have at most 262,144 characters (256 Ki) of JSON, and all values together at most 1,048,576 (1 Mi). Do not store image data; show images with `image()`, which also saves them to a temp file.
 
 ## Models
 
@@ -342,11 +344,11 @@ The `codemode` section of `settings.json`:
 |---|---|---|---|
 | `codemode.mode` | `"on"` \| `"only"` | `"on"` | How the `codemode` tool presents tools while it is active. `on`: declared tools get a note on calling them from scripts appended to their description, and `codemode` lists only tools that are not declared. `only`: `codemode` lists every tool scripts can call, and active built-in and extension tools are hidden from the model, so it reaches them through `codemode`. |
 | `codemode.inlineBudget` | number | `3000` | Estimated tokens (characters / 4) the `codemode` tool's description may spend on tool declarations. Tools that do not fit are left out and found with `search_tools()`. `0` lists only namespaces. |
-| `codemode.typeCheck` | boolean | `true` | Type-check scripts before they run. pidrei only. With `false`, a mistake such as an unknown keyword argument fails only when the call is reached, after the calls before it have run. |
+| `codemode.typeCheck` | boolean | `true` | Type-check scripts before they run. With `false`, a mistake such as an unknown keyword argument fails only when the call is reached, after the calls before it have run. |
 
 ## Limits
 
 - A script has 256 MB of memory. Running out ends the script with a `MemoryError` it cannot catch; filter or aggregate large data instead of accumulating it.
-- A script may spend at most 60 seconds executing, not counting time spent waiting on tools and models. pi has no such limit. `timeout_ms` sets a deadline that includes the waiting.
+- A script may spend at most 60 seconds executing, not counting time spent waiting on tools and models. `timeout_ms` sets a deadline that includes the waiting.
 - Deep recursion raises a `RecursionError`, which the script can catch.
 - Scripts cannot start other `codemode` scripts.

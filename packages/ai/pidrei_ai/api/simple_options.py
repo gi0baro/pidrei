@@ -1,5 +1,6 @@
 """Port of pi's simple-options helpers (packages/ai/src/api/simple-options.ts)."""
 
+import math
 from collections.abc import Mapping
 
 from pidrei_ai.registry import clamp_thinking_level
@@ -17,14 +18,26 @@ from pidrei_ai.utils.estimate import estimate_context_tokens
 
 
 CONTEXT_SAFETY_TOKENS = 4096
+# OpenRouter counts the input with its own tokenizer and rejects input + max_tokens above the
+# window before routing. It counted prose up to 12% above the provider's count (#10497).
+CONTEXT_SAFETY_RATIO = 0.15
+# The 15% margin is kept only while it leaves at least this much output. Otherwise (a nearly full
+# large window, or any small window such as a 32k local model) only the fixed margin is kept, and
+# output is capped at this size so an OpenRouter overcount still fits for a while before compaction.
+MIN_OUTPUT_WITH_RATIO_MARGIN = 32768
 MIN_MAX_TOKENS = 1
 
 
 def clamp_max_tokens_to_context(model: Model, context: TranscriptContext, max_tokens: int) -> int:
+    """Fit max_tokens into the context window, leaving room for the input being counted higher than estimated."""
     if model.context_window <= 0:
         return max(MIN_MAX_TOKENS, max_tokens)
-    available = model.context_window - estimate_context_tokens(context).tokens - CONTEXT_SAFETY_TOKENS
-    return min(max_tokens, max(MIN_MAX_TOKENS, available))
+    input_tokens = estimate_context_tokens(context).tokens
+    margin = max(CONTEXT_SAFETY_TOKENS, math.ceil(input_tokens * CONTEXT_SAFETY_RATIO))
+    room = model.context_window - input_tokens - margin
+    if room < MIN_OUTPUT_WITH_RATIO_MARGIN:
+        room = min(MIN_OUTPUT_WITH_RATIO_MARGIN, model.context_window - input_tokens - CONTEXT_SAFETY_TOKENS)
+    return min(max_tokens, max(MIN_MAX_TOKENS, room))
 
 
 def resolve_sampling_params(
@@ -60,6 +73,7 @@ def build_base_options(
         transport=options.transport if options else None,
         cache_retention=options.cache_retention if options else None,
         session_id=options.session_id if options else None,
+        disable_continuation=options.disable_continuation if options else None,
         headers=options.headers if options else None,
         identity=options.identity if options else None,
         fetch=options.fetch if options else None,

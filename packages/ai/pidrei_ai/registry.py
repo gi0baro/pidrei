@@ -20,7 +20,7 @@ import threading
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from types import EllipsisType
-from typing import Any
+from typing import Any, Literal
 
 import tonio.colored as tonio
 from tonio.colored import sync
@@ -145,7 +145,9 @@ class RefreshModelsContext:
 
 @dataclass(slots=True)
 class ModelsRefreshOptions:
-    allow_network: bool = True
+    # None is pi's absent `allowNetwork`: `Models.refresh` reads it as True, and the coding agent's
+    # `ModelRuntime.refresh` as its own network switch (off in offline mode).
+    allow_network: bool | None = None
     # Restrict refresh to these provider IDs. Unknown and static providers are ignored.
     providers: list[str] | None = None
     # Bypass provider freshness checks and fetch immediately when network access is allowed.
@@ -157,6 +159,15 @@ class ModelsRefreshOptions:
 class ModelsRefreshResult:
     aborted: bool
     errors: dict[str, Exception]
+
+
+@dataclass(slots=True, frozen=True)
+class _NetworkRefresh:
+    """pi's `{ credential?: Credential }`: the network refresh phase runs, with
+    this credential (None for "configured" auth). A missing result (None) means
+    the provider is not configured."""
+
+    credential: Credential | None = None
 
 
 class Provider:
@@ -203,6 +214,13 @@ class Provider:
         self._baseline_models = models
         self._dynamic_models: list[AnyModel] = []
         self._fetch_models = fetch_models
+        # What the network phase of `refresh_models` needs. "credential" (the default, also None)
+        # receives the effective credential, so an expired OAuth token is refreshed first.
+        # "configured" is for catalogs served by a source other than the provider, such as pi.dev:
+        # the phase still runs only when the provider is configured, but OAuth is never refreshed for
+        # it and `context.credential` is None. Not a `create_provider` option in pi either: wrappers
+        # set it (pi spreads the provider and overrides the field).
+        self.refresh_models_auth: Literal["credential", "configured"] | None = None
 
     @property
     def has_dynamic_models(self) -> bool:
@@ -631,7 +649,8 @@ class Models:
         `providers` is omitted). Provider errors and cancellation are returned
         without raising; static, unknown, and unconfigured providers are skipped."""
         options = options or ModelsRefreshOptions()
-        allow_network = options.allow_network
+        # pi: `options.allowNetwork ?? true`.
+        allow_network = options.allow_network if options.allow_network is not None else True
         caller_cancel = operation_cancel(options.cancel)
         errors: dict[str, Exception] = {}
         if caller_cancel.cancelled:
@@ -664,10 +683,12 @@ class Models:
                 if not allow_network or cancel.cancelled:
                     return
 
-                credential = await self._resolve_refresh_credential(provider, stored_credential, cancel)
-                if credential is None:
+                network = await self._resolve_network_refresh(provider, stored_credential, cancel)
+                if network is None:
                     return
-                await self._run_provider_refresh_phase(provider, credential, True, options.force, generation, cancel)
+                await self._run_provider_refresh_phase(
+                    provider, network.credential, True, options.force, generation, cancel
+                )
 
             try:
                 await race_with_cancel(operation(), cancel)
@@ -696,6 +717,18 @@ class Models:
                     raise
 
         return ModelsRefreshResult(aborted=caller_cancel.cancelled, errors=dict(errors))
+
+    async def _resolve_network_refresh(
+        self,
+        provider: Provider,
+        stored: Credential | None,
+        cancel: CancelToken,
+    ) -> _NetworkRefresh | None:
+        """The credential for the network refresh phase, or None when the provider is not configured."""
+        if provider.refresh_models_auth == "configured":
+            return None if await self._check_provider_auth(provider, stored, cancel) is None else _NetworkRefresh()
+        credential = await self._resolve_refresh_credential(provider, stored, cancel)
+        return None if credential is None else _NetworkRefresh(credential=credential)
 
     async def _resolve_refresh_credential(
         self,

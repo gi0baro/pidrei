@@ -11,7 +11,7 @@ from pidrei.modes.interactive.components import TreeSelectorComponent
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import AssistantMessage, TextContent, ToolCall, Usage, UserMessage
-from pidrei_tui import set_keybindings, visible_width
+from pidrei_tui import CURSOR_MARKER, set_keybindings, visible_width
 
 
 @pytest.fixture(autouse=True)
@@ -245,6 +245,55 @@ class TestHelp:
         assert "label time" in plain
         assert "..." not in plain
         assert all(visible_width(line) <= 30 for line in plain_lines)
+
+
+class TestSearchCursor:
+    @pytest.mark.tonio
+    async def test_renders_the_cursor_only_while_the_selector_is_focused(self):
+        tree = build_tree([user_message("user-1", None, "hello")])
+        selector = _make_selector(tree, "user-1")
+
+        assert CURSOR_MARKER not in "\n".join(selector.render(80))
+
+        selector.focused = True
+        focused_lines = selector.render(80)
+        cursor_lines = [line for line in focused_lines if CURSOR_MARKER in line]
+        assert len(cursor_lines) == 1
+        assert strip_ansi(cursor_lines[0].replace(CURSOR_MARKER, "")) == "  Type to search:  "
+        assert f"{CURSOR_MARKER}\x1b[7m \x1b[27m" in cursor_lines[0]
+
+        selector.focused = False
+        assert CURSOR_MARKER not in "\n".join(selector.render(80))
+
+    @pytest.mark.tonio
+    async def test_moves_focus_to_the_label_input_and_restores_it_after_cancellation(self):
+        tree = build_tree([user_message("user-1", None, "hello")])
+        selector = _make_selector(tree, "user-1")
+        selector.focused = True
+
+        selector.handle_input("L")
+        rendered = selector.render(80)
+        cursor_line_index = next((i for i, line in enumerate(rendered) if CURSOR_MARKER in line), -1)
+        assert cursor_line_index > 0
+        assert "Label (empty to remove):" in strip_ansi(rendered[cursor_line_index - 1])
+        assert len([line for line in rendered if CURSOR_MARKER in line]) == 1
+
+        selector.handle_input("\x1b")
+        rendered = selector.render(80)
+        cursor_line_index = next((i for i, line in enumerate(rendered) if CURSOR_MARKER in line), -1)
+        assert "Type to search:" in strip_ansi(rendered[cursor_line_index])
+        assert len([line for line in rendered if CURSOR_MARKER in line]) == 1
+
+    @pytest.mark.tonio
+    async def test_keeps_the_cursor_within_narrow_terminal_widths(self):
+        tree = build_tree([user_message("user-1", None, "hello")])
+        selector = _make_selector(tree, "user-1")
+        selector.focused = True
+        selector.handle_input("a long search query")
+
+        cursor_line = next((line for line in selector.render(10) if CURSOR_MARKER in line), None)
+        assert cursor_line is not None
+        assert visible_width(cursor_line) <= 10
 
 
 class TestCopy:

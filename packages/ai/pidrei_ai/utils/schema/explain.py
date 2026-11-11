@@ -8,6 +8,11 @@ call; here each call walks with its own `_Walk`, so one explainer serves
 concurrent calls. pi's draft 7 branches are not ported: tool arguments are
 explained under draft 2020-12, as pi's validation compiles them. pi's `bytes`
 type (a Uint8Array) has no JSON value and no branch here.
+
+TypeBox's bigints are `int`s (checks.py `is_big_int`): the number keywords
+already walk them, and `type_name` keeps calling an `int` `integer`, since an
+`int` is both. pi's present-but-undefined required property has no
+counterpart: a Python dict has no key set to undefined.
 """
 
 import math
@@ -47,7 +52,8 @@ def list_values(values: list) -> str:
 
 
 def type_name(v: Any) -> str:
-    """The JSON type of `v` as the messages name it: `integer` for a whole number."""
+    """The JSON type of `v` as the messages name it: `integer` for a whole number, `NaN` or `Infinity` for one that
+    is not finite."""
     if v is None:
         return "null"
     if isinstance(v, bool):
@@ -58,6 +64,8 @@ def type_name(v: Any) -> str:
         return "object"
     if is_integer(v):
         return "integer"
+    if is_number(v) and not math.isfinite(v):
+        return number_string(v)
     if is_number(v):
         return "number"
     if isinstance(v, str):

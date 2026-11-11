@@ -27,7 +27,14 @@ _AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP: dict[str, str | None] = {
 }
 
 # Qwen Token Plan serves DeepSeek V4 through Qwen's own thinking format.
-_QWEN_FORMAT_PROVIDERS = frozenset({"qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"})
+_QWEN_FORMAT_PROVIDERS = frozenset(
+    {
+        "qwen-token-plan",
+        "qwen-token-plan-cn",
+        "qwen-token-plan-individual",
+        "qwen-token-plan-individual-cn",
+    }
+)
 # These hosts accept native reasoning efforts instead of DeepSeek's thinking toggle.
 _NATIVE_EFFORT_PROVIDERS = frozenset({"openrouter", "opencode"})
 

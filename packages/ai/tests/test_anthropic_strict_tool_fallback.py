@@ -4,7 +4,8 @@ pi passes a custom `fetch` that answers with real `Response`s, so the SDK's
 own HTTP error parsing runs; here the `fetch` option answers with
 `http.Response`s and the adapter's punkreq client parses them. pi's
 "preserves prefer through pi-messages" case is not mirrored: the pi-messages
-adapter is not ported (radius).
+adapter is not ported (radius). pi's `afterEach` `cleanupSessionResources()`
+is the module's autouse fixture.
 """
 
 import copy
@@ -24,6 +25,7 @@ from pidrei_ai.types import (
     Tool,
     UserMessage,
 )
+from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.transcript import normalize_context
 from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
@@ -114,6 +116,12 @@ def _assert_matches(actual, expected) -> None:
             _assert_matches(actual[key], value)
     else:
         assert actual == expected
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_session_resources():
+    yield
+    cleanup_session_resources()
 
 
 # Regression tests for https://github.com/earendil-works/pi/issues/10409.
@@ -364,9 +372,52 @@ async def test_does_not_retry_an_sse_error_after_response_headers():
 
 
 @pytest.mark.tonio
-async def test_does_not_disable_strict_sampling_on_later_requests():
+async def test_does_not_disable_strict_sampling_on_later_requests_without_a_session():
     harness = Harness(lambda request, attempt: error_response(request) if attempt == 1 else success_response(request))
     transcript = context([tool("lookup", "prefer")])
     await stream_anthropic(MODEL, transcript, harness.options()).result()
     await stream_anthropic(MODEL, transcript, harness.options()).result()
     assert [payload["tools"][0].get("strict") for payload in harness.payloads] == [True, None, True]
+
+
+# Regression tests for https://github.com/earendil-works/pi/issues/11626.
+
+
+@pytest.mark.tonio
+async def test_sends_preferred_tools_non_strict_right_away_on_later_requests_of_a_rejected_session():
+    harness = Harness(lambda request, attempt: error_response(request) if attempt == 1 else success_response(request))
+    transcript = context([tool("lookup", "prefer"), tool("required", "require")])
+    first = await stream_anthropic(MODEL, transcript, harness.options(session_id="rejected")).result()
+    second = await stream_anthropic(MODEL, transcript, harness.options(session_id="rejected")).result()
+    await stream_anthropic(MODEL, transcript, harness.options(session_id="other")).result()
+
+    assert first.diagnostics is not None and first.diagnostics[0].type == "anthropic_strict_tools_fallback"
+    assert second.stop_reason == "stop"
+    assert second.diagnostics is None
+    assert [[definition.get("strict") for definition in payload["tools"]] for payload in harness.payloads] == [
+        [True, True],
+        [None, True],
+        [None, True],
+        [True, True],
+    ]
+
+
+@pytest.mark.tonio
+async def test_tries_strict_sampling_again_after_the_sessions_resources_are_cleaned_up():
+    harness = Harness(lambda request, attempt: error_response(request) if attempt == 1 else success_response(request))
+    transcript = context([tool("lookup", "prefer")])
+    await stream_anthropic(MODEL, transcript, harness.options(session_id="cleaned")).result()
+    cleanup_session_resources("cleaned")
+    await stream_anthropic(MODEL, transcript, harness.options(session_id="cleaned")).result()
+    assert [payload["tools"][0].get("strict") for payload in harness.payloads] == [True, None, True]
+
+
+@pytest.mark.tonio
+async def test_surfaces_a_rejection_of_a_remembered_sessions_required_tools_without_retrying():
+    harness = Harness(lambda request, attempt: success_response(request) if attempt == 2 else error_response(request))
+    transcript = context([tool("lookup", "prefer"), tool("required", "require")])
+    await stream_anthropic(MODEL, transcript, harness.options(session_id="required")).result()
+    result = await stream_anthropic(MODEL, transcript, harness.options(session_id="required")).result()
+    assert result.stop_reason == "error"
+    assert GRAMMAR_ERROR in result.error_message
+    assert len(harness.payloads) == 3

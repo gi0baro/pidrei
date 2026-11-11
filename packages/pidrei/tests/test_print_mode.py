@@ -5,9 +5,11 @@ the output-guard functions (stdout and stderr alike) are swapped on the module.
 """
 
 import contextlib
+import signal
 from types import SimpleNamespace
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.modes import print_mode
 from pidrei.modes.print_mode import PrintModeOptions, run_print_mode
@@ -92,6 +94,35 @@ def _create_runtime_host(assistant_message):
     return _FakeRuntimeHost(_FakeSession(assistant_message))
 
 
+class _FakeSignalDispatcher:
+    """Captures the mode's signal handlers, so a test delivers a signal by calling one."""
+
+    def __init__(self):
+        self.handlers = {}
+
+    def set_handler(self, signum, handler):
+        self.handlers[signum] = handler
+
+
+class _Done:
+    """A spawned call and an Event set when it returns."""
+
+    def __init__(self, coro):
+        self._event = tonio.Event()
+        self._handle = tonio.spawn(self._run(coro))
+
+    async def _run(self, coro):
+        try:
+            await coro
+        finally:
+            self._event.set()
+
+    async def wait(self):
+        await self._event.wait(5)
+        assert self._event.is_set(), "the call never returned"
+        await self._handle
+
+
 class TestRunPrintMode:
     @pytest.mark.tonio
     async def test_emits_session_shutdown_in_text_mode(self):
@@ -169,3 +200,67 @@ class TestRunPrintMode:
         assert exit_code == 1
         assert stdout == ["partial\n"]
         assert stderr == ["Response was truncated: the model reached its output token limit.\n"]
+
+    # A signal during the final disposal used to hit no handler and kill pi mid-dispose.
+    # pi emits SIGTERM on the process and sleeps before asserting "not exited yet"; here the
+    # installed handler is called directly, and each exit records whether the disposal had
+    # been released by then.
+    @pytest.mark.tonio
+    async def test_waits_for_the_final_disposal_when_sigterm_arrives_during_it_and_exits_on_a_repeated_sigterm(self):
+        runtime_host = _create_runtime_host(create_assistant_message("done"))
+        dispose_started = tonio.Event()
+        dispose_release = tonio.Event()
+        exited = tonio.Event()
+        exits: list[tuple[int, bool]] = []
+        dispatcher = _FakeSignalDispatcher()
+
+        async def slow_dispose():
+            runtime_host.dispose_calls += 1
+            dispose_started.set()
+            await dispose_release.wait()
+
+        def record_exit(code):
+            exits.append((code, dispose_release.is_set()))
+            exited.set()
+
+        async def drain():
+            pass
+
+        runtime_host.dispose = slow_dispose
+        with _patched(
+            print_mode,
+            write_raw_stdout=lambda _text: None,
+            drain_output=drain,
+            hard_exit=record_exit,
+            kill_tracked_detached_children=lambda: None,
+        ):
+            run = _Done(
+                run_print_mode(
+                    runtime_host,
+                    PrintModeOptions(mode="text", initial_message="Say done"),
+                    signal_dispatcher=dispatcher,
+                )
+            )
+            signals: list[_Done] = []
+            try:
+                await dispose_started.wait(5)
+                assert dispose_started.is_set(), "the final disposal never started"
+                assert runtime_host.dispose_calls == 1
+                assert set(dispatcher.handlers) == {signal.SIGTERM, signal.SIGHUP}
+
+                signals.append(_Done(dispatcher.handlers[signal.SIGTERM](signal.SIGTERM)))
+                signals.append(_Done(dispatcher.handlers[signal.SIGTERM](signal.SIGTERM)))
+                await exited.wait(5)
+                # One of the two counts as the repeated signal and exits at once; the other
+                # waits for the disposal.
+                assert exits == [(143, False)]
+                assert runtime_host.dispose_calls == 1
+            finally:
+                dispose_release.set()
+                for done in [run, *signals]:
+                    await done.wait()
+        assert [code for code, released in exits if not released] == [143]
+        # After the disposal: the waiting signal's exit and the main exit, both with the
+        # signal's status (the repeated signal's stand-in exit returns, so it waits too).
+        assert [code for code, released in exits if released] == [143, 143, 143]
+        assert runtime_host.dispose_calls == 1

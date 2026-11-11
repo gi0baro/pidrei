@@ -55,6 +55,7 @@ class StalledLoginProvider:
         self.base_url = None
         self.headers = None
         self.filter_models = None
+        self.refresh_models_auth = None
         self._network_started = network_started
         self._network_release = network_release
 

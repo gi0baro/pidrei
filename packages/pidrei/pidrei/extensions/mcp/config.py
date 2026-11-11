@@ -47,14 +47,10 @@ from typing import Any, Literal
 
 from tonio.colored import fs
 
+from pidrei_mcp import is_mcp_server_override, mcp_namespace
+
 from ...config import CONFIG_DIR_NAME
-from ...core.mcp_servers import (
-    McpExposure,
-    McpServerConfig,
-    get_mcp_tool_exposure,
-    mcp_namespace,
-    validate_mcp_server_config,
-)
+from ...core.mcp_servers import McpExposure, McpServerConfig, get_mcp_tool_exposure, validate_mcp_server_config
 from ...utils.lockfile import FileLock
 from ...utils.text import strip_bom
 
@@ -104,11 +100,6 @@ class LoadedMcpConfig:
 _OVERRIDE_KEYS = ("enabled", "exposure", "toolExposure")
 
 
-def _is_override(value: dict[str, Any]) -> bool:
-    """Whether an entry overrides a server defined elsewhere instead of defining one."""
-    return "command" not in value and "url" not in value and "type" not in value
-
-
 def locale_order(text: str) -> tuple[str, str]:
     """Sort key approximating pi's `a.localeCompare(b)` for server names: case-insensitive first."""
     return (text.lower(), text)
@@ -147,7 +138,7 @@ async def _read_config_file(path: str, scope: Literal["global", "project"], stat
     elif "autoEnableCodemode" in parsed:
         errors.append(f"{path}: autoEnableCodemode must be a boolean")
     for name, value in (parsed.get("mcpServers") or {}).items():
-        if scope == "project" and _is_record(value) and _is_override(value):
+        if scope == "project" and _is_record(value) and is_mcp_server_override(value):
             base = servers.get(name)
             extra = [key for key in value if key not in _OVERRIDE_KEYS]
             if base is None:
@@ -227,7 +218,7 @@ async def update_mcp_server_config(
             parsed["mcpServers"] = {**(servers or {}), name: server}
         if not _is_record(server):
             raise Exception(f'{path} does not define MCP server "{name}"')
-        keep_defaults = _is_override(server)
+        keep_defaults = is_mcp_server_override(server)
         if patch.enabled is not None:
             if patch.enabled and not keep_defaults:
                 server.pop("enabled", None)

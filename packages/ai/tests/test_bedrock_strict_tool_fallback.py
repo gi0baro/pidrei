@@ -3,7 +3,8 @@
 pi replaces `@aws-sdk/client-bedrock-runtime` with `vi.mock`; here the stub
 replaces `api/bedrock_runtime.BedrockRuntimeClient` by name, as in the other
 bedrock mirrors. `send` raises `BedrockRuntimeServiceException` for a non-2xx
-response, with the body's `message`, as pidrei's runtime does.
+response, with the body's `message`, as pidrei's runtime does. pi's
+`afterEach` `cleanupSessionResources()` is the module's autouse fixture.
 """
 
 import contextlib
@@ -26,6 +27,7 @@ from pidrei_ai.types import (
     Tool,
     UserMessage,
 )
+from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.transcript import normalize_context
 
 
@@ -102,12 +104,22 @@ def raising(error: Exception) -> Any:
     raise error
 
 
-async def run(tools: list[Tool], on_payload=None):
+async def run(tools: list[Tool], on_payload=None, session_id: str | None = None):
     return await stream_bedrock(
         MODEL,
         normalize_context(Context(tools=tools, messages=[UserMessage(content="Hello", timestamp=1)])),
-        BedrockOptions(cache_retention="none", on_payload=on_payload),
+        BedrockOptions(cache_retention="none", on_payload=on_payload, session_id=session_id),
     ).result()
+
+
+def strict_flags(inputs: list[dict[str, Any]]) -> list[list[bool | None]]:
+    return [[tool["toolSpec"].get("strict") for tool in input["toolConfig"]["tools"]] for input in inputs]
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_session_resources():
+    yield
+    cleanup_session_resources()
 
 
 # Regression tests for https://github.com/earendil-works/pi/issues/11416.
@@ -179,3 +191,45 @@ async def test_retries_only_once():
 
     assert result.stop_reason == "error"
     assert len(inputs) == 2
+
+
+def _reject_first(attempt: int):
+    return raising(sdk_error("ValidationException", UNION_LIMIT_MESSAGE)) if attempt == 1 else success_response()
+
+
+@pytest.mark.tonio
+async def test_does_not_remember_a_rejection_without_a_session():
+    with _client(_reject_first) as inputs:
+        await run([tool("preferred", "prefer")])
+        await run([tool("preferred", "prefer")])
+
+    assert strict_flags(inputs) == [[True], [None], [True]]
+
+
+# Regression tests for https://github.com/earendil-works/pi/issues/11626.
+@pytest.mark.tonio
+async def test_sends_preferred_tools_non_strict_right_away_on_later_requests_of_a_rejected_session():
+    tools = [tool("preferred", "prefer"), tool("required", "require")]
+    with _client(_reject_first) as inputs:
+        await run(tools, None, "rejected")
+        second = await run(tools, None, "rejected")
+        await run(tools, None, "other")
+
+    assert second.stop_reason == "stop"
+    assert second.diagnostics is None
+    assert strict_flags(inputs) == [
+        [True, True],
+        [None, True],
+        [None, True],
+        [True, True],
+    ]
+
+
+@pytest.mark.tonio
+async def test_tries_strict_sampling_again_after_the_sessions_resources_are_cleaned_up():
+    with _client(_reject_first) as inputs:
+        await run([tool("preferred", "prefer")], None, "cleaned")
+        cleanup_session_resources("cleaned")
+        await run([tool("preferred", "prefer")], None, "cleaned")
+
+    assert strict_flags(inputs) == [[True], [None], [True]]

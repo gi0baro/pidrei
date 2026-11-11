@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/core/tools/find.ts."""
 
+import dataclasses
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -15,7 +17,7 @@ from .grep import _run_streaming_lines
 from .path_utils import path_exists_blocking, resolve_to_cwd
 from .renderers.find import find_renderers
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
-from .truncate import DEFAULT_MAX_BYTES, TruncationResult, format_size, truncate_head
+from .truncate import DEFAULT_MAX_BYTES, TruncationResult, format_size, truncate_head, utf8_byte_length
 
 
 FIND_SCHEMA = {
@@ -37,6 +39,8 @@ FIND_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
 }
 
 DEFAULT_LIMIT = 1000
+# JS `Number.MAX_SAFE_INTEGER`.
+_MAX_SAFE_INTEGER = 2**53 - 1
 
 
 @dataclass(slots=True)
@@ -74,18 +78,16 @@ def relativize_find_result_path(result_path: str, search_path: str) -> str:
     return f"{posix_path}/" if had_trailing_separator and not posix_path.endswith("/") else posix_path
 
 
-def _build_details_result(relativized: list[str], effective_limit: int) -> AgentToolResult:
-    result_limit_reached = len(relativized) >= effective_limit
-    raw_output = "\n".join(relativized)
-    truncation = truncate_head(raw_output, max_lines=2**53 - 1)
+def _build_details_result(
+    truncation: TruncationResult, effective_limit: int, limit_notice: str | None
+) -> AgentToolResult:
+    """The result both paths share; `limit_notice` is set when the result limit was reached."""
     result_output = truncation.content
     details = FindToolDetails()
     has_details = False
     notices: list[str] = []
-    if result_limit_reached:
-        notices.append(
-            f"{effective_limit} results limit reached. Use limit={effective_limit * 2} for more, or refine pattern"
-        )
+    if limit_notice is not None:
+        notices.append(limit_notice)
         details.result_limit_reached = effective_limit
         has_details = True
     if truncation.truncated:
@@ -112,23 +114,33 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         _throw_if_aborted(cancel)
 
         search_path = resolve_to_cwd(search_dir or ".", (ctx.cwd if ctx is not None else None) or cwd)
-        effective_limit = int(limit) if limit is not None else DEFAULT_LIMIT
+        # fd treats --max-results 0 as unlimited, so a limit below 1 means 1.
+        effective_limit = max(1, math.floor(limit if limit is not None else DEFAULT_LIMIT))
 
         # If custom operations provide glob(), use that instead of fd.
         if custom_ops is not None and getattr(custom_ops, "glob", None) is not None:
             if not await custom_ops.exists(search_path):
                 raise Exception(f"Path not found: {search_path}")
             _throw_if_aborted(cancel)
+            # One result past the limit tells "exactly N matches" apart from "more than N".
             results = await custom_ops.glob(
-                pattern, search_path, ignore=["**/node_modules/**", "**/.git/**"], limit=effective_limit
+                pattern, search_path, ignore=["**/node_modules/**", "**/.git/**"], limit=effective_limit + 1
             )
             _throw_if_aborted(cancel)
             if not results:
                 return AgentToolResult(content=[TextContent(text="No files found matching pattern")], details=None)
 
+            result_limit_reached = len(results) > effective_limit
             # Relativize paths against the search root for stable output.
-            relativized = [relativize_find_result_path(result_path, search_path) for result_path in results]
-            return _build_details_result(relativized, effective_limit)
+            relativized = [
+                relativize_find_result_path(result_path, search_path) for result_path in results[:effective_limit]
+            ]
+            truncation = truncate_head("\n".join(relativized), max_lines=_MAX_SAFE_INTEGER)
+            return _build_details_result(
+                truncation,
+                effective_limit,
+                f"{effective_limit} results limit reached" if result_limit_reached else None,
+            )
 
         # Default implementation uses fd.
         fd_path = await ensure_tool("fd")
@@ -136,50 +148,79 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         if not fd_path:
             raise Exception(missing_tool_message("fd"))
 
-        args: list[str] = [fd_path, "--glob", "--color=never", "--hidden"]
+        args: list[str] = [fd_path, "--color=never", "--hidden"]
 
         # fd normally ignores .gitignore outside git repos, so keep --no-require-git
         # there. Inside repos, use fd's default git-aware behavior so parent
         # .gitignore rules stop at nested repo boundaries (pi#5960).
         if not await tonio.spawn_blocking(_is_inside_git_repo_blocking, search_path):
             args.append("--no-require-git")
-        args.extend(["--max-results", str(effective_limit)])
 
         # fd --glob matches against the basename unless --full-path is set; in --full-path
         # mode it matches against the absolute candidate path, so a path-containing
         # pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
         effective_pattern = pattern
-        if "/" in pattern:
+        is_path_pattern = "/" in effective_pattern
+        if (
+            is_path_pattern
+            and not effective_pattern.startswith("/")
+            and not effective_pattern.startswith("**/")
+            and effective_pattern != "**"
+        ):
+            effective_pattern = f"**/{effective_pattern}"
+        # One result past the limit tells "exactly N matches" apart from "more than N" (#7121).
+        args.extend(["--glob", "--max-results", str(effective_limit + 1)])
+        if is_path_pattern:
             args.append("--full-path")
-            if not pattern.startswith("/") and not pattern.startswith("**/") and pattern != "**":
-                effective_pattern = f"**/{pattern}"
         args.extend(["--", effective_pattern, search_path])
 
-        lines: list[str] = []
+        # An abort during the .git lookup above must not start fd.
+        _throw_if_aborted(cancel)
 
-        def collect(line: str) -> bool:
-            lines.append(line)
+        # Results within the limit, stored only up to the first one past the byte cap:
+        # truncate_head drops the rest anyway, so they are counted but not kept.
+        stored_results: list[str] = []
+        result_count = 0
+        # Byte size of all results within the limit, each counted with a trailing newline.
+        output_bytes = 0
+        result_limit_reached = False
+
+        def collect(raw_line: str) -> bool:
+            nonlocal result_count, output_bytes, result_limit_reached
+            line = raw_line.removesuffix("\r").strip()
+            if not line:
+                return False
+            if result_count == effective_limit:
+                result_limit_reached = True
+                return False
+            result = relativize_find_result_path(line, search_path)
+            result_count += 1
+            if output_bytes - 1 <= DEFAULT_MAX_BYTES:
+                stored_results.append(result)
+            output_bytes += utf8_byte_length(result) + 1
             return False
 
         exit_code, stderr = await _run_streaming_lines(args, cancel, collect)
         _throw_if_aborted(cancel)
 
-        output = "\n".join(lines)
-        if exit_code != 0:
-            error_message = stderr.strip() or f"fd exited with code {exit_code}"
-            if not output:
-                raise Exception(error_message)
-        if not output:
+        if exit_code != 0 and result_count == 0:
+            raise Exception(stderr.strip() or f"fd exited with code {exit_code}")
+        if result_count == 0:
             return AgentToolResult(content=[TextContent(text="No files found matching pattern")], details=None)
 
-        relativized: list[str] = []
-        for raw_line in lines:
-            line = raw_line.removesuffix("\r").strip()
-            if not line:
-                continue
-            relativized.append(relativize_find_result_path(line, search_path))
-
-        return _build_details_result(relativized, effective_limit)
+        # Stored results extend past the byte cap when more exist, so truncate_head decides
+        # truncation as for the full output; only the totals need the unstored rest.
+        truncation = dataclasses.replace(
+            truncate_head("\n".join(stored_results), max_lines=_MAX_SAFE_INTEGER),
+            total_lines=result_count,
+            total_bytes=output_bytes - 1,
+        )
+        limit_notice = (
+            f"{effective_limit} results limit reached. Use limit={effective_limit * 2} for more, or refine pattern"
+            if result_limit_reached
+            else None
+        )
+        return _build_details_result(truncation, effective_limit, limit_notice)
 
     return ToolDefinition(
         name="find",

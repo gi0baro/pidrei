@@ -1,7 +1,9 @@
 """Mirror of pi coding-agent src/core/cache-warmer.ts.
 
 Keeps one prompt cache entry alive by re-sending its request with a one-token
-output cap before the entry expires.
+output cap before the entry expires. The policy (delays, lifetimes,
+replayability, the refresh's options, the warm-or-stop economics) is
+`pidrei_ai.cache_warming`; this module owns the scheduling.
 
 Runtime mapping (0.87.1 delta port):
 - `Date.now()` / `setTimeout` are `clock.now_ms` and a `Timeout`. The timer
@@ -15,69 +17,34 @@ Runtime mapping (0.87.1 delta port):
   one lock that is never held across an await.
 """
 
-import dataclasses
 import math
 import re
 import threading
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import tonio.colored as tonio
 
-from pidrei_ai.builders import UsageBuilder
-from pidrei_ai.registry import calculate_cost
+from pidrei_ai.cache_warming import (
+    CACHE_WARMING_MAX_AGE_MS,
+    CACHE_WARMING_MAX_IDLE_AGE_MS,
+    CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS,
+    CacheWarmingAction,
+    CacheWarmingDecision,
+    CacheWarmingPhase,
+    evaluate_cache_warming,
+    get_cache_warming_delay_ms,
+    get_cache_warming_request_options,
+    get_prompt_cache_ttl_ms,
+    is_cache_warming_replayable,
+)
 from pidrei_ai.types import ClientIdentity, Model, SimpleStreamOptions, TranscriptContext
-from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 from pidrei_utils.timers import Timeout
 
 from .settings_manager import CacheWarmingMode
-
-
-# Streaming warming never continues past this long after the real request that started it.
-MAX_WARMING_AGE_MS = 60 * 60_000
-# Idle warming uses a shorter horizon because continuation estimates become less reliable with age.
-MAX_IDLE_WARMING_AGE_MS = 30 * 60_000
-# A refresh is sent only when it is expected to save at least this many dollars.
-CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05
-# Chance that a real request arrives before the cache entry expires while the
-# agent sits idle. Measured from pi's own usage; per-session estimates were not
-# better than this constant.
-IDLE_CONTINUATION_PROBABILITY = 0.15
-
-
-def get_cache_warming_delay_ms(ttl_ms: float) -> int | None:
-    """Refresh at 90% of the TTL while preserving at least ten seconds of margin."""
-    if ttl_ms <= 10_000:
-        return None
-    return max(1, int(min(ttl_ms * 0.9, ttl_ms - 10_000)))
-
-
-def get_prompt_cache_ttl_ms(model: Model, options: SimpleStreamOptions | None) -> float | None:
-    """Lifetime of the prompt cache entry a request writes, from the model's
-    `prompt_cache` tier for the retention the request used. None when the model
-    has no lifetime for that tier or caching is off."""
-    retention = options.cache_retention if options is not None else None
-    if retention is None:
-        env = options.env if options is not None else None
-        retention = "long" if get_provider_env_value("PIDREI_CACHE_RETENTION", env) == "long" else "short"
-    if retention == "none":
-        return None
-    seconds = (model.prompt_cache or {}).get(retention)
-    return None if seconds is None else seconds * 1000
-
-
-def is_replayable(model: Model, options: SimpleStreamOptions | None) -> bool:
-    """Whether replaying the request with a one-token output cap leaves its cache
-    entry untouched. Anthropic's budget-based thinking (Claude models without
-    adaptive thinking) derives `budget_tokens` from `max_tokens`; the replay
-    would get a different budget, which Anthropic keys the message cache on,
-    and the model could still think for thousands of tokens."""
-    if options is None or not options.reasoning or model.api != "anthropic-messages":
-        return True
-    return getattr(model.compat, "force_adaptive_thinking", None) is True
 
 
 def _last_prompt_tokens(entries: list[dict[str, Any]]) -> int:
@@ -88,33 +55,6 @@ def _last_prompt_tokens(entries: list[dict[str, Any]]) -> int:
             usage = message.usage
             return usage.input + usage.cache_read + usage.cache_write
     return 0
-
-
-def _price(model: Model, **tokens: int) -> float:
-    return calculate_cost(model, UsageBuilder(**tokens)).total
-
-
-type CacheWarmingAction = Literal["warm", "stop"]
-
-
-@dataclass(slots=True)
-class CacheWarmingDecision:
-    """Inputs and outcome of one warm-or-stop decision, as shown by `/session`."""
-
-    # "streaming" while the agent run that sent the request is still active.
-    phase: Literal["streaming", "idle"]
-    # Price of this refresh: a cache read of the prompt plus one output token.
-    warm_cost: float
-    # Extra price of the next real request if the cache entry is lost.
-    miss_cost: float
-    # Estimated chance that a real request arrives before the entry expires.
-    continuation_probability: float
-    # `continuation_probability * miss_cost - warm_cost`.
-    expected_savings: float
-    # False when the prompt size or the model's prices are unknown.
-    economics_available: bool
-    # pidrei's decision: "warm" when `expected_savings` is at least $0.05.
-    action: CacheWarmingAction
 
 
 @dataclass(slots=True)
@@ -148,7 +88,7 @@ class _ActiveRun:
     delay_ms: int
     started_at: int
     cancel: CancelToken
-    phase: Literal["streaming", "idle"] = "streaming"
+    phase: CacheWarmingPhase = "streaming"
     next_warm_at: int = 0
     # Latest safe time to send this refresh, leaving half the original expiry margin.
     refresh_deadline_at: int = 0
@@ -222,7 +162,7 @@ class CacheWarmer:
             if self._get_mode() == "off":
                 self._stop_locked("cache warming disabled")
                 return
-            if not is_replayable(request.model, request.options):
+            if not is_cache_warming_replayable(request.model, request.options):
                 self._stop_locked("request cannot be replayed safely")
                 return
             ttl_ms = get_prompt_cache_ttl_ms(request.model, request.options)
@@ -256,7 +196,7 @@ class CacheWarmer:
                 self._stop_locked("agent run settled")
                 return
             run.phase = "idle"
-            deadline = run.started_at + MAX_IDLE_WARMING_AGE_MS
+            deadline = run.started_at + CACHE_WARMING_MAX_IDLE_AGE_MS
             if run.next_warm_at > deadline or clock.now_ms() >= deadline:
                 self._stop_locked("30-minute idle safety limit reached")
 
@@ -300,7 +240,7 @@ class CacheWarmer:
         # the planned pre-expiry margin for that delay and request dispatch; a
         # late refresh is likely a full-price cache write, not a cache warm.
         run.refresh_deadline_at = run.next_warm_at + math.floor((run.ttl_ms - run.delay_ms) / 2)
-        deadline = run.started_at + (MAX_IDLE_WARMING_AGE_MS if run.phase == "idle" else MAX_WARMING_AGE_MS)
+        deadline = run.started_at + (CACHE_WARMING_MAX_IDLE_AGE_MS if run.phase == "idle" else CACHE_WARMING_MAX_AGE_MS)
         if run.next_warm_at > deadline or now >= deadline:
             self._stop_locked(
                 "30-minute idle safety limit reached" if run.phase == "idle" else "one-hour safety limit reached"
@@ -351,15 +291,13 @@ class CacheWarmer:
 
         try:
             request = run.request
+            # The identity is resolved again on top of the replayed options (`warm-identity`).
             message = await self._models.stream_simple(
                 request.model,
                 request.context,
-                dataclasses.replace(
-                    request.options,
+                replace(
+                    get_cache_warming_request_options(request.options, run.cancel),
                     identity=self._get_identity(),
-                    max_tokens=1,
-                    max_retries=0,
-                    cancel=run.cancel,
                 ),
             ).result()
             with self._lock:
@@ -407,29 +345,9 @@ class CacheWarmer:
             return "agent run settled"
         return None
 
-    def _evaluate(self, model: Model, phase: Literal["streaming", "idle"]) -> CacheWarmingDecision:
+    def _evaluate(self, model: Model, phase: CacheWarmingPhase) -> CacheWarmingDecision:
         """`phase` is read by the caller under the lock (`on_agent_settled` writes it)."""
-        prompt_tokens = _last_prompt_tokens(self._session_manager.get_branch())
-        cache_hit_cost = _price(model, cache_read=prompt_tokens)
-        cache_miss_cost = (
-            _price(model, cache_write=prompt_tokens)
-            if model.cost.cache_write > 0
-            else _price(model, input=prompt_tokens)
-        )
-        warm_cost = _price(model, cache_read=prompt_tokens, output=1)
-        miss_cost = max(0.0, cache_miss_cost - cache_hit_cost)
-        continuation_probability = IDLE_CONTINUATION_PROBABILITY if phase == "idle" else 1
-        economics_available = prompt_tokens > 0 and (cache_hit_cost > 0 or cache_miss_cost > 0)
-        expected_savings = continuation_probability * miss_cost - warm_cost
-        return CacheWarmingDecision(
-            phase=phase,
-            warm_cost=warm_cost,
-            miss_cost=miss_cost,
-            continuation_probability=continuation_probability,
-            expected_savings=expected_savings,
-            economics_available=economics_available,
-            action="warm" if expected_savings >= CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS else "stop",
-        )
+        return evaluate_cache_warming(model, _last_prompt_tokens(self._session_manager.get_branch()), phase)
 
 
 def _format_dollars(value: float) -> str:
@@ -492,8 +410,8 @@ def format_cache_warming_status(status: CacheWarmingStatus, now: int | None = No
     return f"{_format_cache_warming_decision_time(status.next_warm_at, now)} ({details})"
 
 
-def format_cache_warming_usage(entry: dict[str, Any]) -> str:
-    """One-line transcript text for persisted cache-warming usage."""
-    note = f" ({entry['note']})" if entry.get("note") else ""
-    cost = re.sub(r"(\.\d{3}\d*?)0+$", r"\1", f"{entry['usage'].cost.total:.6f}")
-    return f"Cache warmed{note}: ${cost}"
+def format_cache_warming_usage(total_cost: float, note: str | None = None) -> str:
+    """One-line transcript text for the total cost of one or more consecutive cache warms."""
+    note_text = f" ({note})" if note else ""
+    cost = re.sub(r"(\.\d{3}\d*?)0+$", r"\1", f"{total_cost:.6f}")
+    return f"Cache warmed{note_text}: ${cost}"

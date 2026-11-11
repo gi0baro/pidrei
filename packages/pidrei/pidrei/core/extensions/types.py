@@ -195,6 +195,28 @@ class ToolRenderers:
 type ToolRendererResolver = Callable[[str, Callable[[], ToolRenderers | ToolDefinition | None]], Any]
 
 
+# Markdown surface a transformer runs on.
+# - "user", "assistant", "assistant-thinking": transcript messages (the default types of a transformer)
+# - "custom": custom messages without a custom renderer, and expanded skill blocks (their content, without
+#   PiDrei's header)
+# - "summary": expanded branch and compaction summaries (the summary, without PiDrei's header)
+# - "changelog": PiDrei's changelog ("What's New" and `/changelog`) and the release note of the
+#   "Update Available" notice
+type MarkdownMessageType = Literal["user", "assistant", "assistant-thinking", "custom", "summary", "changelog"]
+
+
+@dataclass(frozen=True, slots=True)
+class MarkdownTransformerRegistration:
+    """A registered Markdown transformer and the surfaces it runs on.
+
+    Rebound whole on each registration: the render path reads it while the
+    extension can register again. The transformer is synchronous (it runs on
+    the render path under the UI lock): `(markdown, context) -> str`."""
+
+    transformer: Callable[[str, dict], str]
+    message_types: frozenset[MarkdownMessageType]
+
+
 # Outcome of the activity that reached a boundary (`turn_end` / `agent_before_settle`).
 type AgentActivityOutcome = Literal["completed", "aborted", "error"]
 
@@ -359,7 +381,7 @@ class Extension:
     message_renderers: dict[str, Any] = field(default_factory=dict)
     # Rebound whole on each registration, never appended to in place.
     tool_renderers: tuple[ToolRendererResolver, ...] = ()
-    markdown_transformer: Any = None
+    markdown_transformer: MarkdownTransformerRegistration | None = None
     entry_renderers: dict[str, Any] = field(default_factory=dict)
 
 

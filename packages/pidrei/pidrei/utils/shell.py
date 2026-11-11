@@ -155,7 +155,15 @@ class SignalDispatcher:
 
 
 def kill_process_tree(pid: int) -> None:
-    """Kill a process and all its children (POSIX process-group SIGKILL)."""
+    """Kill a process and all its children (POSIX process-group SIGKILL).
+
+    `pid` leads its own process group (the shell is started with
+    `start_new_session`), and only the group is signalled. pi falls back to
+    the bare pid when the group kill fails; for a group leader that kill
+    fails only once the leader is gone, and then the pid may already belong
+    to another process (this is also called after the shell exited, for the
+    processes it left behind).
+    """
     if sys.platform == "darwin":
         # macOS signals group members individually after releasing the group lock. A killed
         # child can wake its waiting shell before that shell is signalled, letting `a; b`
@@ -166,12 +174,8 @@ def kill_process_tree(pid: int) -> None:
         try:
             os.killpg(pid, signal.SIGSTOP)
         except OSError:
-            pass  # A failed stop must not prevent the kill attempt or its single-process fallback.
+            pass  # A failed stop must not prevent the kill attempt.
     try:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
-        # Fallback to killing just the child if process group kill fails
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass  # Process already dead
+        pass  # No member left: the leader and everything it started are gone.

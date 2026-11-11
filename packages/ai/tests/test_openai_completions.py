@@ -547,9 +547,8 @@ def test_build_params_openrouter_reasoning_and_cache_control():
     assert last_message["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
-def test_build_params_empty_tools_for_tool_history():
-    model = make_model()
-    context = Context(
+def _tool_history_context() -> Context:
+    return Context(
         messages=[
             UserMessage(content="go", timestamp=1),
             ToolResultMessage(
@@ -557,7 +556,17 @@ def test_build_params_empty_tools_for_tool_history():
             ),
         ]
     )
-    params = build_params(model, normalize_context(context), opts())
+
+
+# Regression for https://github.com/earendil-works/pi/issues/11843
+def test_build_params_omits_tools_for_tool_history_by_default():
+    params = build_params(make_model(), normalize_context(_tool_history_context()), opts())
+    assert "tools" not in params
+
+
+def test_build_params_sends_empty_tools_for_tool_history_when_compat_requires_it():
+    model = make_model(compat=OpenAICompletionsCompat(requires_tools_with_tool_history=True))
+    params = build_params(model, normalize_context(_tool_history_context()), opts())
     assert params["tools"] == []
 
 

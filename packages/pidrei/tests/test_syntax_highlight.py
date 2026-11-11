@@ -1,10 +1,17 @@
 """Partial mirror of pi coding-agent test/syntax-highlight.test.ts: the
 "theme syntax highlighting" cases. The renderer block specs highlight.js's
-HTML output, which pygments has no counterpart for."""
+HTML output, which pygments has no counterpart for; its one case that only
+asserts `getLanguageFromPath` is mirrored here, in the theme-level block."""
 
 import pytest
 
-from pidrei.modes.interactive.theme import get_markdown_theme, highlight_code, init_theme, theme
+from pidrei.modes.interactive.theme import (
+    get_language_from_path,
+    get_markdown_theme,
+    highlight_code,
+    init_theme,
+    theme,
+)
 from pidrei_tui import reset_capabilities_cache, set_capabilities
 
 
@@ -14,6 +21,13 @@ def _reset_capabilities(request):
 
 
 class TestThemeSyntaxHighlighting:
+    def test_maps_file_extensions_of_eagerly_loaded_languages_to_their_language(self):
+        assert get_language_from_path("lib/main.dart") == "dart"
+        assert get_language_from_path("flake.nix") == "nix"
+        assert get_language_from_path("script.groovy") == "groovy"
+        assert get_language_from_path("build.gradle") == "groovy"
+        assert get_language_from_path("src/Main.kt") == "kotlin"
+
     # #10143
     @pytest.mark.tonio
     async def test_colors_each_line_of_python_docstrings_independently(self):

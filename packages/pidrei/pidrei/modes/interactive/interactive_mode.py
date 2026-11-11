@@ -104,7 +104,13 @@ from ...core.output_guard import (
     write_stdout,
 )
 from ...core.package_manager import DefaultPackageManager
-from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
+from ...core.provider_matching import find_matching_providers
+from ...core.session_cwd import (
+    MissingSessionCwdChoice,
+    MissingSessionCwdError,
+    format_missing_session_cwd_prompt,
+    get_missing_session_cwd_options,
+)
 from ...core.session_manager import SessionManager, session_entry_to_context_messages
 from ...core.slash_commands import BUILTIN_SLASH_COMMANDS
 from ...core.tools.renderers import with_built_in_renderers
@@ -172,6 +178,7 @@ from .components import (
     load_earendil_image_base64,
     raw_key_hint,
 )
+from .components.markdown_transform import create_markdown_transform
 from .components.pi_logo import pi_logo_lines, pi_wordmark, supports_pi_logo
 from .components.themed_text import ThemedText
 from .extension_tui import ExtensionTui, guard_overlay_handle
@@ -590,6 +597,17 @@ class _TerminalInputSubscription:
         self.unsubscribe = unsubscribe
 
 
+class _CacheWarmingNotice:
+    """The last cache-warming notice: its component and the running total it renders."""
+
+    __slots__ = ("component", "note", "total_cost")
+
+    def __init__(self, component: ThemedText, total_cost: float, note: str | None) -> None:
+        self.component = component
+        self.total_cost = total_cost
+        self.note = note
+
+
 class InteractiveMode:
     """Options: ``{"migratedProviders"?, "startupDiagnostics"?,
     "modelFallbackMessage"?, "autoTrustOnReloadCwd"?, "initialMessage"?,
@@ -714,6 +732,9 @@ class InteractiveMode:
         self._shutdown_guard = threading.Lock()
         self._changelog_markdown: str | None = None
         self._startup_notices_shown = False
+        # Last cache-warming notice, extended in place while it is the last chat line. UI state
+        # under `state_lock`: written by `_add_cache_warming_usage`, read by the notice's render.
+        self._cache_warming_notice: _CacheWarmingNotice | None = None
         self._anthropic_subscription_warning_shown = False
         self._anthropic_subscription_warning_guard = threading.Lock()
 
@@ -788,6 +809,13 @@ class InteractiveMode:
         # (component, blocked status) under the UI state lock. The last entry is visible; see
         # `_push_extension_dialog`.
         self._extension_dialogs: list = []
+        # Numbers the program status sources of blocking overlays, so closing one keeps the others. Under the
+        # UI state lock (taken in the mount hold).
+        self._next_blocking_overlay_id = 0
+        # Open extension overlays (`custom` with `"overlay": True`) and the function that removes each, in
+        # opening order, keyed by the raw `OverlayHandle`. Reset removes only these, not pidrei's own overlays.
+        # Under the UI state lock.
+        self._extension_overlays: dict = {}
         self._extension_terminal_input_subscriptions: set = set()
 
         # Extension widgets (components rendered above/below the editor)
@@ -1039,9 +1067,7 @@ class InteractiveMode:
             else:
                 self._chat_container.add_child(ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0))
                 self._chat_container.add_child(Spacer(1))
-                self._chat_container.add_child(
-                    Markdown(self._changelog_markdown.strip(), 1, 0, self._get_markdown_theme_with_settings())
-                )
+                self._chat_container.add_child(self._create_changelog_markdown(self._changelog_markdown.strip(), 1, 0))
                 self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder())
 
@@ -1524,6 +1550,11 @@ class InteractiveMode:
             return None
 
         new_entries = get_new_entries(entries, last_version)
+        # `is None`, not falsiness: an empty list (nothing new) is a readable version.
+        if new_entries is None:
+            # Unreadable saved version: show nothing and record the current one so later updates compare again
+            self.settings_manager.set_last_changelog_version(VERSION)
+            return None
         if new_entries:
             self.settings_manager.set_last_changelog_version(VERSION)
             return "\n\n".join(normalize_changelog_links(e["content"], e) for e in new_entries)
@@ -2291,6 +2322,7 @@ class InteractiveMode:
             self._loaded_resources_container.clear()
             self._chat_container.clear()
             self._pending_messages_container.clear()
+            self._pending_bash_components = []
             with self._compaction_queue_guard:
                 self._compaction_queued_messages = []
             self._streaming_component = None
@@ -2310,6 +2342,19 @@ class InteractiveMode:
 
     def _get_markdown_transformers(self) -> list:
         return self.session.extension_runner.get_markdown_transformers()
+
+    def _create_changelog_markdown(
+        self, markdown: str, padding_x: int, padding_y: int, default_text_style: dict | None = None
+    ) -> Markdown:
+        """Markdown of a changelog or release note that runs the Markdown transformers of the `changelog` type."""
+        return Markdown(
+            markdown,
+            padding_x,
+            padding_y,
+            self._get_markdown_theme_with_settings(),
+            default_text_style,
+            {"transform": create_markdown_transform("changelog", lambda: False, self._get_markdown_transformers())},
+        )
 
     def _setup_extension_shortcuts(self, extension_runner) -> None:
         """Set up keyboard shortcuts registered by extensions."""
@@ -2553,7 +2598,10 @@ class InteractiveMode:
                         dispose()
                 self._extension_dialogs = []
                 self._show_top_extension_dialog()
-            self.ui.hide_overlay()
+            # Reload and session switches replace every extension without calling done(): remove their overlays,
+            # newest first, the same way done() does, but leave the waits pending as for inline dialogs.
+            for remove_overlay in reversed(list(self._extension_overlays.values())):
+                remove_overlay()
             self._set_extension_footer(None)
             self._set_extension_header(None)
             self._clear_extension_widgets()
@@ -2794,11 +2842,12 @@ class InteractiveMode:
             )
         )
 
-    async def _prompt_for_missing_session_cwd(self, error) -> str | None:
-        confirmed = await self._show_extension_confirm(
-            "Session cwd not found", format_missing_session_cwd_prompt(error.issue)
+    async def _prompt_for_missing_session_cwd(self, error) -> MissingSessionCwdChoice | None:
+        options = get_missing_session_cwd_options(error.issue)
+        label = await self._show_extension_selector(
+            format_missing_session_cwd_prompt(error.issue), [option["label"] for option in options]
         )
-        return error.issue.fallback_cwd if confirmed else None
+        return next((option["value"] for option in options if option["label"] == label), None)
 
     def _show_extension_input(self, title: str, placeholder=None, opts: dict | None = None):
         """Show a text input for extensions (see `_show_extension_selector`)."""
@@ -2885,7 +2934,8 @@ class InteractiveMode:
             self._editor_component_factory = factory
 
             # Save text from current editor before switching
-            current_text = self.editor.get_text()
+            get_expanded = getattr(self.editor, "get_expanded_text", None)
+            current_text = get_expanded() if get_expanded is not None else self.editor.get_text()
 
             # An open extension dialog keeps the editor slot; the new editor is shown when the last dialog closes.
             dialog_open = len(self._extension_dialogs) > 0
@@ -2994,7 +3044,15 @@ class InteractiveMode:
         done = tonio.Event()
         # Written under the UI state lock (the mount hold and `close`); the
         # waiting handle reads `value` after `done`.
-        state: dict = {"component": None, "overlay_handle": None, "closed": False, "value": None, "editor_text": ""}
+        state: dict = {
+            "component": None,
+            "overlay_handle": None,
+            # An overlay stays blocked until its interaction ends, also while set_hidden() hides it.
+            "overlay_status_source": None,
+            "closed": False,
+            "value": None,
+            "editor_text": "",
+        }
 
         def restore_editor() -> None:
             if state["component"] is not None:
@@ -3002,23 +3060,36 @@ class InteractiveMode:
             self.editor.set_text(state["editor_text"])
             self.ui.request_render()
 
+        def dispose_component() -> None:
+            component = state["component"]
+            with contextlib.suppress(Exception):
+                if component is not None and getattr(component, "dispose", None) is not None:
+                    component.dispose()
+
+        # Shared by done() and `_reset_extension_ui()`. Removing the map entry first makes a second call a no-op.
+        def remove_overlay() -> None:
+            with self.ui.state_lock:
+                overlay_handle = state["overlay_handle"]
+                if overlay_handle is None or self._extension_overlays.pop(overlay_handle, None) is None:
+                    return
+                # Remove this overlay, not the topmost one: another overlay may have opened above it.
+                overlay_handle.hide()
+                if state["overlay_status_source"] is not None:
+                    self._program_status.set_blocked(state["overlay_status_source"], None)
+                dispose_component()
+
         def close(result=None) -> None:
             with self.ui.state_lock:
                 if state["closed"]:
                     return
                 state["closed"] = True
                 state["value"] = result
-                component = state["component"]
-                overlay_handle = state["overlay_handle"]
-                if not is_overlay:
+                if is_overlay:
+                    remove_overlay()
+                else:
+                    # Requests a render
                     restore_editor()
-                elif overlay_handle is not None:
-                    # Remove this overlay, not the topmost one: another overlay may have opened above it.
-                    overlay_handle.hide()
-                # Note: both branches above already request a render
-                with contextlib.suppress(Exception):
-                    if component is not None and getattr(component, "dispose", None) is not None:
-                        component.dispose()
+                    dispose_component()
             done.set()
 
         def mount(component) -> None:
@@ -3031,20 +3102,31 @@ class InteractiveMode:
                     width = getattr(component, "width", None)
                     resolved_options = {"width": width} if width else None
                 state["overlay_handle"] = self.ui.show_overlay(component, resolved_options)
+                self._extension_overlays[state["overlay_handle"]] = remove_overlay
+                # `"blocked": {"kind", "message"}` reports pidrei as blocked until done(). The source is
+                # numbered here, in the mount hold, where pi numbers it at call time: `custom()` callers run in
+                # parallel here.
+                blocked = options.get("blocked")
+                if blocked:
+                    state["overlay_status_source"] = f"extension-overlay:{self._next_blocking_overlay_id}"
+                    self._next_blocking_overlay_id += 1
+                    self._program_status.set_blocked(
+                        state["overlay_status_source"], BlockedStatus(blocked["kind"], blocked["message"])
+                    )
                 # Expose handle to caller for visibility control
                 on_handle = options.get("onHandle")
                 if on_handle is not None:
                     on_handle(guard_overlay_handle(self.ui, state["overlay_handle"]))
             else:
-                # `"blocked": {"kind", "message"}` reports pidrei as blocked while the component is visible;
-                # overlays are not on the dialog stack and ignore it.
+                # `"blocked": {"kind", "message"}` reports pidrei as blocked while the component is visible.
                 blocked = options.get("blocked")
                 self._push_extension_dialog(
                     component, BlockedStatus(blocked["kind"], blocked["message"]) if blocked else None
                 )
 
         with self.ui.state_lock:
-            state["editor_text"] = self.editor.get_text()
+            get_expanded = getattr(self.editor, "get_expanded_text", None)
+            state["editor_text"] = get_expanded() if get_expanded is not None else self.editor.get_text()
             try:
                 # Synchronous only: an `async def` factory is refused.
                 component = call_sync(lambda: factory(self._extension_tui, theme, self._keybindings, close))
@@ -3694,6 +3776,9 @@ class InteractiveMode:
             self.ui.request_render()
 
         elif event_type == "agent_settled":
+            # The session records deferred user bash results when the run settles; show them there too.
+            self._flush_pending_bash_components()
+            self.ui.request_render()
             self._spawn_flow(self._check_shutdown_requested())
 
         elif event_type == "compaction_start":
@@ -3912,21 +3997,37 @@ class InteractiveMode:
             if message.display:
                 renderer = self.session.extension_runner.get_message_renderer(message.custom_type)
                 component = CustomMessageComponent(
-                    message, renderer, self._get_markdown_theme_with_settings(), self._output_pad
+                    message,
+                    renderer,
+                    self._get_markdown_theme_with_settings(),
+                    self._output_pad,
+                    self._get_markdown_transformers(),
+                    options.get("messageId"),
+                    options.get("timestamp"),
                 )
                 component.set_expanded(self._tool_output_expanded)
                 self._chat_container.add_child(component)
         elif role == "compactionSummary":
             self._chat_container.add_child(Spacer(1))
             component = CompactionSummaryMessageComponent(
-                message, self._get_markdown_theme_with_settings(), self._output_pad
+                message,
+                self._get_markdown_theme_with_settings(),
+                self._output_pad,
+                self._get_markdown_transformers(),
+                options.get("messageId"),
+                options.get("timestamp"),
             )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "branchSummary":
             self._chat_container.add_child(Spacer(1))
             component = BranchSummaryMessageComponent(
-                message, self._get_markdown_theme_with_settings(), self._output_pad
+                message,
+                self._get_markdown_theme_with_settings(),
+                self._output_pad,
+                self._get_markdown_transformers(),
+                options.get("messageId"),
+                options.get("timestamp"),
             )
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
@@ -3941,7 +4042,12 @@ class InteractiveMode:
                 if skill_block is not None:
                     # Render skill block (collapsible)
                     component = SkillInvocationMessageComponent(
-                        skill_block, self._get_markdown_theme_with_settings(), self._output_pad
+                        skill_block,
+                        self._get_markdown_theme_with_settings(),
+                        self._output_pad,
+                        self._get_markdown_transformers(),
+                        options.get("messageId"),
+                        options.get("timestamp"),
                     )
                     component.set_expanded(self._tool_output_expanded)
                     self._chat_container.add_child(component)
@@ -4140,9 +4246,26 @@ class InteractiveMode:
     def _add_cache_warming_usage(self, entry: dict) -> None:
         if not self.settings_manager.get_show_cache_miss_notices():
             return
+        # Back-to-back warms collapse into one line with the cumulative cost.
+        previous = self._cache_warming_notice
+        children = self._chat_container.children
+        if (
+            previous is not None
+            and children
+            and children[-1] is previous.component
+            and previous.note == entry.get("note")
+        ):
+            previous.total_cost += entry["usage"].cost.total
+            previous.component.invalidate()
+            return
+        # Built at render time, so it reads the running total; `notice` is bound before any render.
+        component = ThemedText(
+            lambda: theme.fg("dim", format_cache_warming_usage(notice.total_cost, notice.note)), 1, 0
+        )
+        notice = _CacheWarmingNotice(component=component, total_cost=entry["usage"].cost.total, note=entry.get("note"))
+        self._cache_warming_notice = notice
         self._chat_container.add_child(Spacer(1))
-        usage = format_cache_warming_usage(entry)
-        self._chat_container.add_child(ThemedText(lambda: theme.fg("dim", usage), 1, 0))
+        self._chat_container.add_child(notice.component)
 
     def _add_compaction_cost_notice(self, notice: dict) -> None:
         """Render billing usage for a compaction or branch summary. The notice is derived
@@ -4620,7 +4743,11 @@ class InteractiveMode:
             active_header = self._custom_header if self._custom_header is not None else self._built_in_header
             if is_expandable(active_header):
                 active_header.set_expanded(expanded)
-            for container in (self._loaded_resources_container, self._chat_container):
+            for container in (
+                self._loaded_resources_container,
+                self._chat_container,
+                self._pending_messages_container,
+            ):
                 for child in container.children:
                     if is_expandable(child):
                         child.set_expanded(expanded)
@@ -4710,13 +4837,7 @@ class InteractiveMode:
             if note:
                 self._chat_container.add_child(Spacer(1))
                 self._chat_container.add_child(
-                    Markdown(
-                        note,
-                        1,
-                        0,
-                        self._get_markdown_theme_with_settings(),
-                        {"color": lambda text: theme.fg("muted", text)},
-                    )
+                    self._create_changelog_markdown(note, 1, 0, {"color": lambda text: theme.fg("muted", text)})
                 )
                 self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(ThemedText(changelog_line, 1, 0))
@@ -4783,6 +4904,9 @@ class InteractiveMode:
     def _update_pending_messages_display(self) -> None:
         with self.ui.state_lock:
             self._pending_messages_container.clear()
+            # User bash output shown while the agent works lives here until it moves to the chat.
+            for component in self._pending_bash_components:
+                self._pending_messages_container.add_child(component)
             queued = self._get_all_queued_messages()
             steering_messages = queued["steering"]
             follow_up_messages = queued["followUp"]
@@ -4809,7 +4933,13 @@ class InteractiveMode:
             if all_queued:
                 queued_text = "\n\n".join(all_queued)
                 explicit_text = options.get("currentText") if options else None
-                current_text = explicit_text if explicit_text is not None else self.editor.get_text()
+                get_expanded = getattr(self.editor, "get_expanded_text", None)
+                if explicit_text is not None:
+                    current_text = explicit_text
+                elif get_expanded is not None:
+                    current_text = get_expanded()
+                else:
+                    current_text = self.editor.get_text()
                 combined_text = "\n\n".join(t for t in (queued_text, current_text) if t.strip())
                 self.editor.set_text(combined_text)
                 self.ui.request_render()
@@ -4930,7 +5060,7 @@ class InteractiveMode:
 
     def _flush_pending_bash_components(self) -> None:
         """Move pending bash components from pending area to chat; under the UI
-        state lock (the submit handler)."""
+        state lock (the submit handler, the `agent_settled` apply)."""
         for component in self._pending_bash_components:
             self._pending_messages_container.remove_child(component)
             self._chat_container.add_child(component)
@@ -5905,22 +6035,41 @@ class InteractiveMode:
             self.show_status("Resumed session")
             return result
         except MissingSessionCwdError as error:
-            selected_cwd = await self._prompt_for_missing_session_cwd(error)
-            if not selected_cwd:
-                self.show_status("Resume cancelled")
-                return {"cancelled": True}
-            result = await self.runtime_host.switch_session(
-                session_path,
-                cwd_override=selected_cwd,
-                with_session=with_session,
-                project_trust_context_factory=lambda cwd: self._create_project_trust_context(cwd),
-            )
-            if result.get("cancelled"):
-                return result
-            self.show_status("Resumed session in current cwd")
-            return result
+            match await self._prompt_for_missing_session_cwd(error):
+                case "continue":
+                    result = await self.runtime_host.switch_session(
+                        session_path,
+                        cwd_override=error.issue.fallback_cwd,
+                        with_session=with_session,
+                        project_trust_context_factory=lambda cwd: self._create_project_trust_context(cwd),
+                    )
+                    if not result.get("cancelled"):
+                        self.show_status(f"Resumed session in {error.issue.fallback_cwd}")
+                    return result
+                case "fork":
+                    return await self._switch_to_forked_session(session_path, error.issue.fallback_cwd, with_session)
+                case _:
+                    self.show_status("Resume cancelled")
+                    return {"cancelled": True}
         except Exception as error:
             return await self._handle_fatal_runtime_error("Failed to resume session", error)
+
+    async def _switch_to_forked_session(self, source_path: str, cwd: str, with_session=None) -> dict:
+        """Fork a session whose stored cwd is gone into `cwd` and switch to the fork, like
+        `--session <id>` from another project (#11060)."""
+        fork = await SessionManager.fork_from(source_path, cwd, self.session_manager.get_session_dir())
+        fork_path = fork.get_session_file()
+        result = await self.runtime_host.switch_session(
+            fork_path,
+            with_session=with_session,
+            project_trust_context_factory=lambda cwd: self._create_project_trust_context(cwd),
+        )
+        if result.get("cancelled"):
+            # An extension vetoed the switch; drop the fork so cancelling leaves no copy behind.
+            await fs.Path(fork_path).unlink(missing_ok=True)
+            return result
+        self.show_status(f"Forked into new session {fork.get_session_id()} in {cwd}")
+        return result
 
     def get_login_provider_options(self, auth_type: str | None = None) -> list:
         options: list = []
@@ -5980,17 +6129,6 @@ class InteractiveMode:
             )
         return sorted(options, key=lambda option: (option["name"].lower(), option["name"]))
 
-    def _find_login_provider_options(self, provider_ref: str) -> list:
-        normalized_provider_ref = provider_ref.strip().lower()
-        if not normalized_provider_ref:
-            return []
-
-        return [
-            provider
-            for provider in self.get_login_provider_options()
-            if provider["id"].lower() == normalized_provider_ref or provider["name"].lower() == normalized_provider_ref
-        ]
-
     def _handle_login_command(self, provider_ref: str | None = None) -> None:
         """From the submit handler: the selector or the login dialog is shown
         here; a login flow is spawned."""
@@ -5998,7 +6136,9 @@ class InteractiveMode:
             self._show_login_auth_type_selector()
             return
 
-        provider_options = self._find_login_provider_options(provider_ref)
+        provider_options = find_matching_providers(
+            self.get_login_provider_options(), provider_ref, lambda option: (option["id"], option["name"])
+        )
         if len(provider_options) == 1:
             self._start_provider_login(provider_options[0])
             return
@@ -6761,15 +6901,18 @@ class InteractiveMode:
                 return
             self.show_status(f"Session imported from: {input_path}")
         except MissingSessionCwdError as error:
-            selected_cwd = await self._prompt_for_missing_session_cwd(error)
-            if not selected_cwd:
-                self.show_status("Import cancelled")
-                return
-            result = await self.runtime_host.import_from_jsonl(input_path, selected_cwd)
-            if result.get("cancelled"):
-                self.show_status("Import cancelled")
-                return
-            self.show_status(f"Session imported from: {input_path}")
+            match await self._prompt_for_missing_session_cwd(error):
+                case "continue":
+                    result = await self.runtime_host.import_from_jsonl(input_path, error.issue.fallback_cwd)
+                    self.show_status(
+                        "Import cancelled" if result.get("cancelled") else f"Session imported from: {input_path}"
+                    )
+                case "fork":
+                    result = await self._switch_to_forked_session(input_path, error.issue.fallback_cwd)
+                    if result.get("cancelled"):
+                        self.show_status("Import cancelled")
+                case _:
+                    self.show_status("Import cancelled")
         except SessionImportFileNotFoundError as error:
             self.show_error(f"Failed to import session: {error}")
         except Exception as error:
@@ -7059,14 +7202,16 @@ class InteractiveMode:
             else "No changelog entries found."
         )
 
-        self._append_to_chat(
-            Spacer(1),
-            DynamicBorder(),
-            ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0),
-            Spacer(1),
-            Markdown(changelog_markdown, 1, 1, self._get_markdown_theme_with_settings()),
-            DynamicBorder(),
-        )
+        # Built in the hold: the transformers come from the current session.
+        with self.ui.state_lock:
+            self._append_to_chat(
+                Spacer(1),
+                DynamicBorder(),
+                ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0),
+                Spacer(1),
+                self._create_changelog_markdown(changelog_markdown, 1, 1),
+                DynamicBorder(),
+            )
 
     def _get_app_key_display(self, action: str) -> str:
         """Get capitalized display string for an app keybinding action."""
@@ -7271,7 +7416,7 @@ class InteractiveMode:
             # Create UI component for display, show output and complete
             component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
             with self.ui.state_lock:
-                self._mount_bash_component(component, self.session.is_streaming)
+                self._mount_bash_component(component)
                 if result.get("output"):
                     component.append_output(result["output"])
                 component.set_complete(
@@ -7300,7 +7445,7 @@ class InteractiveMode:
         # (pi keeps the component in a field; a local, since two `!` commands
         # run concurrently here and each must keep its own output.)
         component = BashExecutionComponent(command, self.ui, exclude_from_context, self._output_pad)
-        self._mount_bash_component(component, self.session.is_streaming)
+        self._mount_bash_component(component)
         self.ui.request_render()
 
         def on_chunk(chunk: str) -> None:
@@ -7333,9 +7478,13 @@ class InteractiveMode:
 
         self.ui.request_render()
 
-    def _mount_bash_component(self, component, deferred: bool) -> None:
+    def _mount_bash_component(self, component) -> None:
+        # The expand state and the streaming flag are read in the mount hold: a ctrl+o toggle, or the
+        # `agent_settled` apply that moves pending output to the chat, lands before or after the mount, never
+        # between the read and the mount.
         with self.ui.state_lock:
-            if deferred:
+            component.set_expanded(self._tool_output_expanded)
+            if self.session.is_streaming:
                 # Show in pending area when agent is streaming
                 # (`_flush_pending_bash_components` moves the pending list)
                 self._pending_messages_container.add_child(component)

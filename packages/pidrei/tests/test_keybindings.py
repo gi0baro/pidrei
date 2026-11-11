@@ -4,6 +4,12 @@ pi's first case asserts native win32 also gets Windows defaults; pidrei is
 POSIX-only and `use_windows_keybindings` has no win32 arm, so that case is
 dropped and the `tui.editor.undo` expectation loses its native-Windows
 branch. The rest is pi's, including that `WT_SESSION` alone is not WSL.
+
+pi's "keeps ctrl+v as a paste key on WSL" re-imports the module under a
+stubbed `WSL_DISTRO_NAME`. `KEYBINDINGS` is built once at import here too,
+and reloading the module in the shared runtime would leave a second
+`KEYBINDINGS` behind, so that case is not mirrored; the WSL value is asserted
+by "applies the detected defaults consistently" on a WSL host.
 """
 
 import json
@@ -30,7 +36,9 @@ def test_keeps_non_windows_defaults_on_other_platforms():
 def test_applies_the_detected_defaults_consistently():
     windows_keybindings = use_windows_keybindings()
 
-    assert KEYBINDINGS["app.clipboard.pasteImage"]["defaultKeys"] == ("alt+v" if windows_keybindings else "ctrl+v")
+    assert KEYBINDINGS["app.clipboard.pasteImage"]["defaultKeys"] == (
+        ["alt+v", "ctrl+v"] if windows_keybindings else "ctrl+v"
+    )
     assert KEYBINDINGS["tui.altScreen.search"]["defaultKeys"] == ("ctrl+f" if windows_keybindings else "ctrl+shift+f")
     assert KEYBINDINGS["app.message.followUp"]["defaultKeys"] == ("ctrl+q" if windows_keybindings else "alt+enter")
     assert KEYBINDINGS["app.model.cycleBackward"]["defaultKeys"] == ("alt+p" if windows_keybindings else "shift+ctrl+p")

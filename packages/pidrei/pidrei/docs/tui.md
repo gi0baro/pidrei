@@ -190,12 +190,17 @@ synchronous function, called as `factory(tui, theme, keybindings, done)`
 before `custom()` returns; calling `done(result)` (from anywhere) resolves
 `custom()` with `result` and disposes the component.
 A custom component does not report pidrei as waiting for the user, because
-`custom()` also hosts loaders and other non-blocking UI. When an inline
-component waits for an answer, pass
+`custom()` also hosts loaders and other non-blocking UI. When a component
+waits for an answer, pass
 `{"blocked": {"kind": "question", "message": "Pick a color"}}` so terminals
 that support [program status](environment-variables.md#program-status) show
-pidrei as blocked while the component is visible. `kind` is `"question"`,
-`"permission"` or `"auth"`. Overlays ignore this option.
+pidrei as blocked. `kind` is `"question"`, `"permission"` or `"auth"`. An
+inline component reports blocked while it is visible: a newer dialog or
+component shown in its place reports its own status instead. An overlay
+reports blocked from when it is shown until it calls `done()`, also while it
+is hidden with `set_hidden()` or covered by another overlay. When several
+blocking prompts are open, the most recently shown one supplies `kind` and
+`message`.
 By default the component replaces the editor; `{"overlay": True}` draws it on
 top of existing content instead, with `"overlayOptions"` (size, anchor,
 offsets, margins, responsive visibility — a dict or a callable returning one)

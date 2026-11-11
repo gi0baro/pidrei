@@ -23,14 +23,12 @@ from pidrei.core.cache_warmer import (
     CacheWarmRequest,
     format_cache_warming_status,
     format_cache_warming_usage,
-    get_cache_warming_delay_ms,
-    get_prompt_cache_ttl_ms,
-    is_replayable,
 )
 from pidrei.core.event_bus import create_event_bus
 from pidrei.core.extensions.loader import create_extension_runtime, load_extension_from_factory
 from pidrei.core.extensions.runner import ExtensionRunner
 from pidrei.core.session_manager import SessionManager
+from pidrei_ai.cache_warming import get_cache_warming_delay_ms, get_prompt_cache_ttl_ms, is_cache_warming_replayable
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import AssistantMessage, Context, SimpleStreamOptions, Usage, UsageCost
 from pidrei_ai.utils.transcript import normalize_context
@@ -186,10 +184,10 @@ def test_derives_eligibility_and_timing_from_retention_and_provider_behavior():
         get_cache_warming_delay_ms(10_000),
     ] == [270_000, 50_000, None]
     assert [
-        is_replayable(BUDGET_MODEL, SimpleStreamOptions(reasoning="medium")),
-        is_replayable(BUDGET_MODEL, None),
-        is_replayable(ADAPTIVE_MODEL, SimpleStreamOptions(reasoning="medium")),
-        is_replayable(OPENAI_MODEL, SimpleStreamOptions(reasoning="medium")),
+        is_cache_warming_replayable(BUDGET_MODEL, SimpleStreamOptions(reasoning="medium")),
+        is_cache_warming_replayable(BUDGET_MODEL, None),
+        is_cache_warming_replayable(ADAPTIVE_MODEL, SimpleStreamOptions(reasoning="medium")),
+        is_cache_warming_replayable(OPENAI_MODEL, SimpleStreamOptions(reasoning="medium")),
     ] == [False, True, True, True]
 
 
@@ -222,6 +220,7 @@ async def test_replays_profitable_requests_and_preserves_options_across_repeated
             1,
         )
         assert options.max_retries == 0
+        assert options.disable_continuation is True
         assert options.cancel is not cancel
         assert runtime.events[0]["type"] == "cache_warming_decision"
         assert runtime.events[0]["continuationProbability"] == 1
@@ -416,7 +415,10 @@ async def test_formats_status_and_usage_entries():
     entry = await SessionManager.in_memory().append_usage(
         "cache_warm", ADAPTIVE_MODEL.provider, ADAPTIVE_MODEL.id, usage, "extension override"
     )
-    assert format_cache_warming_usage(entry) == "Cache warmed (extension override): $0.029497"
+    assert (
+        format_cache_warming_usage(entry["usage"].cost.total, entry["note"])
+        == "Cache warmed (extension override): $0.029497"
+    )
 
 
 @pytest.mark.tonio

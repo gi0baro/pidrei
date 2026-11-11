@@ -4014,6 +4014,27 @@ async def test_renumbers_the_paste_registry_in_ascending_id_order_when_markers_a
     assert submitted == [paste_c + paste_b]
 
 
+# Regression test for #11923
+@pytest.mark.tonio
+async def test_renumbers_short_paste_markers_without_a_size_suffix():
+    editor = Editor(create_test_tui(), default_editor_theme)
+    submitted = []
+    editor.on_submit = lambda t: submitted.append(t)
+
+    paste_a = _big_paste("alpha")
+    paste_b = _big_paste("beta")
+    editor.handle_input(f"\x1b[200~{paste_a}\x1b[201~")  # #1 = A
+    editor.handle_input(f"\x1b[200~{paste_b}\x1b[201~")  # #2 = B
+    editor.handle_input("\x15")  # Ctrl+U clears the line, registry stays
+    for ch in "[paste #1][paste #2]":
+        editor.handle_input(ch)
+    editor.handle_input("\x1b[D")  # left over marker #2
+    editor.handle_input("\x7f")  # delete marker #1, renumber #2 -> #1
+    assert editor.get_text() == "[paste #1]"
+    editor.handle_input("\r")
+    assert submitted == [paste_b]
+
+
 @pytest.mark.tonio
 async def test_undo_after_set_text_restores_paste_markers_and_registry():
     editor = Editor(create_test_tui(), default_editor_theme)

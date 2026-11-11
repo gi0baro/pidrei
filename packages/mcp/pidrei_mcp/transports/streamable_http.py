@@ -72,6 +72,7 @@ DEFAULT_RECONNECT_MAX_DELAY_MS = 30_000
 DEFAULT_RECONNECT_MAX_RETRIES = 5
 _DELETE_TIMEOUT_MS = 1_000
 _RETRY_FIELD = re.compile(r"[0-9]+")
+_SSE_LINE_ENDING = re.compile(r"\r\n?|\n")
 _INSUFFICIENT_SCOPE = re.compile(r'(?:^|[\s,])error="?insufficient_scope"?', re.IGNORECASE)
 
 
@@ -94,7 +95,7 @@ async def consume_sse_stream(
     without data (resumption priming events); `on_retry` every valid `retry`
     field, in milliseconds. The owner of `chunks` closes it."""
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    limit = max_event_bytes or DEFAULT_MAX_MESSAGE_BYTES
+    limit = DEFAULT_MAX_MESSAGE_BYTES if max_event_bytes is None else max_event_bytes
     buffered = ""
     event_name: str | None = None
     event_id: str | None = None
@@ -117,9 +118,8 @@ async def consume_sse_stream(
         data_bytes = 0
         await on_event(event)
 
-    async def process_line(raw_line: str) -> None:
+    async def process_line(line: str) -> None:
         nonlocal event_name, event_id, data_bytes
-        line = raw_line.removesuffix("\r")
         if line == "":
             await dispatch()
             return
@@ -144,16 +144,35 @@ async def consume_sse_stream(
             if on_retry is not None:
                 await on_retry(int(value))
 
+    # SSE lines end with CRLF, LF, or a lone CR.
+    skip_leading_lf = False
+
+    async def consume_lines() -> None:
+        nonlocal buffered, skip_leading_lf
+        start = 0
+        for ending in _SSE_LINE_ENDING.finditer(buffered):
+            await process_line(buffered[start : ending.start()])
+            # A CR at the end of what has arrived ends the line now; an LF opening the next chunk is its CRLF.
+            if ending.end() == len(buffered) and ending.group() == "\r":
+                skip_leading_lf = True
+            start = ending.end()
+        buffered = buffered[start:]
+
     async for chunk in chunks:
-        buffered += decoder.decode(chunk)
-        newline = buffered.find("\n")
-        while newline >= 0:
-            await process_line(buffered[:newline])
-            buffered = buffered[newline + 1 :]
-            newline = buffered.find("\n")
+        text = decoder.decode(chunk)
+        # A CRLF split across chunks: the CR already ended the line, so drop the LF.
+        if skip_leading_lf and text:
+            text = text.removeprefix("\n")
+            skip_leading_lf = False
+        buffered += text
+        await consume_lines()
         if len(buffered.encode("utf-8")) > limit:
             raise RuntimeError(f"MCP SSE event exceeds {limit} bytes")
-    buffered += decoder.decode(b"", final=True)
+    tail = decoder.decode(b"", final=True)
+    if skip_leading_lf:
+        tail = tail.removeprefix("\n")
+    buffered += tail
+    await consume_lines()
     if buffered:
         await process_line(buffered)
     await dispatch()
@@ -219,6 +238,25 @@ def _needs_authorization(response: McpResponse) -> bool:
 def _is_transient_status(status: int) -> bool:
     """Statuses worth retrying when a stream fails to (re)open."""
     return status in (408, 429) or status >= 500
+
+
+async def _read_body_text(response: McpResponse, max_bytes: int) -> tuple[str, bool]:
+    """Read a response body as text, decoding chunks as they arrive, and
+    whether it was truncated. Once the body exceeds `max_bytes`, reading
+    stops and the text holds only the first `max_bytes` bytes; the owner's
+    close of the response aborts the rest."""
+    # `utf-8-sig` drops a leading BOM, as `TextDecoder` does.
+    decoder = codecs.getincrementaldecoder("utf-8-sig")(errors="replace")
+    parts: list[str] = []
+    remaining = max_bytes
+    async for chunk in response.iter_bytes():
+        if len(chunk) > remaining:
+            parts.append(decoder.decode(chunk[:remaining]))
+            return "".join(parts), True
+        remaining -= len(chunk)
+        parts.append(decoder.decode(chunk))
+    parts.append(decoder.decode(b"", final=True))
+    return "".join(parts), False
 
 
 def _describe_http_failure(status: int, body: str) -> str:
@@ -364,9 +402,16 @@ class StreamableHttpTransport(TransportEvents):
             raise McpHttpError(response.status, f"MCP server accepted request {message['method']} without a response")
         content_type = _content_type(response)
         if content_type == "application/json":
+            max_bytes = self.options.max_message_bytes
+            if max_bytes is None:
+                max_bytes = DEFAULT_MAX_MESSAGE_BYTES
             try:
-                body = parse_json(await response.read())
+                text, truncated = await _read_body_text(response, max_bytes)
+                if truncated:
+                    raise RuntimeError(f"MCP JSON response exceeds {max_bytes} bytes")
+                body = parse_json(text)
             finally:
+                # Closing a response not read to the end aborts the rest of it.
                 await self._discard(response)
             for item in body if isinstance(body, list) else [body]:
                 self._emit_message(parse_json_rpc_message(item))
@@ -458,8 +503,10 @@ class StreamableHttpTransport(TransportEvents):
     async def _check_response(self, response: McpResponse) -> None:
         if 200 <= response.status < 300:
             return
+        # Reads only the excerpt the error keeps; discarding the response
+        # aborts the rest, so a huge error body is never buffered.
         try:
-            body = (await response.read()).decode("utf-8", "replace")[:MAX_ERROR_BODY_BYTES]
+            body, _truncated = await _read_body_text(response, MAX_ERROR_BODY_BYTES)
         except Exception:
             body = ""
         await self._discard(response)
@@ -500,7 +547,9 @@ class StreamableHttpTransport(TransportEvents):
             on_event=on_event,
             on_id=on_id,
             on_retry=on_retry,
-            max_event_bytes=self.options.max_message_bytes or DEFAULT_MAX_MESSAGE_BYTES,
+            max_event_bytes=(
+                DEFAULT_MAX_MESSAGE_BYTES if self.options.max_message_bytes is None else self.options.max_message_bytes
+            ),
         )
 
     async def _consume_response_stream(self, response: McpResponse, request_id: JsonRpcId) -> None:

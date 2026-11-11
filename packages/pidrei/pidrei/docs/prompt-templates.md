@@ -42,8 +42,12 @@ Run `/reload` after adding or changing a template in a running session.
 | `${@:N:L}` | `L` arguments starting at position `N` |
 
 Arguments are split on whitespace, with quotes honoured, so
-`/review "feature branch"` passes one argument. A placeholder with no matching
-argument expands to nothing.
+`/review "feature branch"` passes one argument. A quote only starts quoting at
+the beginning of an argument, so apostrophes inside words such as `doesn't`
+stay as text, and a quote with no closing match is kept as text. Inside a
+quoted argument, a backslash before the same quote character keeps it as text,
+so `/review "the \"fast\" path"` passes `the "fast" path`; other backslashes
+are kept as typed. A placeholder with no matching argument expands to nothing.
 
 An extension command with the same name wins over a template. Otherwise
 extensions see the raw `/name args` text through the `input` event first, and

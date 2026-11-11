@@ -46,6 +46,7 @@ class NativeProvider(UnusedStreams):
         self.base_url = None
         self.headers = None
         self.filter_models = None
+        self.refresh_models_auth = None
         self.has_dynamic_models = False
         self._model = make_model("extension-native", "native")
 

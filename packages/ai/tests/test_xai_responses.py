@@ -126,7 +126,8 @@ async def test_uses_responses_with_bearer_auth_and_xai_compatible_request_fields
     assert client._url == "https://api.x.ai/v1/responses"
     assert client._headers["authorization"] == "Bearer xai-test-token"
     assert client._headers["User-Agent"] == format_user_agent()
-    assert client._headers["session_id"] == "pi-session-123"
+    assert client._headers["session-id"] == "pi-session-123"
+    assert "session_id" not in client._headers
 
     assert params["model"] == "grok-4.5"
     assert params["store"] is False

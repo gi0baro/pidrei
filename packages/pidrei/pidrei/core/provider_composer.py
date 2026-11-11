@@ -711,6 +711,12 @@ class ComposedProvider:
         self.auth = auth
         self.filter_models = base.filter_models if base is not None else None
         self.filter_all_models = base.filter_all_models if base is not None else None
+        # Extension hooks read context.credential, so they need the default credential refresh.
+        self.refresh_models_auth = (
+            None
+            if (extension and extension.get("refreshModels")) or (extension_oauth and extension_oauth.modify_models)
+            else (base.refresh_models_auth if base is not None else None)
+        )
         self._extension_images = (extension.get("images") if extension else None) or {}
         self._extension_classifiers = (extension.get("classifiers") if extension else None) or {}
         self._base_generate_images = base.generate_images if base is not None else None

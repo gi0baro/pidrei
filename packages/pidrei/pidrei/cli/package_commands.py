@@ -38,9 +38,11 @@ from typing import Any
 
 import tonio.colored as tonio
 
+from pidrei_ai.utils.models_error import ModelsError
+
 from ..config import APP_NAME, CONFIG_DIR_NAME, get_agent_dir, get_auth_path, get_models_path
 from ..core.output_guard import write_stderr, write_stdout
-from ..core.package_manager import DefaultPackageManager
+from ..core.package_manager import DefaultPackageManager, is_offline_mode_enabled
 from ..core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
 from ..core.resource_loader import format_package_install_warning, is_builtin_extension
 from ..core.settings_manager import SettingsManager
@@ -385,29 +387,40 @@ def _report_project_trust_warnings(warnings: list[str]) -> None:
 
 async def _refresh_model_catalogs(agent_dir: str) -> None:
     from pidrei_utils.cancel import CancelToken
+    from pidrei_utils.timers import Timeout
 
     from ..core.model_runtime import ModelRuntime, ModelsRefreshOptions
 
     cancel = CancelToken()
-
-    async def _expire() -> None:
-        await tonio.time.sleep(15)
-        cancel.cancel(TimeoutError("The operation timed out."))
-
-    tonio.spawn.without_tracking(_expire())
-    runtime = await ModelRuntime(
-        auth_path=get_auth_path(),
-        models_path=get_models_path(),
-        allow_model_network=False,
-        cancel=cancel,
-    )
-    result = await runtime.refresh(ModelsRefreshOptions(allow_network=True, force=True, cancel=cancel))
-    if getattr(result, "aborted", False):
+    timeout = Timeout(15_000, lambda: cancel.cancel(TimeoutError("The operation timed out.")))
+    try:
+        runtime = await ModelRuntime(
+            auth_path=get_auth_path(),
+            models_path=get_models_path(),
+            allow_model_network=False,
+            cancel=cancel,
+        )
+        result = await runtime.refresh(ModelsRefreshOptions(allow_network=True, force=True, cancel=cancel))
+    finally:
+        # pi: clearTimeout. Synchronous, so it also runs on a cancelled chain.
+        timeout.cancel()
+    if result.aborted:
         raise Exception("Model catalog refresh timed out.")
-    errors = getattr(result, "errors", None) or {}
-    if errors:
-        details = "; ".join(f"{provider}: {error}" for provider, error in errors.items())
-        raise Exception(f"Could not refresh model catalogs: {details}")
+    failures: list[str] = []
+    for provider, error in result.errors.items():
+        # A stale login only affects that provider's catalog; the others are still worth refreshing.
+        if isinstance(error, ModelsError) and error.code == "oauth":
+            write_stderr(
+                yellow(
+                    f"Warning: skipped model catalog for {provider}: {error}\n"
+                    f"Log in again with `{APP_NAME} auth login {provider}` to refresh it."
+                )
+                + "\n"
+            )
+        else:
+            failures.append(f"{provider}: {error}")
+    if failures:
+        raise Exception(f"Could not refresh model catalogs: {'; '.join(failures)}")
     write_stdout(green("Model catalogs refreshed") + "\n")
 
 
@@ -513,9 +526,17 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
     _report_settings_errors(settings_manager, "package command")
 
     package_manager = DefaultPackageManager(cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager)
-    package_manager.set_progress_callback(
-        lambda event: write_stdout(dim(event.message) + "\n") if event.type == "start" and event.message else None
-    )
+
+    # Update result events describe a changed package, e.g. "git:github.com/user/repo abc1234 -> def5678".
+    updated_packages: list[str] = []
+
+    def on_progress(event) -> None:
+        if event.type == "result" and event.action == "update" and event.message:
+            updated_packages.append(event.message)
+        elif event.type == "start" and event.message:
+            write_stdout(dim(event.message) + "\n")
+
+    package_manager.set_progress_callback(on_progress)
 
     failures: tuple[BaseException, ...] = ()
     try:
@@ -538,8 +559,25 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
             return 0
 
         # update
-        await package_manager.update(options.update_source)
-        write_stdout(green(f"Updated {options.update_source}" if options.update_source else "Updated packages") + "\n")
+        update_source = options.update_source
+        await package_manager.update(update_source)
+        # Only claim "up to date" when the update actually checked. pi also
+        # prints "No packages were updated, see the warnings above" when nothing
+        # changed and a `progress` warning was printed; PiDrei's update emits no
+        # `progress` events (pi's are npm's stale-metadata warning and a git-clean
+        # warning it does not have), so that branch is not ported.
+        if is_offline_mode_enabled():
+            write_stdout(yellow("Skipped package updates (offline mode)") + "\n")
+        elif not updated_packages:
+            write_stdout(
+                green(f"{update_source} is already up to date" if update_source else "Packages are already up to date")
+                + "\n"
+            )
+        else:
+            count = len(updated_packages)
+            write_stdout(green(f"Updated {count} package{'' if count == 1 else 's'}:") + "\n")
+            for message in updated_packages:
+                write_stdout(f"  {message}\n")
         if options.update_target == "all":
             await _refresh_model_catalogs(agent_dir)
         await settings_manager.flush()

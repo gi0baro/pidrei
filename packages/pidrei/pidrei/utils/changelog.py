@@ -14,7 +14,8 @@ Three deliberate divergences, all following from whose changelog this reads:
   build>``, and the build number is the one that moves between pi releases —
   parsing three segments would make every pidrei-only release compare equal to
   the last one and silently skip the "What's New" panel. A header with only
-  three segments still parses, as build ``0``.
+  three segments still parses, as build ``0``, and so does the last seen
+  version.
 - **pi's legacy-repository rewrite is gone.** It canonicalized
   ``badlogic|earendil-works/pi-mono`` URLs into pi's current repo — history we
   do not have. Left in place it would rewrite a genuine pi link into a pidrei
@@ -35,6 +36,11 @@ _CHANGELOG_LINK_BASE_PATH = "packages/pidrei/pidrei"
 _URL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 _INLINE_MARKDOWN_LINK_RE = re.compile(r"(!?\[[^\]\n]+\]\()([^\s)]+)((?:\s+[^)]*)?\))")
 _VERSION_HEADER_RE = re.compile(r"##\s+\[?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?\]?")
+# pi reads `^v?(\d+)\.(\d+)\.(\d+)` and ignores the rest. The fourth (build)
+# segment is optional and also numeric only: anything after the last digit read
+# (`-rc.1`, `+local`, `rc1`, `.dev3`) is ignored, and a missing build reads as 0.
+# ASCII digits only, as JavaScript's `\d`.
+_LAST_VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?", re.ASCII)
 
 
 def _entry_version(entry: dict) -> str:
@@ -185,16 +191,23 @@ def compare_versions(v1: dict, v2: dict) -> int:
     return v1["build"] - v2["build"]
 
 
-def get_new_entries(entries: list, last_version: str) -> list:
-    """Get entries newer than last_version."""
-
-    def part(index: int) -> int:
-        pieces = last_version.split(".")
-        try:
-            return int(pieces[index])
-        except IndexError, ValueError:
-            return 0
-
-    last = {"major": part(0), "minor": part(1), "patch": part(2), "build": part(3), "content": ""}
+def get_new_entries(entries: list, last_version: str) -> list | None:
+    """Get entries newer than last_version, or None when last_version has no
+    major.minor.patch to compare against."""
+    # Read only the leading major.minor.patch[.build], like the changelog headings, so a prerelease such as
+    # 0.1.5-20261020.7 counts as 0.1.5 and its notes are not shown again on every launch (#11703).
+    # Alternatives considered: plain string comparison orders 0.10.0 before 0.9.0; numeric localeCompare
+    # works by accident and is locale-dependent; strict semver orders 0.1.5-x before 0.1.5, which repeats
+    # the [0.1.5] notes forever.
+    parts = _LAST_VERSION_RE.match(last_version.strip())
+    if parts is None:
+        return None
+    last = {
+        "major": int(parts.group(1)),
+        "minor": int(parts.group(2)),
+        "patch": int(parts.group(3)),
+        "build": int(parts.group(4) or 0),
+        "content": "",
+    }
 
     return [entry for entry in entries if compare_versions(entry, last) > 0]

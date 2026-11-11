@@ -13,8 +13,13 @@ expected strings are pi's.
 
 Where the outcome differs from pi's: patterns run on Python's `re`, which
 rejects `\\p{L}` and words its errors its own way (`pattern-unicode-prop`,
-`mcp-invalid-regex`). JavaScript-only cases are kept with their JSON
-arguments: `prototype-key` and `proto-key-value` are ordinary keys here.
+`mcp-invalid-regex`). TypeBox's bigint is an `int`, so the converted
+arguments read `{"n":12}` where pi's replacer writes `{"n":"12n"}`
+(`bigint`, "BigInt from a JSON string"). `Type.Undefined` stays rejected
+("Undefined from JSON null"): pi converts `null` to a key present and set to
+undefined, which a Python dict cannot hold, so the expectation keeps
+PiDrei's `REJECT`. JavaScript-only cases are kept with their JSON arguments:
+`prototype-key` and `proto-key-value` are ordinary keys here.
 """
 
 import json
@@ -463,8 +468,9 @@ EXPECTED: dict[str, str] = {
     'codec {"c":12}': 'ok {"c":"12"}',
     "undefined-optional {}": "ok {}",
     'undefined-optional {"u":null}': "ok {}",
-    'bigint {"n":1}': "REJECT - n: expected bigint, got integer",
-    'bigint {"n":"12"}': "REJECT - n: expected bigint, got string",
+    # pi: 'ok {"n":"1n"}' and 'ok {"n":"12n"}' (its replacer writes a bigint as `<n>n`); the bigint is an int here.
+    'bigint {"n":1}': 'ok {"n":1}',
+    'bigint {"n":"12"}': 'ok {"n":12}',
     'refine {"n":5}': 'ok {"n":5}',
     'refine {"n":-5}': 'ok {"n":-5}',
     'template-literal {"t":"id-12"}': 'ok {"t":"id-12"}',
@@ -624,13 +630,9 @@ def test_every_probe_has_an_expected_outcome():
 
 
 SOL_CASES: list[tuple[str, dict, dict, str]] = [
-    # TypeBox-only: Type.BigInt and Type.Undefined have no JSON form; TypeBox converted to them.
-    (
-        "BigInt from a JSON string",
-        obj({"n": {"type": "bigint"}}),
-        {"n": "42"},
-        "REJECT - n: expected bigint, got string",
-    ),
+    # Type.BigInt and Type.Undefined have no JSON form: arguments convert to them, as TypeBox converted them.
+    # PiDrei: the bigint is an int (pi writes `"42n"`); Undefined stays rejected (see the module docstring).
+    ("BigInt from a JSON string", obj({"n": {"type": "bigint"}}), {"n": "42"}, 'ok {"n":42}'),
     (
         "Undefined from JSON null",
         obj({"n": {"type": "undefined"}}),

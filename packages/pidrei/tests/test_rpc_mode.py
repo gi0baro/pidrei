@@ -12,6 +12,7 @@ export lands with the Phase 4 theme system).
 import contextlib
 import json
 import os
+import signal
 import threading
 from typing import Any
 
@@ -26,7 +27,8 @@ from pidrei_ai.types import DoneEvent, Model, ModelCost, StartEvent
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_utils.cancel import CancelToken
 
-from .agent_session_helpers import create_agent_session, create_assistant_message
+from .agent_session_helpers import create_agent_session, create_assistant_message, create_test_resource_loader
+from .harness import create_test_extensions_result
 from .test_agent_session_compaction import _make_llm_stream_fn
 
 
@@ -79,17 +81,61 @@ def _fake_model() -> Model:
     )
 
 
+class _FakeSignalDispatcher:
+    """Captures the mode's signal handlers, so a test delivers a signal by awaiting one."""
+
+    def __init__(self):
+        self.handlers: dict[int, Any] = {}
+
+    def set_handler(self, signum: int, handler) -> None:
+        self.handlers[signum] = handler
+
+
 class _RpcHarness:
     def __init__(self):
         self.output_lines: list[str] = []
         self._waiters_lock = threading.Lock()
         self._waiters: list[tuple[Any, tonio.Event]] = []
         self.line_handler = None
+        self.end_handler = None
         self._stop = tonio.Event()
         self._ready = tonio.Event()
         self._exit = None
         self._handle = None
         self.runtime_host = None
+        self.signal_dispatcher = _FakeSignalDispatcher()
+        # `hard_exit` calls: (exit code, whether the slow dispose had been released by then).
+        self.exits: list[tuple[int, bool | None]] = []
+        self._exited = tonio.Event()
+        self.dispose_started = tonio.Event()
+        self.dispose_release: tonio.Event | None = None
+        self.dispose_calls = 0
+        self._spawned: list = []
+
+    def _hard_exit(self, code: int) -> None:
+        """Stands in for `hard_exit`: records the exit as an output record, so its order
+        relative to the responses can be asserted."""
+        self.exits.append((code, self.dispose_release.is_set() if self.dispose_release is not None else None))
+        self._write(json.dumps({"type": "exit", "code": code}) + "\n")
+        self._exited.set()
+
+    def slow_dispose(self) -> None:
+        """Make the runtime's dispose wait for `dispose_release` (pi's mocked dispose)."""
+        self.dispose_release = tonio.Event()
+
+    def run(self, coro) -> tonio.Event:
+        """Spawn a call into the mode (its stdin-end callback, a signal handler); the
+        returned Event is set when it returns. `stop()` awaits it."""
+        done = tonio.Event()
+
+        async def run() -> None:
+            try:
+                await coro
+            finally:
+                done.set()
+
+        self._spawned.append(tonio.spawn(run()))
+        return done
 
     def records(self) -> list[dict[str, Any]]:
         parsed = []
@@ -144,9 +190,20 @@ class _RpcHarness:
 
     async def start(self, runtime_host) -> None:
         self.runtime_host = runtime_host
+        real_dispose = runtime_host.dispose
 
-        async def fake_pump(on_line, _on_end) -> None:
+        async def dispose() -> None:
+            self.dispose_calls += 1
+            self.dispose_started.set()
+            if self.dispose_release is not None:
+                await self.dispose_release.wait()
+            await real_dispose()
+
+        runtime_host.dispose = dispose
+
+        async def fake_pump(on_line, on_end) -> None:
             self.line_handler = on_line
+            self.end_handler = on_end
             self._ready.set()
             await self._stop.wait()
 
@@ -161,12 +218,23 @@ class _RpcHarness:
                 write_raw_stdout=self._write,
                 drain_output=_noop_async,
                 _pump_stdin_commands=fake_pump,
+                hard_exit=self._hard_exit,
+                kill_tracked_detached_children=lambda: None,
             )
         )
-        self._handle = tonio.spawn(rpc_mode.run_rpc_mode(runtime_host))
-        await self._ready.wait()
+        self._handle = tonio.spawn(rpc_mode.run_rpc_mode(runtime_host, signal_dispatcher=self.signal_dispatcher))
+        await self._ready.wait(5)
+        assert self._ready.is_set(), "the RPC mode never attached its input"
 
     async def stop(self) -> None:
+        # A started shutdown ends in `hard_exit`: let it reach the stand-in before the real
+        # one is restored, also when the test failed midway.
+        if self.dispose_release is not None:
+            self.dispose_release.set()
+        if self.dispose_started.is_set():
+            await self._exited.wait(5)
+        for spawned in self._spawned:
+            await spawned
         self._stop.set()
         if self._handle is not None:
             await self._handle
@@ -188,11 +256,17 @@ async def _create_runtime_host(
     model: Model | None = None,
     persisted: bool = False,
     settings_overrides: dict | None = None,
+    extension_factories: list | None = None,
 ) -> AgentSessionRuntime:
     """Real AgentSessionRuntime whose factory builds sessions from the shared
     hermetic helper, so new_session/fork/switch flow through real code."""
     temp_dir = str(temp_dir)
     session_dir = os.path.join(temp_dir, "sessions")
+    resource_loader = (
+        create_test_resource_loader(await create_test_extensions_result(extension_factories, temp_dir))
+        if extension_factories
+        else None
+    )
 
     async def create_runtime(
         *,
@@ -209,6 +283,7 @@ async def _create_runtime_host(
             model=model,
             provider_auth="anthropic" if with_auth else None,
             settings_overrides=settings_overrides,
+            resource_loader=resource_loader,
         )
         services = AgentSessionServices(
             cwd=cwd,
@@ -352,6 +427,187 @@ class TestRpcPromptResponseSemantics:
             assert len([record for record in harness.records() if record.get("type") == "agent_start"]) == 1
         finally:
             release.set()
+            await harness.stop()
+
+
+def _exit_order(harness: _RpcHarness, request_id: str) -> list[str]:
+    """pi's `parseOutputLines(...).map(line => line.id === id ? "response" : line.type)`."""
+    return [
+        "response" if record.get("id") == request_id else record.get("type")
+        for record in harness.records()
+        if record.get("id") == request_id or record.get("type") == "exit"
+    ]
+
+
+def _capture_shutdown(captured: list):
+    """An extension that keeps its session_start context, to request a shutdown later."""
+
+    async def factory(pi) -> None:
+        async def on_session_start(_event, ctx):
+            captured.append(ctx)
+
+        pi.on("session_start", on_session_start)
+
+    return factory
+
+
+class TestRpcExtensionShutdownRequests:
+    """pi's "RPC extension shutdown requests" describe. `process.exit` is the
+    harness's `hard_exit` stand-in, which records an `exit` output record."""
+
+    # #11599: an async ctx.shutdown() while idle must not wait for another stdin command.
+    @pytest.mark.tonio
+    async def test_shuts_down_an_idle_session_when_an_extension_requests_shutdown_asynchronously(self, tmp_path):
+        harness = _RpcHarness()
+        contexts: list = []
+        host = await _create_runtime_host(
+            tmp_path, stream_fn=_stream_fn(), with_auth=False, extension_factories=[_capture_shutdown(contexts)]
+        )
+        await harness.start(host)
+        try:
+            assert contexts, "session_start never ran"
+            assert harness.exits == []
+            contexts[-1].shutdown()
+            await harness.until(lambda: len(harness.exits) > 0)
+            assert harness.exits == [(0, None)]
+        finally:
+            await harness.stop()
+
+    @pytest.mark.tonio
+    async def test_writes_the_command_response_before_shutting_down_for_a_shutdown_requested_by_an_extension_command(
+        self, tmp_path
+    ):
+        harness = _RpcHarness()
+
+        async def factory(pi) -> None:
+            async def quit_now(_args, ctx):
+                ctx.shutdown()
+
+            pi.register_command("quit-now", handler=quit_now)
+
+        host = await _create_runtime_host(
+            tmp_path, stream_fn=_stream_fn(), with_auth=False, extension_factories=[factory]
+        )
+        await harness.start(host)
+        try:
+            harness.send({"id": "q", "type": "prompt", "message": "/quit-now"})
+            await harness.until(lambda: len(harness.exits) > 0)
+            assert len(harness.exits) == 1
+            assert _exit_order(harness, "q") == ["response", "exit"]
+        finally:
+            await harness.stop()
+
+    # pi requests the shutdown and sends the command in one tick, before the scheduled idle
+    # check runs. Here the check is spawned, so the order is made explicit: the command has
+    # started (an Event its handler sets) when the shutdown is requested.
+    @pytest.mark.tonio
+    async def test_waits_for_a_command_that_arrives_before_an_idle_shutdown_request_is_processed(self, tmp_path):
+        harness = _RpcHarness()
+        contexts: list = []
+        slow_started = tonio.Event()
+        slow_release = tonio.Event()
+
+        async def factory(pi) -> None:
+            async def slow(_args, _ctx):
+                slow_started.set()
+                await slow_release.wait()
+
+            pi.register_command("slow", handler=slow)
+
+        host = await _create_runtime_host(
+            tmp_path,
+            stream_fn=_stream_fn(),
+            with_auth=False,
+            extension_factories=[_capture_shutdown(contexts), factory],
+        )
+        await harness.start(host)
+        try:
+            harness.send({"id": "s", "type": "prompt", "message": "/slow"})
+            await slow_started.wait(5)
+            assert slow_started.is_set(), "the command never started"
+            contexts[-1].shutdown()
+            slow_release.set()
+            await harness.until(lambda: len(harness.exits) > 0)
+            assert len(harness.exits) == 1
+            assert _exit_order(harness, "s") == ["response", "exit"]
+        finally:
+            slow_release.set()
+            await harness.stop()
+
+
+class TestRpcShutdownTriggers:
+    """pi's "RPC shutdown triggers" describe. pi emits stdin `end` and SIGTERM on the
+    process and sleeps before asserting "not exited yet"; here the mode's stdin-end
+    callback and its installed signal handler are awaited directly, and each exit records
+    whether the slow dispose had been released by then."""
+
+    @staticmethod
+    async def _start_with_slow_dispose(tmp_path) -> _RpcHarness:
+        harness = _RpcHarness()
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), with_auth=False)
+        await harness.start(host)
+        harness.slow_dispose()
+        return harness
+
+    @staticmethod
+    async def _returned(done: tonio.Event) -> None:
+        await done.wait(5)
+        assert done.is_set(), "the call never returned"
+
+    @staticmethod
+    def _signal(harness: _RpcHarness) -> tonio.Event:
+        return harness.run(harness.signal_dispatcher.handlers[signal.SIGTERM](signal.SIGTERM))
+
+    # fcatuhe's report on #11599: Paseo closes stdin and sends SIGTERM together.
+    @pytest.mark.tonio
+    async def test_lets_a_shutdown_started_by_stdin_eof_finish_when_one_sigterm_follows(self, tmp_path):
+        harness = await self._start_with_slow_dispose(tmp_path)
+        try:
+            end = harness.run(harness.end_handler())
+            await harness.dispose_started.wait(5)
+            assert harness.dispose_started.is_set()
+            # The signal handler stays installed during the shutdown.
+            assert signal.SIGTERM in harness.signal_dispatcher.handlers
+            await self._returned(self._signal(harness))
+            assert harness.exits == []
+
+            harness.dispose_release.set()
+            await self._returned(end)
+            assert harness.exits == [(0, True)]
+        finally:
+            await harness.stop()
+
+    @pytest.mark.tonio
+    async def test_lets_a_shutdown_started_by_sigterm_finish_when_stdin_eof_follows(self, tmp_path):
+        harness = await self._start_with_slow_dispose(tmp_path)
+        try:
+            signalled = self._signal(harness)
+            await harness.dispose_started.wait(5)
+            assert harness.dispose_started.is_set()
+            end = harness.run(harness.end_handler())
+
+            harness.dispose_release.set()
+            await self._returned(signalled)
+            await self._returned(end)
+            assert harness.exits == [(143, True)]
+            assert harness.dispose_calls == 1
+        finally:
+            await harness.stop()
+
+    @pytest.mark.tonio
+    async def test_exits_at_once_on_a_repeated_signal_during_shutdown(self, tmp_path):
+        harness = await self._start_with_slow_dispose(tmp_path)
+        try:
+            end = harness.run(harness.end_handler())
+            await harness.dispose_started.wait(5)
+            assert harness.dispose_started.is_set()
+            await self._returned(self._signal(harness))
+            await self._returned(self._signal(harness))
+            assert harness.exits == [(143, False)]
+
+            harness.dispose_release.set()
+            await self._returned(end)
+        finally:
             await harness.stop()
 
 

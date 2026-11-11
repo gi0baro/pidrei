@@ -34,7 +34,8 @@
       },
       "compat": {
         "forceAdaptiveThinking": true,
-        "supportsTemperature": false
+        "supportsTemperature": false,
+        "supportsMidConvoEffort": true
       },
       "inputLimits": {
         "images": {
@@ -309,7 +310,7 @@
     },
     "chat:deepseek-v4.1-flash": {
       "id": "deepseek-v4.1-flash",
-      "name": "DeepSeek V4.1 Flash",
+      "name": "DeepSeek V4.1 Flash 1017",
       "api": "openai-completions",
       "provider": "opencode-go",
       "baseUrl": "https://opencode.ai/inference/go/openai/v1",
@@ -772,6 +773,43 @@
       },
       "type": "chat"
     },
+    "chat:longcat-2.5-free": {
+      "id": "longcat-2.5-free",
+      "name": "LongCat 2.5 Free",
+      "api": "openai-completions",
+      "provider": "opencode-go",
+      "baseUrl": "https://opencode.ai/inference/go/openai/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
+        "maxTokensField": "max_tokens"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:mimo-v2.5": {
       "id": "mimo-v2.5",
       "name": "MiMo V2.5",
@@ -1003,49 +1041,6 @@
     }
   },
   "openai-responses": {
-    "chat:crouton-alpha-free": {
-      "id": "crouton-alpha-free",
-      "name": "Crouton Alpha Free",
-      "api": "openai-responses",
-      "provider": "opencode-go",
-      "baseUrl": "https://opencode.ai/inference/go/openai/v1",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "contextWindow": 1048576,
-      "maxTokens": 270000,
-      "compat": {
-        "sessionAffinityFormat": "openai-nosession"
-      },
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": "max"
-      },
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
     "chat:gpt-5.6-luna": {
       "id": "gpt-5.6-luna",
       "name": "GPT-5.6 Luna",

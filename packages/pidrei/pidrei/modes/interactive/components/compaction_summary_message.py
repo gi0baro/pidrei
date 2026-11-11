@@ -4,6 +4,7 @@ from pidrei_tui import Box, Container, Markdown, MouseRegion, Spacer, Text, TuiM
 
 from ..theme import get_markdown_theme, theme
 from .keybinding_hints import key_text
+from .markdown_transform import create_markdown_transform
 
 
 class CompactionSummaryMessageComponent(Box):
@@ -12,11 +13,22 @@ class CompactionSummaryMessageComponent(Box):
     Uses the same background color as custom messages for visual consistency.
     """
 
-    def __init__(self, message, markdown_theme: dict | None = None, output_pad: int = 1) -> None:
+    def __init__(
+        self,
+        message,
+        markdown_theme: dict | None = None,
+        output_pad: int = 1,
+        markdown_transformers=(),
+        message_id: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
         super().__init__(output_pad, 1, lambda t: theme.bg("customMessageBg", t))
         self._expanded = False
         self._message = message
         self._markdown_theme = markdown_theme if markdown_theme is not None else get_markdown_theme()
+        self._markdown_transformers = markdown_transformers
+        self._message_id = message_id
+        self._timestamp = timestamp
         self._update_display()
 
     def set_expanded(self, expanded: bool) -> None:
@@ -42,13 +54,18 @@ class CompactionSummaryMessageComponent(Box):
 
         if self._expanded:
             header = f"**Compacted from {token_str} tokens**\n\n"
+            transform = create_markdown_transform(
+                "summary", lambda: False, self._markdown_transformers, self._message_id, self._timestamp
+            )
             content.add_child(
                 Markdown(
-                    header + self._message.summary,
+                    self._message.summary,
                     0,
                     0,
                     self._markdown_theme,
                     {"color": lambda text: theme.fg("customMessageText", text)},
+                    # Transformers see only the summary content, not PiDrei's header.
+                    {"transform": lambda markdown, width: header + transform(markdown, width)},
                 )
             )
         else:

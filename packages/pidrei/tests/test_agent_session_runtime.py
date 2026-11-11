@@ -25,6 +25,7 @@ from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.extensions import Extension, ExtensionRuntime, LoadExtensionsResult
 from pidrei.core.model_runtime import ModelRuntime
 from pidrei.core.sdk import CreateAgentSessionOptions, create_agent_session
+from pidrei.core.session_cwd import MissingSessionCwdError
 from pidrei.core.session_manager import SessionManager
 from pidrei_ai.auth.types import ApiKeyCredential
 from pidrei_ai.providers.all import get_builtin_model
@@ -123,6 +124,38 @@ def _recorder(events: list):
 
 
 class TestRuntimeSessionLifecycleEvents:
+    # #11060
+    @pytest.mark.tonio
+    async def test_leaves_no_copy_behind_when_an_import_fails_on_a_missing_session_cwd(self, tmp_path):
+        temp_dir = str(tmp_path)
+        runtime = await _create_runtime_host(temp_dir, [])
+        session_dir = runtime.session.session_manager.get_session_dir()
+        import_dir = os.path.join(temp_dir, "import")
+        import_path = os.path.join(import_dir, "orphan.jsonl")
+        os.makedirs(import_dir, exist_ok=True)
+        with open(import_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "session",
+                        "version": 3,
+                        "id": "orphan",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "cwd": os.path.join(temp_dir, "renamed-away"),
+                    }
+                )
+                + "\n"
+            )
+
+        with pytest.raises(MissingSessionCwdError):
+            await runtime.import_from_jsonl(import_path)
+        assert not os.path.exists(os.path.join(session_dir, "orphan.jsonl"))
+
+        await runtime.import_from_jsonl(import_path, temp_dir)
+        assert runtime.session.session_file == os.path.join(session_dir, "orphan.jsonl")
+        assert not os.path.exists(os.path.join(session_dir, "orphan-1.jsonl"))
+        await runtime.dispose()
+
     @pytest.mark.tonio
     async def test_preserves_an_existing_session_when_importing_a_file_with_the_same_name(self, tmp_path):
         temp_dir = str(tmp_path)

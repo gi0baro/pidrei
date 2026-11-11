@@ -1227,6 +1227,10 @@ This is mainly useful for debugging provider serialization and cache
 behaviour; `examples/extensions/provider_payload.py` logs every payload and
 response to a file.
 
+The payload is the full request. Providers that continue from a previous
+response (OpenAI Codex over WebSocket, Anthropic message threads) may send only
+the part that is new since the previous request.
+
 #### after_provider_response
 
 Fired after an HTTP response is received and before its stream body is
@@ -1754,8 +1758,11 @@ Request an orderly shutdown of pidrei.
 
 - **Interactive mode:** deferred until the agent is idle (after every queued
   steering and follow-up message has been processed).
-- **RPC mode:** deferred until the next idle state, once the current command
-  response is complete.
+- **RPC mode:** runs right away when the session is idle and no command is
+  being handled. Otherwise deferred until the current command finishes
+  (including its response) or the active run settles. (A request made while
+  an extension-started compaction is running waits for the next command or
+  run to finish.)
 - **Print and JSON modes:** no effect. The process exits by itself once every
   prompt has been processed.
 
@@ -2179,7 +2186,7 @@ provides; action methods act on the session.
 | `register_flag(name, *, type, description=None, default=None)` | Add a CLI flag |
 | `get_flag(name)` | Read a registered flag's value |
 | `register_message_renderer(custom_type, renderer)` | Render a custom message |
-| `register_markdown_transformer(transformer)` | Rewrite Markdown before pidrei renders it |
+| `register_markdown_transformer(transformer, options=None)` | Rewrite Markdown before pidrei renders it |
 | `register_entry_renderer(custom_type, renderer)` | Render a custom session entry |
 | `register_tool_renderer(resolver)` | Choose how tool calls are drawn |
 | `register_provider(...)` / `unregister_provider(name)` | Add, override or remove a model provider |
@@ -2520,22 +2527,32 @@ messages are created with `pi.send_message()` and are part of the model
 context. See [Custom UI](#custom-ui) and
 `examples/extensions/message_renderer.py`.
 
-### pi.register_markdown_transformer(transformer)
+### pi.register_markdown_transformer(transformer, options)
 
-Rewrite the Markdown of normal user text, assistant text, and thinking blocks
-before pidrei renders it. Transformers run in extension load order and each
-one receives the Markdown the previous one returned; the built-in renderer
-then renders the result. Each extension has one transformer: registering
-again replaces it.
+Rewrite Markdown before pidrei renders it in interactive mode. Transformers
+run in extension load order and each one receives the Markdown the previous
+one returned; the built-in renderer then renders the result. Each extension
+has one transformer: registering again replaces it.
+
+By default a transformer runs on normal user text, assistant text, and
+thinking blocks. `options["messageTypes"]` lists the surfaces it runs on
+instead:
+
+| `messageType` | Surface |
+|---------------|---------|
+| `"user"`, `"assistant"`, `"assistant-thinking"` | Transcript messages (default) |
+| `"custom"` | Custom messages from `pi.send_message()` without a registered message renderer, and expanded skill blocks (their content, without pidrei's header) |
+| `"summary"` | Expanded branch and compaction summaries (the summary, without pidrei's header) |
+| `"changelog"` | pidrei's changelog ("What's New" at startup and `/changelog`) and the release note of the "Update Available" notice |
 
 The transformer is called with the Markdown string and a context dict:
 
-- `messageType` — `"user"`, `"assistant"`, or `"assistant-thinking"`
-- `isStreaming` — `True` for partial assistant updates; `False` for user,
-  finalized assistant, and restored messages
+- `messageType` — one of the surfaces above
+- `isStreaming` — `True` for partial assistant updates; `False` otherwise
 - `availableWidth` — the exact terminal columns available for the content
 - `messageId`, `timestamp` — the session entry's id and ISO timestamp when
-  rendering from stored session entries; `None` for live messages
+  rendering from stored session entries; `None` for live messages and
+  notices
 
 It returns the transformed Markdown:
 
@@ -2547,14 +2564,20 @@ def transformer(markdown, context):
 
 
 pi.register_markdown_transformer(transformer)
+
+# Show :warning: shortcodes in changelogs as a symbol.
+pi.register_markdown_transformer(
+    lambda markdown, context: markdown.replace(":warning:", "⚠"),
+    {"messageTypes": ["changelog"]},
+)
 ```
 
 If a transformer raises, pidrei keeps the Markdown produced so far and
 continues with the next one. The hook is display-only: the session and the
-model context keep the original message. It runs for new user messages,
-assistant streaming updates, restored session messages, and terminal width
-changes — so unlike every other extension callback it is **synchronous**, and
-it must stay inexpensive.
+model context keep the original message. It runs for new messages, assistant
+streaming updates, restored session messages, and terminal width changes — so
+unlike every other extension callback it is **synchronous**, and it must stay
+inexpensive.
 
 `pidrei_tui.lex_markdown(text)` exposes the bundled Markdown lexer if a
 transformer needs to inspect the token stream.
@@ -3483,13 +3506,24 @@ built-in name inherits the built-in renderer for each slot it leaves out (see
 
 | Tool | Methods |
 |---|---|
-| `read` | `read_file(path) -> bytes`, `access(path)` (raises when the file is not readable), and optionally `detect_image_mime_type(path) -> str \| None` |
+| `read` | `read_file(path) -> bytes`, `access(path)` (raises when the file is not readable), and optionally `detect_image_mime_type(path) -> str \| None` and `create_read_stream(path, *, cancel)` |
 | `write` | `write_file(path, content)`, `mkdir(dir)` |
 | `edit` | `read_file(path) -> bytes`, `write_file(path, content)`, `access(path)` |
 | `bash` | `exec(command, cwd, *, on_data, cancel=None, timeout=None, env=None) -> BashExecResult`; `on_data` receives output chunks as `bytes`, `timeout` is in seconds |
 | `ls` | `exists(path)`, `is_directory(path)`, `readdir(path) -> list[str]` |
-| `grep` | `is_directory(path)`, `read_file(path) -> str` |
+| `grep` | `is_directory(path)` |
 | `find` | `exists(path)`, `glob(pattern, path, *, ignore, limit)` returning the matching paths |
+
+The `grep` operations only cover the directory check: grep always runs the
+local `rg`. To search a remote system, override grep's `execute()` instead.
+
+The `read` operations' `create_read_stream` is optional: an async generator
+method (`async def` with `yield`) that `read` calls without awaiting. When it
+yields the file as `bytes` chunks, `read` keeps only the lines it shows in memory, so large files
+can be read with `offset`/`limit`; without it, `read` loads the whole file
+through `read_file`. The generator should stop when `cancel` fires; `read`
+also stops consuming it then, and closes it with `aclose()` whenever it stops
+before the end.
 
 See `examples/extensions/ssh.py` for a complete SSH example with an `--ssh`
 flag.
@@ -4721,7 +4755,7 @@ nothing; a renderer that raises shows an error line in its place. See
 
 To rewrite the Markdown of user text, assistant text and thinking blocks
 before pidrei renders it, register a transformer with
-[`pi.register_markdown_transformer()`](#piregister_markdown_transformertransformer).
+[`pi.register_markdown_transformer()`](#piregister_markdown_transformertransformer-options).
 
 ### Theme colours
 

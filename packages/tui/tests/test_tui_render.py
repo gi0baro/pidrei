@@ -1283,6 +1283,41 @@ class _BoundedWriteTerminal(VirtualTerminal):
 
 
 @pytest.mark.tonio
+async def test_does_not_write_duplicate_cursor_markers_to_the_terminal():
+    terminal = _BoundedWriteTerminal(80, 24)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    # Regression for #9257: terminals may render the payload of a leaked APC marker.
+    component.lines = [f"\x1b[31m界🙂\x1b[0m{CURSOR_MARKER} world{CURSOR_MARKER}"]
+    tui.add_child(component)
+
+    await tui.render_now()
+
+    output = terminal.get_writes()
+    assert "\x1b[31m界🙂\x1b[0m world" in output, "visible styled text should be preserved"
+    assert CURSOR_MARKER not in output, "internal cursor markers must not reach the terminal"
+    assert "\x1b[5G" in output, "the first marker should keep the cursor at visible column 4"
+
+
+@pytest.mark.tonio
+async def test_does_not_write_cursor_markers_from_other_visible_or_scrollback_lines():
+    terminal = _BoundedWriteTerminal(80, 2)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    # Regression for #9257: cursor extraction must not leave markers on other rendered lines.
+    component.lines = [f"offscreen{CURSOR_MARKER}", f"a{CURSOR_MARKER}", f"visible-b{CURSOR_MARKER}"]
+    tui.add_child(component)
+
+    await tui.render_now()
+
+    output = terminal.get_writes()
+    assert "offscreen" in output, "full renders should preserve scrollback content"
+    assert "a" in output, "full renders should preserve other visible lines"
+    assert CURSOR_MARKER not in output, "internal cursor markers must not reach the terminal"
+    assert "\x1b[10G" in output, "the bottom visible marker should determine the cursor column"
+
+
+@pytest.mark.tonio
 async def test_splits_a_large_full_render_without_changing_its_output():
     terminal = _BoundedWriteTerminal(80, 24)
     tui = TuiMainScreen(terminal)

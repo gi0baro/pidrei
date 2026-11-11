@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent src/core/tools/ls.ts."""
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -66,7 +67,8 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
             raise Exception("Operation aborted")
 
         dir_path = resolve_to_cwd(path or ".", (ctx.cwd if ctx is not None else None) or cwd)
-        effective_limit = int(limit) if limit is not None else DEFAULT_LIMIT
+        # A limit of 0 would list nothing and report "(empty directory)", so it means 1.
+        effective_limit = max(1, math.floor(limit if limit is not None else DEFAULT_LIMIT))
 
         # Check if path exists.
         if not await ops.exists(dir_path):

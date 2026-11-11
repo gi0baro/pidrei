@@ -44,6 +44,7 @@ from pidrei_ai.providers.openrouter import openrouter_provider
 from pidrei_ai.providers.qwen_token_plan import qwen_token_plan_provider
 from pidrei_ai.providers.qwen_token_plan_cn import qwen_token_plan_cn_provider
 from pidrei_ai.providers.qwen_token_plan_individual import qwen_token_plan_individual_provider
+from pidrei_ai.providers.qwen_token_plan_individual_cn import qwen_token_plan_individual_cn_provider
 from pidrei_ai.providers.together import together_provider
 from pidrei_ai.providers.typesafe import typesafe_provider
 from pidrei_ai.providers.vercel_ai_gateway import vercel_ai_gateway_provider
@@ -164,6 +165,7 @@ def builtin_providers() -> list[Provider]:
         qwen_token_plan_provider(),
         qwen_token_plan_cn_provider(),
         qwen_token_plan_individual_provider(),
+        qwen_token_plan_individual_cn_provider(),
         together_provider(),
         typesafe_provider(),
         vercel_ai_gateway_provider(),

@@ -311,6 +311,9 @@ DROPPED_PREFIXES += tuple(
     (path, _EXPERIMENTAL_REASON)
     for path in (
         "packages/chord/",
+        # p2 ("Pi Mobile on Chord v2", imported from pi-private in 1.5.1
+        # `05dc8d23`) and p3's design docs: apps on Chord and pi-durable
+        "apps/",
         # Pico5 durable package (0.86.0 `08016016` moved pico out of agent)
         "packages/durable/",
         # pi-env: remote execution environments for Pi Durable (an SSH-deployed
@@ -495,6 +498,9 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/jev-router-example.test.ts",
         "packages/coding-agent/test/plan-mode-extension.test.ts",
         "packages/coding-agent/test/plan-mode-utils.test.ts",
+        # 1.5.1 `aba42ae6`: drives the subagent example through a child process
+        "packages/coding-agent/test/subagent-extension.test.ts",
+        "packages/coding-agent/test/fixtures/subagent-child.mjs",
         "packages/coding-agent/test/tool-renderer-examples.test.ts",
         "packages/coding-agent/test/trigger-compact-extension.test.ts",
     )
@@ -763,6 +769,11 @@ DROPPED_PREFIXES += tuple(
         # shared.ts's cases: V8 collecting shared checks and patterns (WeakRef, FinalizationRegistry)
         "packages/schema/test/shared.test.ts",
         "packages/schema/LICENSES/",
+        # 1.5.1 `136a7b2d` renamed the directory
+        "packages/schema/THIRD_PARTY_NOTICES/",
+        # 1.5.1 `af79b0c3`: the exported `equal` over bigint and typed values;
+        # pidrei's JSON equality is checks.py's, covered by test_schema_validator.py
+        "packages/schema/test/equal.test.ts",
         "packages/agent/test/agent-tool-typebox.test.ts",
         # pi-ai's typed builders over pi-schema; pidrei's schemas stay plain dicts
         "packages/ai/src/providers/schema-builders.ts",
@@ -800,6 +811,48 @@ DROPPED_PREFIXES += (
     # `531340f1` deletes them; pidrei never had npm root shims
     ("packages/ai/bedrock-provider.js", "npm root entry shim, not ported (1.5.0 delta port)"),
     ("packages/ai/bedrock-provider.d.ts", "npm root entry shim, not ported (1.5.0 delta port)"),
+)
+#: 1.5.2 drops (1.5.2 delta port).
+_NODE_BUNDLE_LOADERS_REASON = "lazy loaders for code-split Node bundles, not ported (JS packaging; 1.5.2 delta port)"
+_PIPE_TRANSPORT_REASON = (
+    "PipeTransport (stdio over a program the caller started) not ported: its only consumer is apps/p2 "
+    "over pi-env's RemoteProcess (experimental stack); its framing cases are mirrored in test_lines.py "
+    "(1.5.2 delta port)"
+)
+_PREFERRED_PROVIDERS_REASON = (
+    "preferred partner providers (Radius and OpenRouter first in /login and /logout, brand colours) "
+    "not ported (2026-11-11 ruling; 1.5.2 delta port)"
+)
+DROPPED_PREFIXES += (
+    # `da95cd79`; the bedrock-converse-stream.lazy.ts and oauth/load.ts hunks
+    # of it and of `5c6ce2b3` are per-hunk skips
+    ("packages/ai/src/lazy-bedrock-provider.ts", _NODE_BUNDLE_LOADERS_REASON),
+    ("packages/ai/src/lazy-oauth.ts", _NODE_BUNDLE_LOADERS_REASON),
+    # `c158fa2e`: lines.ts and the stdio.ts refactor of the same commit port
+    ("packages/mcp/src/transports/pipe.ts", _PIPE_TRANSPORT_REASON),
+    ("packages/mcp/test/pipe.test.ts", _PIPE_TRANSPORT_REASON),
+    # `683a7a86`: the oauth-selector.ts and interactive-mode.ts hunks are
+    # per-hunk skips, with the oauth-selector.test.ts cases
+    ("packages/coding-agent/src/core/preferred-providers.ts", _PREFERRED_PROVIDERS_REASON),
+    ("packages/coding-agent/src/modes/interactive/components/provider-brand.ts", _PREFERRED_PROVIDERS_REASON),
+    ("packages/coding-agent/test/preferred-providers.test.ts", _PREFERRED_PROVIDERS_REASON),
+    # `9e870f6f`: the fix itself has nothing to land (per-hunk skips)
+    (
+        "packages/coding-agent/test/truncate-surrogates.test.ts",
+        "UTF-16 surrogate pairs split by a slice; pidrei slices str by code point, so a pair cannot be split "
+        "(1.5.2 delta port)",
+    ),
+    # `1f7c685b`: the image-resize.ts hunk is a per-hunk skip
+    (
+        "packages/coding-agent/test/image-resize-worker-teardown.test.ts",
+        "image resize worker thread teardown; pidrei resizes with Pillow as a blocking-pool job, there is no "
+        "worker (1.5.2 delta port)",
+    ),
+    # `df0d88aa`: the model-selector half of the commit ports
+    (
+        "packages/coding-agent/test/llama-ui.test.ts",
+        "llama.cpp extension not ported (see pidrei/extensions/__init__.py)",
+    ),
 )
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
@@ -872,6 +925,15 @@ RENAMES = {
     "packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt": (
         "packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt"
     ),
+    # 1.5.1 `136a7b2d` renamed the directory.
+    "packages/mcp/THIRD_PARTY_NOTICES/modelcontextprotocol-typescript-sdk.txt": (
+        "packages/mcp/THIRD_PARTY_NOTICES/modelcontextprotocol-typescript-sdk.txt"
+    ),
+    # 1.5.1 `bb266bf3`: the authorization server double of the sign-in tests,
+    # named so the pidrei suite's mcp_oauth_server.py does not clash with it.
+    "packages/mcp/test/authorization-server.ts": "packages/mcp/tests/mcp_authorization_server.py",
+    # 1.5.1 `42849bb8`: a server whose main process exits and leaves a child.
+    "packages/mcp/test/fixtures/exiting-parent-server.mjs": "packages/mcp/tests/fixtures/exiting_parent_server.py",
     # 1.1.0: resizing is Pillow on the blocking pool, in the one image module
     # (the worker-thread half is dropped below).
     "packages/coding-agent/src/utils/image-resize-core.ts": "packages/pidrei/pidrei/utils/image_process.py",
@@ -1001,6 +1063,21 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    "packages/coding-agent/src/utils/shell.ts": (
+        (
+            "group-only-kill",
+            "killProcessTree signals the shell's process group only; pi's fallback to the bare pid is not ported",
+        ),
+    ),
+    "packages/coding-agent/src/core/tools/edit-diff.ts": (
+        (
+            "edit-diff-difflib",
+            (
+                "jsdiff diffLines/structuredPatch/formatPatch are difflib SequenceMatcher(autojunk=False) and its "
+                "grouped opcodes; window hunks are numbered from the window's line offsets"
+            ),
+        ),
+    ),
     "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
         (
             "nested-calls-channel",
@@ -1082,6 +1159,19 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "is auth/anthropic_federation.py, applied per request by "
                 "_PunkreqAnthropicClient"
             ),
+        ),
+        (
+            "session-keyed-state",
+            (
+                "threadState sits behind a module thread lock: the entry is pinned, the prefix hashed outside "
+                "the lock, then claimed only if still the stored one; set + evict-oldest is one hold"
+            ),
+        ),
+    ),
+    "packages/ai/src/api/strict-tool-limits.ts": (
+        (
+            "session-keyed-state",
+            "the session set is an insertion-ordered dict behind a module thread lock; add + evict-oldest is one hold",
         ),
     ),
     "packages/ai/src/api/openai-completions.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
@@ -1507,8 +1597,40 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/src/extensions/mcp/oauth.ts": (
         (
             "mcp-extension",
-            "the shared refresh runs detached and is joined through an Event; refresh requests are capped by "
-            "the fetch's timeout_ms; the refresh lock is a renewing FileLock; settings() is async",
+            "the refresh lock is a renewing FileLock whose LockedError maps to McpRefreshLockBusyError; PiDrei's "
+            "client identity (APP_NAME, pi's documents, auto -> dcr) is handed to pidrei-mcp by thin wrappers",
+        ),
+    ),
+    # 1.5.1 `bb266bf3`: the sign-in and the refreshing auth provider moved into pi-mcp.
+    "packages/mcp/src/oauth/auth-provider.ts": (
+        (
+            "mcp-client",
+            "the shared refresh runs detached and is joined through an Event; on_unauthorized starts it at the "
+            "call; settings() is async",
+        ),
+    ),
+    "packages/mcp/src/oauth/client-settings.ts": (
+        ("mcp-client", "timed_fetch sets the fetch's timeout_ms instead of adding AbortSignal.timeout"),
+    ),
+    "packages/mcp/src/oauth/sign-in.ts": (
+        (
+            "mcp-client",
+            "the signal is McpSignInOptions.cancel handed to the flow; untilAborted is the locked refresh run "
+            "detached, awaited with Waiter.any(done, cancel.event); McpSignInRedirect is a camelCase TypedDict",
+        ),
+    ),
+    "packages/mcp/src/oauth/loopback.ts": (
+        (
+            "mcp-client",
+            "wait_for_loopback_sign_in registers the callback wait in a synchronous prefix and returns the race "
+            "to await; the race is detached racers settling a first outcome",
+        ),
+    ),
+    "packages/mcp/src/transports/lines.ts": (
+        (
+            "mcp-client",
+            "read_stderr awaits the async on_stderr; each half is driven by one reader coroutine; end() runs in "
+            "the reaper after both pipes reach EOF",
         ),
     ),
     "packages/coding-agent/src/extensions/mcp/config.ts": (
@@ -1652,7 +1774,10 @@ TEST_HOMES = {
         "the other grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
-    "packages/coding-agent/test/git-update.test.ts": "PARITY GAP: package_manager.py git update (force-push handling) unmirrored",
+    "packages/coding-agent/test/git-update.test.ts": (
+        "partial mirror: test_package_manager.py holds the 1.5.1 update result cases (git stubbed); the "
+        "force-push handling cases are a PARITY GAP"
+    ),
     "packages/coding-agent/test/suite/regressions/8237-node-sea-extension-loading.test.ts": (
         "not ported: guards jiti virtualModules vs filesystem aliases inside a Node SEA binary; "
         "pidrei extensions import the live modules from sys.path (loader.py docstring)"
@@ -1704,8 +1829,10 @@ TEST_HOMES = {
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
     "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": (
-        "PARITY GAP: rpc prompt/response semantics suite unmirrored (incl. the 0.99.1 data.disposition cases; "
-        "steer/follow_up 'queued' is covered in test_agent_session.py)"
+        "partial mirror: test_rpc_mode.py holds the preflight failure and success, queued-during-streaming and "
+        "queue-clearing cases (TestRpcPromptResponseSemantics) and the 1.5.1 shutdown cases "
+        "(TestRpcExtensionShutdownRequests, TestRpcShutdownTriggers); the extension-command and "
+        "intercepted-input case is a PARITY GAP"
     ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": (
@@ -1879,6 +2006,7 @@ NOISE_BASENAMES = {
     "pi-test.sh",
     "pi-test.ps1",
     ".npmignore",
+    ".npmrc",
     ".gitignore",
     ".gitattributes",
     # pi's Nix flake (1.0.2): packaging of pi itself

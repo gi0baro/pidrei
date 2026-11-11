@@ -1,7 +1,7 @@
 """Mirror of pi mcp src/oauth/flow.ts.
 
 Adapted from modelcontextprotocol/typescript-sdk v1.29.0 src/client/auth.ts.
-Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see LICENSES/.
+Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see THIRD_PARTY_NOTICES/.
 Modified to remove SDK/Zod dependencies and use WebCrypto for PKCE.
 """
 
@@ -128,6 +128,14 @@ class OAuthFlowOptions:
     # tokens, for example when the server asks for scopes the current grant
     # lacks (a refresh keeps the old scope).
     skip_refresh: bool = False
+    # Only refresh the stored tokens: return `REDIRECT` instead of registering
+    # a client or preparing an authorization request, so a pending
+    # authorization (its `state` and PKCE verifier) stays usable.
+    refresh_only: bool = False
+    # With `authorization_code`: the redirect URI the authorization request
+    # used. The exchange fails before sending the code when the flow would
+    # send another one (RFC 6749 section 4.1.3 requires the same).
+    authorization_redirect_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,7 +395,21 @@ def _cancellable(fetch: McpFetch, cancel: CancelToken | None) -> McpFetch:
     return fetching
 
 
-async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) -> OAuthFlowResult:
+class _FlowUse:
+    """What a flow used, for deciding what to invalidate after it failed."""
+
+    __slots__ = ("stored_client_id",)
+
+    def __init__(self) -> None:
+        # `client_id` of the stored client the flow used; None when none was stored.
+        self.stored_client_id: str | None = None
+
+
+async def _run_flow(
+    provider: OAuthClientProvider, options: OAuthFlowOptions, use: _FlowUse | None = None
+) -> OAuthFlowResult:
+    if use is None:
+        use = _FlowUse()
     fetch = _cancellable(options.fetch if options.fetch is not None else default_fetch, options.cancel)
     metadata_url = (
         _secure_endpoint(options.authorization_server_metadata_url)
@@ -436,6 +458,7 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         or None
     )
     stored = await provider.client_information()
+    use.stored_client_id = stored.get("client_id") if stored is not None else None
     client_document = (
         None
         if stored is not None or provider.client_metadata_document is None
@@ -445,10 +468,27 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
         url = parse_url(client_document.url)
         if url.protocol != "https:" or url.pathname == "/":
             raise RuntimeError("Invalid OAuth client metadata URL")
+    # The document's redirect URI may differ from the provider's, for example by a server-specific path.
+    redirect_url = client_document.redirect_url if client_document is not None else provider.redirect_url
+    # Checked first: another redirect URI also explains a client that is missing for the exchange.
+    if (
+        options.authorization_code
+        and options.authorization_redirect_url is not None
+        and redirect_url != options.authorization_redirect_url
+    ):
+        raise RuntimeError(
+            f"The code exchange would use the redirect URI {redirect_url}, "
+            f"but the authorization request used {options.authorization_redirect_url}"
+        )
     client = stored if stored is not None else ({"client_id": client_document.url} if client_document else None)
     if client is None:
+        if options.refresh_only:
+            return "REDIRECT"
         if options.authorization_code:
-            raise RuntimeError("OAuth client information is missing during code exchange")
+            raise RuntimeError(
+                "OAuth client information is missing during code exchange: the authorization request's client "
+                "was removed, or the client settings changed"
+            )
         if provider.save_client_information is None:
             raise RuntimeError("OAuth client information cannot be persisted")
         client = await register_client(
@@ -459,8 +499,6 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
             fetch=fetch,
         )
         await provider.save_client_information(client)
-    # The document's redirect URI may differ from the provider's, for example by a server-specific path.
-    redirect_url = client_document.redirect_url if client_document is not None else provider.redirect_url
     token_options = TokenRequestOptions(
         client_information=client,
         metadata=metadata,
@@ -509,6 +547,8 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
             if options.cancel is not None and options.cancel.cancelled:
                 raise
             # Any other failure falls through to a new authorization, as in pi.
+    if options.refresh_only:
+        return "REDIRECT"
     state_value = await provider.state() if provider.state is not None else None
     authorization = start_authorization(
         discovered["authorizationServerUrl"],
@@ -525,11 +565,21 @@ async def _run_flow(provider: OAuthClientProvider, options: OAuthFlowOptions) ->
 
 
 async def authorize_mcp(provider: OAuthClientProvider, options: OAuthFlowOptions) -> OAuthFlowResult:
+    use = _FlowUse()
     try:
-        return await _run_flow(provider, options)
+        return await _run_flow(provider, options, use)
     except OAuthError as error:
         if error.code in ("invalid_client", "unauthorized_client"):
-            if provider.invalidate_credentials is not None:
+            # A refresh keeps a pending authorization's `state` and verifier: they are the user's sign-in. A
+            # client stored meanwhile (by a sign-in that completed) is not the one the server rejected, so it
+            # stays.
+            if options.refresh_only:
+                current = await provider.client_information()
+                current_id = current.get("client_id") if current is not None else None
+                if current_id == use.stored_client_id and provider.invalidate_credentials is not None:
+                    for kind in ("client", "tokens", "discovery"):
+                        await provider.invalidate_credentials(kind)  # type: ignore[arg-type]
+            elif provider.invalidate_credentials is not None:
                 await provider.invalidate_credentials("all")
             return await _run_flow(provider, options)
         if error.code == "invalid_grant":

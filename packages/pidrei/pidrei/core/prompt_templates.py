@@ -33,15 +33,28 @@ def parse_command_args(args_string: str) -> list[str]:
     # Tracks whether a token has started, so quoted empty strings ("" or '') are kept as arguments
     has_token = False
     in_quote: str | None = None
+    # Where the open quote started, so an unclosed quote can be re-read as literal text
+    quote_start = 0
 
-    for char in args_string:
+    # Index-driven: an unclosed quote rewinds the index to re-read the rest.
+    i = 0
+    length = len(args_string)
+    while i < length:
+        char = args_string[i]
+
         if in_quote:
-            if char == in_quote:
+            if char == "\\" and i + 1 < length and args_string[i + 1] == in_quote:
+                # A backslash before the open quote's character keeps it as text: "say \"hi\"" gives say "hi"
+                current += in_quote
+                i += 1
+            elif char == in_quote:
                 in_quote = None
             else:
                 current += char
-        elif char in ('"', "'"):
+        elif char in ('"', "'") and not has_token:
+            # Quotes only open at the start of an argument, so apostrophes inside words stay literal
             in_quote = char
+            quote_start = i
             has_token = True
         elif char.isspace():
             if has_token:
@@ -51,6 +64,15 @@ def parse_command_args(args_string: str) -> list[str]:
         else:
             current += char
             has_token = True
+
+        if in_quote and i == length - 1:
+            # Unclosed quote: keep the quote character as text and parse the rest normally
+            # (current was empty when the quote opened, because quotes only open a new argument)
+            in_quote = None
+            current = args_string[quote_start]
+            i = quote_start
+
+        i += 1
 
     if has_token:
         args.append(current)

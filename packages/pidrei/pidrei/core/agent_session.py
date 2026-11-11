@@ -136,6 +136,16 @@ from .virtual_models import (
 )
 
 
+@dataclass(slots=True, frozen=True)
+class _QueuedUserMessageWithImages(UserMessage):
+    """A queued user message whose images are normalized when it is delivered.
+
+    pi marks such messages in a `WeakSet` and normalizes them in place at
+    `message_start`. Messages are frozen here, so the class is the mark: it lives
+    exactly as long as the message, and `message_start` replaces the message with a
+    plain, normalized `UserMessage` (`_normalize_queued_message_images`)."""
+
+
 class _NestedToolCallHost:
     """The session side of `ctx.execute_tool()` (pi's inline `NestedToolCallHost`).
 
@@ -539,6 +549,19 @@ def _retry_policy_from(settings: dict[str, Any]) -> RetryPolicy:
 # ============================================================================
 
 
+def _get_next_cycle_index(current_index: int, length: int, direction: str) -> int | None:
+    """Index of the model to cycle to, or None when there is nothing to switch to.
+    When the current model is not in the list (current_index -1), forward picks the first
+    entry and backward the last, so a one-entry list still selects its only model."""
+    if length == 0:
+        return None
+    if current_index == -1:
+        return 0 if direction == "forward" else length - 1
+    if length == 1:
+        return None
+    return (current_index + 1) % length if direction == "forward" else (current_index - 1 + length) % length
+
+
 class AgentSession:
     def __init__(self, config: AgentSessionConfig):
         self.agent = config.agent
@@ -560,6 +583,10 @@ class AgentSession:
         self._event_listeners: tuple[AgentSessionEventListener, ...] = ()
         self._event_listeners_guard = threading.Lock()
         self._is_agent_run_active = False
+        # Prompts in their preflight (input hooks, template expansion, auth checks), which
+        # tree navigation waits out (#9154). Under `_state_guard`, with the navigation
+        # marker `_branch_summary_cancel` (see `prompt` and `navigate_tree`).
+        self._prompt_preflight_count = 0
         # Set by abort() while a run is active; the post-run loop checks it so a retry,
         # compaction continuation or queued-message continuation cannot outlive the abort.
         self._agent_run_abort_requested = False
@@ -581,6 +608,12 @@ class AgentSession:
         # Pending steering/follow-up messages tracked for UI display.
         self._steering_messages: list[str] = []
         self._follow_up_messages: list[str] = []
+        # pi changes a display list and the agent's queue in one synchronous step.
+        # This makes each such pair one section: queueing (append the text, post the
+        # message), clearing (take and rebind the lists, post the clear) and the
+        # delivered text's removal at `message_start`. Sync sections only; it is the
+        # inner lock when `_state_guard` is held, and nothing inside takes another.
+        self._queued_input_guard = threading.Lock()
         # Messages queued to be included with the next user prompt as context.
         self._pending_next_turn_messages: list[CustomMessage] = []
         # Context-only custom messages queued during a run, flushed once the
@@ -815,24 +848,57 @@ class AgentSession:
         return model if model is not None and model.provider == message.provider and model.id == message.model else None
 
     async def _record_selection(self) -> None:
-        """Record the selection on the current branch when the branch implies
-        another one, so a resume restores it. Tree navigation can leave the
-        latest `model_change` on another branch; responses cannot record a
-        virtual selection because they name physical models. Responses do record
-        a physical selection unless the branch holds a virtual one; checking a
-        physical selection against responses would record it on every prompt
-        while `prepare_request` redirects to another model."""
+        """Record the live model and thinking level on the current branch, so a resume restores them."""
+        branch = self.session_manager.get_branch()
+        await self._record_model_selection(branch)
+        await self._record_thinking_level(branch)
+
+    async def _record_model_selection(self, branch: list[dict[str, Any]]) -> None:
+        """Record the model on the current branch when the branch implies another
+        one. Tree navigation can leave the latest `model_change` on another branch;
+        responses cannot record a virtual selection because they name physical
+        models. Responses do record a physical selection unless the branch holds a
+        virtual one; checking a physical selection against responses would record
+        it on every prompt while `prepare_request` redirects to another model."""
         model = self.model
         if model is None:
             return
         get_model = self._model_runtime.get_model
-        recorded = get_branch_selection(self.session_manager.get_branch(), get_model)
+        recorded = get_branch_selection(branch, get_model)
         if recorded is None or recorded == (model.provider, model.id):
             return
         recorded_model = get_model(*recorded)
         if not is_virtual_model(model) and not (recorded_model is not None and is_virtual_model(recorded_model)):
             return
         await self.session_manager.append_model_change(model.provider, model.id)
+
+    async def _record_thinking_level(self, branch: list[dict[str, Any]]) -> None:
+        """Record the thinking level on the current branch when the branch implies
+        another one (#11451). Tree navigation can leave the latest
+        `thinking_level_change` on another branch. The recorded level is compared
+        after clamping to the current model, so a level clamped on resume (e.g.
+        `xhigh` running as `high`) is not recorded over the requested one.
+
+        pi compares and appends in one synchronous step. Here the append suspends
+        on the session manager, and `set_thinking_level` can change the live level
+        meanwhile, leaving the older level last on the branch. So the branch is read
+        again after each append, and the live level recorded again while they differ."""
+        while True:
+            recorded = next((entry for entry in reversed(branch) if entry.get("type") == "thinking_level_change"), None)
+            if recorded is None:
+                return
+            recorded_level = recorded["thinkingLevel"]
+            available_levels = self.get_available_thinking_levels()
+            effective = (
+                recorded_level
+                if recorded_level in available_levels
+                else self._clamp_thinking_level(recorded_level, available_levels)
+            )
+            level = self.thinking_level
+            if effective == level:
+                return
+            await self.session_manager.append_thinking_level_change(level)
+            branch = self.session_manager.get_branch()
 
     def _limits_model(self) -> Model | None:
         """The model whose limits apply to the conversation."""
@@ -1292,7 +1358,10 @@ class AgentSession:
             listener(event)
 
     def _emit_queue_update(self) -> None:
-        self._emit(QueueUpdateEvent(steering=list(self._steering_messages), follow_up=list(self._follow_up_messages)))
+        # Both lists from one hold; the listeners run outside it.
+        with self._queued_input_guard:
+            steering, follow_up = list(self._steering_messages), list(self._follow_up_messages)
+        self._emit(QueueUpdateEvent(steering=steering, follow_up=follow_up))
 
     async def _emit_session_compact_failed(
         self,
@@ -1400,13 +1469,46 @@ class AgentSession:
         content: list[TextContent | ImageContent] = [TextContent(text=text)]
         if images:
             content.extend(images)
-        message = UserMessage(content=content, timestamp=clock.now_ms())
-        if behavior == "followUp":
-            self._follow_up_messages.append(text)
-            self.agent.follow_up(message)
-        else:
-            self._steering_messages.append(text)
-            self.agent.steer(message)
+        # A message with images is marked by its class; it is normalized on delivery.
+        message_type = _QueuedUserMessageWithImages if images else UserMessage
+        message = message_type(content=content, timestamp=clock.now_ms())
+        # The display entry and the agent's queue change together (`_queued_input_guard`).
+        with self._queued_input_guard:
+            if behavior == "followUp":
+                self._follow_up_messages.append(text)
+                self.agent.follow_up(message)
+            else:
+                self._steering_messages.append(text)
+                self.agent.steer(message)
+
+    async def _normalize_queued_message_images(self, event: AgentMessageStartEvent) -> None:
+        """Replace a queued user message's images with normalized ones, appending hints to its text.
+
+        pi does this to the message in place. Here a plain `UserMessage` replaces it on this
+        event, and the loop's `message_end` for the same message resolves to it through
+        `_message_replacements`, so state and persistence get the replacement. The loop's
+        own copy (the `agent_end` messages) keeps the original, as for message_end
+        replacements."""
+        message = event.message
+        if isinstance(message.content, str) or not message.content:
+            return
+        first, *rest = message.content
+        if first.type != "text":
+            return
+        images = [block for block in rest if block.type == "image"]
+        normalized_images, hints = await self._normalize_prompt_images(images)
+        text = f"{first.text}\n\n{chr(10).join(hints)}" if hints else first.text
+        # Constructed as the base class: `dataclasses.replace` would keep the mark.
+        replacement = UserMessage(
+            content=[
+                TextContent(text=text),
+                *(block for block in rest if block.type != "image"),
+                *normalized_images,
+            ],
+            timestamp=message.timestamp,
+        )
+        self._message_replacements[id(message)] = (message, replacement)
+        event.message = replacement
 
     async def _handle_agent_event(self, event: AgentEvent, _cancel=None) -> None:
         """Internal handler for agent events - shared by subscribe and reconnect."""
@@ -1419,13 +1521,31 @@ class AgentSession:
         if event.type == "message_start" and getattr(event.message, "role", None) == "user":
             self._overflow_recovery_attempted = False
             message_text = content_text(event.message.content, "")
-            if message_text:
+            # The lookup and the removal are one section with the queueing and
+            # `clear_queue()` (`_queued_input_guard`); the update is emitted after it.
+            with self._queued_input_guard:
+                # Check steering queue first
                 if message_text in self._steering_messages:
                     self._steering_messages.remove(message_text)
-                    self._emit_queue_update()
+                    removed = True
+                # Check follow-up queue
                 elif message_text in self._follow_up_messages:
                     self._follow_up_messages.remove(message_text)
-                    self._emit_queue_update()
+                    removed = True
+                else:
+                    removed = False
+            if removed:
+                self._emit_queue_update()
+            # Normalize queued images at delivery, before events and persistence see the message,
+            # so they get the same resize as idle prompts with the current model's limits (#11738).
+            if isinstance(event.message, _QueuedUserMessageWithImages):
+                await self._normalize_queued_message_images(event)
+        # The loop ends the message it started (the original); it resolves to the
+        # normalized replacement before extensions, listeners and persistence see it.
+        elif event.type == "message_end" and isinstance(event.message, _QueuedUserMessageWithImages):
+            replacement = self._current_message(event.message)
+            if replacement is not event.message:
+                self._replace_message_in_state(event, replacement)
 
         # Emit to extensions first
         await self._emit_extension_event(event)
@@ -2515,10 +2635,32 @@ class AgentSession:
                     preflight_result("handled")
                 return
 
-        if self._compaction_cancel is not None:
-            raise Exception(
-                "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry."
-            )
+        # The check and the reservation are one section under the guard tree navigation
+        # decides and sets its marker under.
+        with self._state_guard:
+            if self._compaction_cancel is not None or self._branch_summary_cancel is not None:
+                raise Exception(
+                    "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry."
+                )
+
+            # Reserve the context through async input hooks and auth checks so tree navigation cannot
+            # start meanwhile (#9154). The preflight claims the run (`_admit_prompt`) before the
+            # reservation is released, so there is no gap.
+            self._prompt_preflight_count += 1
+        try:
+            trigger = await self._prepare_prompt(text, options)
+        finally:
+            # Synchronous: also runs on a cancelled chain.
+            with self._state_guard:
+                self._prompt_preflight_count -= 1
+        if trigger is not None:
+            await self._start_run(trigger, (lambda: preflight_result("started")) if preflight_result else None)
+
+    async def _prepare_prompt(self, text: str, options: PromptOptions) -> dict[str, Any] | None:
+        """Run input hooks, expand templates, queue while streaming, and validate model and auth.
+        Returns the run trigger, with the run claimed, or None when the prompt was handled or queued."""
+        expand_prompt_templates = options.expand_prompt_templates
+        preflight_result = options.preflight_result
 
         # Emit input event for extension interception (before skill/template expansion)
         processed_input = await self._run_input_handlers(
@@ -2530,7 +2672,7 @@ class AgentSession:
         if processed_input is None:
             if preflight_result:
                 preflight_result("handled")
-            return
+            return None
         current_text, current_images = processed_input
 
         # Expand skill commands (/skill:name args) and prompt templates (/template args)
@@ -2572,12 +2714,9 @@ class AgentSession:
             self._emit_queue_update()
             if preflight_result:
                 preflight_result("queued")
-            return
+            return None
 
-        await self._start_run(
-            {"messageType": "user", "prompt": expanded_text, "images": current_images},
-            (lambda: preflight_result("started")) if preflight_result else None,
-        )
+        return {"messageType": "user", "prompt": expanded_text, "images": current_images}
 
     async def _admit_prompt(
         self, behavior: str | None, text: str, images: list[ImageContent] | None, *, claim: bool
@@ -2883,11 +3022,13 @@ class AgentSession:
 
     def clear_queue(self) -> dict[str, list[str]]:
         """Clear all queued messages and return them."""
-        steering = list(self._steering_messages)
-        follow_up = list(self._follow_up_messages)
-        self._steering_messages = []
-        self._follow_up_messages = []
-        self.agent.clear_all_queues()
+        # The lists and the agent's queues are cleared together (`_queued_input_guard`).
+        with self._queued_input_guard:
+            steering = list(self._steering_messages)
+            follow_up = list(self._follow_up_messages)
+            self._steering_messages = []
+            self._follow_up_messages = []
+            self.agent.clear_all_queues()
         self._emit_queue_update()
         return {"steering": steering, "followUp": follow_up}
 
@@ -3004,16 +3145,11 @@ class AgentSession:
         scoped_models = [
             scoped for scoped in self._scoped_models if (scoped.model.provider, scoped.model.id) in available_ids
         ]
-        if len(scoped_models) <= 1:
-            return None
-
         current_model = self.model
         current_index = next((i for i, sm in enumerate(scoped_models) if models_are_equal(sm.model, current_model)), -1)
-
-        if current_index == -1:
-            current_index = 0
-        length = len(scoped_models)
-        next_index = (current_index + 1) % length if direction == "forward" else (current_index - 1 + length) % length
+        next_index = _get_next_cycle_index(current_index, len(scoped_models), direction)
+        if next_index is None:
+            return None
         next_scoped = scoped_models[next_index]
         thinking_level = self._get_thinking_level_for_model_switch(next_scoped.model, next_scoped.thinking_level)
 
@@ -3038,16 +3174,11 @@ class AgentSession:
 
     async def _cycle_available_model(self, direction: str, *, persist: bool) -> tuple[ModelCycleResult, Model] | None:
         available_models = self._model_runtime.get_available_snapshot()
-        if len(available_models) <= 1:
-            return None
-
         current_model = self.model
         current_index = next((i for i, m in enumerate(available_models) if models_are_equal(m, current_model)), -1)
-
-        if current_index == -1:
-            current_index = 0
-        length = len(available_models)
-        next_index = (current_index + 1) % length if direction == "forward" else (current_index - 1 + length) % length
+        next_index = _get_next_cycle_index(current_index, len(available_models), direction)
+        if next_index is None:
+            return None
         next_model = available_models[next_index]
 
         thinking_level = self._get_thinking_level_for_model_switch(next_model)
@@ -3329,15 +3460,20 @@ class AgentSession:
 
     def abort_compaction(self) -> None:
         """Cancel in-progress compaction (manual or auto)."""
-        if self._compaction_cancel is not None:
-            self._compaction_cancel.cancel()
-        if self._auto_compaction_cancel is not None:
-            self._auto_compaction_cancel.cancel()
+        # One read each: the compaction clears its field from another coroutine.
+        compaction_cancel = self._compaction_cancel
+        if compaction_cancel is not None:
+            compaction_cancel.cancel()
+        auto_compaction_cancel = self._auto_compaction_cancel
+        if auto_compaction_cancel is not None:
+            auto_compaction_cancel.cancel()
 
     def abort_branch_summary(self) -> None:
         """Cancel in-progress branch summarization."""
-        if self._branch_summary_cancel is not None:
-            self._branch_summary_cancel.cancel()
+        # One read: a navigation clears the field from another coroutine.
+        branch_summary_cancel = self._branch_summary_cancel
+        if branch_summary_cancel is not None:
+            branch_summary_cancel.cancel()
 
     async def _check_compaction(self, assistant_message: AssistantMessage, skip_aborted_check: bool = True) -> bool:
         """Dispatch automatic compaction after `agent_end` or before prompt submission.
@@ -4140,6 +4276,12 @@ class AgentSession:
         )
 
     async def reload(self, before_session_start: Callable[[], Awaitable[None]] | None = None) -> None:
+        # Entry checks, as in pi: they do not keep a prompt or compaction from
+        # starting while the reload runs.
+        if self.is_streaming:
+            raise Exception("Wait for the current response to finish before reloading.")
+        if self.is_compacting:
+            raise Exception("Wait for compaction to finish before reloading.")
 
         old_runner = self._extension_runner
         previous_flag_values = old_runner.get_flag_values()
@@ -4408,7 +4550,9 @@ class AgentSession:
     # =========================================================================
 
     def _raise_if_tree_navigation_blocked(self) -> None:
-        if self.is_streaming:
+        # A prompt in its preflight counts as running (#9154). Authoritative under
+        # `_state_guard`, where the prompt reserves the context.
+        if self.is_streaming or self._prompt_preflight_count > 0:
             raise RuntimeError("Wait for the current response to finish before navigating the session tree.")
         if self.is_compacting:
             raise RuntimeError(
@@ -4571,7 +4715,12 @@ class AgentSession:
             self._refresh_finalized_context()
             self._restore_tools_from_transcript()
 
-            # Emit session_tree event
+            # The selected context is installed; session_tree handlers may now prompt or navigate again.
+            # Compare-and-clear under the guard prompts and navigations decide under: from here any
+            # caller can start the next navigation, whose marker this must not clear.
+            with self._state_guard:
+                if self._branch_summary_cancel is branch_summary_cancel:
+                    self._branch_summary_cancel = None
             await self._extension_runner.emit(
                 {
                     "type": "session_tree",
@@ -4584,7 +4733,10 @@ class AgentSession:
 
             return NavigateTreeResult(cancelled=False, editor_text=editor_text, summary_entry=summary_entry)
         finally:
-            self._branch_summary_cancel = None
+            # A navigation started from session_tree owns the marker now; do not clear it.
+            with self._state_guard:
+                if self._branch_summary_cancel is branch_summary_cancel:
+                    self._branch_summary_cancel = None
             self._resolve_idle_wait_if_idle()
 
     def get_user_messages_for_forking(self) -> list[dict[str, str]]:

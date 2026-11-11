@@ -505,6 +505,30 @@ class TestCustomModelsMergeBehavior:
         assert compat.supports_eager_tool_input_streaming is False
 
     @pytest.mark.tonio
+    async def test_custom_models_inherit_and_override_prompt_cache_key_mode_independently_of_long_retention(
+        self, registry_env
+    ):
+        _tmp, models_json_path, auth_storage = registry_env
+        write_models_json(
+            models_json_path,
+            {
+                "demo": {
+                    "baseUrl": "https://proxy.example.com/v1",
+                    "api": "openai-completions",
+                    "compat": {"promptCacheKeyMode": "enabled", "supportsLongCacheRetention": False},
+                    "models": [{"id": "inherited"}, {"id": "disabled", "compat": {"promptCacheKeyMode": "disabled"}}],
+                }
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        assert registry.get_error() is None
+        inherited = registry.find("demo", "inherited").compat
+        disabled = registry.find("demo", "disabled").compat
+        assert (inherited.prompt_cache_key_mode, inherited.supports_long_cache_retention) == ("enabled", False)
+        assert (disabled.prompt_cache_key_mode, disabled.supports_long_cache_retention) == ("disabled", False)
+
+    @pytest.mark.tonio
     async def test_compat_schema_accepts_long_cache_retention_flag(self, registry_env):
         _tmp, models_json_path, auth_storage = registry_env
         write_models_json(
@@ -907,6 +931,25 @@ class TestModelOverrides:
 
         assert sonnet.compat.supports_finish_reason is False
         assert opus.compat.supports_finish_reason is True
+
+    @pytest.mark.tonio
+    async def test_built_in_models_inherit_prompt_cache_key_support_unless_overridden(self, registry_env):
+        _tmp, models_json_path, auth_storage = registry_env
+        write_models_json(
+            models_json_path,
+            {
+                "openai": {
+                    "baseUrl": "https://proxy.example.com/v1",
+                    "compat": {"promptCacheKeyMode": "enabled"},
+                    "modelOverrides": {"gpt-4o-mini": {"compat": {"promptCacheKeyMode": "disabled"}}},
+                }
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        assert registry.get_error() is None
+        assert registry.find("openai", "gpt-4o").compat.prompt_cache_key_mode == "enabled"
+        assert registry.find("openai", "gpt-4o-mini").compat.prompt_cache_key_mode == "disabled"
 
     @pytest.mark.tonio
     async def test_multiple_model_overrides_on_same_provider(self, registry_env):

@@ -19,7 +19,6 @@ import os
 import sys
 import traceback
 import warnings
-from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -43,6 +42,9 @@ from .cli.auth_command import (
     print_auth_command_help,
     validate_auth_command_args,
 )
+from .cli.auth_login import AuthLoginOptions, run_auth_login
+from .cli.auth_logout import AuthLogoutOptions, run_auth_logout
+from .cli.auth_terminal import ProcessAuthOutput, create_process_login_terminal
 from .cli.credential_print import resolve_credential_for_print
 from .cli.file_processor import process_file_arguments_blocking
 from .cli.initial_message import InitialMessageResult, build_initial_message
@@ -79,6 +81,7 @@ from .core.session_cwd import (
     MissingSessionCwdError,
     format_missing_session_cwd_prompt,
     get_missing_session_cwd_issue,
+    get_missing_session_cwd_options,
 )
 from .core.session_manager import SessionManager, assert_valid_session_id
 from .core.settings_diagnostics import collect_settings_diagnostics, deduplicate_diagnostics
@@ -169,6 +172,38 @@ def _is_plain_runtime_metadata_command(parsed: Args) -> bool:
     return not parsed.print and parsed.mode is None and (parsed.help is True or parsed.list_models is not None)
 
 
+async def _run_auth_login_command(args: list[str]) -> int:
+    """pi's runAuthLoginCommand. `_main` already applied the proxy settings of
+    the same global settings; pi's `configureHttpDispatcher` has no PiDrei
+    counterpart (the idle timeout is read per request). pi also aborts the
+    login on SIGINT: PiDrei handles no SIGINT, so only the terminal's interrupt
+    callback cancels it."""
+    settings_manager = await SettingsManager(os.getcwd(), get_agent_dir(), project_trusted=False)
+    model_runtime = await ModelRuntime(allow_model_network=False, cancel=_timeout_cancel(15_000))
+    cancel = CancelToken()
+    exit_code = await run_auth_login(
+        args,
+        AuthLoginOptions(
+            model_runtime=model_runtime,
+            terminal=create_process_login_terminal(cancel.cancel),
+            get_device_id=settings_manager.get_or_create_device_id,
+            cancel=cancel,
+        ),
+    )
+    # A device ID created by the login is a queued settings write; pi's process
+    # lives until it lands.
+    await settings_manager.flush()
+    return exit_code
+
+
+async def _run_auth_logout_command(args: list[str]) -> int:
+    cancel = _timeout_cancel(15_000)
+    model_runtime = await ModelRuntime(allow_model_network=False, cancel=cancel)
+    return await run_auth_logout(
+        args, AuthLogoutOptions(model_runtime=model_runtime, terminal=ProcessAuthOutput(), cancel=cancel)
+    )
+
+
 async def _run_auth_command(args: list[str]) -> int | None:
     """pi's runAuthCommand: handle `auth <command>` before normal startup.
     Returns the process exit code, or None when the args are not an auth
@@ -178,6 +213,11 @@ async def _run_auth_command(args: list[str]) -> int | None:
     if is_auth_command_help(args):
         print_auth_command_help()
         return 0
+    if len(args) > 1 and args[0] == "auth" and args[1] == "login":
+        # `_main` already applied --offline.
+        return await _run_auth_login_command([arg for arg in args[2:] if arg != "--offline"])
+    if len(args) > 1 and args[0] == "auth" and args[1] == "logout":
+        return await _run_auth_logout_command([arg for arg in args[2:] if arg != "--offline"])
 
     try:
         command = parse_auth_command(args)
@@ -552,17 +592,6 @@ def _build_session_options(
     )
 
 
-def _prompt_for_missing_session_cwd(issue, settings_manager: SettingsManager) -> Awaitable[str | None]:
-    return show_startup_selector(
-        settings_manager,
-        format_missing_session_cwd_prompt(issue),
-        [
-            {"label": "Continue", "value": issue.fallback_cwd},
-            {"label": "Cancel", "value": None},
-        ],
-    )
-
-
 def _resolve_cli_paths(cwd: str, paths: list[str] | None) -> list[str] | None:
     if paths is None:
         return None
@@ -717,12 +746,21 @@ async def _main(
     missing_session_cwd_issue = await get_missing_session_cwd_issue(session_manager, cwd)
     if missing_session_cwd_issue:
         if app_mode == "interactive":
-            selected_cwd = await _prompt_for_missing_session_cwd(missing_session_cwd_issue, startup_settings_manager)
-            if not selected_cwd:
-                raise SystemExit(0)
-            session_manager = await SessionManager(
-                selected_cwd, session_dir, session_file=missing_session_cwd_issue.session_file
+            session_file = missing_session_cwd_issue.session_file
+            choice = await show_startup_selector(
+                startup_settings_manager,
+                format_missing_session_cwd_prompt(missing_session_cwd_issue),
+                get_missing_session_cwd_options(missing_session_cwd_issue),
             )
+            match choice:
+                case "continue":
+                    session_manager = await SessionManager(cwd, session_dir, session_file=session_file)
+                # Fork like `--session <id>` from another project, so the choice sticks without rewriting
+                # history (#11060).
+                case "fork":
+                    session_manager = await _fork_session_or_exit(session_file, cwd, session_dir)
+                case None:
+                    raise SystemExit(0)
         else:
             write_stderr(red(str(MissingSessionCwdError(missing_session_cwd_issue))) + "\n")
             raise SystemExit(1)
@@ -1038,6 +1076,7 @@ async def _main(
             # size) before restoring the terminal.
             await tonio.time.sleep(0.15)
             await interactive_mode.stop()
+            await runtime.dispose()
             stop_theme_watcher()
             print_timings()
             return

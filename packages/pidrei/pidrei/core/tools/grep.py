@@ -1,7 +1,10 @@
 """Mirror of pi coding-agent src/core/tools/grep.ts."""
 
+import base64
 import json
+import math
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,6 +28,7 @@ from .truncate import (
     format_size,
     truncate_head,
     truncate_line,
+    utf8_byte_length,
 )
 
 
@@ -33,7 +37,13 @@ GREP_SCHEMA = {
     "properties": {
         "pattern": {"type": "string", "description": "Search pattern (regex or literal string)"},
         "path": {"type": "string", "description": "Directory or file to search (default: current directory)"},
-        "glob": {"type": "string", "description": "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'"},
+        "glob": {
+            "type": "string",
+            "description": (
+                "Filter files by glob pattern, relative to path, e.g. '*.ts', 'src/**/*.ts' or '**/*.spec.ts'. "
+                "A pattern without '/' matches file names at any depth"
+            ),
+        },
         "ignoreCase": {"type": "boolean", "description": "Case-insensitive search (default: false)"},
         "literal": {
             "type": "boolean",
@@ -54,6 +64,12 @@ GREP_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
 }
 
 DEFAULT_LIMIT = 100
+# JS `Number.MAX_SAFE_INTEGER`.
+_MAX_SAFE_INTEGER = 2**53 - 1
+# pi's `/\r?\n?$/`: only the line terminator; JS `$` without the m flag is Python's `\Z`.
+_LINE_TERMINATOR_RE = re.compile(r"\r?\n?\Z")
+# rg never matches a leading "./" ("./src/*.ts" finds nothing), so drop it; "!" negates.
+_GLOB_DOT_SLASH_RE = re.compile(r"^(!?)(?:\./)+")
 
 
 @dataclass(slots=True)
@@ -64,23 +80,42 @@ class GrepToolDetails:
 
 
 class LocalGrepOperations:
+    """The default operations of the grep tool (pi's `GrepOperations`).
+
+    The search itself always runs the local ripgrep; to search a remote system,
+    override the tool's execute(). A custom object may still carry the
+    deprecated `read_file`: it is ignored, since context lines come directly
+    from ripgrep.
+    """
+
     async def is_directory(self, absolute_path: str) -> bool:
         if not await fs.Path(absolute_path).exists():
             raise Exception(f"Path not found: {absolute_path}")
         return await fs.Path(absolute_path).is_dir()
 
-    async def read_file(self, absolute_path: str) -> str:
-        return await fs.Path(absolute_path).read_text(encoding="utf-8", errors="replace", newline="")
+
+def _decode_rg_text(data: Any) -> str:
+    """Decode a ripgrep JSON text field (path or line). Non-UTF-8 data arrives base64-encoded in `bytes`."""
+    if isinstance(data, dict):
+        if isinstance(text := data.get("text"), str):
+            return text
+        if isinstance(encoded := data.get("bytes"), str):
+            return base64.b64decode(encoded).decode("utf-8", "replace")
+    return ""
 
 
-async def _run_streaming_lines(argv: list[str], cancel, on_line: Callable[[str], bool]) -> tuple[int | None, str]:
+async def _run_streaming_lines(
+    argv: list[str], cancel, on_line: Callable[[str], bool], *, cwd: str | None = None
+) -> tuple[int | None, str]:
     """Spawn a process and feed stdout to `on_line` as lines arrive.
 
     `on_line` returns True once it has seen enough; the process is then killed
     (pi's `killedDueToLimit`) instead of being read to EOF. Also kills on
     cancel. Returns the exit code and the captured stderr text.
     """
-    process = await tonio.open_process(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = await tonio.open_process(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd
+    )
     stderr_parts: list[bytes] = []
 
     unsubscribe = None
@@ -158,28 +193,16 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         except Exception:
             raise Exception(f"Path not found: {search_path}")
 
-        context_value = int(context) if context and context > 0 else 0
-        effective_limit = max(1, int(limit) if limit is not None else DEFAULT_LIMIT)
+        # pi clamps so String() never yields exponent notation, which rg rejects; the same bound here.
+        context_value = int(min(context, _MAX_SAFE_INTEGER)) if context and context > 0 else 0
+        effective_limit = max(1, math.floor(limit if limit is not None else DEFAULT_LIMIT))
 
         def format_path(file_path: str) -> str:
             if is_directory:
-                relative = os.path.relpath(file_path, search_path)
+                relative = os.path.relpath(os.path.join(search_path, file_path), search_path)
                 if relative and not relative.startswith(".."):
                     return relative
             return os.path.basename(file_path)
-
-        file_cache: dict[str, list[str]] = {}
-
-        async def get_file_lines(file_path: str) -> list[str]:
-            lines = file_cache.get(file_path)
-            if lines is None:
-                try:
-                    content = await ops.read_file(file_path)
-                    lines = content.replace("\r\n", "\n").split("\n")
-                except Exception:
-                    lines = []
-                file_cache[file_path] = lines
-            return lines
 
         # --no-config: the tool contract (literal, glob, limit, ...) must not depend on
         # ambient user config like RIPGREP_CONFIG_PATH. Users can customize via bash or extensions.
@@ -189,87 +212,107 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         if literal:
             args.append("--fixed-strings")
         if glob:
-            args.extend(["--glob", glob])
-        args.extend(["--", pattern, search_path])
+            args.extend(["--glob", _GLOB_DOT_SLASH_RE.sub(r"\1", glob, count=1)])
+        # rg emits the surrounding lines as `context` events, so no matched file is ever read here (#9276).
+        if context_value > 0:
+            args.extend(["--context", str(context_value)])
+        # rg roots --glob at its own cwd, so a directory search runs inside search_path (#11807).
+        # It searches "." because rg canonicalizes its cwd: with an absolute path, a symlinked
+        # search_path (macOS /tmp) would no longer lie under the glob root.
+        args.extend(["--", pattern, "." if is_directory else search_path])
 
-        # Collect matches from the JSON event stream as it arrives; at the
-        # match limit the reader kills rg rather than draining it to EOF.
-        matches: list[tuple[str, int, str | None]] = []
+        match_count = 0
         match_limit_reached = False
         lines_truncated = False
+        killed_due_to_limit = False
+        output_lines: list[str] = []
+        # Size of the full output, including lines past the byte cap that are counted but not stored.
+        output_bytes = 0
+        output_line_count = 0
+        last_file: str | None = None
+        # Set at the last allowed match. rg still sends that match's trailing context, kept up to
+        # trailing_context_end, and the limit notice waits for proof of one more match.
+        limit_hit = False
+        trailing_context_end = 0
 
+        def push_line(file_path: str, line_number: int, line_text: str, is_match: bool) -> None:
+            nonlocal last_file, lines_truncated, output_bytes, output_line_count
+            last_file = file_path
+            relative_path = format_path(file_path)
+            # Strip only the line terminator: a lone CR inside a line is content, as in the read tool.
+            sanitized = _LINE_TERMINATOR_RE.sub("", line_text, count=1)
+            # Truncate long lines so grep output stays compact.
+            truncated = truncate_line(sanitized)
+            if truncated.was_truncated:
+                lines_truncated = True
+            line = (
+                f"{relative_path}:{line_number}: {truncated.text}"
+                if is_match
+                else f"{relative_path}-{line_number}- {truncated.text}"
+            )
+            # Byte truncation below drops everything past the cap, so keep counting but stop storing (#9276).
+            # output_bytes counts a newline after every line; the joined output has one fewer.
+            if output_bytes - 1 <= DEFAULT_MAX_BYTES:
+                output_lines.append(line)
+            output_bytes += utf8_byte_length(line) + 1
+            output_line_count += 1
+
+        # Called per stdout line as rg streams; returning True stops rg (pi's `finish()`).
         def on_line(line: str) -> bool:
-            nonlocal match_limit_reached
+            nonlocal match_count, match_limit_reached, killed_due_to_limit, limit_hit, trailing_context_end
             if not line.strip():
                 return False
             try:
                 event = json.loads(line)
             except Exception:
                 return False
-            if event.get("type") == "match":
-                data = event.get("data") or {}
-                file_path = (data.get("path") or {}).get("text")
-                line_number = data.get("line_number")
-                line_text = (data.get("lines") or {}).get("text")
-                if file_path and isinstance(line_number, int):
-                    matches.append((file_path, line_number, line_text))
-                if len(matches) >= effective_limit:
-                    match_limit_reached = True
-                    return True
+            if not isinstance(event, dict):
+                return False
+            is_match = event.get("type") == "match"
+            if not is_match and event.get("type") != "context":
+                return False
+            data = event.get("data")
+            if not isinstance(data, dict):
+                return False
+            file_path = _decode_rg_text(data.get("path"))
+            line_number = data.get("line_number")
+            if not file_path or not isinstance(line_number, int):
+                return False
+            line_text = _decode_rg_text(data.get("lines"))
+            if not limit_hit:
+                push_line(file_path, line_number, line_text, is_match)
+                if not is_match:
+                    return False
+                match_count += 1
+                if match_count >= effective_limit:
+                    limit_hit = True
+                    trailing_context_end = line_number + context_value
+                return False
+            in_window = file_path == last_file and line_number <= trailing_context_end
+            # A match inside the last match's trailing context is shown as context.
+            if in_window:
+                push_line(file_path, line_number, line_text, False)
+            # Only another match proves that the limit cut results off.
+            if is_match:
+                match_limit_reached = True
+            if match_limit_reached and not (in_window and line_number < trailing_context_end):
+                killed_due_to_limit = True
+                return True
             return False
 
-        exit_code, stderr = await _run_streaming_lines(args, cancel, on_line)
+        exit_code, stderr = await _run_streaming_lines(args, cancel, on_line, cwd=search_path if is_directory else None)
         if cancel is not None and cancel.cancelled:
             raise Exception("Operation aborted")
-
-        if not matches:
-            if exit_code not in (0, 1) and not match_limit_reached:
-                raise Exception(stderr.strip() or f"ripgrep exited with code {exit_code}")
-            return AgentToolResult(content=[TextContent(text="No matches found")], details=None)
-
-        if exit_code not in (0, 1, None) and not match_limit_reached:
+        if not killed_due_to_limit and exit_code not in (0, 1):
             raise Exception(stderr.strip() or f"ripgrep exited with code {exit_code}")
-
-        output_lines: list[str] = []
-
-        async def format_block(file_path: str, line_number: int) -> list[str]:
-            nonlocal lines_truncated
-            relative_path = format_path(file_path)
-            lines = await get_file_lines(file_path)
-            if not lines:
-                return [f"{relative_path}:{line_number}: (unable to read file)"]
-            block: list[str] = []
-            start = max(1, line_number - context_value) if context_value > 0 else line_number
-            end = min(len(lines), line_number + context_value) if context_value > 0 else line_number
-            for current in range(start, end + 1):
-                line_text = lines[current - 1] if current - 1 < len(lines) else ""
-                sanitized = line_text.replace("\r", "")
-                is_match_line = current == line_number
-                # Truncate long lines so grep output stays compact.
-                truncated = truncate_line(sanitized)
-                if truncated.was_truncated:
-                    lines_truncated = True
-                if is_match_line:
-                    block.append(f"{relative_path}:{current}: {truncated.text}")
-                else:
-                    block.append(f"{relative_path}-{current}- {truncated.text}")
-            return block
-
-        for file_path, line_number, line_text in matches:
-            if context_value == 0 and line_text is not None:
-                relative_path = format_path(file_path)
-                sanitized = line_text.replace("\r\n", "\n").replace("\r", "")
-                sanitized = sanitized.removesuffix("\n")
-                truncated = truncate_line(sanitized)
-                if truncated.was_truncated:
-                    lines_truncated = True
-                output_lines.append(f"{relative_path}:{line_number}: {truncated.text}")
-            else:
-                output_lines.extend(await format_block(file_path, line_number))
+        if match_count == 0:
+            return AgentToolResult(content=[TextContent(text="No matches found")], details=None)
 
         raw_output = "\n".join(output_lines)
         # Apply byte truncation. There is no line limit here because the match limit already capped rows.
-        truncation = truncate_head(raw_output, max_lines=2**53 - 1)
+        truncation = truncate_head(raw_output, max_lines=_MAX_SAFE_INTEGER)
+        truncation.total_lines = output_line_count
+        truncation.total_bytes = output_bytes - 1
         output = truncation.content
         details = GrepToolDetails()
         has_details = False

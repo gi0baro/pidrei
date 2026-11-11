@@ -82,3 +82,68 @@ async def test_toggles_a_skill_invocation_when_clicked():
     assert "skill details" in _render_text(component)
     await _click_row(component, "[skill]")
     assert "skill details" not in _render_text(component)
+
+
+# Markdown transformers
+
+
+@pytest.mark.parametrize(
+    ("message_type", "header", "create"),
+    [
+        pytest.param(
+            "summary",
+            "Compacted from 1,234 tokens",
+            lambda transformers: CompactionSummaryMessageComponent(
+                CompactionSummaryMessage(summary="details", tokens_before=1234, timestamp=0),
+                None,
+                1,
+                transformers,
+                "entry-1",
+            ),
+            id="compaction summary",
+        ),
+        pytest.param(
+            "summary",
+            "Branch Summary",
+            lambda transformers: BranchSummaryMessageComponent(
+                BranchSummaryMessage(summary="details", from_id="entry-0", timestamp=0),
+                None,
+                1,
+                transformers,
+                "entry-1",
+            ),
+            id="branch summary",
+        ),
+        pytest.param(
+            "custom",
+            "example-skill",
+            lambda transformers: SkillInvocationMessageComponent(
+                ParsedSkillBlock(
+                    name="example-skill", location="/tmp/example-skill.md", content="details", user_message=None
+                ),
+                None,
+                1,
+                transformers,
+                "entry-1",
+            ),
+            id="skill",
+        ),
+    ],
+)
+def test_runs_on_expanded_content_without_the_header(message_type, header, create):
+    seen = []
+
+    def transformer(markdown, context):
+        seen.append({"markdown": markdown, "context": context})
+        return markdown.replace("details", "transformed")
+
+    component = create([transformer])
+    component.set_expanded(True)
+
+    rendered = _render_text(component)
+    assert header in rendered
+    assert "transformed" in rendered
+    assert "details" not in rendered
+    # pi's toMatchObject: a subset check.
+    assert seen[0]["markdown"] == "details"
+    assert {"messageType": message_type, "messageId": "entry-1"}.items() <= seen[0]["context"].items()

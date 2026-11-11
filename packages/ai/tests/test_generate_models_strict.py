@@ -30,7 +30,9 @@ def test_fails_when_an_individual_model_loses_tool_support():
         "deepseek-v4-flash-0731",
         "deepseek-v4-pro",
         "deepseek-v4-pro-0813",
+        "deepseek-v4.1-flash",
         "glm-5.2",
+        "glm-5.3",
         "qwen3.6-flash",
         "qwen3.7-max",
         "qwen3.7-plus",
@@ -51,12 +53,15 @@ def test_fails_when_an_individual_model_loses_tool_support():
 
 
 def test_passes_when_the_individual_allowlist_matches():
-    from catalog.providers.qwen_token_plan_individual import MODEL_IDS
+    from catalog.providers.qwen_token_plan_individual import INDIVIDUAL_MODEL_IDS
 
-    source_models = {model_id: _source_model(model_id) for model_id in [*MODEL_IDS, "qwen3.8-max-preview"]}
+    source_models = {model_id: _source_model(model_id) for model_id in [*INDIVIDUAL_MODEL_IDS, "qwen3.8-max-preview"]}
 
+    # The China catalog too: qwen-token-plan-individual-cn checks the same allowlist against it.
     models = generate_chat_models(
-        {"alibaba-token-plan": {"models": source_models}}, "qwen-token-plan-individual", strict=True
+        {"alibaba-token-plan": {"models": source_models}, "alibaba-token-plan-cn": {"models": source_models}},
+        "qwen-token-plan-individual",
+        strict=True,
     )
 
-    assert sorted(models) == sorted(MODEL_IDS)
+    assert sorted(models) == sorted(INDIVIDUAL_MODEL_IDS)

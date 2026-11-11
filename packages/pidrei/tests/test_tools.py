@@ -8,6 +8,8 @@ agent-package mirror.
 """
 
 import base64
+import dataclasses
+import math
 import os
 import re
 import shutil
@@ -39,13 +41,21 @@ from pidrei.core.tools.bash import (
     create_shell_tool_definition,
 )
 from pidrei.core.tools.edit import create_edit_tool_definition
-from pidrei.core.tools.edit_diff import EditDiffError, compute_edits_diff
-from pidrei.core.tools.find import create_find_tool_definition
+from pidrei.core.tools.edit_diff import (
+    Edit,
+    EditDiffError,
+    TextReplacement,
+    apply_edits_to_normalized_content,
+    apply_replacements_to_original,
+    compute_edits_diff,
+    normalize_to_lf,
+)
+from pidrei.core.tools.find import FindToolDetails, create_find_tool_definition
 from pidrei.core.tools.grep import create_grep_tool_definition
-from pidrei.core.tools.ls import create_ls_tool_definition
+from pidrei.core.tools.ls import LsToolDetails, create_ls_tool_definition
 from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.core.tools.renderers.bash import _format_shell_call
-from pidrei.core.tools.truncate import truncate_middle
+from pidrei.core.tools.truncate import truncate_head
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
@@ -105,21 +115,6 @@ def create_tiny_bmp_1x1_red_24bpp() -> bytes:
 
 
 PNG_1X1_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
-
-
-class TestTruncateMiddle:
-    # pi tests truncateMiddle in mcp-extension.test.ts, whose other cases port
-    # with MCP; the helper itself is core, so its case lives here.
-    def test_cuts_multi_byte_text_only_at_character_boundaries(self):
-        text = f"{'é' * 20_000}end"
-        result = truncate_middle(text, 1001)
-        assert result.truncated is True
-        assert "�" not in result.content
-        assert result.content.endswith("end")
-        head, tail = re.split(r"…\d+ chars truncated…", result.content)
-        assert len(head.encode()) <= 500
-        assert len(tail.encode()) <= 501
-        assert len(head) + len(tail) + result.removed_chars == len(text)
 
 
 class TestReadTool:
@@ -935,9 +930,128 @@ class TestGrepTool:
         )
 
         output = get_text_output(result)
-        assert "lone-cr.txt-1- beforeprogress" in output
+        # A lone CR inside a line is kept, as the read tool shows it, so the text can be copied into edit.
+        assert "lone-cr.txt-1- before\rprogress" in output
         assert "lone-cr.txt:2: needle" in output
         assert "lone-cr.txt-3- after" in output
+
+    # https://github.com/earendil-works/pi/issues/9276
+    @pytest.mark.tonio
+    async def test_prints_overlapping_context_once_and_keeps_the_last_matchs_trailing_context(self, tmp_path):
+        test_file = tmp_path / "rg-context.txt"
+        test_file.write_text("a\nmatch one\nb\nmatch two\nmatch three\nc\nmatch four")
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-rg-context", {"pattern": "match", "path": str(test_file), "context": 1, "limit": 2}
+        )
+        assert get_text_output(result).split("\n\n")[0] == (
+            "rg-context.txt-1- a\n"
+            "rg-context.txt:2: match one\n"
+            "rg-context.txt-3- b\n"
+            "rg-context.txt:4: match two\n"
+            # A match inside the last allowed match's trailing context is shown as context.
+            "rg-context.txt-5- match three"
+        )
+
+    # https://github.com/earendil-works/pi/issues/9276
+    @pytest.mark.tonio
+    async def test_keeps_counting_matches_past_the_byte_cap(self, tmp_path):
+        test_file = tmp_path / "byte-cap.txt"
+        line = f"match {'x' * 400}"
+        test_file.write_text("\n".join([line] * 200))
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-byte-cap", {"pattern": "match", "path": str(test_file), "limit": 150}
+        )
+
+        output = get_text_output(result)
+        assert "150 matches limit reached" in output
+        assert "50.0KB limit reached" in output
+        assert result.details.match_limit_reached == 150
+        assert result.details.truncation.total_lines == 150
+
+    # https://github.com/earendil-works/pi/issues/9276
+    @pytest.mark.tonio
+    async def test_reports_truncation_when_stored_output_ends_exactly_at_the_byte_cap(self, tmp_path):
+        test_file = tmp_path / "x"
+        # 103 rows of 500 bytes plus one of 12 bytes, with newlines, join to exactly 50KB; one more match follows.
+        test_file.write_text("\n".join([*(["x" * 490] * 103), "x" * 7, "extra x"]))
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-byte-cap-boundary", {"pattern": "x", "path": str(test_file), "limit": 1000}
+        )
+
+        assert "[50.0KB limit reached]" in get_text_output(result)
+        assert result.details.truncation.total_lines == 105
+
+    # https://github.com/earendil-works/pi/issues/9276
+    @pytest.mark.tonio
+    async def test_accepts_a_huge_context_value(self, tmp_path):
+        test_file = tmp_path / "huge-context.txt"
+        test_file.write_text("before\nneedle\nafter")
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-huge-context", {"pattern": "needle", "path": str(test_file), "context": 1e30}
+        )
+
+        assert get_text_output(result) == (
+            "huge-context.txt-1- before\nhuge-context.txt:2: needle\nhuge-context.txt-3- after"
+        )
+
+    # Context lines come from ripgrep, which decodes UTF-16; rereading the file as UTF-8 corrupted them (#11423).
+    @pytest.mark.tonio
+    async def test_decodes_utf16_files_with_context(self, tmp_path):
+        test_file = tmp_path / "utf16.txt"
+        test_file.write_bytes("﻿before\nneedle 中文\nafter\n".encode("utf-16-le"))
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        result = await grep_tool.execute(
+            "test-call-utf16-context", {"pattern": "needle", "path": str(test_file), "context": 1}
+        )
+
+        assert get_text_output(result) == "utf16.txt-1- before\nutf16.txt:2: needle 中文\nutf16.txt-3- after"
+
+    @pytest.mark.tonio
+    async def test_keeps_a_lone_cr_inside_a_line_and_strips_crlf_terminators(self, tmp_path):
+        test_file = tmp_path / "mixed-cr.txt"
+        test_file.write_bytes(b"one\rtwo needle\r\nnext\r\n")
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        plain = await grep_tool.execute("test-call-cr-plain", {"pattern": "needle", "path": str(test_file)})
+        assert get_text_output(plain) == "mixed-cr.txt:1: one\rtwo needle"
+
+        with_context = await grep_tool.execute(
+            "test-call-cr-context", {"pattern": "needle", "path": str(test_file), "context": 1}
+        )
+        assert get_text_output(with_context) == "mixed-cr.txt:1: one\rtwo needle\nmixed-cr.txt-2- next"
+
+    @pytest.mark.tonio
+    async def test_does_not_report_the_match_limit_when_exactly_limit_matches_exist(self, tmp_path):
+        test_file = tmp_path / "exact-limit.txt"
+        test_file.write_text("match one\nx\nmatch two\ny")
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        for context in (0, 1):
+            exact = await grep_tool.execute(
+                "test-call-exact-limit", {"pattern": "match", "path": str(test_file), "limit": 2, "context": context}
+            )
+            assert "limit reached" not in get_text_output(exact)
+            assert exact.details is None or exact.details.match_limit_reached is None
+
+            over = await grep_tool.execute(
+                "test-call-over-limit", {"pattern": "match", "path": str(test_file), "limit": 1, "context": context}
+            )
+            assert "[1 matches limit reached. Use limit=2 for more, or refine pattern]" in get_text_output(over)
+            assert over.details.match_limit_reached == 1
+
+        fractional = await grep_tool.execute(
+            "test-call-fractional-limit", {"pattern": "match", "path": str(test_file), "limit": 1.5}
+        )
+        assert "[1 matches limit reached. Use limit=2 for more, or refine pattern]" in get_text_output(fractional)
 
     # https://github.com/earendil-works/pi/issues/11203
     @pytest.mark.tonio
@@ -956,6 +1070,49 @@ class TestGrepTool:
         output = get_text_output(result)
         assert "fixture.txt:1: aXb" in output
         assert "fixture.txt:2: a.b" in output
+
+    # https://github.com/earendil-works/pi/issues/11807
+    @pytest.mark.tonio
+    async def test_resolves_folder_globs_relative_to_path(self, tmp_path):
+        repo = tmp_path / "repo"
+        (repo / "migrations" / "main").mkdir(parents=True)
+        (repo / "nested" / "migrations" / "main").mkdir(parents=True)
+        (repo / "migrations" / "main" / "a.js").write_text("hello\n")
+        (repo / "nested" / "migrations" / "main" / "b.js").write_text("hello\n")
+        # rg canonicalizes its cwd, so a symlinked path must still anchor the glob.
+        link = tmp_path / "repo-link"
+        link.symlink_to(repo)
+        grep_tool = create_grep_tool(str(tmp_path))
+
+        for search_path in (repo, link):
+            anchored = await grep_tool.execute(
+                "test-call-glob-anchored",
+                {"pattern": "hello", "path": str(search_path), "glob": "migrations/main/*.js"},
+            )
+            # The decoy under nested/ stays out: the glob is anchored at path.
+            assert get_text_output(anchored) == "migrations/main/a.js:1: hello"
+
+            any_depth = await grep_tool.execute(
+                "test-call-glob-any-depth",
+                {"pattern": "hello", "path": str(search_path), "glob": "**/migrations/main/*.js"},
+            )
+            assert sorted(get_text_output(any_depth).split("\n")) == [
+                "migrations/main/a.js:1: hello",
+                "nested/migrations/main/b.js:1: hello",
+            ]
+
+            # rg matches nothing for a leading "./", so the tool drops it.
+            dot_slash = await grep_tool.execute(
+                "test-call-glob-dot-slash",
+                {"pattern": "hello", "path": str(search_path), "glob": "./migrations/main/*.js"},
+            )
+            assert get_text_output(dot_slash) == "migrations/main/a.js:1: hello"
+
+            negated = await grep_tool.execute(
+                "test-call-glob-negated-dot-slash",
+                {"pattern": "hello", "path": str(search_path), "glob": "!./migrations/**"},
+            )
+            assert get_text_output(negated) == "nested/migrations/main/b.js:1: hello"
 
     @pytest.mark.tonio
     async def test_treats_flag_like_patterns_as_search_text(self, tmp_path):
@@ -1037,6 +1194,94 @@ class TestFindTool:
         result = await find_tool.execute("test-call-find-flag-pattern", {"pattern": "--help", "path": str(tmp_path)})
         assert "No files found matching pattern" in get_text_output(result)
 
+    # #7121: exactly `limit` matches must not report that the limit was reached.
+    @pytest.mark.tonio
+    async def test_reports_the_result_limit_only_when_more_results_exist(self, tmp_path):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (tmp_path / name).write_text(name)
+        find_tool = create_find_tool(str(tmp_path))
+
+        exact = await find_tool.execute(
+            "test-call-find-exact-limit", {"pattern": "*.txt", "path": str(tmp_path), "limit": 3}
+        )
+        assert sorted(get_text_output(exact).split("\n")) == ["a.txt", "b.txt", "c.txt"]
+        assert exact.details is None
+
+        over = await find_tool.execute(
+            "test-call-find-over-limit", {"pattern": "*.txt", "path": str(tmp_path), "limit": 2}
+        )
+        listing, notice = get_text_output(over).split("\n\n")
+        assert len(listing.split("\n")) == 2
+        assert notice == "[2 results limit reached. Use limit=4 for more, or refine pattern]"
+        assert over.details == FindToolDetails(result_limit_reached=2)
+
+    @pytest.mark.tonio
+    async def test_treats_limits_below_1_as_1_and_floors_fractional_limits(self, tmp_path):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (tmp_path / name).write_text(name)
+        find_tool = create_find_tool(str(tmp_path))
+
+        for limit in (0, -5, 0.5, 1.9):
+            result = await find_tool.execute(
+                "test-call-find-small-limit", {"pattern": "*.txt", "path": str(tmp_path), "limit": limit}
+            )
+            listing, notice = get_text_output(result).split("\n\n")
+            assert len(listing.split("\n")) == 1
+            assert notice == "[1 results limit reached. Use limit=2 for more, or refine pattern]"
+            assert result.details == FindToolDetails(result_limit_reached=1)
+
+    @pytest.mark.tonio
+    async def test_reports_full_output_totals_past_the_byte_cap(self, tmp_path):
+        # 300 names of 200 bytes join to about 60KB; equal lengths make the kept prefix independent of fd's order.
+        names = [f"{i:03d}{'x' * 193}.txt" for i in range(300)]
+        for name in names:
+            (tmp_path / name).write_text("")
+        find_tool = create_find_tool(str(tmp_path))
+
+        result = await find_tool.execute("test-call-find-byte-cap", {"pattern": "*.txt", "path": str(tmp_path)})
+        expected = truncate_head("\n".join(names), max_lines=2**53 - 1)
+        truncation = result.details.truncation
+        assert truncation == dataclasses.replace(expected, content=truncation.content)
+        assert len(truncation.content.split("\n")) == expected.output_lines
+        assert result.details.result_limit_reached is None
+        assert re.search(r"\n\n\[50\.0KB limit reached\]$", get_text_output(result))
+
+    @pytest.mark.tonio
+    async def test_asks_custom_glob_operations_for_one_result_past_the_limit(self, tmp_path):
+        requested_limits: list[int] = []
+
+        def create_tool(results: list[str]):
+            class Operations:
+                async def exists(self, _path: str) -> bool:
+                    return True
+
+                async def glob(self, _pattern, _cwd, *, ignore, limit):
+                    requested_limits.append(limit)
+                    return results[:limit]
+
+            return create_find_tool_definition(str(tmp_path), operations=Operations())
+
+        exact = await create_tool(["a.txt", "b.txt"]).execute(
+            "test-call-find-custom-exact",
+            {"pattern": "*.txt", "limit": 2},
+            None,
+            None,
+            ExtensionContext(cwd=str(tmp_path)),
+        )
+        assert get_text_output(exact) == "a.txt\nb.txt"
+        assert exact.details is None
+
+        over = await create_tool(["a.txt", "b.txt", "c.txt"]).execute(
+            "test-call-find-custom-over",
+            {"pattern": "*.txt", "limit": 0},
+            None,
+            None,
+            ExtensionContext(cwd=str(tmp_path)),
+        )
+        assert get_text_output(over) == "a.txt\n\n[1 results limit reached]"
+        assert over.details == FindToolDetails(result_limit_reached=1)
+        assert requested_limits == [3, 2]
+
 
 class TestLsTool:
     @pytest.mark.tonio
@@ -1050,6 +1295,27 @@ class TestLsTool:
 
         assert ".hidden-file" in output
         assert ".hidden-dir/" in output
+
+    @pytest.mark.tonio
+    async def test_treats_limits_below_1_as_1_and_floors_fractional_limits(self, tmp_path):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (tmp_path / name).write_text(name)
+        ls_tool = create_ls_tool(str(tmp_path))
+
+        for limit in (0, -5, 0.5, 1.9):
+            result = await ls_tool.execute("test-call-ls-small-limit", {"path": str(tmp_path), "limit": limit})
+            assert get_text_output(result) == "a.txt\n\n[1 entries limit reached. Use limit=2 for more]"
+            assert result.details == LsToolDetails(entry_limit_reached=1)
+
+    @pytest.mark.tonio
+    async def test_reports_the_entry_limit_only_when_more_entries_exist(self, tmp_path):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (tmp_path / name).write_text(name)
+        ls_tool = create_ls_tool(str(tmp_path))
+
+        result = await ls_tool.execute("test-call-ls-exact-limit", {"path": str(tmp_path), "limit": 3})
+        assert get_text_output(result) == "a.txt\nb.txt\nc.txt"
+        assert result.details is None
 
 
 class TestToolCwdResolution:
@@ -1414,3 +1680,159 @@ class TestEditToolCrlfHandling:
         )
 
         assert test_file.read_bytes().decode("utf-8") == "\ufefffirst\r\nSECOND\r\nthird\r\nFOURTH\r\n"
+
+    @pytest.mark.tonio
+    async def test_writes_crlf_for_inserted_lines_in_crlf_files(self, tmp_path):
+        test_file = tmp_path / "crlf-bytes.txt"
+        test_file.write_bytes(b"first\r\nsecond\r\nthird")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-crlf-bytes",
+            {"path": str(test_file), "edits": [{"oldText": "second\nthird", "newText": "2a\r\n2b\nthird!"}]},
+        )
+
+        assert test_file.read_bytes() == b"first\r\n2a\r\n2b\r\nthird!"
+
+    @pytest.mark.tonio
+    async def test_writes_lf_for_inserted_lines_in_lf_files(self, tmp_path):
+        test_file = tmp_path / "lf-bytes.txt"
+        test_file.write_bytes(b"first\nsecond\nthird")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-lf-bytes",
+            {"path": str(test_file), "edits": [{"oldText": "second\nthird", "newText": "2a\r\n2b\nthird!"}]},
+        )
+
+        assert test_file.read_bytes() == b"first\n2a\n2b\nthird!"
+
+    # #8544
+    @pytest.mark.tonio
+    async def test_keeps_crlf_lines_when_the_first_line_ends_with_lf(self, tmp_path):
+        test_file = tmp_path / "mixed-lf-first.txt"
+        test_file.write_bytes(b"a\nb\r\nX = 1\r\n")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-mixed-lf-first", {"path": str(test_file), "edits": [{"oldText": "X = 1", "newText": "X = 2"}]}
+        )
+
+        assert test_file.read_bytes() == b"a\nb\r\nX = 2\r\n"
+
+    # #8544
+    @pytest.mark.tonio
+    async def test_keeps_lf_lines_when_the_first_line_ends_with_crlf(self, tmp_path):
+        test_file = tmp_path / "mixed-crlf-first.txt"
+        test_file.write_bytes(b"a\r\nb\nc")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-mixed-crlf-first", {"path": str(test_file), "edits": [{"oldText": "c", "newText": "C"}]}
+        )
+
+        assert test_file.read_bytes() == b"a\r\nb\nC"
+
+    # #8544
+    @pytest.mark.tonio
+    async def test_keeps_a_lone_cr_in_an_untouched_line(self, tmp_path):
+        test_file = tmp_path / "lone-cr.txt"
+        test_file.write_bytes(b"a\rb\nX = 1\n")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-lone-cr", {"path": str(test_file), "edits": [{"oldText": "X = 1", "newText": "X = 2"}]}
+        )
+
+        assert test_file.read_bytes() == b"a\rb\nX = 2\n"
+
+    # #8544
+    @pytest.mark.tonio
+    async def test_gives_inserted_lines_the_line_ending_of_the_line_they_replace_in_multi_edit_mode(self, tmp_path):
+        test_file = tmp_path / "mixed-multi.txt"
+        test_file.write_bytes(b"lf1\nlf2\ncr1\r\ncr2\r\n")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-mixed-multi",
+            {
+                "path": str(test_file),
+                "edits": [
+                    {"oldText": "lf1\n", "newText": "A\nB\n"},
+                    {"oldText": "cr1\n", "newText": "C\nD\n"},
+                ],
+            },
+        )
+
+        assert test_file.read_bytes() == b"A\nB\nlf2\nC\r\nD\r\ncr2\r\n"
+
+    # #8544
+    @pytest.mark.tonio
+    async def test_keeps_untouched_line_endings_when_fuzzy_matching_widens_the_edit_to_whole_lines(self, tmp_path):
+        test_file = tmp_path / "mixed-fuzzy.txt"
+        test_file.write_bytes(b"a\r\nfoo   \r\nb\n")
+        edit_tool = create_edit_tool(str(tmp_path))
+
+        await edit_tool.execute(
+            "test-mixed-fuzzy", {"path": str(test_file), "edits": [{"oldText": "foo\n", "newText": "FOO\n"}]}
+        )
+
+        assert test_file.read_bytes() == b"a\r\nFOO\r\nb\n"
+
+    # A kept CR and an LF meeting at a splice seam must not merge into one CRLF line break.
+    @pytest.mark.tonio
+    async def test_does_not_merge_a_kept_lone_cr_with_a_line_feed_after_it(self, tmp_path):
+        cases = [
+            # Inserted text starting with LF after a kept lone CR.
+            ({"oldText": "b", "newText": "\nB"}, b"a\r\n\nB\nc", "a\n\nB\nc"),
+            # Deleted text between a kept lone CR and a kept LF.
+            ({"oldText": "b", "newText": ""}, b"a\r\n\nc", "a\n\nc"),
+        ]
+        edit_tool = create_edit_tool(str(tmp_path))
+        for index, (edit, written, diffed) in enumerate(cases):
+            test_file = tmp_path / f"cr-seam-{index}.txt"
+            test_file.write_bytes(b"a\rb\nc")
+
+            result = await edit_tool.execute("test-cr-seam", {"path": str(test_file), "edits": [edit]})
+
+            assert test_file.read_bytes() == written
+            assert apply_patch("a\nb\nc", result.details.patch) == diffed
+
+    def test_does_not_merge_an_inserted_cr_line_ending_with_a_kept_line_feed_after_it(self):
+        # Only files without LF give inserted text CR line endings, so check the seam directly.
+        written = apply_replacements_to_original(
+            "a\rb\nc", [TextReplacement(match_index=2, match_length=1, new_text="\r")]
+        )
+
+        assert normalize_to_lf(written) == "a\n\n\nc"
+
+    def test_writes_content_that_normalizes_to_the_diffed_content_for_random_mixed_line_endings(self):
+        seed = 1
+
+        def random(n: int) -> int:
+            nonlocal seed
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            # The high bits: the low bits of this generator repeat with a short period.
+            return math.floor((seed / 0x80000000) * n)
+
+        endings = ["\n", "\r\n", "\r", ""]
+        for _run in range(3000):
+            original = ""
+            line = random(12) + 1
+            while line > 0:
+                original += f"w{random(100)}{'  ' if random(5) == 0 else ''}{endings[random(4)]}"
+                line -= 1
+            normalized = normalize_to_lf(original)
+            start = random(len(normalized))
+            old_text = normalized[start : start + 1 + random(12)]
+            new_text = ["", "\n", "X\n", "\nY", "\r", "Z"][random(6)]
+            try:
+                applied = apply_edits_to_normalized_content(
+                    normalized, [Edit(old_text=old_text, new_text=new_text)], "f.txt"
+                )
+            except Exception:  # noqa: S112
+                continue  # duplicate, not found or no change
+
+            assert (
+                normalize_to_lf(apply_replacements_to_original(original, applied.replacements)) == applied.new_content
+            )

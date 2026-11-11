@@ -79,6 +79,10 @@ class OAuthMcpServer:
         self.origin = ""
         self.url = ""
 
+    def issue_access_token(self) -> str:
+        """A valid access token issued without a sign-in, like one of a pidrei provider."""
+        return self._issue_tokens()["access_token"]
+
     def expire_access_tokens(self) -> None:
         """Simulates access token expiry."""
         self._valid_tokens.clear()

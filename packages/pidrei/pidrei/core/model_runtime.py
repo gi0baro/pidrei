@@ -949,6 +949,11 @@ class ModelRuntime:
 
         await self._enqueue_credential_operation(provider_id, cancel, task)
 
+    def settle_credential_writes(self) -> Awaitable[None]:
+        """Wait until credential writes already in progress finish, such as an OAuth refresh started by a
+        background catalog refresh. Call before the process exits so a rotated token is not lost."""
+        return self._credentials.settled()
+
     def list_credentials(self, options: AuthOperationOptions | None = None) -> Awaitable[list[CredentialInfo]]:
         return self._credentials.list(options)
 
@@ -1164,7 +1169,11 @@ class ModelRuntime:
     async def refresh(
         self, options: ModelsRefreshOptions | None = None, *, _requested_only: bool = False
     ) -> ModelsRefreshResult:
-        options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
+        options = options if options is not None else ModelsRefreshOptions()
+        if options.allow_network is None:
+            # pi: `options.allowNetwork ?? this.modelNetworkEnabled`, also when the caller passes
+            # other options: an offline runtime does not fetch for a provider-scoped refresh.
+            options = replace(options, allow_network=self._model_network_enabled)
         cancel = options.cancel
         if options.providers is not None:
             # Provider-scoped refreshes must interleave freely (pi runs each

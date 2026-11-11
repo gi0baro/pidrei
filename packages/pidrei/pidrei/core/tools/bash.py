@@ -95,6 +95,24 @@ class BashExecResult:
     exit_code: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class _ShellExit:
+    exit_code: int
+    after_seconds: float
+
+
+class _ShellTimeoutError(Exception):
+    """Timeout of the local shell backend. Its message keeps the `timeout:<seconds>` form custom operations raise.
+
+    `shell_exit` is set when the shell itself exited before the deadline, so the tool was only still waiting
+    because background processes kept writing to the inherited stdout/stderr pipes (#11613).
+    """
+
+    def __init__(self, timeout: float | None, shell_exit: _ShellExit | None):
+        super().__init__(f"timeout:{_format_timeout(timeout)}")
+        self.shell_exit = shell_exit
+
+
 @dataclass(slots=True, kw_only=True)
 class BashSpawnContext:
     command: str
@@ -138,10 +156,19 @@ class LocalShellOperations:
         pid = process.pid
         if pid:
             track_detached_child_pid(pid)
+        started_at = clock.monotonic()
+        # Set by this coroutine once `process.wait()` returned, read by the watchdog
+        # for the timeout message (pi's `exit` listener).
+        exit_lock = threading.Lock()
+        shell_exited_after: float | None = None
         timed_out = False
+        exited_before_deadline_after: float | None = None
         activity = {"count": 0}
         readers_done = tonio.Event()
-        exited = tonio.Event()
+        # The wait for the shell and its stdio is over (pi's `waitForChildProcess`
+        # settled). The deadline and the abort stay armed until then: a background
+        # process can keep the pipes open after the shell exited (#11613).
+        settled = tonio.Event()
         # stdout/stderr readers run in parallel; `on_data` (accumulator +
         # throttle state) assumed pi's single-thread ordering.
         chunk_lock = threading.Lock()
@@ -171,62 +198,83 @@ class LocalShellOperations:
 
         tonio.spawn.without_tracking(read_streams())
 
+        def kill_shell_tree() -> None:
+            # The shell leads its own group (`start_new_session`), and only the group is
+            # signalled: this also runs after the shell exited, when its pid may be reused.
+            if pid:
+                kill_process_tree(pid)
+
         async def watchdog() -> None:
-            nonlocal timed_out
-            await exited.wait(timeout_ms / 1000)
-            if not exited.is_set():
+            nonlocal timed_out, exited_before_deadline_after
+            await settled.wait(timeout_ms / 1000)
+            if settled.is_set():
+                return
+            with exit_lock:
                 timed_out = True
-                if pid:
-                    kill_process_tree(pid)
+                exited_before_deadline_after = shell_exited_after
+            # Also when the shell already exited: the group kill still reaches background
+            # processes holding the pipes.
+            kill_shell_tree()
 
         watchdog_join = tonio.spawn(watchdog()) if timeout_ms is not None else None
 
         unsubscribe = None
         if cancel is not None:
-            unsubscribe = cancel.on_cancel(lambda _reason: kill_process_tree(pid))
+            unsubscribe = cancel.on_cancel(lambda _reason: kill_shell_tree())
 
         try:
             exit_code = await process.wait()
+            with exit_lock:
+                shell_exited_after = clock.monotonic() - started_at
+
+            # Post-exit stdio grace: detached descendants can keep the inherited
+            # pipes open. pi closes them after 100 ms with no data (its idle timer
+            # re-arms on each chunk). Idle is a whole window with no chunk AND
+            # nothing left unread in the pipes: a reader the scheduler has not run
+            # yet (or woke but did not run yet) still has the output in its pipe.
+            while not readers_done.is_set():
+                before = activity["count"]
+                await readers_done.wait(EXIT_STDIO_GRACE_S)
+                if readers_done.is_set():
+                    break
+                if activity["count"] == before and all(map(pipe_is_drained, (process.stdout, process.stderr))):
+                    break
+
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+            # A reader that already pulled a chunk off the pipe still delivers it;
+            # the closed streams end its next receive.
+            await readers_done.wait()
         finally:
-            exited.set()
-            if watchdog_join is not None:
-                await watchdog_join
+            settled.set()
             if unsubscribe is not None:
                 unsubscribe()
+            # Tracked until the stdio settled, as pi: background processes holding the
+            # pipes after the shell exited are still killed when pidrei is told to exit.
             if pid:
                 untrack_detached_child_pid(pid)
-
-        # Post-exit stdio grace: detached descendants can keep the inherited
-        # pipes open. pi closes them after 100 ms with no data (its idle timer
-        # re-arms on each chunk). Idle is a whole window with no chunk AND
-        # nothing left unread in the pipes: a reader the scheduler has not run
-        # yet (or woke but did not run yet) still has the output in its pipe.
-        while not readers_done.is_set():
-            before = activity["count"]
-            await readers_done.wait(EXIT_STDIO_GRACE_S)
-            if readers_done.is_set():
-                break
-            if activity["count"] == before and all(map(pipe_is_drained, (process.stdout, process.stderr))):
-                break
-
-        for stream in (process.stdout, process.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-        # A reader that already pulled a chunk off the pipe still delivers it;
-        # the closed streams end its next receive.
-        await readers_done.wait()
+        if watchdog_join is not None:
+            # The watchdog returns at once now that `settled` is set; joining it
+            # orders its writes before the reads below.
+            await watchdog_join
 
         if cancel is not None and cancel.cancelled:
             raise Exception("aborted")
-        if timed_out:
-            raise Exception(f"timeout:{_format_timeout(timeout)}")
         # A signal-killed shell reports -signum. Use the standard shell convention so
         # callers do not mistake the termination for an ordinary exit status.
         if exit_code is not None and exit_code < 0:
             exit_code = 128 - exit_code
+        if timed_out:
+            raise _ShellTimeoutError(
+                timeout,
+                _ShellExit(exit_code=exit_code, after_seconds=_round_tenths(exited_before_deadline_after))
+                if exited_before_deadline_after is not None
+                else None,
+            )
         return BashExecResult(exit_code=exit_code)
 
 
@@ -234,6 +282,16 @@ def _format_timeout(timeout: float | None) -> str:
     if timeout is None:
         return ""
     return f"{timeout:g}"
+
+
+def _round_tenths(seconds: float) -> float:
+    # pi: Math.round(ms / 100) / 10 — tenths of a second, halves rounded up.
+    return math.floor(seconds * 10 + 0.5) / 10
+
+
+def _js_number(value: float) -> str:
+    # JS template interpolation of a number: integral floats print bare.
+    return str(int(value)) if value.is_integer() else str(value)
 
 
 def create_local_bash_operations(*, shell_path: str | None = None) -> LocalShellOperations:
@@ -449,15 +507,23 @@ def create_shell_tool_definition(
                     raise Exception(append_status(text, "Command aborted"))
                 if message.startswith("timeout:"):
                     timeout_secs = message.split(":", 1)[1]
-                    raise Exception(append_status(text, f"Command timed out after {timeout_secs} seconds"))
+                    status = f"Command timed out after {timeout_secs} seconds"
+                    if isinstance(error, _ShellTimeoutError) and error.shell_exit is not None:
+                        # Both facts matter: the command's real result, and that its background processes
+                        # were still writing output when the timeout hit (#11613).
+                        status += (
+                            f". The shell exited with code {error.shell_exit.exit_code} after "
+                            f"{_js_number(error.shell_exit.after_seconds)} seconds, but background processes "
+                            "it started kept writing output until the timeout."
+                        )
+                    raise Exception(append_status(text, status))
                 raise
 
             snapshot = await finish_output()
             output_text, details = format_output(snapshot)
             if exit_code is None:
                 raise Exception(append_status(output_text, "Command terminated without an exit code"))
-            # pi: Math.round(ms / 100) / 10 — tenths of a second, halves rounded up.
-            wall_time_seconds = math.floor((clock.monotonic() - started_at) * 10 + 0.5) / 10
+            wall_time_seconds = _round_tenths(clock.monotonic() - started_at)
             full_output = await output.read_full_output(STRUCTURED_OUTPUT_MAX_BYTES)
             structured_content: dict[str, Any] = {"output": full_output.content, "truncated": full_output.truncated}
             if full_output.truncated and snapshot.full_output_path:

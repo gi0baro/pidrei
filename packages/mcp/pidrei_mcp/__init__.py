@@ -8,7 +8,20 @@ and pidrei-http.
 
 from .auth_provider import AuthProvider, UnauthorizedContext
 from .client import McpClient, McpClientOptions, RequestContext, RequestHandler
+from .config import (
+    McpHttpServerConfig,
+    McpOAuthConfig,
+    McpServerConfig,
+    McpServerConfigOptions,
+    McpServerConfigResult,
+    McpStdioServerConfig,
+    is_mcp_server_override,
+    validate_mcp_server_config,
+)
 from .fetch import McpFetch, McpResponse, McpResponseHeaders, default_fetch
+from .input_schema import normalize_mcp_input_schema
+from .naming import create_mcp_tool_name, mcp_namespace
+from .output_limit import MCP_OUTPUT_MAX_BYTES, LimitedMcpContent, McpOutputSaver, limit_mcp_content
 from .protocol.content import (
     AudioContent,
     BlobResourceContents,
@@ -85,6 +98,7 @@ from .transports.transport import (
 __all__ = [
     "JSON_RPC_ERROR_CODES",
     "LATEST_PROTOCOL_VERSION",
+    "MCP_OUTPUT_MAX_BYTES",
     "SUPPORTED_PROTOCOL_VERSIONS",
     "AudioContent",
     "AuthProvider",
@@ -107,6 +121,7 @@ __all__ = [
     "JsonRpcRequest",
     "JsonRpcResponse",
     "JsonRpcSuccessResponse",
+    "LimitedMcpContent",
     "ListResourceTemplatesResult",
     "ListResourcesResult",
     "ListToolsResult",
@@ -119,9 +134,16 @@ __all__ = [
     "McpError",
     "McpFetch",
     "McpHttpError",
+    "McpHttpServerConfig",
+    "McpOAuthConfig",
+    "McpOutputSaver",
     "McpResponse",
     "McpResponseHeaders",
+    "McpServerConfig",
+    "McpServerConfigOptions",
+    "McpServerConfigResult",
     "McpSessionExpiredError",
+    "McpStdioServerConfig",
     "McpTimeoutError",
     "McpTransport",
     "McpTransportCloseListener",
@@ -149,10 +171,16 @@ __all__ = [
     "ToolAnnotations",
     "ToolExecution",
     "UnauthorizedContext",
+    "create_mcp_tool_name",
     "default_fetch",
     "is_json_rpc_notification",
     "is_json_rpc_request",
     "is_json_rpc_response",
+    "is_mcp_server_override",
+    "limit_mcp_content",
+    "mcp_namespace",
+    "normalize_mcp_input_schema",
     "parse_json_rpc_message",
     "to_llm_content",
+    "validate_mcp_server_config",
 ]

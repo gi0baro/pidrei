@@ -304,13 +304,14 @@ def build_params(
         },
     )
 
-    params: dict[str, Any] = {
-        "model": deployment_name,
-        "input": messages,
-        "stream": True,
-        "prompt_cache_key": clamp_openai_prompt_cache_key(options.session_id if options else None),
-        "store": False,
-    }
+    params: dict[str, Any] = {"model": deployment_name, "input": messages, "stream": True}
+    # pi's `undefined` (the mode is "disabled", or there is no session id) drops the field from the
+    # body; a None here would be sent as null.
+    if getattr(compat, "prompt_cache_key_mode", None) != "disabled":
+        cache_key = clamp_openai_prompt_cache_key(options.session_id if options else None)
+        if cache_key is not None:
+            params["prompt_cache_key"] = cache_key
+    params["store"] = False
 
     if options is not None and options.max_tokens:
         params["max_output_tokens"] = max(options.max_tokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)

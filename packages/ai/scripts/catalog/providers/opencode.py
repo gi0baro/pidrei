@@ -12,7 +12,11 @@ from catalog.define import (
     merge_thinking,
     models_dev_models,
 )
-from catalog.families.anthropic import supports_claude_mid_convo_system_messages
+from catalog.families.anthropic import (
+    enable_claude_mid_convo_effort,
+    supports_claude_mid_convo_effort,
+    supports_claude_mid_convo_system_messages,
+)
 from catalog.families.google import google_thinking_levels
 from catalog.families.kimi import is_kimi_k3_family_id
 from catalog.families.openai import enable_openai_grammar_tools, enable_openai_mid_convo_system_messages
@@ -183,6 +187,10 @@ def finalize_opencode_model(model: ChatModel, _ctx: ProviderContext) -> None:
         # `tool_addition`/`tool_removal` blocks, so tool changes stay top-level.
         if model["provider"] == "opencode" and supports_claude_mid_convo_system_messages(model["id"]):
             merge_compat(model, {"supportsMidConvoSystemMessages": True})
+        # Zen and Go forward per-message effort and `thinking.block_binding`. Without
+        # `drop_block`, Go rejects replayed thinking after the system prompt or tools change.
+        if supports_claude_mid_convo_effort(model["id"]):
+            enable_claude_mid_convo_effort(model)
         # OpenCode Qwen 3.8 Flash emits and accepts thinking blocks with empty signatures.
         if model["id"] == "qwen3.8-flash":
             merge_compat(model, {"allowEmptySignature": True})

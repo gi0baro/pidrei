@@ -4,6 +4,9 @@ pi vitest-mocks `modelRuntime.refresh`; here the instance attribute is
 replaced with a stub returning the same result.
 """
 
+import re
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -192,3 +195,98 @@ async def test_lists_every_catalog_that_failed_to_refresh():
         assert "Could not refresh 2 model catalogs (openai, anthropic); showing cached models." in render(selector)
     finally:
         harness.cleanup()
+
+
+# #9109: when the catalog refresh lands
+
+
+def selected_model_id(selector: ModelSelectorComponent) -> str | None:
+    row = next((line for line in render(selector).split("\n") if line.startswith("→")), None)
+    return re.sub(r"^→\s*(✓\s*)?", "", row).split(" ")[0] if row is not None else None
+
+
+@asynccontextmanager
+async def open_with_pending_refresh():
+    """Opens the selector with the refresh in flight, so a test can browse first and then let it land."""
+    harness = await create_harness(models=[{"id": "alpha-1"}, {"id": "alpha-2"}, {"id": "alpha-3"}, {"id": "beta-1"}])
+    refresh_released = tonio.Event()
+
+    async def pending_refresh(_options=None, *, _requested_only=False):
+        await refresh_released.wait()
+        return ModelsRefreshResult(aborted=False, errors={})
+
+    harness.session.model_runtime.refresh = pending_refresh
+    tui = RenderRequests()
+    try:
+        selector = ModelSelectorComponent(
+            tui,
+            harness.get_model("alpha-1"),
+            harness.session.model_runtime,
+            [],
+            lambda *args: None,
+            lambda *args: None,
+        )
+
+        async def finish_refresh() -> None:
+            refresh_released.set()
+            await tui.until(lambda: "Model catalogs refreshed." in render(selector))
+
+        yield harness, selector, finish_refresh
+        selector.dispose()
+    finally:
+        refresh_released.set()
+        harness.cleanup()
+
+
+@pytest.mark.tonio
+async def test_keeps_the_selection_on_the_browsed_model_when_the_refresh_lands():
+    async with open_with_pending_refresh() as (_harness, selector, finish_refresh):
+        selector.handle_input("\x1b[B")
+        selector.handle_input("\x1b[B")
+
+        await finish_refresh()
+
+        assert selected_model_id(selector) == "alpha-3"
+
+
+@pytest.mark.tonio
+async def test_keeps_the_selection_while_a_search_query_is_active_when_the_refresh_lands():
+    async with open_with_pending_refresh() as (_harness, selector, finish_refresh):
+        for char in "alpha":
+            selector.handle_input(char)
+        selector.handle_input("\x1b[B")
+        browsed = selected_model_id(selector)
+
+        await finish_refresh()
+
+        assert selected_model_id(selector) == browsed
+        assert browsed != "alpha-1"
+
+
+@pytest.mark.tonio
+async def test_follows_the_selected_model_when_new_rows_shift_its_position():
+    async with open_with_pending_refresh() as (harness, selector, finish_refresh):
+        selector.handle_input("\x1b[B")
+        model_runtime = harness.session.model_runtime
+        snapshot = model_runtime.get_available_snapshot()
+        model_runtime.get_available_snapshot = lambda: [replace(snapshot[0], id="added-model"), *snapshot]
+
+        await finish_refresh()
+
+        assert selected_model_id(selector) == "alpha-2"
+        selector.handle_input("\x1b[A")
+        selector.handle_input("\x1b[A")
+        assert selected_model_id(selector) == "alpha-1"
+
+
+@pytest.mark.tonio
+async def test_falls_back_to_the_current_model_when_the_selected_model_disappears():
+    async with open_with_pending_refresh() as (harness, selector, finish_refresh):
+        selector.handle_input("\x1b[B")
+        model_runtime = harness.session.model_runtime
+        remaining = [model for model in model_runtime.get_available_snapshot() if model.id != "alpha-2"]
+        model_runtime.get_available_snapshot = lambda: remaining
+
+        await finish_refresh()
+
+        assert selected_model_id(selector) == "alpha-1"

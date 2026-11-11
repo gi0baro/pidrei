@@ -16,7 +16,7 @@ def _strip_prefix(model_id: str) -> str:
 
 _MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$")
 _MID_CONVO_EFFORT_SONNET_HAIKU_RE = re.compile(r"^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$")
-_MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$")
+_MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5[.-][12](?:-\d{8})?$")
 
 
 def supports_claude_mid_convo_effort(model_id: str) -> bool:
@@ -30,13 +30,13 @@ def supports_claude_mid_convo_effort(model_id: str) -> bool:
 
 
 # Claude models that accept `thinking: {type: "disabled"}` alongside per-message effort.
-# Opus 5.5, Sonnet 5.5, Fable 5.1, and Mythos 5.1 reject it.
+# Opus 5.5, Sonnet 5.5, Fable 5.1/5.2, and Mythos 5.1/5.2 reject it.
 # https://platform.claude.com/docs/en/build-with-claude/thinking#configuring-thinking
 _DISABLED_THINKING_MODELS = frozenset({"claude-opus-5", "claude-haiku-5-5", "claude-haiku-5.5"})
 
 _MID_CONVO_SYSTEM_OPUS_RE = re.compile(r"^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$")
 _MID_CONVO_SYSTEM_SONNET_HAIKU_RE = re.compile(r"^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$")
-_MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$")
+_MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-][12])?(?:-\d{8})?$")
 
 
 def supports_claude_mid_convo_system_messages(model_id: str) -> bool:
@@ -94,8 +94,8 @@ _TEMPERATURE_UNSUPPORTED = (
     "opus-4.8",
     "opus-5",
     "opus.5",
-    "sonnet-5-5",
-    "sonnet-5.5",
+    "sonnet-5",
+    "sonnet.5",
     "haiku-5-5",
     "haiku-5.5",
 )

@@ -1515,6 +1515,43 @@ def test_should_render_html_tags_in_code_blocks_correctly():
     assert "<div>" in joined_plain and "</div>" in joined_plain, "Should render HTML in code blocks"
 
 
+# HTML comments
+# Regression tests for https://github.com/earendil-works/pi/issues/11710
+
+
+def _render_plain(text: str) -> list[str]:
+    return [strip_ansi(line).rstrip() for line in Markdown(text, 0, 0, default_markdown_theme).render(60)]
+
+
+def test_hides_block_and_inline_comments_without_extra_spacing():
+    assert _render_plain(
+        "## [1.0.0]\n\n<!-- release-notes:start -->\nFixed a bug.\n\nSee <!-- todo: link --> the docs."
+    ) == _render_plain("## [1.0.0]\n\nFixed a bug.\n\nSee the docs.")
+
+
+def test_drops_one_blank_line_around_comment_only_blocks():
+    assert _render_plain(
+        "<!-- start -->\n\n## [1.0.0]\n\n<!-- a -->\n\n- item\n\n<!-- b -->\n\n## [0.9.0]\n\n<!-- end -->"
+    ) == _render_plain("## [1.0.0]\n\n- item\n\n## [0.9.0]")
+
+
+def test_hides_multi_line_and_unclosed_comments():
+    assert _render_plain("<!--\nmulti\nline\n-->\ntext") == _render_plain("text")
+    assert _render_plain("text\n\n<!-- streaming") == _render_plain("text")
+
+
+def test_hides_comments_in_blockquotes_and_list_items():
+    assert _render_plain("> q\n>\n> <!-- c -->\n>\n> r\n\n- a\n\n  <!-- c -->\n\n  b\n- <!-- c --> item") == (
+        _render_plain("> q\n>\n> r\n\n- a\n\n  b\n- item")
+    )
+
+
+def test_keeps_other_html_and_the_text_after_a_comment_in_a_block():
+    assert _render_plain("with <tag> markers") == ["with <tag> markers"]
+    assert _render_plain("<!-- c --> trailing text") == ["trailing text"]
+    assert _render_plain("<div>\n<!-- c -->a</div>") == ["<div>", "a</div>"]
+
+
 # Streaming code fences
 
 
