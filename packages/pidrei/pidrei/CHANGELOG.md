@@ -6,6 +6,330 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.5.2.0] - 2026-11-11
+
+Tracks [Pi 1.5.2](https://github.com/earendil-works/pi/releases/tag/v1.5.2).
+PiDrei skipped Pi 1.5.1, so this release also carries its changes.
+
+### Added
+
+- `pidrei auth login <provider>` signs in to a provider from the shell
+  without starting a session, then exits; `--api-key` saves an API key
+  instead, and `--no-browser` signs in with a device code or a pasted code.
+  `pidrei auth logout <provider>` removes the stored credentials, like
+  `/logout`. Ctrl+C ends the command as it ends every other pidrei shell
+  command, without Pi's `Login cancelled.` line; nothing is saved before a
+  login completes.
+- Anthropic sessions use message threads: each request sends only the new
+  messages and the server continues from the previous reply, falling back to
+  the full request when the conversation changed (after compaction or a tool
+  list change, for example). On by default for the `anthropic` provider on
+  `api.anthropic.com`; set `compat.supportsMessageThreads` in `models.json`
+  to enable it for gateways that forward the `thread` field, or to turn it
+  off. Cache warming never touches the session's thread.
+- When a session's working directory no longer exists, for example after the
+  project folder was renamed, interactive mode offers `Continue`, `Fork` or
+  `Cancel` instead of only continuing. `Fork` copies the session into the
+  current directory as a new session with a new ID, like `--fork`, so the
+  next resume no longer asks. This applies at startup (`--session`,
+  `--resume`), to `/resume`, to `/import` and to `ctx.switch_session()`.
+- `pi.register_markdown_transformer()` takes an optional
+  `{"messageTypes": [...]}` that selects the Markdown surfaces a transformer
+  runs on: besides user, assistant and thinking Markdown, `custom` (custom
+  messages and skill blocks), `summary` (branch and compaction summaries) and
+  `changelog` (What's New, `/changelog` and the Update Available note).
+  Without options a transformer runs where it did before.
+- `ctx.ui.custom()` overlays honor the `blocked` option: pidrei reports that
+  it is waiting for input from when the overlay is shown until it calls
+  `done()`, also while it is hidden. Closing one overlay keeps other open
+  questions blocked.
+- `pidrei update` lists each updated git package with its commit change
+  (`<source> abc1234 -> def5678`), prints `Packages are already up to date`
+  when nothing changed and `Skipped package updates (offline mode)` when
+  offline. `PackageManager.update()` reports each changed package as a
+  `result` progress event whose `message` holds that line.
+- The Microsoft-Decision-1 classifier on GitHub Copilot, callable through
+  codemode's `models.classify()`.
+- Claude Fable 5.2 (`claude-fable-5-2`) on the `anthropic` provider ($8/$40
+  per million input/output tokens, 1M context, 128K output). Like Fable 5.1
+  it uses per-message effort and mid-conversation system messages; requests
+  its safety classifiers refuse before any output are answered by Claude
+  Opus 5 and billed at Opus 5's price. Fable 5.2 and Mythos 5.2 on other
+  providers, such as OpenRouter's `anthropic/claude-fable-5.2`, get the same
+  per-message effort support.
+- The `qwen-token-plan-individual-cn` provider for Qwen Token Plan Individual
+  on the China endpoint, using `QWEN_TOKEN_PLAN_CN_API_KEY`, and GLM 5.3 on
+  Qwen Token Plan Individual.
+- `compat.promptCacheKeyMode` (`"auto"`, `"enabled"` or `"disabled"`) in
+  `models.json` enables prompt cache keys for compatible proxies or omits
+  them for endpoints that reject them, and
+  `compat.requiresNonNullAssistantContent` sends an empty string instead of
+  `null` in tool-call-only assistant messages to OpenAI-compatible endpoints
+  that require it.
+- Syntax highlighting for Dart, Nix, Groovy and Gradle files in read and
+  write views.
+- Custom read tool operations can stream the file through the new optional
+  `create_read_stream`.
+- `pidrei_ai`: `cleanup_session_resources(session_id)` frees the per-session
+  state of message threads and strict tool limits;
+  `StreamOptions.disable_continuation` keeps a request from using or
+  replacing server-side continuation state; `pidrei_ai.cache_warming` holds
+  the cache warming policy (`evaluate_cache_warming()`,
+  `get_prompt_cache_ttl_ms()` and the `CACHE_WARMING_*` constants);
+  `Provider.refresh_models_auth = "configured"` marks a provider whose
+  catalog needs no credential, so a stale login no longer fails its catalog
+  refresh; the schema validator's `validate()` checks a value without
+  coercing it.
+- `pidrei_mcp`: MCP OAuth sign-in in two halves (`start_mcp_sign_in()` and
+  `complete_mcp_sign_in()`, with `listen_for_loopback_sign_in()`,
+  `wait_for_loopback_sign_in()` and `response_from_redirect_url()`) and
+  `create_mcp_auth_provider()`, moved from pidrei, and the helpers that name
+  and configure MCP tools as pidrei does (`create_mcp_tool_name()`,
+  `normalize_mcp_input_schema()`, `limit_mcp_content()`,
+  `validate_mcp_server_config()`, `is_mcp_server_override()`).
+- `pidrei_codemode`: `resolve_schema_ref(ref, root)`, which returns the
+  subschema a local `$ref` names.
+
+### Changed
+
+- **Breaking:** a custom grep `read_file` operation is no longer called for
+  context lines: the grep tool takes them from ripgrep and no longer reads
+  matched files. To search a remote system, override the tool's `execute()`.
+- **Breaking:** OpenAI-compatible models no longer send `"tools": []` when
+  all tools are disabled in a session that has used tools; the field is
+  omitted, which fixes 400 errors (`tools must not be an empty array`) from
+  vLLM 0.20+, also behind LiteLLM. Proxies that require `tools` once the
+  history has tool calls, such as older LiteLLM versions in front of
+  Anthropic, need `compat.requiresToolsWithToolHistory: true` in
+  `models.json`.
+- `cacheWarming` defaults to `"idle"` instead of `"streaming"`: pidrei also
+  keeps eligible prompt caches warm for up to 30 minutes between agent runs,
+  but only when a refresh is expected to pay for itself. Set
+  `"cacheWarming": "streaming"` in global settings for the previous
+  behaviour.
+- Consecutive cache warms show as one `Cache warmed: $<total>` line with the
+  cumulative cost.
+- The default `anthropic` model is Claude Opus 5.5 (`claude-opus-5-5`).
+  Other defaults moved to newer models at the same or a lower price:
+  `amazon-bedrock` Claude Opus 5.5, `azure` GPT-6.1 Sol, `google` and
+  `google-vertex` Gemini 4 Argon, `vercel-ai-gateway` and `baseten` GLM 5.3,
+  `minimax` and `minimax-cn` MiniMax-M3, `qwen-token-plan` and
+  `qwen-token-plan-cn` Qwen3.8 Max, `opencode-go` Kimi K3.1 Pro, and Kimi
+  K2.7 Code for `moonshotai`, `moonshotai-cn`, `huggingface`, `opencode`,
+  `openrouter`, `cloudflare-workers-ai` and `cloudflare-ai-gateway`.
+- The OpenAI Codex provider is named "OpenAI Codex" again instead of "OpenAI
+  Codex (legacy)".
+- Model catalog regenerated from models.dev.
+
+### Fixed
+
+- The read tool loaded whole files into memory, which ran out of memory on
+  large files even with `offset`/`limit`; it now streams the file and keeps
+  only the shown lines.
+- The edit tool rewrote the line endings of untouched lines in files with
+  mixed CRLF/LF or lone CR line endings, and could run out of memory on large
+  files after the file was written. The diff now covers only the changed
+  lines and their surroundings and is computed before writing.
+- The grep tool read every matched file into memory when `context` was set;
+  context lines now come from ripgrep, which also fixes UTF-16 files and
+  lone CRs in matched lines. The match limit notice no longer appears when
+  exactly `limit` matches exist.
+- The grep tool's `glob` matched from the folder pidrei was started in
+  instead of from `path`. Globs are now relative to `path`, the form grep
+  prints its results in, also when `path` is a symlink, and a leading `./`
+  is ignored.
+- The find tool reported the result limit when exactly `limit` files
+  matched, and `limit: 0` in find and ls returned every result or an empty
+  listing; limits below 1 now mean 1. A find cancelled during its
+  parent-directory lookup still started `fd`.
+- A bash command whose shell had exited while a background process it
+  started kept writing ignored its timeout and abort until the writer
+  stopped. Both now apply until the output closes and stop the background
+  processes too, and the timeout error reports the shell's exit code and
+  when it exited. Stopping a command no longer falls back to signalling the
+  shell's bare process ID, which after the shell exited could belong to
+  another process; only its process group is signalled.
+- `!` and `!!` commands omitted the truncation notice and full-output file
+  link when earlier output chunks had been discarded.
+- `ctrl+o` did not expand or collapse the output of `!` and `!!` commands
+  run while the agent was working. New output starts in the current expand
+  state, no longer disappears when a steering or follow-up message is
+  queued, and moves into the chat when the agent finishes.
+- Images in steering and follow-up messages, including `prompt()` while
+  streaming, were sent and saved at full size; they are resized like images
+  in idle prompts. Delivered image-only steering and follow-up messages
+  stayed in the pending queue.
+- Restoring queued messages to the editor at the moment one was delivered
+  could fail the run.
+- Prompts and `/tree` navigation could overlap during asynchronous input
+  hooks, authentication or branch summaries, and install the wrong
+  conversation context.
+- Resuming a session restored an old thinking level after `/tree` navigated
+  to before a `/thinking` change. Like the model, the live thinking level is
+  now recorded on the new branch with the next prompt.
+- Ctrl+P did not switch to the only model in scope (or the only available
+  model) when the active model was a different one, and cycling forward from
+  a model outside the scope skipped the first scoped model.
+- Disposing a session runtime tore down extensions before active tools
+  finished aborting and their results were recorded.
+- OAuth logins such as `openai` and `anthropic` failed with `invalid_grant`
+  after pidrei was stopped while it refreshed an expired token: the token
+  endpoint had already replaced the refresh token. On exit, pidrei now waits
+  for a token refresh in progress to be saved.
+- `pidrei update --models` failed with `OAuth refresh failed ...
+  invalid_grant` when a provider's login had gone stale. Providers whose
+  catalog comes from pi.dev, such as `openai`, no longer refresh their OAuth
+  token for a catalog refresh; for providers that list models with the
+  login, such as OpenRouter, a failed refresh prints a warning naming
+  `pidrei auth login <provider>`, and the other catalogs still refresh.
+- With `--offline`, signing in through `/login` still fetched the provider's
+  model catalog.
+- SDK and RPC reloads replaced extensions while a response or compaction was
+  still running; reload now asks the caller to wait.
+- RPC mode ignored an extension's `ctx.shutdown()` while idle, for example
+  from a timer, until the client sent another command. It now shuts down
+  right away when idle; a shutdown requested by an extension command waits
+  until the command's `prompt` response is written.
+- RPC mode cut off shutdown cleanup, such as a pending MCP token refresh,
+  when stdin closed and SIGTERM arrived together, as process managers like
+  systemd do, and the refreshed token was lost. Once a shutdown has started,
+  a stdin EOF or a single signal no longer interrupts it; a second signal
+  still exits at once. Print mode likewise no longer dies from a signal that
+  arrives during its final cleanup.
+- `/import` of a session whose working directory no longer exists left a
+  copy in the session directory, and continuing it left a second copy with
+  the same ID; the failed copy is now removed.
+- `/reload` and session switches left extension overlays on screen when an
+  extension had more than one `ctx.ui.custom()` overlay open: only the
+  topmost was removed, and the others kept focus and input. All extension
+  overlays, hidden ones included, are now removed and disposed; pidrei's own
+  overlays stay open.
+- Large pasted text was replaced by literal paste markers when switching
+  editors, opening custom UI or restoring queued messages.
+- Extension selection dialogs grew beyond the terminal height; they show a
+  scrolling window of up to ten options.
+- The session-tree search cursor was not shown or positioned for input
+  methods.
+- The model selector moved the selection when a background catalog refresh
+  arrived.
+- Internal cursor markers leaked into terminal output with multiple markers
+  or horizontally clipped content.
+- Markdown showed HTML comments (`<!-- ... -->`) as visible text.
+- Inline images in fullscreen mode showed only their first row in Orca.
+  Fullscreen now draws Kitty images after the rows they cover on every
+  terminal.
+- Alacritty hyperlinks were not enabled when `TERM_PROGRAM` was unset;
+  detection also uses `TERM` and `ALACRITTY_WINDOW_ID`.
+- Under WSL, Ctrl+V did not paste clipboard images or text; Ctrl+V and
+  Alt+V are both default paste shortcuts there.
+- `pidrei config` ignored custom keybindings from `keybindings.json`.
+- Prompt template arguments dropped apostrophes and merged words: an
+  apostrophe inside a word, as in `doesn't`, no longer opens a quote, a
+  quote with no closing match is kept as text, and `\"` inside `"..."` (or
+  `\'` inside `'...'`) gives a literal quote.
+- What's New repeated old notes on every fresh launch when the last seen
+  version had a suffix, such as a prerelease. A saved version without
+  `major.minor.patch` now shows no notes and is replaced by the installed
+  version.
+- An extension whose entry file is a symlink imported its sibling modules
+  from the link's directory; the entry file's real path is used.
+- Concurrent OAuth refreshes through symlinked paths to the same `auth.json`
+  did not share their lock; the lock is taken on the resolved file.
+- `tool_search` and codemode's `search_tools()` did not find a tool by the
+  property names and descriptions behind a local `$ref`, as in MCP input
+  schemas that keep their models in `$defs`, and codemode's summary of a
+  tool's result left out the fields behind one.
+- A failed token refresh of an MCP connection registered an OAuth client or
+  replaced the PKCE verifier of a sign-in in progress, which made that
+  sign-in fail. MCP sign-in now refreshes the stored tokens with the stored
+  client even when the loopback callback port changed, instead of
+  registering a new client and opening the browser. Ctrl+C in `/mcp` and
+  the `--timeout` of `pidrei mcp login` also stop a sign-in while it waits
+  up to 25 seconds for another pidrei process's token refresh, and a refresh
+  lock that fails for another reason fails the sign-in instead of opening
+  the browser.
+- `pidrei mcp list` reported MCP servers with
+  `"auth": {"provider": "<provider>"}` as needing sign-in although the
+  provider was signed in. It now sends the provider's `/login` token and
+  refreshes it when it expired; for these servers the sign-in hint names
+  `/login <provider>`, and `pidrei mcp login` and `pidrei mcp logout` point
+  to `pidrei auth login` and `pidrei auth logout` instead of failing with
+  "does not use OAuth".
+- MCP stdio server subprocesses survived disconnect or pidrei's exit when
+  the server's main process had already exited, and large stdio messages
+  were copied and scanned again as each chunk arrived.
+- MCP Streamable HTTP SSE replies with CR-only line endings failed with
+  "stream ended without a response", JSON replies bypassed the message-size
+  limit, and HTTP errors read the whole response body. Oversized replies are
+  cancelled, and only the first 8 KiB of an error body is read.
+- Anthropic and Bedrock sent `strict: "prefer"` tools strict again on every
+  request after Claude rejected them for exceeding its strict tool limits,
+  which cost a rejected request per turn; later requests of the same session
+  send those tools non-strict right away.
+- Anthropic non-strict tool schemas dropped root `$defs` and `definitions`,
+  which left property `$ref`s pointing at nothing: Claude produced wrong
+  arguments for such tools (common in MCP servers), and some
+  Anthropic-compatible gateways rejected the request.
+- Anthropic OAuth requests reported an outdated Claude Code version.
+- Claude Sonnet 5 requests sent an unsupported temperature parameter.
+- OpenCode Go Claude Haiku 5.5 failed with a 400 (`Invalid signature in
+  thinking block ...`) after the tool list, system prompt or earlier history
+  changed, and kept failing on every retry. OpenCode Go and Zen Claude 5.5
+  models, Opus 5 and Fable 5.1 now use per-message effort and send
+  `thinking.block_binding: drop_block`, like the Anthropic provider.
+- OpenRouter rejected requests with a 400 (`This endpoint's maximum context
+  length is ...`) for models whose output limit is close to the context
+  window, and pidrei then compacted the session as if the context had
+  overflowed. The default output limit now leaves 15% of the estimated input
+  unused, and near a full window at most 32,768 output tokens are requested.
+- Azure GPT-6 Astra, Luna, Sol, GPT-6.1 Sol and GPT-6.1 Terra used a 272K
+  context window instead of the 1,050,000 tokens Azure Foundry deploys them
+  with, and Azure OpenAI models lost OpenAI's long-context price tier for
+  requests above 272K input tokens.
+- Azure OpenAI Responses requests without a session sent
+  `"prompt_cache_key": null`; the field is now left out.
+- OpenAI Responses requests sent a `session_id` header instead of the
+  documented `session-id`.
+- Provider streams dropped after the reply had begun were not retried
+  automatically.
+- Cancelling during lazy provider loading or authentication was reported as
+  an error instead of an abort.
+- Tool arguments for `{"type": "bigint"}` parameters (TypeBox's
+  `Type.BigInt()`) were rejected; `"42"` and `42` now convert to the integer
+  42, as TypeBox converts them. A `number` parameter no longer accepts `NaN`
+  or infinities, which only values built in code can be.
+- The subagent extension example showed running tasks as completed, lost
+  failed and aborted tasks, and lost the results of parallel tasks when one
+  of them raised. Agent discovery and trust checks use each task's working
+  directory, and single and chain results are truncated without losing the
+  full tool details.
+- The plan-mode extension example missed completion markers in thinking
+  blocks and common completion phrases, dropped formatted or long plan
+  steps, and sent an extra model turn to acknowledge completion.
+
+### Not ported
+
+- Pi's preferred partner providers: Radius and OpenRouter listed first and
+  marked in `/login` and `/logout`. The provider lists keep their order.
+- Radius sign-in through `pidrei auth login radius` and the Radius MCP
+  server it configures: Radius is not ported.
+- The npm half of Pi's `update` summary (npm version changes and the
+  `No packages were updated, see the warnings above` line): pidrei installs
+  packages from git and local paths.
+- The Extension Updates notice among the `changelog` Markdown surfaces: Pi's
+  extension update changelogs are not ported.
+- Mermaid diagram rendering and its upgrade (pie charts, author-defined
+  styles, clickable labels, diagrams in summaries).
+- `{"type": "undefined"}` parameters (TypeBox's `Type.Undefined()`) still
+  reject every argument: a Python value cannot be a key set to undefined.
+- MCP's `PipeTransport`, the stdio transport over a program the caller
+  started.
+- Windows fixes (the installer, the powershell tool, `find` path patterns,
+  Ctrl+V on native Windows, the subagent example's Bun entry path): pidrei is
+  POSIX-only.
+- llama.cpp fixes (connection errors, Hugging Face search selection): the
+  llama.cpp extension is not ported.
+
 ## [1.5.0.0] - 2026-11-09
 
 Tracks [Pi 1.5.0](https://github.com/earendil-works/pi/releases/tag/v1.5.0).

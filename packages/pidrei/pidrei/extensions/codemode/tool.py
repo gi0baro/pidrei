@@ -153,9 +153,9 @@ def _description_intro(type_check: bool) -> str:
         ),
         (
             "- `await tools.<name>(arg=value, ...)` takes keyword arguments only, returns a `str`, or a `dict` if "
-            "the tool's declaration says so, and raises on failure (catch with `except Exception`). A tool whose "
-            "declaration returns a `dict` returns it on failure too when the tool produced one; check its fields. "
-            "Calls still running when the script ends are cancelled."
+            "the tool's declaration says so, and raises on failure. A tool whose declaration returns a `dict` "
+            "returns it on failure too when the tool produced one; check its fields. Calls still running when the "
+            "script ends are cancelled."
         ),
     ]
     if type_check:
