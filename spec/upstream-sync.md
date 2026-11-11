@@ -303,7 +303,9 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Pi's experimental stack**: the durable harness runtime, Chord, the
   experimental coding agent (`coding-agent/src/experimental`,
   `cli/experimental`, `mini/`, facet plugins), session backends,
-  benchmarks. It is an unfinished rewrite the product does not run on;
+  benchmarks, and the apps built on it (`apps/`: p2, "Pi Mobile on Chord
+  v2", and p3's design docs, in the tree since Pi 1.5.1). It is an
+  unfinished rewrite the product does not run on;
   porting it would track churn on a moving target. Not porting it is a
   deferral, not a saving.
   - Pi 1.2.0 deleted its experimental server stack and the
@@ -335,6 +337,15 @@ Each has entries in the classifier's dropped tables, with the reason.
   Pi's TypeScript SDK examples and npm/wasm example extensions.
 - **MCP's conformance suite** (`test/mcp-conformance/`) and pi's MCP
   examples: pidrei's client mirrors pi's, which passes the suite.
+- **MCP's `PipeTransport`** (stdio over a program the caller started): its
+  only consumer is p2. The line framing it shares with the stdio transport
+  (`transports/lines.ts`) is ported.
+- **Code Pi moves into a package so p2 can share it** is still ported, to
+  the same place: PiDrei's packages mirror Pi's. Only what nothing but p2
+  uses is dropped.
+- **Preferred partner providers** (Pi 1.5.1: Radius and OpenRouter listed
+  first in `/login` and `/logout`, marked and drawn in brand colours). The
+  provider lists keep the order they had before it.
 
 ## 7. Diverged regions
 
@@ -1325,6 +1336,23 @@ those model-visible rules into `pidrei_ai/utils/schema/` and keeps
 - **Engine differences, documented in `engine.py`**: `pattern` runs on
   Python `re`, not ECMAScript (`\p{L}` is an error there); format
   strictness follows the Python checkers, not TypeBox's regexes.
+- **TypeBox's JavaScript types** (pi 1.5.1, `af79b0c3`):
+  - `bigint` is a Python `int` (`checks.is_big_int`, `TYPE_CHECKS["bigint"]`):
+    TypeBox's TryBigInt converts to an `int` (`coerce._try_big_int`), the
+    number keywords apply as to any number, and two `int`s are compared
+    exactly in `is_multiple`. What cannot be kept is pi's distinction between
+    the number `5` and `5n`: an `int` passes `bigint`, `integer` and
+    `number`, an error calls it `integer`, and an `int` literal (`const`,
+    `enum`) converts as a number, since JSON has no bigint literal. Mirrors
+    write pi's bigint values as `int`s (pi's probe replacer writes `"12n"`,
+    the mirror `12`); a pi case that relies on the distinction is
+    re-specified with a float or not mirrored, and the docstring says which.
+  - `undefined` stays rejected: pi checks and converts to a key present and
+    set to undefined, which a Python dict cannot hold (absence is the only
+    undefined). `Type.Undefined` matches no value, TryUndefined has no
+    branch, and pi's present-but-undefined required property has no
+    counterpart. Mirrors keep PiDrei's outcome (the probes' `REJECT`) and
+    say so in the docstring.
 - **Upstream diffs**: commits to the not-ported files are nothing to port. A
   hunk in the ported files lands 1:1; one that changes how pi's compiler
   answers a check lands on the `jsonschema` call that answers it here.

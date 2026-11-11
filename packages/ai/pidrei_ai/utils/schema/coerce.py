@@ -35,8 +35,12 @@ Where Python differs from JavaScript:
   integer give `42`), else a `float`; an integer schema truncates a float to
   an `int`.
 - `String(number)` and `Number(string)` follow JavaScript (`"0x10"` is 16,
-  `"1e3"` is 1000, `1e21` is `"1e+21"`). TypeBox's `undefined` and `bigint`
-  conversions have no JSON value and no branch here.
+  `"1e3"` is 1000, `1e21` is `"1e+21"`).
+- TypeBox's `bigint` conversion gives an `int` (`is_big_int`): `"12n"` and
+  `"12.9"` give 12. A literal (`const`, an enum value) that is an `int`
+  converts as a number, since JSON has no bigint literal. TypeBox's
+  `undefined` conversion has no branch: its result is a key present and set
+  to undefined, which a Python value cannot be.
 """
 
 import math
@@ -44,7 +48,14 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from pidrei_ai.utils.schema.checks import is_integer, is_number, number_string, same_value
+from pidrei_ai.utils.schema.checks import (
+    is_big_int,
+    is_finite_number,
+    is_integer,
+    is_number,
+    number_string,
+    same_value,
+)
 from pidrei_ai.utils.schema.engine import Engine, Scope
 
 
@@ -291,6 +302,8 @@ class _Conversion:
                 return _or_value(_try_boolean(value), value)
             case "null":
                 return _or_value(_try_null(value), value)
+            case "bigint":
+                return _or_value(_try_big_int(value), value)
             case "array":
                 return self._convert_array(node, b, value)
             case "object":
@@ -498,6 +511,7 @@ def _convert_literal(literal: Any, value: Any) -> Any:
     elif isinstance(literal, bool):
         result = _try_boolean(value)
     elif is_number(literal):
+        # pi's bigint literal branch (TryBigInt) has no counterpart: an `int` literal is a JSON number.
         result = _try_number(value)
     else:
         result = _NO_RESULT
@@ -543,6 +557,25 @@ def _try_number(value: Any) -> Any:
         return 1
     big = _big_int_of_string(value)
     return big if big is not None and abs(big) <= _MAX_SAFE_INTEGER else _NO_RESULT
+
+
+def _try_big_int(value: Any) -> Any:
+    """TypeBox's TryBigInt: booleans to 1/0, numbers truncated, null to 0, bigint-like strings."""
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if is_big_int(value):
+        return value
+    if _is_finite_number(value):
+        return math.trunc(value)
+    if value is None:
+        return 0
+    if not isinstance(value, str):
+        return _NO_RESULT
+    big = _big_int_of_string(value)
+    if big is not None:
+        return big
+    lowercase = value.lower()
+    return 0 if lowercase == "false" else 1 if lowercase == "true" else _NO_RESULT
 
 
 _BIGINT_LITERAL = re.compile(r"-?(?:0|[1-9][0-9]*)n")
@@ -630,7 +663,7 @@ def _types_of(schema: dict) -> list[str]:
 def _matches_type(value: Any, type_name: str) -> bool:
     match type_name:
         case "number":
-            return is_number(value)
+            return is_finite_number(value)
         case "integer":
             return is_integer(value)
         case "boolean":
@@ -639,6 +672,8 @@ def _matches_type(value: Any, type_name: str) -> bool:
             return isinstance(value, str)
         case "null":
             return value is None
+        case "bigint":
+            return is_big_int(value)
         case "array":
             return isinstance(value, list)
         case "object":

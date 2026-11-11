@@ -280,6 +280,16 @@ def test_supports_off_only_on_managed_models_that_accept_disabled_thinking():
         model = get_builtin_model("anthropic", model_id)
         assert model.compat.supports_mid_convo_effort is True
         assert (model.thinking_level_map or {}).get("off", "") is not None
-    for model_id in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"):
+    for model_id in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-fable-5-2"):
         model = get_builtin_model("anthropic", model_id)
         assert "off" in model.thinking_level_map and model.thinking_level_map["off"] is None
+
+
+def test_gates_fable_5_2_like_fable_5_1_and_keeps_only_fallbacks_that_accept_per_message_effort():
+    direct = get_builtin_model("anthropic", "claude-fable-5-2")
+    assert direct.compat.supports_mid_convo_effort is True
+    assert direct.compat.supports_mid_convo_system_messages is True
+    assert (direct.thinking_level_map["xhigh"], direct.thinking_level_map["max"]) == ("xhigh", "max")
+    # Opus 4.8 cannot take per-message effort, so it is dropped from Fable 5.2's fallbacks.
+    assert [fallback.model for fallback in direct.compat.allowed_fallback_models or []] == ["claude-opus-5"]
+    assert get_builtin_model("openrouter", "anthropic/claude-fable-5.2").compat.supports_mid_convo_effort is True

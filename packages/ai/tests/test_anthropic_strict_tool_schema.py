@@ -91,6 +91,32 @@ async def test_only_sends_the_full_input_schema_for_strict_json_schema_tools():
     assert input_schema["title"] == "StrictLookupInput"
 
 
+# https://github.com/earendil-works/pi/issues/9557
+@pytest.mark.tonio
+async def test_keeps_root_definitions_in_non_strict_schemas_so_property_refs_resolve():
+    settings = {"type": "object", "properties": {"verbose": {"type": "boolean"}}}
+    cases = [
+        {"ref": "#/$defs/Settings", "definitions": {"$defs": {"Settings": settings}}},
+        {"ref": "#/definitions/Settings", "definitions": {"definitions": {"Settings": settings}}},
+    ]
+    for case in cases:
+        ref, definitions = case["ref"], case["definitions"]
+        parameters = {
+            "type": "object",
+            "properties": {"settings": {"$ref": ref}},
+            "required": ["settings"],
+            **definitions,
+        }
+        tool = await capture_first_tool(create_tool(parameters))
+        assert "strict" not in tool
+        assert tool["input_schema"] == {
+            "type": "object",
+            "properties": {"settings": {"$ref": ref}},
+            "required": ["settings"],
+            **definitions,
+        }
+
+
 # https://github.com/earendil-works/pi/issues/9953
 @pytest.mark.tonio
 async def test_sends_prefer_tools_non_strict_when_they_use_keywords_anthropic_strict_mode_rejects():

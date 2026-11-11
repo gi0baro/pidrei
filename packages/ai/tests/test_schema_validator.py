@@ -11,10 +11,11 @@ Schema they emit.
 """
 
 import copy
+import math
 
 import pytest
 
-from pidrei_ai.utils.schema import FORMATS, ValidationError, compile
+from pidrei_ai.utils.schema import FORMATS, ParseResult, ValidationError, compile
 
 
 READ = {
@@ -119,6 +120,24 @@ def test_does_not_accept_every_value_for_a_type_the_draft_does_not_define():
     assert compile({"type": "constructor"}).check(1) is False
 
 
+# PiDrei: pi also compares each answer with TypeBox's `Check`, which has no counterpart here.
+def test_rejects_nan_and_infinity_as_a_number_or_an_integer_with_or_without_bounds():
+    schemas = [
+        {"type": "number"},
+        {"type": "integer"},
+        {"type": "number", "minimum": 0},
+        {"type": ["number", "string"]},
+        {"anyOf": [{"type": "number"}, {"type": "null"}]},
+        {"type": "object", "properties": {"a": {"type": "number"}}},
+    ]
+    for schema in schemas:
+        check = compile(schema).check
+        for v in (math.nan, math.inf, -math.inf):
+            value = {"a": v} if schema.get("type") == "object" else v
+            assert check(value) is False, f"{schema}: {v}"
+    assert compile({"type": "number"}).errors(math.nan) == [error("", "type", "expected number, got NaN")]
+
+
 # options
 
 
@@ -172,6 +191,67 @@ def test_compiles_a_recursive_schema():
     assert validator.errors({"value": 1, "children": [{"value": 2, "children": [{}]}]}) == [
         error("/children/0/children/0/value", "required", "missing")
     ]
+
+
+# #11697
+def test_applies_a_relative_root_id_once_when_resolving_local_references():
+    schema = {
+        "$id": "schemas/tool.json",
+        "type": "object",
+        "properties": {"count": {"$ref": "#/$defs/count"}},
+        "required": ["count"],
+        "$defs": {"count": {"type": "integer"}},
+    }
+    assert compile(schema).check({"count": 2}) is True
+    validator = compile(schema, unresolved_refs="reject")
+    assert validator.check({"count": 2}) is True
+    assert validator.errors({"count": "a"}) == [error("/count", "type", "expected integer, got string")]
+    assert compile(schema, coerce=True).parse({"count": "2"}) == ParseResult(ok=True, value={"count": 2})
+
+
+def test_applies_a_relative_root_id_once_in_schemas_with_unevaluated_keywords():
+    props = {
+        "$id": "schemas/tool.json",
+        "type": "object",
+        "properties": {"count": {"$ref": "#/$defs/count"}},
+        "$defs": {"count": {"type": "integer"}},
+        "unevaluatedProperties": False,
+    }
+    validator = compile(props, unresolved_refs="reject")
+    assert validator.check({"count": 2}) is True
+    assert validator.errors({"count": 2, "extra": 1}) == [error("/extra", "unevaluatedProperties", "unknown field")]
+    items = {
+        "$id": "schemas/list.json",
+        "type": "array",
+        "prefixItems": [{"$ref": "#/$defs/count"}],
+        "$defs": {"count": {"type": "integer"}},
+        "unevaluatedItems": False,
+    }
+    assert compile(items, unresolved_refs="reject").check([2]) is True
+    assert compile(items).check([2, 3]) is False
+
+
+def test_explains_errors_under_nested_resources_with_a_relative_id():
+    cloned = {
+        "$id": "https://example.com/root.json",
+        "allOf": [{"$ref": "#/$defs/child"}],
+        "$defs": {
+            "child": {
+                "$id": "schemas/tool.json",
+                "$ref": "#/$defs/props",
+                "unevaluatedProperties": False,
+                "$defs": {"props": {"properties": {"count": {"type": "integer"}}}},
+            },
+        },
+    }
+    assert compile(cloned).errors({"count": 2, "extra": 1}) == [
+        error("/extra", "unevaluatedProperties", "unknown field")
+    ]
+    branch = {
+        "$id": "https://example.com/root.json",
+        "anyOf": [{"$id": "a/b.json", "$ref": "#/$defs/n", "$defs": {"n": {"type": "integer"}}}, {"type": "boolean"}],
+    }
+    assert compile(branch).errors({}) == [error("", "type", "expected integer, got object")]
 
 
 def test_raises_for_a_malformed_schema():
@@ -332,3 +412,34 @@ def test_checks_iri_and_iri_reference():
     reference = compile({"type": "string", "format": "iri-reference"}, formats=FORMATS)
     assert reference.check("relative/パス#片") is True
     assert reference.check("a b") is False
+
+
+# TypeBox's JavaScript types
+#
+# PiDrei: a bigint is an `int`, so the number `5` passes `bigint` here (pi tells `5` from `5n`) and the
+# `expected bigint, got integer` error has no value to fail on. Not mirrored: `Type.Undefined` and a required
+# property set to undefined (a Python dict has no key set to undefined), and a bigint against a fractional
+# `multipleOf` (an `int` there is a JSON number, a multiple of 0.5 when whole).
+
+
+def test_checks_type_bigint_with_its_bounds_as_typebox_does():
+    validator = compile({"anyOf": [{"type": "bigint", "minimum": 0}, {"type": "null"}]})
+    for value in (5, 0, None):
+        assert validator.check(value) is True
+    # pi's `5` (a number, not a bigint) is `5.5` here: a whole `int` is a bigint.
+    for value in (-1, "5", 5.5):
+        assert validator.check(value) is False
+    assert compile({"type": "bigint", "maximum": 10, "multipleOf": 5}).check(10) is True
+    assert compile({"type": "bigint", "multipleOf": 5}).check(7) is False
+    assert compile({"type": "bigint", "exclusiveMaximum": 3}).check(3) is False
+    assert compile({"type": "bigint", "minimum": 0}).errors(-2) == [error("", "minimum", "expected >= 0")]
+    # pi: errors(2) is `expected bigint, got integer`; a fractional number is the non-bigint number here.
+    assert compile({"type": "bigint"}).errors(2.5) == [error("", "type", "expected bigint, got number")]
+
+
+def test_checks_multiple_of_of_bigints_exactly_however_large():
+    five = compile({"type": "bigint", "multipleOf": 5})
+    assert five.check(10**400) is True
+    assert five.check(10**400 + 1) is False
+    # A bigint is no multiple of 0.
+    assert compile({"multipleOf": 0}).check(4) is False

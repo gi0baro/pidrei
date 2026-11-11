@@ -1,9 +1,12 @@
 """Anthropic (pi: catalog/providers/anthropic.ts)."""
 
+import copy
+
 from catalog.define import (
     ChatModel,
     ProviderContext,
     ProviderDefinition,
+    add_missing,
     merge_compat,
     merge_thinking,
     models_dev_models,
@@ -21,11 +24,27 @@ from catalog.sources.models_dev import ModelsDevModel
 # Models the API may fall back to, with the price the caller is billed.
 _ALLOWED_FALLBACK_MODELS: dict[str, list[str]] = {
     "claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
+    "claude-fable-5-2": ["claude-opus-4-8", "claude-opus-5"],
     "claude-opus-5": ["claude-opus-4-8"],
 }
 
 _MODELS_WITH_1M_CONTEXT = frozenset({"claude-opus-4-6", "claude-sonnet-4-6"})
 _MODELS_55 = frozenset({"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"})
+
+# Released 2026-11-09; models.dev does not list it for Anthropic yet.
+# https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2
+_CLAUDE_FABLE_5_2: ChatModel = {
+    "id": "claude-fable-5-2",
+    "name": "Claude Fable 5.2",
+    "api": "anthropic-messages",
+    "baseUrl": "https://api.anthropic.com",
+    "provider": "anthropic",
+    "reasoning": True,
+    "input": ["text", "image"],
+    "cost": {"input": 8, "output": 40, "cacheRead": 0.2, "cacheWrite": 10},
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+}
 
 
 def _map(model: ChatModel, _source: ModelsDevModel) -> ChatModel:
@@ -37,8 +56,11 @@ def _map(model: ChatModel, _source: ModelsDevModel) -> ChatModel:
 
 
 def _models(ctx: ProviderContext) -> list[ChatModel]:
-    return models_dev_models(
-        ctx, "anthropic", api="anthropic-messages", base_url="https://api.anthropic.com", map_model=_map
+    return add_missing(
+        models_dev_models(
+            ctx, "anthropic", api="anthropic-messages", base_url="https://api.anthropic.com", map_model=_map
+        ),
+        [copy.deepcopy(_CLAUDE_FABLE_5_2)],
     )
 
 

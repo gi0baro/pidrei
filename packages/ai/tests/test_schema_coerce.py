@@ -5,8 +5,9 @@ conflict, and the guarantees around them.
 pi builds the schemas with pi-schema's builders (`obj`, `opt`, `arr`, ...) and
 TypeBox; here the builders are local helpers that emit the same JSON, and the
 TypeBox schemas are written as the JSON they emit. Not mirrored: the static
-type assertions (`expectTypeOf`), frozen schemas and the unavailable Function
-constructor (JavaScript-only).
+type assertions (`expectTypeOf`), frozen schemas, the unavailable Function
+constructor (JavaScript-only) and TypeBox's undefined conversion (see "bigint
+and undefined").
 """
 
 from pidrei_ai.utils.schema import FORMATS, CoercingValidator, ParseResult, ValidationError, compile
@@ -131,6 +132,48 @@ def test_parse_returns_the_errors_of_the_coerced_value_when_it_is_invalid():
     assert validator.parse({"count": "many", "name": 7}) == ParseResult(
         ok=False, errors=(ValidationError("/count", "type", "expected number, got string"),)
     )
+
+
+# validate
+
+
+def test_validate_checks_without_coercing_with_or_without_the_coerce_option():
+    schema = obj({"count": num(), "tags": arr(str_())})
+    value = {"count": 42, "tags": ["a"]}
+    for validator in (compile(schema), compile(schema, coerce=True)):
+        result = validator.validate(value)
+        assert result == ok(value)
+        assert result.value is value
+        # parse() would turn "42" into 42 and "a" into ["a"]; validate() reports both.
+        assert validator.validate({"count": "42", "tags": "a"}) == ParseResult(
+            ok=False,
+            errors=(
+                ValidationError("/count", "type", "expected number, got string"),
+                ValidationError("/tags", "type", "expected array, got string"),
+            ),
+        )
+
+
+# bigint and undefined, as TypeBox's Value.Convert
+#
+# PiDrei: the bigint is an `int`. TypeBox's TryUndefined is not mirrored: its result is a key present and set to
+# undefined, which a Python dict cannot hold.
+
+
+def test_converts_to_a_bigint_like_typeboxs_try_big_int():
+    def big_int(value):
+        coerced = coerce_value({"type": "bigint"}, value)
+        # `True == 1` and `3.0 == 3` in Python: the type is part of the answer.
+        assert type(coerced) is int, coerced
+        return coerced
+
+    schema = {"type": "object", "properties": {"n": {"type": "bigint", "minimum": 0}}, "required": ["n"]}
+    assert compile(schema, coerce=True).parse({"n": "42"}) == ok({"n": 42})
+    assert big_int("12n") == 12
+    assert big_int("12.9") == 12
+    assert big_int(3.7) == 3
+    assert big_int(True) == 1
+    assert coerce_value({"type": "bigint"}, "x") == "x"
 
 
 # pass 1: optional nulls

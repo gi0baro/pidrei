@@ -238,6 +238,73 @@ class TestBm25Ranker:
         assert isinstance(matches[0].score, float)
 
 
+# pi #11803
+class TestSchemaReferencesInTheSearchText:
+    @staticmethod
+    def search_text(parameters: dict) -> str:
+        entry = tool("mcp__ledger__inspect", "Inspect records")
+        entry.parameters = parameters
+        return create_tool_search_document(entry).text
+
+    def test_reads_names_and_descriptions_behind_local_references(self):
+        text = self.search_text(
+            {
+                "type": "object",
+                "properties": {"options": {"$ref": "#/$defs/options"}},
+                "$defs": {
+                    "options": {
+                        "type": "object",
+                        "properties": {"mode": {"type": "string", "description": "reconciliation"}},
+                    }
+                },
+            }
+        )
+        assert text == "Inspect records options mode reconciliation"
+
+    def test_follows_escaped_pointer_segments(self):
+        text = self.search_text(
+            {
+                "type": "object",
+                "properties": {"range": {"$ref": "#/$defs/date~1range"}},
+                "$defs": {"date/range": {"description": "fiscal period"}},
+            }
+        )
+        assert text == "Inspect records range fiscal period"
+
+    def test_reads_recursive_and_shared_definitions_once(self):
+        text = self.search_text(
+            {
+                "type": "object",
+                "properties": {
+                    "root": {"$ref": "#/$defs/node"},
+                    "other": {"$ref": "#/$defs/node"},
+                    "self": {"$ref": "#"},
+                },
+                "$defs": {
+                    "node": {
+                        "description": "tree node",
+                        "properties": {"children": {"type": "array", "items": {"$ref": "#/$defs/node"}}},
+                    }
+                },
+            }
+        )
+        assert text == "Inspect records root tree node children other self"
+
+    def test_leaves_out_unreferenced_definitions_and_remote_or_missing_references(self):
+        text = self.search_text(
+            {
+                "type": "object",
+                "properties": {
+                    "remote": {"$ref": "https://example.com/schema.json#/$defs/x"},
+                    "missing": {"$ref": "#/$defs/missing"},
+                    "malformed": {"$ref": "#/$defs/%E0%A4%A"},
+                },
+                "$defs": {"unused": {"description": "reconciliation"}},
+            }
+        )
+        assert text == "Inspect records remote missing malformed"
+
+
 PLAIN = tool("read_notes", "Read notes.")
 GITHUB = [tool(f"mcp__github__{suffix}", f"GitHub {suffix}.") for suffix in ("a", "b", "c")]
 DOCS = [tool("mcp__docs__search", "Search docs."), tool("mcp__docs__long", "Long " * 200)]

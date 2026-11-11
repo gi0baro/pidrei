@@ -39,6 +39,18 @@ class Validator:
             return []
         return self._explainer.errors(value)
 
+    def validate(self, value: Any) -> ParseResult:
+        """`value` itself when it is valid, else its errors: `check()` and `errors()` in one result, without
+        coercion.
+
+        Not TypeBox's `Value.Parse`, which also clones, fills defaults, converts and strips undeclared properties
+        before it checks. This only checks: the strict replacement where `Value.Parse` is used to validate (its other
+        steps change nothing for a valid value of a schema without defaults or extra properties). Use `parse()` with
+        `coerce=True` for conversion."""
+        if self.check(value):
+            return ParseResult(ok=True, value=value)
+        return ParseResult(ok=False, errors=tuple(self._explainer.errors(value)))
+
 
 class CoercingValidator(Validator):
     """A validator compiled with `coerce=True`: it also coerces loosely typed input towards the schema."""
@@ -58,10 +70,7 @@ class CoercingValidator(Validator):
 
     def parse(self, value: Any) -> ParseResult:
         """Coerces `value`, then checks it: the coerced value when it is valid, else its errors."""
-        coerced = self.coerce(value)
-        if self.check(coerced):
-            return ParseResult(ok=True, value=coerced)
-        return ParseResult(ok=False, errors=tuple(self._explainer.errors(coerced)))
+        return self.validate(self.coerce(value))
 
 
 @overload

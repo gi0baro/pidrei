@@ -88,14 +88,15 @@ def test_clamps_prompt_cache_key_to_64_characters():
 
 def test_sets_cache_affinity_headers_for_official_openai_requests():
     headers = transport_headers(make_model())
-    assert headers["session_id"] == "session-123"
+    assert headers["session-id"] == "session-123"
+    assert "session_id" not in headers
     assert headers["x-client-request-id"] == "session-123"
     assert "x-session-id" not in headers
 
 
 def test_sets_cache_affinity_headers_for_proxy_requests():
     headers = transport_headers(make_model(base_url="https://my-proxy.example.com/v1"))
-    assert headers["session_id"] == "session-123"
+    assert headers["session-id"] == "session-123"
     assert headers["x-client-request-id"] == "session-123"
 
 
@@ -103,7 +104,7 @@ def test_uses_openrouter_session_affinity_header_when_configured():
     model = make_model(compat=OpenAIResponsesCompat(session_affinity_format="openrouter"))
     headers = transport_headers(model)
     assert headers["x-session-id"] == "session-123"
-    assert "session_id" not in headers
+    assert "session-id" not in headers
     assert "x-client-request-id" not in headers
 
 
@@ -111,27 +112,27 @@ def test_auto_detects_openrouter_session_affinity_for_openrouter_endpoints():
     model = make_model(provider="openrouter", base_url="https://openrouter.ai/api/v1")
     headers = transport_headers(model)
     assert headers["x-session-id"] == "session-123"
-    assert "session_id" not in headers
+    assert "session-id" not in headers
 
 
 def test_uses_openai_nosession_format_when_configured():
     model = make_model(compat=OpenAIResponsesCompat(session_affinity_format="openai-nosession"))
     headers = transport_headers(model)
-    assert "session_id" not in headers
+    assert "session-id" not in headers
     assert headers["x-client-request-id"] == "session-123"
     assert "x-session-id" not in headers
 
 
 def test_explicit_headers_override_default_cache_affinity_headers():
-    headers = transport_headers(make_model(), options_headers={"session_id": "explicit-session"})
-    assert headers["session_id"] == "explicit-session"
+    headers = transport_headers(make_model(), options_headers={"session-id": "explicit-session"})
+    assert headers["session-id"] == "explicit-session"
     assert headers["x-client-request-id"] == "session-123"
 
 
 def test_omits_cache_affinity_headers_when_session_is_absent():
     # The adapter passes session_id=None when cacheRetention is "none".
     headers = transport_headers(make_model(), session_id=None)
-    assert "session_id" not in headers
+    assert "session-id" not in headers
     assert "x-client-request-id" not in headers
     assert "x-session-id" not in headers
 

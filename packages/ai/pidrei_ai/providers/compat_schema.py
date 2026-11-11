@@ -30,6 +30,10 @@ SESSION_AFFINITY_FORMAT_SCHEMA = _session_affinity_format(
 )
 
 
+def _prompt_cache_key_mode(**options: Any) -> dict[str, Any]:
+    return _literals("auto", "enabled", "disabled", **options)
+
+
 def _thinking_token_budget_field(**options: Any) -> dict[str, Any]:
     return _literals("thinking_token_budget", "thinking_budget", "thinking_budget_tokens", **options)
 
@@ -221,6 +225,19 @@ OPENAI_COMPLETIONS_COMPAT_SCHEMA: dict[str, Any] = {
                 "auto-detected from URL."
             )
         ),
+        "requiresNonNullAssistantContent": _boolean(
+            description=(
+                'Whether replayed assistant messages with no text (e.g. tool-call-only messages) must send "" instead '
+                "of null content. Default: false."
+            )
+        ),
+        "requiresToolsWithToolHistory": _boolean(
+            description=(
+                'Whether requests without tools must send "tools": [] when the conversation contains tool calls or '
+                "tool results. Needed by some proxies in front of Anthropic, such as older LiteLLM versions. Default: "
+                "false, the field is omitted."
+            )
+        ),
         "requiresThinkingAsText": _boolean(
             description=(
                 "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: "
@@ -343,6 +360,13 @@ OPENAI_COMPLETIONS_COMPAT_SCHEMA: dict[str, Any] = {
                 "sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
             )
         ),
+        "promptCacheKeyMode": _prompt_cache_key_mode(
+            description=(
+                "Controls the prompt_cache_key request field. auto sends it to api.openai.com, or with long cache "
+                "retention when supportsLongCacheRetention is true; enabled sends it whenever caching is active, for "
+                "compatible proxies; disabled never sends it. Default: auto."
+            )
+        ),
         "supportsLongCacheRetention": _boolean(
             description=(
                 'Whether the provider supports long prompt cache retention (prompt_cache_retention: "24h" or '
@@ -382,9 +406,15 @@ OPENAI_RESPONSES_COMPAT_SCHEMA: dict[str, Any] = {
         ),
         "sessionAffinityFormat": _session_affinity_format(
             description=(
-                "Session-affinity header format. openai sends session_id and x-client-request-id; "
+                "Session-affinity header format. openai sends session-id and x-client-request-id; "
                 "openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect "
                 "prompt_cache_key. Default: auto-detected."
+            )
+        ),
+        "promptCacheKeyMode": _prompt_cache_key_mode(
+            description=(
+                "Controls the prompt_cache_key request field. auto and enabled send it whenever caching is active; "
+                "disabled never sends it, for compatible proxies that reject it. Default: auto."
             )
         ),
         "supportsLongCacheRetention": _boolean(
@@ -600,6 +630,12 @@ _PROVIDER_COMPAT_PROPERTY_OVERRIDES: dict[str, Any] = {
     ),
     "sessionAffinityFormat": _session_affinity_format(
         description="Session-affinity header format. Defaults are API-specific or auto-detected."
+    ),
+    "promptCacheKeyMode": _prompt_cache_key_mode(
+        description=(
+            "Controls the prompt_cache_key request field for openai-completions and openai-responses: auto keeps "
+            "each API's default, enabled sends it whenever caching is active, disabled never sends it. Default: auto."
+        )
     ),
     "supportsMidConvoEffort": _boolean(
         description=(

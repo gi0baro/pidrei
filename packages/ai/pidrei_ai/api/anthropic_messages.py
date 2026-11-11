@@ -103,7 +103,7 @@ from pidrei_utils.cancel import CancelToken
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Stealth mode: mimic Claude Code's tool naming exactly.
-CLAUDE_CODE_VERSION = "2.1.280"
+CLAUDE_CODE_VERSION = "2.1.322"
 
 # Claude Code 2.x tool names (canonical casing).
 # Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -1332,11 +1332,18 @@ def _convert_tools(
             )
         )
         schema = get_json_schema_tool_parameters(tool, strict) or {}
+        # Keep shared definitions so property $refs still resolve. Other root keywords stay out:
+        # Anthropic rejects root anyOf/oneOf/allOf with a 400.
         legacy_input_schema = {
             "type": "object",
             "properties": schema.get("properties") or {},
             "required": schema.get("required") or [],
         }
+        # Pi's `=== undefined`: a present key is kept, whatever its value.
+        if "$defs" in schema:
+            legacy_input_schema["$defs"] = schema["$defs"]
+        if "definitions" in schema:
+            legacy_input_schema["definitions"] = schema["definitions"]
         input_schema = {**schema, **legacy_input_schema} if strict is True else legacy_input_schema
 
         entry: dict[str, Any] = {

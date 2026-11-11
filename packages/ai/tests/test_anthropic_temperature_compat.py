@@ -48,6 +48,14 @@ async def test_omits_default_temperature_for_claude_opus_4_7():
 
 
 @pytest.mark.tonio
+async def test_omits_temperature_for_claude_sonnet_5():
+    payload = await capture_payload(
+        get_builtin_model("anthropic", "claude-sonnet-5"), SimpleStreamOptions(temperature=0)
+    )
+    assert "temperature" not in payload
+
+
+@pytest.mark.tonio
 async def test_keeps_temperature_for_claude_opus_4_6():
     payload = await capture_payload(
         get_builtin_model("anthropic", "claude-opus-4-6"), SimpleStreamOptions(temperature=0)

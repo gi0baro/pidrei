@@ -87,6 +87,7 @@ type KnownProvider = Literal[
     "qwen-token-plan",
     "qwen-token-plan-cn",
     "qwen-token-plan-individual",
+    "qwen-token-plan-individual-cn",
     "xiaomi",
     "xiaomi-token-plan-cn",
     "xiaomi-token-plan-ams",
@@ -112,6 +113,7 @@ type CacheRetention = Literal["none", "short", "long"]
 type ModelPromptCache = dict[Literal["short", "long"], float]
 type Transport = Literal["sse", "websocket", "websocket-cached", "auto"]
 type SessionAffinityFormat = Literal["openai", "openai-nosession", "openrouter"]
+type PromptCacheKeyMode = Literal["auto", "enabled", "disabled"]
 
 # Provider-scoped environment overrides. Values take precedence over os.environ.
 type ProviderEnv = Mapping[str, str]
@@ -493,6 +495,11 @@ class OpenAICompletionsCompat:
     max_tokens_field: Literal["max_completion_tokens", "max_tokens"] | None = None
     requires_tool_result_name: bool | None = None
     requires_assistant_after_tool_result: bool | None = None
+    # Whether replayed assistant messages with no text must send "" instead of null content. Default: False.
+    requires_non_null_assistant_content: bool | None = None
+    # Whether requests without tools must send `"tools": []` when the conversation contains tool calls or
+    # tool results (some proxies in front of Anthropic, such as older LiteLLM versions). Default: False.
+    requires_tools_with_tool_history: bool | None = None
     requires_thinking_as_text: bool | None = None
     requires_reasoning_content_on_assistant_messages: bool | None = None
     thinking_format: ThinkingFormat | None = None  # default "openai"
@@ -531,6 +538,10 @@ class OpenAICompletionsCompat:
     cache_control_format: Literal["anthropic"] | None = None
     send_session_affinity_headers: bool | None = None  # default True for OpenRouter endpoints, False otherwise
     session_affinity_format: SessionAffinityFormat | None = None
+    # Controls the `prompt_cache_key` request field. "auto" sends it to api.openai.com, or with
+    # long cache retention when `supports_long_cache_retention` is True; "enabled" sends it whenever
+    # caching is active, for compatible proxies; "disabled" never sends it. Default: "auto".
+    prompt_cache_key_mode: PromptCacheKeyMode | None = None
     supports_long_cache_retention: bool | None = None  # default True
 
 
@@ -544,6 +555,9 @@ class OpenAIResponsesCompat:
     # message. Default: False; the generated model catalog enables it for verified models.
     supports_mid_convo_system_messages: bool | None = None
     session_affinity_format: SessionAffinityFormat | None = None
+    # Controls the `prompt_cache_key` request field. "auto" and "enabled" send it whenever caching
+    # is active; "disabled" never sends it, for compatible proxies that reject it. Default: "auto".
+    prompt_cache_key_mode: PromptCacheKeyMode | None = None
     # Whether the provider supports long prompt cache retention. This uses
     # `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"`
     # on earlier models. Default: True.

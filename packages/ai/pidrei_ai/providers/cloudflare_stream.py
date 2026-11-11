@@ -1,5 +1,6 @@
 """Port of pi's cloudflare-stream.ts: endpoint materialization before dispatch."""
 
+from collections.abc import Awaitable
 from dataclasses import replace
 from typing import Any
 
@@ -51,9 +52,9 @@ class CloudflareClassifier:
     def __init__(self, classifier: Any):
         self._classifier = classifier
 
-    async def classify(self, model: ClassifierModel, context: Any, options: Any = None) -> ClassifierResult:
+    def classify(self, model: ClassifierModel, context: Any, options: Any = None) -> Awaitable[ClassifierResult]:
         env = options.env if options is not None else None
-        return await self._classifier.classify(resolve_cloudflare_model(model, env), context, options)
+        return self._classifier.classify(resolve_cloudflare_model(model, env), context, options)
 
 
 def cloudflare_classifier(classifier: Any) -> CloudflareClassifier:

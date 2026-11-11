@@ -582,6 +582,7 @@ class TestDefaultModelSelection:
 
     def test_qwen_token_plan_individual_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual"] == "qwen3.8-max"
+        assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual-cn"] == "qwen3.8-max"
 
     @pytest.mark.tonio
     async def test_find_initial_model_selects_ai_gateway_default_when_available(self):

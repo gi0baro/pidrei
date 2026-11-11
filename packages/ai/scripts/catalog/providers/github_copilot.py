@@ -2,6 +2,7 @@
 
 import copy
 import re
+from typing import Any
 
 from catalog.define import (
     ChatModel,
@@ -91,6 +92,22 @@ _GPT_6_LUNA: ChatModel = {
     "headers": {**_STATIC_HEADERS},
 }
 
+# The authenticated Copilot catalog lists this decision model on /v1/systemone (checked 2026-11-02) without
+# a context window or price, and GitHub's Copilot pricing page does not list it. These are Azure's values,
+# which OpenRouter and Vercel AI Gateway also list.
+_MICROSOFT_DECISION_1: dict[str, Any] = {
+    "type": "classifier",
+    "id": "microsoft-decision-1",
+    "name": "Microsoft-Decision-1",
+    "api": "typesafe-system-one",
+    "provider": "github-copilot",
+    "baseUrl": _BASE_URL,
+    "input": ["text"],
+    "cost": {"input": 0.042, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    "contextWindow": 32768,
+    "headers": {**_STATIC_HEADERS},
+}
+
 
 def _map_model(model: ChatModel, _source: ModelsDevModel) -> ChatModel:
     api = _copilot_api(model["id"])
@@ -126,6 +143,10 @@ def _models(ctx: ProviderContext) -> list[ChatModel]:
     ]
 
 
+def _classifiers(_ctx: ProviderContext) -> list[dict[str, Any]]:
+    return [copy.deepcopy(_MICROSOFT_DECISION_1)]
+
+
 def _finalize(model: ChatModel, _ctx: ProviderContext) -> None:
     if model["id"].startswith("gpt-5"):
         merge_thinking(model, {"minimal": "low"})
@@ -151,6 +172,7 @@ def _finalize(model: ChatModel, _ctx: ProviderContext) -> None:
 PROVIDER = ProviderDefinition(
     id="github-copilot",
     models=_models,
+    classifiers=_classifiers,
     compat={"openai-completions": {"supportsStrictMode": True}},
     finalize=_finalize,
 )

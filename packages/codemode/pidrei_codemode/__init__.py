@@ -15,6 +15,7 @@ from .declarations import (
     render_stubs,
     render_tools,
     reserved_type_names,
+    resolve_schema_ref,
     schema_to_type,
 )
 from .identifier import to_codemode_identifier
@@ -79,6 +80,7 @@ __all__ = [
     "render_stubs",
     "render_tools",
     "reserved_type_names",
+    "resolve_schema_ref",
     "schema_to_type",
     "to_codemode_identifier",
 ]

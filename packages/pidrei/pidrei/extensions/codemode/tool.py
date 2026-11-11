@@ -47,6 +47,7 @@ from pidrei_codemode import (
     RenderedTool,
     render_tools,
     reserved_type_names,
+    resolve_schema_ref,
 )
 
 from ...config import get_docs_path
@@ -470,41 +471,65 @@ def create_codemode_description(
     return "\n\n".join(sections)
 
 
-def _describe_fields(schema: Any, depth: int) -> str | None:
+def _describe_fields(schema: Any, root: Any, depth: int) -> str | None:
     """The keys of an object schema, `a dict with keys output, exit_code,
     full_output_path (optional)`, with the keys of dict-typed keys `depth`
     levels deep: `a dict with keys content, structuredContent (optional, a dict
     with keys results)`, and the value of `const` keys: `a dict with keys
-    action ('start'), id`. None for other schemas."""
-    if not isinstance(schema, Mapping) or schema.get("type") != "object":
+    action ('start'), id`. None for other schemas. Local `$ref`s resolve
+    against `root`."""
+    resolved = _follow_ref(schema, root)
+    if not isinstance(resolved, Mapping) or resolved.get("type") != "object":
         return None
-    properties = schema.get("properties")
+    properties = resolved.get("properties")
     if not isinstance(properties, Mapping):
         return None
-    required = set(schema["required"]) if isinstance(schema.get("required"), list) else set()
+    required = set(resolved["required"]) if isinstance(resolved.get("required"), list) else set()
     keys = []
     for name, field_schema in properties.items():
         notes = [] if name in required else ["optional"]
-        if isinstance(field_schema, Mapping) and "const" in field_schema:
-            nested = repr(field_schema["const"])
+        resolved_field = _follow_ref(field_schema, root)
+        if isinstance(resolved_field, Mapping) and "const" in resolved_field:
+            nested = repr(resolved_field["const"])
         else:
-            nested = _describe_fields(field_schema, depth - 1) if depth > 0 else None
+            nested = _describe_fields(field_schema, root, depth - 1) if depth > 0 else None
         if nested:
             notes.append(nested)
         keys.append(f"{name} ({', '.join(notes)})" if notes else name)
     return f"a dict with keys {', '.join(keys)}"
 
 
-def _describe_union_fields(schema: Any) -> str | None:
+def _describe_union_fields(schema: Any, root: Any) -> str | None:
     """The keys of each variant of an `anyOf`/`oneOf` whose variants are all
     objects, joined by `|`."""
-    if not isinstance(schema, Mapping):
+    resolved = _follow_ref(schema, root)
+    if not isinstance(resolved, Mapping):
         return None
-    variants = schema.get("anyOf", schema.get("oneOf"))
+    variants = resolved.get("anyOf", resolved.get("oneOf"))
     if not isinstance(variants, list) or not variants:
         return None
-    described = [_describe_fields(variant, 0) for variant in variants]
+    described = [_describe_fields(variant, root, 0) for variant in variants]
     return None if None in described else " | ".join(described)
+
+
+def _follow_ref(schema: Any, root: Any) -> Any:
+    """The subschema the local `$ref` chain of `schema` names in `root`, so MCP
+    output schemas that put their models in `$defs` still show key names.
+    Remote, missing, and cyclic references stop at the schema holding them."""
+    # pi's `Set` of schema objects; dicts are unhashable, and every schema
+    # walked stays alive in `root` for the loop, so an `id()` names one.
+    seen: set[int] = set()
+    current = schema
+    while isinstance(current, Mapping) and id(current) not in seen:
+        ref = current.get("$ref")
+        if not isinstance(ref, str):
+            break
+        target = resolve_schema_ref(ref, root)
+        if target is None:
+            break
+        seen.add(id(current))
+        current = target
+    return current
 
 
 def _describe_output(rendered: RenderedTool) -> str:
@@ -516,7 +541,7 @@ def _describe_output(rendered: RenderedTool) -> str:
     if rendered.output_type == "str":
         return "a string"
     schema = rendered.tool.output_schema
-    fields = _describe_fields(schema, 1) or _describe_union_fields(schema)
+    fields = None if schema is None else (_describe_fields(schema, schema, 1) or _describe_union_fields(schema, schema))
     if fields:
         return fields
     if not rendered.output_names_definitions:

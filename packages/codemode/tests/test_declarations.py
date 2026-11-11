@@ -8,6 +8,7 @@ from pidrei_codemode import BUILTIN_STUBS, CodemodeGlobal, CodemodeTool, Rendere
 from pidrei_codemode.declarations import (
     render_stubs,
     render_tools,
+    resolve_schema_ref,
     schema_to_type,
 )
 
@@ -317,6 +318,29 @@ def test_renders_types_over_the_budget_as_any():
     schema = {"type": "object", "properties": {f"field{i}": {"type": "string"} for i in range(50)}}
     assert schema_to_type(schema, max_chars=100) == RenderedType("Any", ())
     assert "    field49: NotRequired[str]" in schema_to_type(schema).definitions[0]
+
+
+# -- resolve_schema_ref ------------------------------------------------------
+
+_ITEM = {"type": "string"}
+_ROOT = {"$defs": {"item": _ITEM, "a/b": _ITEM, "c~d": _ITEM, "e f": _ITEM}}
+
+
+def test_resolves_local_references_with_escaped_segments():
+    assert resolve_schema_ref("#", _ROOT) is _ROOT
+    assert resolve_schema_ref("#/$defs/item", _ROOT) is _ITEM
+    assert resolve_schema_ref("#/$defs/a~1b", _ROOT) is _ITEM
+    assert resolve_schema_ref("#/$defs/c~0d", _ROOT) is _ITEM
+    assert resolve_schema_ref("#/$defs/e%20f", _ROOT) is _ITEM
+
+
+def test_returns_none_for_remote_missing_and_malformed_references():
+    assert resolve_schema_ref("other.json#/$defs/item", _ROOT) is None
+    assert resolve_schema_ref("#/$defs/missing", _ROOT) is None
+    assert resolve_schema_ref("#/$defs/%E0%A4%A", _ROOT) is None
+    # PiDrei: `unquote` leaves these in place or substitutes them where `decodeURIComponent` throws.
+    assert resolve_schema_ref("#/$defs/%zz", {"$defs": {"%zz": _ITEM}}) is None
+    assert resolve_schema_ref("#/$defs/%E0%A4", {"$defs": {"�": _ITEM}}) is None
 
 
 # -- tool declarations -------------------------------------------------------

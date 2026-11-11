@@ -211,6 +211,8 @@ class _ResolvedCompat:
     max_tokens_field: str
     requires_tool_result_name: bool
     requires_assistant_after_tool_result: bool
+    requires_non_null_assistant_content: bool
+    requires_tools_with_tool_history: bool
     requires_thinking_as_text: bool
     requires_reasoning_content_on_assistant_messages: bool
     thinking_format: str
@@ -229,6 +231,8 @@ class _ResolvedCompat:
     send_session_affinity_headers: bool
     session_affinity_format: str
     supports_long_cache_retention: bool
+    # pi keeps it optional: no detected default, None reads as "auto".
+    prompt_cache_key_mode: str | None = None
     vllm_priority: int | None = None
 
 
@@ -312,6 +316,8 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         max_tokens_field="max_tokens" if use_max_tokens else "max_completion_tokens",
         requires_tool_result_name=False,
         requires_assistant_after_tool_result=False,
+        requires_non_null_assistant_content=False,
+        requires_tools_with_tool_history=False,
         requires_thinking_as_text=False,
         requires_reasoning_content_on_assistant_messages=is_deepseek,
         thinking_format=thinking_format,
@@ -357,6 +363,12 @@ def get_compat(model: Model) -> _ResolvedCompat:
         requires_assistant_after_tool_result=pick(
             compat.requires_assistant_after_tool_result, detected.requires_assistant_after_tool_result
         ),
+        requires_non_null_assistant_content=pick(
+            compat.requires_non_null_assistant_content, detected.requires_non_null_assistant_content
+        ),
+        requires_tools_with_tool_history=pick(
+            compat.requires_tools_with_tool_history, detected.requires_tools_with_tool_history
+        ),
         requires_thinking_as_text=pick(compat.requires_thinking_as_text, detected.requires_thinking_as_text),
         requires_reasoning_content_on_assistant_messages=pick(
             compat.requires_reasoning_content_on_assistant_messages,
@@ -401,6 +413,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
         supports_long_cache_retention=pick(
             compat.supports_long_cache_retention, detected.supports_long_cache_retention
         ),
+        prompt_cache_key_mode=compat.prompt_cache_key_mode,
         vllm_priority=compat.vllm_priority,
     )
 
@@ -891,7 +904,11 @@ def convert_messages(
             # Some providers don't accept null content; use empty string instead.
             assistant_msg: dict[str, Any] = {
                 "role": "assistant",
-                "content": "" if compat.requires_assistant_after_tool_result else None,
+                "content": (
+                    ""
+                    if compat.requires_assistant_after_tool_result or compat.requires_non_null_assistant_content
+                    else None
+                ),
             }
 
             assistant_text_parts = [
@@ -1073,12 +1090,15 @@ def build_params(
     )
     messages = convert_messages(model, context, compat, grammar_tool_input_properties)
     cache_control = _get_compat_cache_control(compat, cache_retention)
+    prompt_cache_key_mode = compat.prompt_cache_key_mode if compat.prompt_cache_key_mode is not None else "auto"
+    supports_prompt_cache_key = prompt_cache_key_mode == "enabled" or (
+        prompt_cache_key_mode == "auto"
+        and ("api.openai.com" in model.base_url or (cache_retention == "long" and compat.supports_long_cache_retention))
+    )
 
     params: dict[str, Any] = {"model": model.id, "messages": messages, "stream": True}
 
-    if ("api.openai.com" in model.base_url and cache_retention != "none") or (
-        cache_retention == "long" and compat.supports_long_cache_retention
-    ):
+    if cache_retention != "none" and supports_prompt_cache_key:
         cache_key = clamp_openai_prompt_cache_key(options.session_id)
         if cache_key is not None:
             params["prompt_cache_key"] = cache_key
@@ -1101,9 +1121,7 @@ def build_params(
         params["tools"] = convert_tools(transcript_tools.request_tools, compat)
         if compat.zai_tool_stream:
             params["tool_stream"] = True
-    elif _has_tool_history(context.messages):
-        # Anthropic (via LiteLLM/proxy) requires tools param when the
-        # conversation contains tool_calls/tool_results.
+    elif compat.requires_tools_with_tool_history and _has_tool_history(context.messages):
         params["tools"] = []
 
     if cache_control:

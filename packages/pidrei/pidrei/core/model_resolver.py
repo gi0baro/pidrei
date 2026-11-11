@@ -60,6 +60,7 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "qwen-token-plan": "qwen3.7-max",
     "qwen-token-plan-cn": "qwen3.7-max",
     "qwen-token-plan-individual": "qwen3.8-max",
+    "qwen-token-plan-individual-cn": "qwen3.8-max",
     "xiaomi": "mimo-v2.6-pro",
     "xiaomi-token-plan-cn": "mimo-v2.6-pro",
     "xiaomi-token-plan-ams": "mimo-v2.6-pro",

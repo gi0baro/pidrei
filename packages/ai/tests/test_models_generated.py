@@ -175,6 +175,13 @@ def test_supports_off_but_not_minimal_for_gpt_6_1_terra():
         assert model.thinking_level_map["minimal"] == ("low" if provider == "openai-codex" else None)
 
 
+@pytest.mark.parametrize("model_id", ["gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra"])
+def test_uses_the_azure_foundry_1_05m_context_window(model_id):
+    model = next((model for model in MODELS["azure"] if model.id == model_id), None)
+    assert model is not None
+    assert model.context_window == 1050000
+
+
 def test_preserves_low_high_max_metadata_for_deepseek_v4_1_flash_on_openrouter():
     model = next((model for model in MODELS["openrouter"] if model.id == "deepseek/deepseek-v4.1-flash"), None)
     assert model is not None

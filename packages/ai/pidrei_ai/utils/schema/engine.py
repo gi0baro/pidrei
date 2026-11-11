@@ -12,8 +12,9 @@ own scope.
 The validator is `jsonschema`'s draft 2020-12, with the keywords whose answer
 differs from pi's compiler answered as pi does:
 
-- `type`: a type name the draft does not define (TypeBox's `function`,
-  `bigint`, `undefined`) matches no value, instead of raising;
+- `type`: TypeBox's `bigint` is an `int` (`TYPE_CHECKS`); any other type
+  name the draft does not define (TypeBox's `function`, `undefined`) matches
+  no value, instead of raising;
 - `$ref`: a reference that names nothing (a missing definition, a document
   that is not registered) fails the value at its place, instead of raising,
   when the schema is compiled with `unresolved_refs="reject"`; nothing is

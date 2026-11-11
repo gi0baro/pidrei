@@ -352,6 +352,64 @@ async def test_summarizes_union_and_named_output_types_instead_of_inlining_them(
     )
 
 
+@pytest.mark.tonio
+async def test_summarizes_output_fields_behind_local_schema_references(harnesses):
+    def output_tool(name: str, output_schema: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name=name,
+            label=name,
+            description=f"{name} tool",
+            parameters=EMPTY_SCHEMA,
+            output_schema=output_schema,
+            execute=_echo,
+        )
+
+    report = output_tool(
+        "report",
+        {
+            "$ref": "#/$defs/Report",
+            "$defs": {
+                "Report": {
+                    "type": "object",
+                    "properties": {"kind": {"$ref": "#/$defs/Kind"}, "summary": {"$ref": "#/$defs/Summary"}},
+                    "required": ["kind", "summary"],
+                },
+                "Kind": {"const": "ledger"},
+                "Summary": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]},
+            },
+        },
+    )
+    result = output_tool(
+        "result",
+        {
+            "anyOf": [{"$ref": "#/$defs/Ok"}, {"$ref": "#/$defs/Failed"}],
+            "$defs": {
+                "Ok": {"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+                "Failed": {"type": "object", "properties": {"error": {"type": "string"}}, "required": ["error"]},
+            },
+        },
+    )
+
+    async def register(pi) -> None:
+        for definition in (report, result):
+            pi.register_tool(definition)
+
+    harness = await setup(harnesses, [register])
+    harness.session.set_active_tools_by_name(["report", "result", "codemode"])
+
+    def description(name: str) -> str:
+        return next((tool.description for tool in harness.session.agent.state.tools if tool.name == name), "")
+
+    call = "takes the parameters as keyword arguments and returns"
+    assert description("report") == (
+        f"report tool\n\nCodemode: `await tools.report(...)` {call} a dict with keys kind ('ledger'), summary (a dict"
+        " with keys total)."
+    )
+    assert description("result") == (
+        f"result tool\n\nCodemode: `await tools.result(...)` {call} a dict with keys value | a dict with keys error."
+    )
+
+
 # #10343
 @pytest.mark.tonio
 async def test_shows_the_guidelines_of_tools_that_do_not_fit_the_inline_budget_through_describe_tool(harnesses):
