@@ -52,6 +52,7 @@ class _RotatingOAuthProvider:
         self.base_url = None
         self.headers = None
         self.filter_models = None
+        self.refresh_models_auth = None
 
         async def login(_interaction, _options=None):
             raise Exception("unused")

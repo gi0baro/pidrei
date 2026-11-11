@@ -63,6 +63,7 @@ class _HandwrittenProvider:
         self.headers = None
         self.auth = faux.provider.auth
         self.filter_models = None
+        self.refresh_models_auth = None
         self.get_all_models = None
         self.filter_all_models = None
         self.generate_images = None

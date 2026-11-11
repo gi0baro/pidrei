@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import pytest
 
+import pidrei.core.model_runtime as model_runtime_module
 from pidrei.cli import package_commands
 from pidrei.cli.package_commands import (
     SELF_UPDATE_HINT,
@@ -26,13 +27,15 @@ from pidrei.cli.package_commands import (
     handle_package_command,
     parse_package_command,
 )
-from pidrei.core.package_manager import DefaultPackageManager
+from pidrei.core.package_manager import DefaultPackageManager, ProgressEvent
 from pidrei.core.settings_manager import SettingsManager
 from pidrei.modes.interactive.components.config_selector import (
     ConfigSelectorComponent,
     build_canonical_path_map_blocking,
 )
 from pidrei.modes.interactive.theme import init_theme
+from pidrei_ai.registry import ModelsRefreshResult
+from pidrei_ai.utils.models_error import ModelsError
 
 
 @pytest.fixture
@@ -103,6 +106,27 @@ def capture():
     finally:
         package_commands.write_stdout, package_commands.write_stderr = saved
         result.out, result.err = "".join(out), "".join(err)
+
+
+def _fake_model_runtime(errors: dict):
+    """pi's `vi.spyOn(ModelRuntime, "create")`: a runtime whose `refresh()`
+    returns these provider errors. Swapped on `pidrei.core.model_runtime`,
+    which `_refresh_model_catalogs` imports from at call time."""
+
+    class FakeModelRuntime:
+        def __init__(self, **_options) -> None:
+            pass
+
+        def __await__(self):
+            return self._start().__await__()
+
+        async def _start(self):
+            return self
+
+        async def refresh(self, _options):
+            return ModelsRefreshResult(aborted=False, errors=errors)
+
+    return FakeModelRuntime
 
 
 def read_settings(agent_dir: str) -> dict:
@@ -333,10 +357,80 @@ class TestUpdateTargets:
         assert parse_package_command(["update", "--all"]).update_target == "all"
 
     @pytest.mark.tonio
-    async def test_update_with_no_packages_reports_success(self, workspace):
+    async def test_does_not_report_packages_as_up_to_date_in_offline_mode(self, workspace, monkeypatch):
+        # pi configures a stale npm package; any configured git package is skipped the same way.
+        with open(os.path.join(workspace["agent_dir"], "settings.json"), "w", encoding="utf-8") as handle:
+            json.dump({"packages": ["git:github.com/user/repo"]}, handle)
+        monkeypatch.setenv("PIDREI_OFFLINE", "1")
+
+        with capture() as captured:
+            assert await handle_package_command(["update", "--extensions"]) == 0
+
+        assert "Skipped package updates (offline mode)" in captured.out
+        assert "up to date" not in captured.out
+
+    @pytest.mark.tonio
+    async def test_update_with_no_packages_reports_up_to_date(self, workspace, monkeypatch):
+        monkeypatch.delenv("PIDREI_OFFLINE", raising=False)
         with capture() as captured:
             assert await handle_package_command(["update"]) == 0
-        assert "Updated packages" in captured.out
+        assert "Packages are already up to date" in captured.out
+
+    @pytest.mark.tonio
+    async def test_update_lists_the_packages_that_changed(self, workspace, monkeypatch):
+        monkeypatch.delenv("PIDREI_OFFLINE", raising=False)
+        messages = ["git:github.com/user/a abc1234 -> def5678", "git:github.com/user/b (project) (none) -> 1234567"]
+
+        async def update(self, source=None):
+            for message in messages:
+                self._emit_progress(ProgressEvent(type="result", action="update", source="", message=message))
+
+        monkeypatch.setattr(DefaultPackageManager, "update", update)
+
+        with capture() as captured:
+            assert await handle_package_command(["update"]) == 0
+
+        assert "Updated 2 packages:" in captured.out
+        assert captured.out.endswith(f"\n  {messages[0]}\n  {messages[1]}\n")
+        assert "up to date" not in captured.out
+
+    @pytest.mark.tonio
+    async def test_warns_about_a_stale_provider_login_during_update_models_and_keeps_the_refresh_successful(
+        self, workspace, monkeypatch
+    ):
+        errors = {
+            "radius": ModelsError("oauth", "OAuth refresh failed for radius", cause=Exception("invalid_grant")),
+        }
+        monkeypatch.setattr(model_runtime_module, "ModelRuntime", _fake_model_runtime(errors))
+
+        with capture() as captured:
+            assert await handle_package_command(["update", "--models"]) == 0
+
+        assert "skipped model catalog for radius: OAuth refresh failed for radius: invalid_grant" in captured.err
+        assert "pidrei auth login radius" in captured.err
+        assert "Model catalogs refreshed" in captured.out
+        assert "Error:" not in captured.err
+
+    @pytest.mark.tonio
+    async def test_fails_update_models_when_a_catalog_refresh_fails_for_a_reason_other_than_a_stale_login(
+        self, workspace, monkeypatch
+    ):
+        errors = {
+            "radius": ModelsError("oauth", "OAuth refresh failed for radius"),
+            "openrouter": Exception("OpenRouter model list request failed: 500"),
+        }
+        monkeypatch.setattr(model_runtime_module, "ModelRuntime", _fake_model_runtime(errors))
+
+        with capture() as captured:
+            assert await handle_package_command(["update", "--models"]) == 1
+
+        # pi's console.error carries only the failure; here the warning shares stderr, so pick the error line.
+        error_lines = [line for line in captured.err.splitlines() if "Could not refresh model catalogs" in line]
+        assert len(error_lines) == 1
+        assert (
+            "Could not refresh model catalogs: openrouter: OpenRouter model list request failed: 500" in error_lines[0]
+        )
+        assert "radius" not in error_lines[0]
 
     @pytest.mark.tonio
     async def test_update_of_an_unknown_source_fails_even_offline(self, workspace):

@@ -241,6 +241,7 @@ class VirtualModelsProvider:
             self.filter_all_models = None
             self.generate_images = None
             self.classify = None
+            self.refresh_models_auth = None
             return
         self.name = provider.name
         self.base_url = provider.base_url
@@ -248,6 +249,7 @@ class VirtualModelsProvider:
         self.auth = provider.auth
         self.generate_images = provider.generate_images
         self.classify = provider.classify
+        self.refresh_models_auth = provider.refresh_models_auth
         base_filter_models = provider.filter_models
         base_filter_all_models = provider.filter_all_models
 

@@ -51,6 +51,7 @@ class ProviderDouble:
         self.base_url = None
         self.headers = None
         self.filter_models = None
+        self.refresh_models_auth = None
         self._model = make_model(id)
         self._refresh_models = refresh_models
 

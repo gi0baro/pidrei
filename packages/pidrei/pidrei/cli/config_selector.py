@@ -9,8 +9,9 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen, prime_capabilities
+from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen, prime_capabilities, set_keybindings
 
+from ..core.keybindings import KeybindingsManager
 from ..core.output_guard import attach_terminal, detach_terminal
 from ..modes.interactive.components.config_selector import ConfigSelectorComponent, build_canonical_path_map_blocking
 from ..modes.interactive.theme import init_theme, stop_theme_watcher
@@ -29,6 +30,7 @@ async def select_config(
 ) -> None:
     """Run the config TUI until the user closes it."""
     await init_theme(settings_manager.get_theme(), True)
+    set_keybindings(await KeybindingsManager(agent_dir))
     # `ui.start()` and the render paths read the capabilities: settle them
     # (under tmux, a subprocess probe) first.
     await prime_capabilities(probe_tmux_hyperlinks)

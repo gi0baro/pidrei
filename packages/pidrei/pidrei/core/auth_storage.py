@@ -33,7 +33,7 @@ from pidrei_utils.cancel import AbortError, CancelToken
 from ..config import get_agent_dir
 from ..utils import lockfile
 from ..utils.abort import race_with_cancel
-from ..utils.paths import get_file_revision_blocking, normalize_path
+from ..utils.paths import canonicalize_path_blocking, get_file_revision_blocking, normalize_path
 from ..utils.text import strip_bom
 from .resolve_config_value import is_command_config_value, resolve_config_value
 
@@ -173,10 +173,14 @@ class FileAuthStorageBackend:
         if not os.path.exists(self._auth_path):
             self._write_blocking("{}")
 
-    def _ensure_ready_blocking(self) -> None:
-        """Both preparation steps as one unit, so the async path pays one hop."""
+    def _ensure_ready_blocking(self) -> str:
+        """Both preparation steps as one unit, so the async path pays one hop.
+        Returns the path to lock: the resolved file, so symlinked aliases of
+        auth.json share one lock (#11655). It exists by then, as
+        proper-lockfile's realpath needs."""
         self._ensure_parent_dir_blocking()
         self._ensure_file_exists_blocking()
+        return canonicalize_path_blocking(self._auth_path)
 
     def _read_blocking(self) -> str | None:
         if not os.path.exists(self._auth_path):
@@ -207,9 +211,10 @@ class FileAuthStorageBackend:
             async with self._async_lock:
                 if cancel is not None:
                     cancel.raise_if_cancelled()
-                await tonio.spawn_blocking(self._ensure_ready_blocking)
+                lock_path = await tonio.spawn_blocking(self._ensure_ready_blocking)
 
-                lock = await _acquire_lock_async(self._auth_path, cancel)
+                # Lock the resolved file so symlinked aliases of auth.json share one lock (#11655).
+                lock = await _acquire_lock_async(lock_path, cancel)
                 try:
                     if cancel is not None:
                         cancel.raise_if_cancelled()

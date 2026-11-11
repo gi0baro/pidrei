@@ -10,7 +10,7 @@ import urllib.parse
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, Literal
 
 from pidrei_ai.api.lazy import call_stream_into
 from pidrei_ai.models_store import ModelsStoreEntry
@@ -152,6 +152,8 @@ class RemoteCatalogProvider:
         self.filter_all_models = provider.filter_all_models
         self.generate_images = provider.generate_images
         self.classify = provider.classify
+        # pi.dev serves the catalog, so a stale provider login must not block or fail its refresh.
+        self.refresh_models_auth: Literal["credential", "configured"] | None = "configured"
 
     @property
     def has_dynamic_models(self) -> bool:
@@ -292,6 +294,9 @@ class PersonalizedCatalogProvider(RemoteCatalogProvider):
         fetch: Any,
     ):
         super().__init__(provider, catalog_base_url, local_generated_at, fetch)
+        # pi's `withPersonalizedCatalog` spreads the wrapped provider, not `withRemoteCatalog`'s
+        # result, so it keeps the provider's own value: `personalize` reads `context.credential`.
+        self.refresh_models_auth = provider.refresh_models_auth
         self._personalize = personalize
         # Rebound whole by the publish updates; readers pin one read.
         self._personal_models: Sequence[AnyModel] = []

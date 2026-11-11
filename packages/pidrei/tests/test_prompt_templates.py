@@ -295,8 +295,34 @@ class TestParseCommandArgs:
         assert parse_command_args("a\n\n\tb  c") == ["a", "b", "c"]
 
     def test_handles_escaped_quotes_inside_quoted_strings(self):
-        # Note: This implementation doesn't handle escaped quotes - backslash is literal
-        assert parse_command_args('"quoted \\"text\\""') == ["quoted \\text\\"]
+        # A backslash escapes the enclosing quote character inside a quoted argument (#11861)
+        assert parse_command_args('"quoted \\"text\\""') == ['quoted "text"']
+        assert parse_command_args("'it\\'s here' next") == ["it's here", "next"]
+        # Other backslashes stay literal, so paths keep them
+        assert parse_command_args("\"C:\\dir\\file\" '\\\\server\\share'") == ["C:\\dir\\file", "\\\\server\\share"]
+        assert parse_command_args("\"it's\" 'a\\\"b'") == ["it's", 'a\\"b']
+        # Outside quotes a backslash is literal
+        assert parse_command_args('say \\"hi') == ["say", '\\"hi']
+
+    def test_keeps_apostrophes_inside_words(self):
+        # Apostrophes in normal English must not open a quote (#11861)
+        assert parse_command_args("why doesn't the user's cache work") == [
+            "why",
+            "doesn't",
+            "the",
+            "user's",
+            "cache",
+            "work",
+        ]
+        assert parse_command_args("why doesn't this work") == ["why", "doesn't", "this", "work"]
+
+    def test_treats_an_unclosed_quote_as_literal_text(self):
+        # A quote without a closing match is kept as text (#11861)
+        assert parse_command_args("'tis the season") == ["'tis", "the", "season"]
+        assert parse_command_args('say "hello world') == ["say", '"hello', "world"]
+        assert parse_command_args("a '") == ["a", "'"]
+        assert parse_command_args('"abc\\"') == ['"abc\\"']
+        assert parse_command_args("\"it's\" 'x") == ["it's", "'x"]
 
     def test_handles_trailing_spaces(self):
         assert parse_command_args("a b c   ") == ["a", "b", "c"]

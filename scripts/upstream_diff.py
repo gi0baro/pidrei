@@ -1774,7 +1774,10 @@ TEST_HOMES = {
         "the other grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
-    "packages/coding-agent/test/git-update.test.ts": "PARITY GAP: package_manager.py git update (force-push handling) unmirrored",
+    "packages/coding-agent/test/git-update.test.ts": (
+        "partial mirror: test_package_manager.py holds the 1.5.1 update result cases (git stubbed); the "
+        "force-push handling cases are a PARITY GAP"
+    ),
     "packages/coding-agent/test/suite/regressions/8237-node-sea-extension-loading.test.ts": (
         "not ported: guards jiti virtualModules vs filesystem aliases inside a Node SEA binary; "
         "pidrei extensions import the live modules from sys.path (loader.py docstring)"

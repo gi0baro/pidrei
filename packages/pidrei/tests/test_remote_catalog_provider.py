@@ -19,9 +19,18 @@ from pidrei.core.remote_catalog import (
     with_personalized_catalog,
     with_remote_catalog,
 )
-from pidrei_ai.auth.types import ApiKeyAuth, ApiKeyCredential, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.auth.credential_store import InMemoryCredentialStore
+from pidrei_ai.auth.types import (
+    ApiKeyAuth,
+    ApiKeyCredential,
+    AuthResult,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuth,
+)
 from pidrei_ai.models_store import InMemoryModelsStore, ModelsStoreEntry
-from pidrei_ai.registry import RefreshModelsContext, create_models, create_provider
+from pidrei_ai.registry import ModelsRefreshOptions, RefreshModelsContext, create_models, create_provider
 from pidrei_ai.types import ImageModel, ModelCost
 from pidrei_utils.cancel import CancelToken
 from tests.model_runtime_helpers import UnusedStreams, make_model
@@ -268,6 +277,94 @@ async def test_treats_unimplemented_catalog_routes_as_an_unavailable_overlay():
     stored = await store.read(provider.id)
     assert stored.models == []
     assert isinstance(stored.checked_at, int)
+
+
+async def _seed_stale_oauth_login(credentials: InMemoryCredentialStore, provider_id: str) -> None:
+    async def seed(_current):
+        return OAuthCredential(access="expired", refresh="revoked", expires=0)
+
+    await credentials.modify(provider_id, seed)
+
+
+@pytest.mark.tonio
+async def test_fetches_the_pi_dev_catalog_without_refreshing_a_stale_oauth_login():
+    calls = []
+
+    async def fetch(url, _headers, _cancel):
+        calls.append(url)
+        return CatalogResponse(
+            status=200,
+            headers={"content-type": "application/json"},
+            body=json.dumps({"dynamic": model_dict("dynamic")}),
+        )
+
+    oauth_refreshes: list = []
+
+    async def oauth_refresh(credential, _cancel):
+        oauth_refreshes.append(credential)
+        raise Exception("invalid_grant")
+
+    async def login(_interaction, _options=None):
+        raise Exception("not used")
+
+    async def to_auth(credential):
+        return ModelAuth(api_key=credential.access)
+
+    # pi spreads builtinProvider() and replaces its auth with an OAuth one.
+    base = create_provider(
+        id="test-provider",
+        auth=ProviderAuth(oauth=OAuthAuth(name="Test OAuth", login=login, refresh=oauth_refresh, to_auth=to_auth)),
+        models=[make_model("test-provider", "static")],
+        api=UnusedStreams(),
+    )
+    provider = with_remote_catalog(base, fetch=fetch)
+    credentials = InMemoryCredentialStore()
+    await _seed_stale_oauth_login(credentials, provider.id)
+    models = create_models(credentials=credentials, models_store=InMemoryModelsStore())
+    models.set_provider(provider)
+
+    assert (await models.refresh(ModelsRefreshOptions(force=True))).errors == {}
+    assert oauth_refreshes == []
+    assert len(calls) == 1
+    assert [entry.id for entry in provider.get_models()] == ["static", "dynamic"]
+
+
+@pytest.mark.tonio
+async def test_personalized_catalogs_keep_the_credential_refresh_of_the_wrapped_provider():
+    """PiDrei-only: `PersonalizedCatalogProvider` subclasses `RemoteCatalogProvider`
+    here, while pi's `withPersonalizedCatalog` spreads the wrapped provider. It
+    must not inherit "configured": `personalize` reads `context.credential`."""
+
+    async def fetch(_url, _headers, _cancel):
+        return CatalogResponse(status=404, headers={}, body="not found")
+
+    credentials_seen: list = []
+
+    async def personalize(catalog, context):
+        credentials_seen.append(context.credential)
+        return catalog
+
+    async def resolve(_ctx, credential, _cancel):
+        return AuthResult(auth=ModelAuth(api_key=credential.key if credential is not None else None))
+
+    base = create_provider(
+        id="test-provider",
+        auth=ProviderAuth(api_key=ApiKeyAuth(name="Test", resolve=resolve)),
+        models=[make_model("test-provider", "static")],
+        api=UnusedStreams(),
+    )
+    provider = with_personalized_catalog(base, personalize, fetch=fetch)
+    credentials = InMemoryCredentialStore()
+
+    async def seed(_current):
+        return ApiKeyCredential(key="user-key")
+
+    await credentials.modify(provider.id, seed)
+    models = create_models(credentials=credentials, models_store=InMemoryModelsStore())
+    models.set_provider(provider)
+
+    assert (await models.refresh(ModelsRefreshOptions(force=True))).errors == {}
+    assert [credential.key for credential in credentials_seen] == ["user-key"]
 
 
 # personalized catalog provider

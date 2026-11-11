@@ -1036,6 +1036,7 @@ async def _main(
             # size) before restoring the terminal.
             await tonio.time.sleep(0.15)
             await interactive_mode.stop()
+            await runtime.dispose()
             stop_theme_watcher()
             print_timings()
             return

@@ -1543,6 +1543,11 @@ class InteractiveMode:
             return None
 
         new_entries = get_new_entries(entries, last_version)
+        # `is None`, not falsiness: an empty list (nothing new) is a readable version.
+        if new_entries is None:
+            # Unreadable saved version: show nothing and record the current one so later updates compare again
+            self.settings_manager.set_last_changelog_version(VERSION)
+            return None
         if new_entries:
             self.settings_manager.set_last_changelog_version(VERSION)
             return "\n\n".join(normalize_changelog_links(e["content"], e) for e in new_entries)

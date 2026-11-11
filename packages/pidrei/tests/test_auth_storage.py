@@ -363,6 +363,53 @@ async def test_pre_aborted_file_operations_do_not_create_the_backing_file_or_run
 
 
 @pytest.mark.tonio
+async def test_a_symlinked_auth_json_path_waits_for_the_lock_held_on_the_real_file(tmp_path, monkeypatch):
+    """#11655: aliases of the same auth.json must share one lock. pi's second
+    half (`withLock` throws ELOCKED) has no counterpart: the file backend has no
+    synchronous lock. pi's 200 ms sleep before the abort is the parked-on-retry
+    seam."""
+    auth_path = tmp_path / "auth.json"
+    write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
+    alias_path = tmp_path / "alias.json"
+    alias_path.symlink_to(auth_path)
+    held = lockfile.FileLock(str(auth_path), stale=30.0)
+    await held.try_acquire()
+    backend = FileAuthStorageBackend(str(alias_path))
+    operations = ObservedLock.install(backend)
+    parked = park_on_file_lock_retry(monkeypatch)
+    controller = CancelToken()
+    calls = {"count": 0}
+
+    async def update(_content):
+        calls["count"] += 1
+        return None, json.dumps({})
+
+    outcome: dict = {}
+
+    async def run_pending() -> None:
+        try:
+            await backend.with_lock_async(update, AuthOperationOptions(cancel=controller))
+            outcome["error"] = None
+        except BaseException as error:
+            outcome["error"] = error
+
+    async def drive() -> None:
+        await parked.wait(5)
+        assert parked.is_set()
+        controller.cancel()
+
+    try:
+        await tonio.spawn(run_pending(), drive())
+    finally:
+        await held.release()
+    assert isinstance(outcome["error"], AbortError)
+    # The cancelled operation finishes detached, without running the mutation.
+    await operations.until(lambda lock: lock.released == 1)
+    assert calls["count"] == 0
+    assert read_auth_json(auth_path) == {"anthropic": {"type": "api_key", "key": "stored"}}
+
+
+@pytest.mark.tonio
 async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mutation_later(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})

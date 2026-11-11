@@ -29,7 +29,6 @@ import hashlib
 import os
 import re
 import shutil
-from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -92,8 +91,16 @@ class PackageInstallFailure:
 
 @dataclass(slots=True)
 class ProgressEvent:
-    """pi's ProgressEvent: `type` is start|complete|error, `action` is
-    install|pull|remove|update."""
+    """pi's ProgressEvent: `type` is start|complete|error|result, `action` is
+    install|pull|remove|update.
+
+    `start` is followed by exactly one `complete` or `error` for the same
+    source. `result` reports an outcome outside that pairing, e.g. one changed
+    package after update(): `git:github.com/user/repo abc1234 -> def5678`.
+    pi's `progress` type (an intermediate message or warning) has no emitter
+    here: its two senders are npm's stale-metadata warning and a git-clean
+    warning PiDrei does not have.
+    """
 
     type: str
     action: str
@@ -143,10 +150,17 @@ class UnsupportedSourceError(Exception):
 
 
 def is_offline_mode_enabled() -> bool:
+    """Whether PIDREI_OFFLINE is set; package installs and updates then skip all network access."""
     value = os.environ.get("PIDREI_OFFLINE")
     if not value:
         return False
     return value == "1" or value.lower() in ("true", "yes")
+
+
+def _format_git_head(head: str | None) -> str:
+    """A commit in an update result: cut to 7 characters, `(none)` when the
+    package was not installed before."""
+    return "(none)" if head is None else head[:7]
 
 
 async def get_extension_temp_folder(agent_dir: str) -> str:
@@ -989,15 +1003,53 @@ class DefaultPackageManager:
 
         # pi updates up to four at once (its `runWithConcurrency`). A failed
         # update does not stop the others; the failures are raised together.
+        # Each update returns its (from, to) commits when they differ; pi pushes
+        # them onto a shared list and re-sorts it into configured order, while
+        # `tonio.map` already returns the results in `targets` order.
         @tonio.mark.max_concurrency(GIT_UPDATE_CONCURRENCY)
-        def update_one(target: tuple[GitSource, str, str]) -> Awaitable[None]:
+        async def update_one(target: tuple[GitSource, str, str]) -> tuple[str | None, str | None] | None:
             parsed, scope, source_str = target
-            return self._with_progress(
-                "update", source_str, f"Updating {source_str}...", lambda: self._update_git(parsed, scope)
+            changed: tuple[str | None, str | None] | None = None
+
+            async def run() -> None:
+                nonlocal changed
+                target_dir = await self._get_git_install_path(parsed, scope)
+                from_head = await self._get_git_head(target_dir)
+                await self._update_git(parsed, scope)
+                to_head = await self._get_git_head(target_dir)
+                if from_head != to_head:
+                    changed = (from_head, to_head)
+
+            await self._with_progress("update", source_str, f"Updating {source_str}...", run)
+            return changed
+
+        if not targets:
+            return
+        results = await tonio.map(update_one, targets)
+
+        # Report each changed package, e.g. "git:github.com/user/repo abc1234 -> def5678".
+        for (_parsed, scope, source_str), changed in zip(targets, results, strict=True):
+            if changed is None:
+                continue
+            from_head, to_head = changed
+            scope_label = " (project)" if scope == "project" else ""
+            self._emit_progress(
+                ProgressEvent(
+                    type="result",
+                    action="update",
+                    source=source_str,
+                    message=f"{source_str}{scope_label} {_format_git_head(from_head)} -> {_format_git_head(to_head)}",
+                )
             )
 
-        if targets:
-            await tonio.map(update_one, targets)
+    async def _get_git_head(self, target_dir: str) -> str | None:
+        if not await fs.Path(target_dir).exists():
+            return None
+        try:
+            head = await self._run_command("git", ["rev-parse", "HEAD"], cwd=target_dir)
+        except Exception:
+            return None
+        return head.strip() or None
 
     # -- settings -----------------------------------------------------------------
 
