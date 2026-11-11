@@ -15,6 +15,8 @@ import pytest
 from pidrei.core.trust_manager import ProjectTrustStore
 from pidrei.extensions.mcp.cli import McpCommandOptions, run_mcp_command
 
+from .mcp_oauth_server import oauth_mcp_servers
+
 
 FIXTURE = str(Path(__file__).resolve().parents[2] / "mcp" / "tests" / "fixtures" / "stdio_server.py")
 
@@ -26,7 +28,7 @@ SERVERS = {
 }
 
 
-async def run(tmp_path, args: list[str], servers: dict | None, agent_dir: str | None = None):
+async def run(tmp_path, args: list[str], servers: dict | None, agent_dir: str | None = None, provider_token=None):
     if agent_dir is None:
         agent_dir = str(tmp_path / f"agent-{len(list(tmp_path.iterdir()))}")
         os.mkdir(agent_dir)
@@ -34,7 +36,14 @@ async def run(tmp_path, args: list[str], servers: dict | None, agent_dir: str | 
         Path(agent_dir, "mcp.json").write_text(json.dumps({"mcpServers": servers}))
     output: list[str] = []
     exit_code = await run_mcp_command(
-        args, McpCommandOptions(cwd=agent_dir, agent_dir=agent_dir, log=output.append, error=output.append)
+        args,
+        McpCommandOptions(
+            cwd=agent_dir,
+            agent_dir=agent_dir,
+            provider_token=provider_token,
+            log=output.append,
+            error=output.append,
+        ),
     )
     return exit_code, "\n".join(output), agent_dir
 
@@ -85,6 +94,39 @@ async def test_rejects_unknown_servers_and_servers_without_oauth_for_login_and_l
         'MCP server "fixture" does not use OAuth. Only HTTP servers without an Authorization header do.',
     )
     assert (await run(tmp_path, ["frobnicate"], SERVERS))[0] == 1
+
+
+@pytest.mark.tonio
+async def test_sends_the_token_of_the_provider_named_by_auth_provider(monkeypatch, tmp_path):
+    async with oauth_mcp_servers(monkeypatch) as oauth_servers:
+        server = await oauth_servers.start()
+        radius = {"radius": {"url": server.url, "auth": {"provider": "radius"}}}
+        token = server.issue_access_token()
+        requested: list[str] = []
+
+        async def signed_in_token(provider: str) -> str | None:
+            requested.append(provider)
+            return token
+
+        exit_code, output, _ = await run(tmp_path, ["list"], radius, provider_token=signed_in_token)
+        assert exit_code == 0
+        assert "radius: connected, 1 tool" in output
+        assert "radius" in requested
+
+        # Without the provider's credentials the hint names the provider's /login, not `pidrei mcp login`.
+        async def no_token(_provider: str) -> str | None:
+            return None
+
+        exit_code, output, _ = await run(tmp_path, ["list"], radius, provider_token=no_token)
+        assert exit_code == 1
+        assert "radius: needs sign-in (codemode, global)" in output
+        assert "  sign in with: /login radius in pidrei" in output
+
+        for command in ("login", "logout"):
+            assert (await run(tmp_path, [command, "radius"], radius))[:2] == (
+                1,
+                f'MCP server "radius" uses the credentials of provider "radius". Run /{command} radius in pidrei.',
+            )
 
 
 @pytest.mark.tonio

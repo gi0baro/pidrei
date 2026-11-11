@@ -8,6 +8,7 @@ a request the client sent without waiting for it (the GET stream opens on
 its own after initialization), the test waits for the log to have it.
 """
 
+import itertools
 import json
 import threading
 from typing import Any
@@ -24,11 +25,13 @@ from pidrei_mcp import (
     McpAuthRequiredError,
     McpClient,
     McpConnectionClosedError,
+    McpHttpError,
     McpSessionExpiredError,
     McpTimeoutError,
     StreamableHttpReconnectOptions,
     StreamableHttpTransport,
 )
+from pidrei_mcp.protocol.jsonrpc import stringify
 from pidrei_mcp.transports.streamable_http import SseEvent, consume_sse_stream
 from pidrei_utils.cancel import CancelToken
 
@@ -154,6 +157,49 @@ async def test_consume_sse_stream_parses_chunked_crlf_events_comments_ids_and_mu
 
 
 @pytest.mark.tonio
+async def test_consume_sse_stream_recognizes_cr_lf_and_crlf_line_endings_including_crlf_split_across_chunks():
+    async def parse(parts) -> list[SseEvent]:
+        events: list[SseEvent] = []
+
+        async def on_event(event: SseEvent) -> None:
+            events.append(event)
+
+        await consume_sse_stream(_chunks(*parts), on_event=on_event)
+        return events
+
+    expected = [SseEvent(id="1", data="a\nb"), SseEvent(data="c")]
+    for separator in ("\n", "\r\n", "\r"):
+        text = separator.join(["id: 1", "data: a", "data: b", "", "data: c", "", ""])
+        assert await parse([text]) == expected, repr(separator)
+        # One character per chunk splits every CRLF between chunks.
+        assert await parse(list(text)) == expected, repr(separator)
+    assert await parse(["id: 1\rdata: a\r\ndata: b\n\r", "\ndata: c\r\r"]) == expected
+
+
+@pytest.mark.tonio
+async def test_consume_sse_stream_dispatches_cr_terminated_events_while_the_stream_stays_open():
+    received = tonio.Event()
+    release = tonio.Event()
+    events: list[SseEvent] = []
+
+    async def chunks():
+        yield b"data: first\r\r"
+        await release.wait(_WAIT_S)
+
+    async def on_event(event: SseEvent) -> None:
+        events.append(event)
+        received.set()
+
+    async with tonio.scope(cancel_on_exc=True) as scope:
+        scope.spawn(consume_sse_stream(chunks(), on_event=on_event))
+        await received.wait(_WAIT_S)
+        dispatched_while_open = received.is_set()
+        release.set()
+    assert dispatched_while_open
+    assert events == [SseEvent(data="first")]
+
+
+@pytest.mark.tonio
 async def test_consume_sse_stream_rejects_events_whose_data_lines_exceed_the_limit_without_a_blank_line():
     sent = 0
 
@@ -172,6 +218,64 @@ async def test_consume_sse_stream_rejects_events_whose_data_lines_exceed_the_lim
         await consume_sse_stream(chunks, on_event=on_event, max_event_bytes=256)
     await chunks.aclose()
     assert sent < 100
+
+
+class _Body:
+    """A response whose body is `chunks`. `closed` is set when the response
+    is closed; a body `held_open` ends only then, as a server that keeps the
+    response open."""
+
+    def __init__(self, chunks, *, status: int = 200, headers: dict[str, str] | None = None, held_open=False) -> None:
+        self.status = status
+        self.headers = headers or {}
+        self._chunks = chunks
+        self._held_open = held_open
+        self.closed = tonio.Event()
+
+    async def iter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
+        if self._held_open:
+            await self.closed.wait(_WAIT_S)
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+def _fetch_returning(response: _Body):
+    async def fetch(_url, *, method="GET", headers=None, body=None, timeout_ms=None):
+        return response
+
+    return fetch
+
+
+# pi #11729: a failed stream must be cancelled, not left open.
+@pytest.mark.tonio
+async def test_cancels_the_stream_when_an_event_exceeds_the_limit():
+    """pi checks the stream's `cancel` on `consumeSseStream`; here the owner
+    of an SSE response closes it on any failure (`consume_sse_stream` only
+    reads), so the case runs through the transport, and the response is
+    closed before the request fails."""
+    response = _Body([f"data: {'x' * 512}\n\n".encode()], headers={"content-type": "text/event-stream"}, held_open=True)
+    transport = StreamableHttpTransport(
+        "http://127.0.0.1/mcp", max_message_bytes=128, open_get_stream=False, fetch=_fetch_returning(response)
+    )
+    messages: list[dict[str, Any]] = []
+    answered = tonio.Event()
+
+    async def on_message(message) -> None:
+        messages.append(message)
+        answered.set()
+
+    transport.on_message(on_message)
+    await transport.start()
+    await transport.send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "echo"}})
+    await answered.wait(_WAIT_S)
+    # Before the transport's own close, which would close what it still holds.
+    response_closed = response.closed.is_set()
+    await transport.close()
+    assert response_closed
+    assert messages[0]["error"]["message"] == "MCP response stream failed: MCP SSE event exceeds 128 bytes"
 
 
 @pytest.mark.tonio
@@ -429,6 +533,80 @@ async def test_rejects_a_request_the_server_accepts_without_a_response(monkeypat
         with pytest.raises(Exception, match="without a response"):
             await client.call_tool("echo")
         await client.close()
+
+
+async def _send_once(response: _Body, **options) -> tuple[list[dict[str, Any]], Exception | None]:
+    """One request over a transport whose fetch answers `response`: the
+    messages delivered before the close, and the send's error."""
+    transport = StreamableHttpTransport(
+        "http://127.0.0.1/mcp", open_get_stream=False, fetch=_fetch_returning(response), **options
+    )
+    messages: list[dict[str, Any]] = []
+    closed = tonio.Event()
+
+    async def on_message(message) -> None:
+        messages.append(message)
+
+    async def on_close() -> None:
+        closed.set()
+
+    transport.on_message(on_message)
+    transport.on_close(on_close)
+    await transport.start()
+    error = None
+    try:
+        await transport.send({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    except Exception as caught:
+        error = caught
+    await transport.close()
+    # Messages queued before the close are delivered before it.
+    await closed.wait(_WAIT_S)
+    assert closed.is_set()
+    return messages, error
+
+
+# pi #11335
+@pytest.mark.tonio
+async def test_applies_max_message_bytes_to_json_responses():
+    def reply(description_bytes: int) -> _Body:
+        body = stringify(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"tools": [{"name": "echo", "description": "x" * description_bytes, "inputSchema": {}}]},
+            }
+        )
+        return _Body([body.encode()], headers={"content-type": "application/json"})
+
+    messages, error = await _send_once(reply(32), max_message_bytes=512)
+    assert error is None
+    assert len(messages) == 1
+
+    oversized = reply(2048)
+    messages, error = await _send_once(oversized, max_message_bytes=512)
+    assert isinstance(error, RuntimeError)
+    assert "MCP JSON response exceeds 512 bytes" in str(error)
+    assert messages == []
+    assert oversized.closed.is_set()
+
+
+@pytest.mark.tonio
+async def test_decodes_json_responses_split_inside_a_bom_and_a_multi_byte_character():
+    data = f"﻿{stringify({'jsonrpc': '2.0', 'id': 1, 'result': {'text': 'é€'}})}".encode()
+    response = _Body([bytes([byte]) for byte in data], headers={"content-type": "application/json"})
+    messages, error = await _send_once(response)
+    assert error is None
+    assert messages == [{"jsonrpc": "2.0", "id": 1, "result": {"text": "é€"}}]
+
+
+@pytest.mark.tonio
+async def test_reads_only_an_excerpt_of_http_error_bodies_and_cancels_the_rest():
+    # An endless error body: reading it whole would never finish.
+    response = _Body(itertools.repeat(b"x" * 1024), status=500)
+    _messages, error = await _send_once(response)
+    assert isinstance(error, McpHttpError)
+    assert len(error.body) == 8 * 1024
+    assert response.closed.is_set()
 
 
 @pytest.mark.tonio

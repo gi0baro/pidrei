@@ -929,6 +929,9 @@ RENAMES = {
     "packages/mcp/THIRD_PARTY_NOTICES/modelcontextprotocol-typescript-sdk.txt": (
         "packages/mcp/THIRD_PARTY_NOTICES/modelcontextprotocol-typescript-sdk.txt"
     ),
+    # 1.5.1 `bb266bf3`: the authorization server double of the sign-in tests,
+    # named so the pidrei suite's mcp_oauth_server.py does not clash with it.
+    "packages/mcp/test/authorization-server.ts": "packages/mcp/tests/mcp_authorization_server.py",
     # 1.5.1 `42849bb8`: a server whose main process exits and leaves a child.
     "packages/mcp/test/fixtures/exiting-parent-server.mjs": "packages/mcp/tests/fixtures/exiting_parent_server.py",
     # 1.1.0: resizing is Pillow on the blocking pool, in the one image module
@@ -1579,8 +1582,40 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/coding-agent/src/extensions/mcp/oauth.ts": (
         (
             "mcp-extension",
-            "the shared refresh runs detached and is joined through an Event; refresh requests are capped by "
-            "the fetch's timeout_ms; the refresh lock is a renewing FileLock; settings() is async",
+            "the refresh lock is a renewing FileLock whose LockedError maps to McpRefreshLockBusyError; PiDrei's "
+            "client identity (APP_NAME, pi's documents, auto -> dcr) is handed to pidrei-mcp by thin wrappers",
+        ),
+    ),
+    # 1.5.1 `bb266bf3`: the sign-in and the refreshing auth provider moved into pi-mcp.
+    "packages/mcp/src/oauth/auth-provider.ts": (
+        (
+            "mcp-client",
+            "the shared refresh runs detached and is joined through an Event; on_unauthorized starts it at the "
+            "call; settings() is async",
+        ),
+    ),
+    "packages/mcp/src/oauth/client-settings.ts": (
+        ("mcp-client", "timed_fetch sets the fetch's timeout_ms instead of adding AbortSignal.timeout"),
+    ),
+    "packages/mcp/src/oauth/sign-in.ts": (
+        (
+            "mcp-client",
+            "the signal is McpSignInOptions.cancel handed to the flow; untilAborted is the locked refresh run "
+            "detached, awaited with Waiter.any(done, cancel.event); McpSignInRedirect is a camelCase TypedDict",
+        ),
+    ),
+    "packages/mcp/src/oauth/loopback.ts": (
+        (
+            "mcp-client",
+            "wait_for_loopback_sign_in registers the callback wait in a synchronous prefix and returns the race "
+            "to await; the race is detached racers settling a first outcome",
+        ),
+    ),
+    "packages/mcp/src/transports/lines.ts": (
+        (
+            "mcp-client",
+            "read_stderr awaits the async on_stderr; each half is driven by one reader coroutine; end() runs in "
+            "the reaper after both pipes reach EOF",
         ),
     ),
     "packages/coding-agent/src/extensions/mcp/config.ts": (

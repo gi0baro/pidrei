@@ -42,11 +42,11 @@ def _http_seam_guard():
 def _live_process_groups_guard():
     """Fail-loud cleanup of stdio servers a test left running.
 
-    A stdio transport tracks its server's process group until the server is
-    reaped (the exit hook kills what is left at interpreter exit). One still
-    tracked after a test is a server the test never closed: it would run on
-    through every later test. The guard kills the group and warns, naming
-    the polluting test.
+    A stdio transport tracks its server's process group until the server has
+    closed: it exited and its pipes reached EOF (the exit hook kills what is
+    left at interpreter exit). One still tracked after a test is a server
+    the test never closed: it would run on through every later test. The
+    guard kills the group and warns, naming the polluting test.
     """
     yield
     with stdio._live_guard:

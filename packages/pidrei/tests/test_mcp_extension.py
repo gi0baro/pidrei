@@ -25,7 +25,6 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei.core.auth_storage import InMemoryAuthStorageBackend
-from pidrei.core.tools.truncate import truncate_middle
 from pidrei.extensions.mcp import MAX_SERVERS_SECTION_CHARS, McpServerListing, render_servers_section, runtime
 from pidrei.extensions.mcp.config import (
     McpServerConfigPatch,
@@ -41,16 +40,18 @@ from pidrei.extensions.mcp.runtime import (
     McpServerLog,
     create_default_transport,
 )
-from pidrei.extensions.mcp.tools import (
-    ConvertMcpResultOptions,
-    convert_mcp_result,
-    create_mcp_result_schema,
-    create_mcp_tool_name,
-)
+from pidrei.extensions.mcp.tools import ConvertMcpResultOptions, convert_mcp_result, create_mcp_result_schema
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
 from pidrei_codemode.declarations import schema_to_type
-from pidrei_mcp import LATEST_PROTOCOL_VERSION, McpAuthRequiredError, McpHttpError, McpSessionExpiredError, SendResult
+from pidrei_mcp import (
+    LATEST_PROTOCOL_VERSION,
+    McpAuthRequiredError,
+    McpHttpError,
+    McpSessionExpiredError,
+    SendResult,
+    create_mcp_tool_name,
+)
 from pidrei_mcp.oauth import McpOAuthAuthorizationRequiredError
 from pidrei_mcp.testing import create_in_memory_transport_pair
 
@@ -541,18 +542,6 @@ async def test_cuts_the_middle_of_model_facing_text_over_20kb_and_keeps_the_full
         "docs", "small", {"content": [{"type": "text", "text": "ok"}]}, ConvertMcpResultOptions(save_output=save_output)
     )
     assert len(saved) == 1
-
-
-def test_cuts_multi_byte_text_only_at_character_boundaries():
-    text = f"{'é' * 20_000}end"
-    result = truncate_middle(text, 1001)
-    assert result.truncated
-    assert "�" not in result.content
-    assert result.content.endswith("end")
-    head, tail = re.split(r"…\d+ chars truncated…", result.content)
-    assert len(head.encode()) <= 500
-    assert len(tail.encode()) <= 501
-    assert len(head) + len(tail) + result.removed_chars == len(text)
 
 
 # MCP connections

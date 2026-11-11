@@ -45,7 +45,6 @@ from pidrei.core.tools.grep import create_grep_tool_definition
 from pidrei.core.tools.ls import create_ls_tool_definition
 from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.core.tools.renderers.bash import _format_shell_call
-from pidrei.core.tools.truncate import truncate_middle
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
@@ -105,21 +104,6 @@ def create_tiny_bmp_1x1_red_24bpp() -> bytes:
 
 
 PNG_1X1_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
-
-
-class TestTruncateMiddle:
-    # pi tests truncateMiddle in mcp-extension.test.ts, whose other cases port
-    # with MCP; the helper itself is core, so its case lives here.
-    def test_cuts_multi_byte_text_only_at_character_boundaries(self):
-        text = f"{'é' * 20_000}end"
-        result = truncate_middle(text, 1001)
-        assert result.truncated is True
-        assert "�" not in result.content
-        assert result.content.endswith("end")
-        head, tail = re.split(r"…\d+ chars truncated…", result.content)
-        assert len(head.encode()) <= 500
-        assert len(tail.encode()) <= 501
-        assert len(head) + len(tail) + result.removed_chars == len(text)
 
 
 class TestReadTool:

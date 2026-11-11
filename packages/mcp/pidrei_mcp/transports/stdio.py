@@ -6,15 +6,19 @@ or `uvx` would otherwise leave the server behind.
 
 "Closed" means what Node's child `close` event means: the process exited
 and both of its output pipes reached EOF. A child of the server still
-holding a pipe keeps the transport open until it exits too.
+holding a pipe keeps the transport open until it exits too, and keeps the
+group tracked for the host's exit hook.
+
+The framing of stdout and the stderr tail are `lines.py`'s.
 
 Messages to the server are written by one writer coroutine over a channel,
 in the order they were sent. Closing ends stdin once the queued messages
 are written (Node's `stdin.end()`), then escalates per the spec: SIGTERM to
 the group after a grace period, SIGKILL after the close timeout, and once
 the process has closed, SIGTERM again for children that ignored stdin
-closing. The escalation keeps running if the coroutine awaiting `close()`
-is cancelled.
+closing. A server that already exited gets the same escalation: children
+it left behind can still hold its pipes. The escalation keeps running if
+the coroutine awaiting `close()` is cancelled.
 """
 
 import atexit
@@ -32,11 +36,11 @@ from tonio.colored.sync import channel
 from pidrei_utils import timers
 from pidrei_utils.cancel import CancelToken
 
-from ..protocol.jsonrpc import JsonRpcMessage, McpConnectionClosedError, parse_json, parse_json_rpc_message, stringify
-from .transport import DEFAULT_MAX_MESSAGE_BYTES, SendResult, TransportEvents
+from ..protocol.jsonrpc import JsonRpcMessage, McpConnectionClosedError, stringify
+from .lines import JsonRpcLineReader
+from .transport import SendResult, TransportEvents
 
 
-DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 DEFAULT_CLOSE_TIMEOUT_MS = 2_000
 # How long a server gets to exit on its own after stdin closes, before it is sent SIGTERM.
 STDIN_CLOSE_GRACE_MS = 500
@@ -137,11 +141,17 @@ class StdioTransport(TransportEvents):
         self._pid: int | None = None
         self._started = False
         self._closed = False
-        self._reaped = False
+        # Set once the server process exited and was reaped; its pipes may still be open.
+        self._reaped = tonio.Event()
         self._escalation: tuple[timers.Timeout, timers.Timeout] | None = None
         self._process_closed = tonio.Event()
-        self._stdout_buffer = bytearray()
-        self._stderr_buffer = b""
+        self._lines = JsonRpcLineReader(
+            max_message_bytes=max_message_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+            on_stderr=on_stderr,
+            on_message=self._emit_message,
+            on_error=self._emit_error,
+        )
         self._writes_sender, self._writes_receiver = channel.unbounded()
 
     @property
@@ -150,7 +160,7 @@ class StdioTransport(TransportEvents):
 
     @property
     def stderr(self) -> str:
-        return self._stderr_buffer.decode("utf-8", "replace")
+        return self._lines.stderr
 
     async def start(self) -> None:
         with self._lock:
@@ -211,30 +221,25 @@ class StdioTransport(TransportEvents):
             if self._closed:
                 return
             self._closed = True
-            process = self._process
-            if process is None:
-                no_child = True
-            else:
-                no_child = False
+            # Pi drops its child at the close event: a server already closed has nothing left to stop.
+            no_child = self._process is None or self._process_closed.is_set()
+            if not no_child:
                 # The writer writes what is queued, then ends stdin.
                 self._writes_sender.close()
-                exited = self._reaped
-                if not exited:
-                    # Shutdown per the spec: close stdin and let the server
-                    # exit, then SIGTERM, then SIGKILL.
-                    close_timeout_ms = self.options.close_timeout_ms
-                    if close_timeout_ms is None:
-                        close_timeout_ms = DEFAULT_CLOSE_TIMEOUT_MS
-                    grace = min(STDIN_CLOSE_GRACE_MS, close_timeout_ms)
-                    self._escalation = (
-                        timers.Timeout(grace, lambda: self._signal_server(signal.SIGTERM)),
-                        timers.Timeout(grace + close_timeout_ms, lambda: self._signal_server(signal.SIGKILL)),
-                    )
+                # Shutdown per the spec: close stdin and let the server exit,
+                # then SIGTERM, then SIGKILL. A server that already exited
+                # can leave children holding its pipes; the group cleanup
+                # still has to run for them.
+                close_timeout_ms = self.options.close_timeout_ms
+                if close_timeout_ms is None:
+                    close_timeout_ms = DEFAULT_CLOSE_TIMEOUT_MS
+                grace = min(STDIN_CLOSE_GRACE_MS, close_timeout_ms)
+                self._escalation = (
+                    timers.Timeout(grace, lambda: self._signal_server(signal.SIGTERM)),
+                    timers.Timeout(grace + close_timeout_ms, lambda: self._signal_server(signal.SIGKILL)),
+                )
         if no_child:
             self._emit_close()
-            return
-        if exited:
-            # Exited already: the close follows once its pipes reach EOF.
             return
         await self._process_closed.wait()
 
@@ -242,7 +247,7 @@ class StdioTransport(TransportEvents):
         """An escalation step. A timer that fired just before the reaper
         cancelled it still runs: the reaped flag keeps it off the bare pid."""
         with self._lock:
-            pid, reaped = self._pid, self._reaped
+            pid, reaped = self._pid, self._reaped.is_set()
         if pid is not None:
             _kill_process_tree(pid, sig, child_reaped=reaped)
 
@@ -270,7 +275,7 @@ class StdioTransport(TransportEvents):
     async def _read_stdout(self, stream: Any, done: tonio.Event) -> None:
         try:
             while chunk := await stream.receive_some():
-                self._handle_stdout(chunk)
+                self._lines.read_stdout(chunk)
         except Exception as error:
             self._emit_error(error)
         finally:
@@ -279,7 +284,7 @@ class StdioTransport(TransportEvents):
     async def _read_stderr(self, stream: Any, done: tonio.Event) -> None:
         try:
             while chunk := await stream.receive_some():
-                await self._handle_stderr(chunk)
+                await self._lines.read_stderr(chunk)
         except Exception as error:
             self._emit_error(error)
         finally:
@@ -287,15 +292,15 @@ class StdioTransport(TransportEvents):
 
     async def _reap(self, process: Any, stdout_done: tonio.Event, stderr_done: tonio.Event) -> None:
         try:
-            await process.wait()
+            try:
+                await process.wait()
+            finally:
+                self._reaped.set()
+            await tonio.Waiter(stdout_done, stderr_done)
         finally:
+            # Not at the exit: children of the server can outlive it while still holding its pipes.
             _untrack_process_group(process.pid)
-            with self._lock:
-                self._reaped = True
-        await tonio.Waiter(stdout_done, stderr_done)
-        if self._stdout_buffer.decode("utf-8", "replace").strip():
-            self._emit_error(RuntimeError("MCP stdio server closed with an incomplete JSON-RPC message"))
-        self._stdout_buffer = bytearray()
+        self._lines.end()
         with self._lock:
             escalation, self._escalation = self._escalation, None
             closing = self._closed
@@ -309,36 +314,3 @@ class StdioTransport(TransportEvents):
             # Children of the server that ignored stdin closing would otherwise outlive it.
             _kill_process_tree(process.pid, signal.SIGTERM, child_reaped=True)
         self._emit_close()
-
-    def _handle_stdout(self, chunk: bytes) -> None:
-        self._stdout_buffer += chunk
-        max_message_bytes = self.options.max_message_bytes or DEFAULT_MAX_MESSAGE_BYTES
-        while True:
-            newline = self._stdout_buffer.find(b"\n")
-            if newline < 0:
-                if len(self._stdout_buffer) > max_message_bytes:
-                    self._stdout_buffer = bytearray()
-                    self._emit_error(RuntimeError(f"MCP stdio message exceeds {max_message_bytes} bytes"))
-                return
-            line = bytes(self._stdout_buffer[:newline])
-            del self._stdout_buffer[: newline + 1]
-            if len(line) > max_message_bytes:
-                self._emit_error(RuntimeError(f"MCP stdio message exceeds {max_message_bytes} bytes"))
-                continue
-            text = line.decode("utf-8", "replace").removesuffix("\r")
-            if not text.strip():
-                continue
-            try:
-                self._emit_message(parse_json_rpc_message(parse_json(text)))
-            except Exception as error:
-                self._emit_error(error)
-
-    async def _handle_stderr(self, chunk: bytes) -> None:
-        max_stderr_bytes = self.options.max_stderr_bytes or DEFAULT_MAX_STDERR_BYTES
-        self._stderr_buffer = (self._stderr_buffer + chunk)[-max_stderr_bytes:]
-        on_stderr = self.options.on_stderr
-        if on_stderr is not None:
-            try:
-                await on_stderr(chunk.decode("utf-8", "replace"))
-            except Exception as error:
-                self._emit_error(error)

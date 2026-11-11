@@ -8,16 +8,20 @@ handles `mcp_servers_change`) connects them: the built-in MCP extension, or
 another one that replaced it. A registration nothing handles is reported.
 
 Configs keep the JSON shape of an `mcpServers` entry in `mcp.json`
-(camelCase keys), like pi's objects.
+(camelCase keys), like pi's objects. The `mcpServers` shape itself (stdio
+and HTTP fields, `oauth`, `enabled`, `description`, `timeout`) is
+pidrei-mcp's; this file adds pidrei's fields to it.
 """
 
 import copy
 import re
 import threading
-import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from pidrei_mcp import McpServerConfigOptions, mcp_namespace, validate_mcp_server_config as validate_mcp_server_fields
+from pidrei_mcp.url import parse_url
 
 
 def create_tool_name_matcher(entries: list[str] | tuple[str, ...]) -> Callable[[str], bool]:
@@ -72,7 +76,7 @@ _MCP_EXPOSURE_ALIASES: dict[str, McpExposure] = {"codemode-deferred": "codemode"
 #   dynamic client registration; with `clientName` or a `callbackUrl` other
 #   than `/callback` on localhost or 127.0.0.1, always dynamic client
 #   registration. pidrei is not pi, so `"auto"` always registers dynamically
-#   (`offers_client_metadata_document` in `extensions/mcp/oauth.py`).
+#   (`_pi_settings` in `extensions/mcp/oauth.py`).
 #   `"cimd"`: always the document, and sign-in fails without support.
 #   `"dcr"`: always dynamic client registration.
 # - `oauth.authServerMetadataUrl`: authorization server metadata document
@@ -86,50 +90,6 @@ _MCP_EXPOSURE_ALIASES: dict[str, McpExposure] = {"codemode-deferred": "codemode"
 #   sends the credential to `url`.
 type McpServerConfig = dict[str, Any]
 
-_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
-_SERVER_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-def mcp_namespace(server: str) -> str:
-    """Namespace of a server's tools: `mcp__<server>` with `-` replaced by `_`, like the tool names."""
-    return f"mcp__{server.replace('-', '_')}"
-
-
-def _parse_url(value: str) -> urllib.parse.SplitResult | None:
-    """pi: `URL.canParse(value) ? new URL(value) : undefined`, for absolute URLs."""
-    try:
-        url = urllib.parse.urlsplit(value)
-        url.port  # noqa: B018 - raises for an invalid port, as URL parsing does
-    except ValueError:
-        return None
-    if not url.scheme or not url.netloc:
-        return None
-    return url
-
-
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-
-
-def url_port(url: urllib.parse.SplitResult) -> int | None:
-    """The URL's port as `new URL(...).port` gives it: None when it names
-    none, or names its scheme's default (`http://localhost:80/` has no port)."""
-    port = url.port
-    return None if port == _DEFAULT_PORTS.get(url.scheme) else port
-
-
-def _host_of(url: urllib.parse.SplitResult) -> str:
-    """The URL's hostname as `new URL(...).hostname` spells it (IPv6 in brackets)."""
-    hostname = url.hostname or ""
-    return f"[{hostname}]" if ":" in hostname else hostname
-
-
-def is_loopback_redirect_uri(value: str) -> bool:
-    """Whether a redirect URI can be served by pidrei's loopback callback server."""
-    url = _parse_url(value)
-    if url is None:
-        return False
-    return url.scheme == "http" and _host_of(url) in _LOOPBACK_HOSTS and not url.query and not url.fragment
-
 
 def is_client_metadata_document_callback(callback_url: str | None) -> bool:
     """Whether pi's Client ID Metadata Documents list a redirect URI for the
@@ -137,54 +97,11 @@ def is_client_metadata_document_callback(callback_url: str | None) -> bool:
     on any port. Without `callback_url`, pidrei uses such a URI."""
     if callback_url is None:
         return True
-    url = _parse_url(callback_url)
-    # `url.path or "/"`: an http URL's pathname is "/" when it names none.
-    return url is not None and _host_of(url) != "[::1]" and (url.path or "/") == "/callback"
-
-
-def _is_string_record(value: Any) -> bool:
-    return isinstance(value, dict) and all(isinstance(entry, str) for entry in value.values())
-
-
-def _is_port(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535
-
-
-def _validate_oauth(value: Any) -> str | None:
-    if not isinstance(value, dict):
-        return "oauth must be an object"
-    if "clientId" in value and not isinstance(value["clientId"], str):
-        return "oauth.clientId must be a string"
-    if "clientSecret" in value and not isinstance(value["clientSecret"], str):
-        return "oauth.clientSecret must be a string"
-    port = value.get("callbackPort")
-    if "callbackPort" in value and not _is_port(port):
-        return "oauth.callbackPort must be a port number"
-    if "callbackUrl" in value:
-        callback_url = value["callbackUrl"]
-        if not isinstance(callback_url, str) or not is_loopback_redirect_uri(callback_url):
-            return "oauth.callbackUrl must be an http URI on localhost, 127.0.0.1, or [::1] without query or fragment"
-        callback_port = url_port(_parse_url(callback_url))  # type: ignore[arg-type]
-        if callback_port is not None and "callbackPort" in value and callback_port != port:
-            return "oauth.callbackUrl and oauth.callbackPort name different ports"
-    if "scope" in value and not isinstance(value["scope"], str):
-        return "oauth.scope must be a string"
-    if "clientName" in value and (not isinstance(value["clientName"], str) or not value["clientName"].strip()):
-        return "oauth.clientName must be a non-empty string"
-    if "clientRegistration" in value and value["clientRegistration"] not in ("auto", "dcr"):
-        if value["clientRegistration"] != "cimd":
-            return 'oauth.clientRegistration must be "auto", "dcr", or "cimd"'
-        if "clientId" in value or "clientName" in value:
-            return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName'
-        callback_url = value.get("callbackUrl")
-        if not is_client_metadata_document_callback(callback_url if isinstance(callback_url, str) else None):
-            return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback'
-    if "authServerMetadataUrl" in value:
-        metadata_url = value["authServerMetadataUrl"]
-        url = _parse_url(metadata_url) if isinstance(metadata_url, str) else None
-        if url is None or not (url.scheme == "https" or (url.scheme == "http" and _host_of(url) in _LOOPBACK_HOSTS)):
-            return "oauth.authServerMetadataUrl must be an https URL, or http on localhost, 127.0.0.1, or [::1]"
-    return None
+    try:
+        url = parse_url(callback_url)
+    except ValueError:
+        return False
+    return url.hostname != "[::1]" and url.pathname == "/callback"
 
 
 def _is_exposure(value: Any) -> bool:
@@ -227,64 +144,62 @@ def get_mcp_tool_exposure(config: McpServerConfig, tool_name: str) -> McpExposur
     return config.get("exposure") or "codemode"
 
 
-def validate_mcp_server_config(name: str, raw: Any) -> McpServerConfig | str:
-    """Validate one server entry of the `mcpServers` shape. Returns a copy of
-    the config with exposure aliases resolved, or an error message."""
-    if not _SERVER_NAME.match(name):
-        return f'invalid server name "{name}" (use letters, digits, "_" and "-")'
-    if not isinstance(raw, dict):
-        return f'server "{name}" must be an object'
-    value = _resolve_exposure_aliases(raw)
-    server_type = value.get("type")
+def _check_exposures(entry: dict[str, Any]) -> str | None:
+    """Checks `exposure` and `toolExposure`, after aliases were resolved. Returns an error message."""
     exposures = ", ".join(f'"{exposure}"' for exposure in _MCP_EXPOSURES)
-    if "exposure" in value and not _is_exposure(value["exposure"]):
-        return f'server "{name}": exposure must be one of {exposures}'
-    if "toolExposure" in value:
-        tool_exposure = value["toolExposure"]
+    if "exposure" in entry and not _is_exposure(entry["exposure"]):
+        return f"exposure must be one of {exposures}"
+    if "toolExposure" in entry:
+        tool_exposure = entry["toolExposure"]
         if not isinstance(tool_exposure, dict):
-            return f'server "{name}": toolExposure must map tool names to exposures'
+            return "toolExposure must map tool names to exposures"
         for tool, exposure in tool_exposure.items():
             if not _is_exposure(exposure):
-                return f'server "{name}": toolExposure "{tool}" must be one of {exposures}'
-    if "enabled" in value and not isinstance(value["enabled"], bool):
-        return f'server "{name}": enabled must be a boolean'
-    if "description" in value and not isinstance(value["description"], str):
-        return f'server "{name}": description must be a string'
-    if "timeout" in value:
-        timeout = value["timeout"]
-        if isinstance(timeout, bool) or not isinstance(timeout, int | float) or not timeout > 0:
-            return f'server "{name}": timeout must be a positive number of seconds'
-    if server_type == "sse":
-        return f'server "{name}": legacy SSE transport is not supported; use the streamable HTTP URL'
+                return f'toolExposure "{tool}" must be one of {exposures}'
+    return None
 
-    if isinstance(value.get("url"), str) and server_type in (None, "http", "streamable-http"):
-        url = _parse_url(value["url"])
-        if url is None or url.scheme not in ("http", "https"):
-            return f'server "{name}": url must be an http or https URL'
-        if "headers" in value and not _is_string_record(value["headers"]):
-            return f'server "{name}": headers must map names to strings'
-        # pi skips only an absent `oauth`; `"oauth": null` is not an object.
-        oauth_error = _validate_oauth(value["oauth"]) if "oauth" in value else None
-        if oauth_error:
-            return f'server "{name}": {oauth_error}'
-        if "auth" in value:
-            auth = value["auth"]
-            if not isinstance(auth, dict) or not isinstance(auth.get("provider"), str) or not auth["provider"]:
-                return f'server "{name}": auth.provider must be a provider name'
-            if url.scheme != "https" and _host_of(url) not in _LOOPBACK_HOSTS:
-                return f'server "{name}": auth requires an https URL, or http on localhost, 127.0.0.1, or [::1]'
-        return value
-    if isinstance(value.get("command"), str) and server_type in (None, "stdio"):
-        if "args" in value and not (
-            isinstance(value["args"], list) and all(isinstance(arg, str) for arg in value["args"])
-        ):
-            return f'server "{name}": args must be an array of strings'
-        if "env" in value and not _is_string_record(value["env"]):
-            return f'server "{name}": env must map names to strings'
-        if "cwd" in value and not isinstance(value["cwd"], str):
-            return f'server "{name}": cwd must be a string'
-        return value
-    return f'server "{name}" needs either "command" (stdio) or "url" (streamable HTTP)'
+
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _check_auth(entry: dict[str, Any], url: str) -> str | None:
+    """Checks `auth` of an HTTP server, which sends a provider's credential to `url`. Returns an error message."""
+    if "auth" not in entry:
+        return None
+    auth = entry["auth"]
+    if not isinstance(auth, dict) or not isinstance(auth.get("provider"), str) or not auth["provider"]:
+        return "auth.provider must be a provider name"
+    parsed = parse_url(url)
+    if parsed.protocol != "https:" and parsed.hostname not in _LOOPBACK_HOSTS:
+        return "auth requires an https URL, or http on localhost, 127.0.0.1, or [::1]"
+    return None
+
+
+def _check_metadata_document_callback(callback_url: str | None) -> str | None:
+    if is_client_metadata_document_callback(callback_url):
+        return None
+    return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback'
+
+
+_FIELD_OPTIONS = McpServerConfigOptions(check_metadata_document_callback=_check_metadata_document_callback)
+
+
+def validate_mcp_server_config(name: str, raw: Any) -> McpServerConfig | str:
+    """Validate one server entry of the `mcpServers` shape: pidrei-mcp's
+    shared fields and pidrei's own. Returns a copy of the config with exposure
+    aliases resolved, or an error message."""
+    result = validate_mcp_server_fields(
+        name, _resolve_exposure_aliases(raw) if isinstance(raw, dict) else raw, _FIELD_OPTIONS
+    )
+    if result["kind"] == "invalid":
+        return result["error"]
+    config = result["config"]
+    error = _check_exposures(config)
+    if error is None and result["kind"] == "http":
+        error = _check_auth(config, config["url"])
+    if error:
+        return f'server "{name}": {error}'
+    return config
 
 
 @dataclass(slots=True, frozen=True)

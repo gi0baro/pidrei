@@ -20,14 +20,20 @@ from typing import Any, Literal, Protocol
 import tonio.colored as tonio
 
 from pidrei_agent.types import AgentToolResult
-from pidrei_ai.types import TextContent
-from pidrei_mcp import ListResourcesResult, ListResourceTemplatesResult, ReadResourceResult, Resource, ResourceTemplate
+from pidrei_mcp import (
+    ListResourcesResult,
+    ListResourceTemplatesResult,
+    ReadResourceResult,
+    Resource,
+    ResourceTemplate,
+    limit_mcp_content,
+)
 from pidrei_utils.cancel import CancelToken
 
 from ...core.extensions.types import ToolAnnotations, ToolDefinition
 from ...core.mcp_servers import LIST_MCP_RESOURCE_TEMPLATES_TOOL, LIST_MCP_RESOURCES_TOOL, READ_MCP_RESOURCE_TOOL
 from .config import McpExposure, locale_order
-from .tools import McpToolDetails, limit_mcp_content, to_model_content, to_tool_exposure
+from .tools import McpToolDetails, from_llm_content, save_to_temp_file, to_model_content, to_tool_exposure
 
 
 __all__ = [
@@ -213,11 +219,11 @@ def _string_argument(params: Any, key: str) -> str | None:
 
 async def _json_result(tool: str, server: str | None, payload: dict[str, Any]) -> AgentToolResult[McpToolDetails]:
     text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    content, full_output_path = await limit_mcp_content([TextContent(text=text)])
+    limited, full_output_path = await limit_mcp_content([{"type": "text", "text": text}], save_to_temp_file)
     details: McpToolDetails = {"server": server or "", "tool": tool}
     if full_output_path:
         details["fullOutputPath"] = full_output_path
-    return AgentToolResult(content=content, details=details, structured_content=payload)
+    return AgentToolResult(content=from_llm_content(limited), details=details, structured_content=payload)
 
 
 async def _all_settled(operations: Sequence[Coroutine[Any, Any, Any]]) -> list[tuple[bool, Any]]:
@@ -332,9 +338,10 @@ def create_mcp_resource_tool_definitions(
                 blocks.append({"type": "text", "text": f"{contents['uri']}:"})
             blocks.append({"type": "resource", "resource": contents})
         converted = await to_model_content(server.name, blocks)
-        content, full_output_path = await limit_mcp_content(
-            converted if converted else [TextContent(text=f"Resource {uri} is empty.")]
+        limited, full_output_path = await limit_mcp_content(
+            converted if converted else [{"type": "text", "text": f"Resource {uri} is empty."}], save_to_temp_file
         )
+        content = from_llm_content(limited)
         details: McpToolDetails = {"server": server.name, "tool": READ_MCP_RESOURCE_TOOL}
         if full_output_path:
             details["fullOutputPath"] = full_output_path

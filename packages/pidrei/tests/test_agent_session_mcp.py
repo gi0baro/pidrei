@@ -42,13 +42,12 @@ from pidrei.extensions.codemode import create_codemode_extension
 from pidrei.extensions.mcp import MCP_SERVERS_SECTION, _McpExtension, create_mcp_extension
 from pidrei.extensions.mcp.config import LoadedMcpConfig, McpServerEntry
 from pidrei.extensions.mcp.runtime import McpServerConnection
-from pidrei.extensions.mcp.tools import create_mcp_tool_name
 from pidrei.extensions.tool_search import create_tool_search_extension
 from pidrei.extensions.tool_search.tool import TOOL_SEARCH_DESCRIPTION
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
 from pidrei_ai.types import ImageContent
-from pidrei_mcp import LATEST_PROTOCOL_VERSION
+from pidrei_mcp import LATEST_PROTOCOL_VERSION, create_mcp_tool_name
 from pidrei_mcp.testing import create_in_memory_transport_pair
 
 from .agent_session_helpers import StubResourceLoader

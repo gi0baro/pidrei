@@ -1,6 +1,9 @@
 """Mirror of pi mcp test/stdio.test.ts. The Node fixtures are Python scripts
 run with this interpreter."""
 
+import os
+import re
+import signal
 import sys
 from pathlib import Path
 
@@ -59,3 +62,56 @@ async def test_kills_a_server_that_ignores_shutdown_including_its_children():
     # grandchild held it: completing means both are gone.
     _result, completed = await tonio.time.timeout(client.close(), _WAIT_S)
     assert completed
+
+
+@pytest.mark.tonio
+async def test_kills_children_still_holding_the_pipes_after_the_server_process_exited():
+    """pi polls `isAlive` for the server's death and the helper's; here the
+    transport's reaped Event marks the first. A dead process answers
+    `kill(pid, 0)` until it is reaped, and the helper's reaper is init, so
+    its death is read from the close instead: the helper holds both pipes,
+    and the close returns only once they reached EOF."""
+    helper_pid: list[int] = []
+    announced = tonio.Event()
+
+    async def on_stderr(_chunk: str) -> None:
+        match = re.search(r"helper (\d+)\n", transport.stderr)
+        if match and not helper_pid:
+            helper_pid.append(int(match[1]))
+            announced.set()
+
+    close_events = 0
+    closed = tonio.Event()
+
+    async def on_close() -> None:
+        nonlocal close_events
+        close_events += 1
+        closed.set()
+
+    transport = StdioTransport(
+        sys.executable, args=[str(_FIXTURES / "exiting_parent_server.py")], close_timeout_ms=100, on_stderr=on_stderr
+    )
+    transport.on_close(on_close)
+    await transport.start()
+    helper_gone = False
+    try:
+        await announced.wait(_WAIT_S)
+        assert announced.is_set()
+        await transport._reaped.wait(_WAIT_S)
+        assert transport._reaped.is_set()
+        os.kill(helper_pid[0], 0)
+        assert not closed.is_set()
+
+        _result, completed = await tonio.time.timeout(transport.close(), _WAIT_S)
+        assert completed
+        helper_gone = True
+        await closed.wait(_WAIT_S)
+        assert close_events == 1
+    finally:
+        # Only a helper that may still run: a gone one's pid can belong to another process by now.
+        if not helper_gone:
+            for pid in helper_pid:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass

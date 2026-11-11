@@ -41,3 +41,12 @@ class OAuthRegistrationError(Exception):
 class McpOAuthAuthorizationRequiredError(Exception):
     def __init__(self) -> None:
         super().__init__("MCP OAuth authorization requires user interaction")
+
+
+class McpRefreshLockBusyError(Exception):
+    """Raised by `McpOAuthServerStore.with_refresh_lock()` when another process
+    holds the refresh lock for the whole wait. `start_mcp_sign_in()` then
+    skips the refresh and goes to the browser step."""
+
+    def __init__(self) -> None:
+        super().__init__("Another process is refreshing the MCP server's tokens")

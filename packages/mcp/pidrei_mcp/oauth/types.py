@@ -1,7 +1,7 @@
 """Mirror of pi mcp src/oauth/types.ts.
 
 Adapted from modelcontextprotocol/typescript-sdk v1.29.0.
-Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see LICENSES/.
+Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see THIRD_PARTY_NOTICES/.
 Modified to use dependency-free structural validation.
 """
 

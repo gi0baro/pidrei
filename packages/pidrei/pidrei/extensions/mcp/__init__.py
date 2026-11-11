@@ -69,12 +69,12 @@ from typing import Any
 import tonio.colored as tonio
 
 from pidrei_ai.utils.tasks import gather
+from pidrei_mcp import create_mcp_tool_name, mcp_namespace
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 from ...config import get_agent_dir
 from ...core.extensions.types import ToolDefinition, ToolNamespace, ToolReach
-from ...core.mcp_servers import mcp_namespace
 from ...utils.open_browser import open_browser
 from ..codemode.tool import CODEMODE_TOOL_NAME
 from ..tool_search.tool import TOOL_SEARCH_TOOL_NAME
@@ -105,7 +105,7 @@ from .runtime import (
     create_default_transport,
     sign_in_mcp_server,
 )
-from .tools import create_mcp_tool_definition, create_mcp_tool_name, create_mcp_tool_renderers
+from .tools import create_mcp_tool_definition, create_mcp_tool_renderers
 from .ui import McpManagerView, McpMenu, Subscribe, show_mcp_manager
 
 

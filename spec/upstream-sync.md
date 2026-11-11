@@ -1078,7 +1078,7 @@ session's loadout guard and sets what it returns (`None` sets nothing).
   registration, so their update rides on that `register_tools` call as
   `update_active` (see `mcp-extension`).
 
-### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`, `oauth/flow.ts`)
+### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`, `oauth/flow.ts`, `oauth/auth-provider.ts`, `oauth/client-settings.ts`, `oauth/sign-in.ts`, `oauth/loopback.ts`)
 
 Pi's MCP client leans on its single thread: listeners run inline, a `send()`
 is ordered by the call, and an `AbortController` stops a request at any
@@ -1096,6 +1096,11 @@ runtime layer from TonIO, httpunk and punkreq.
   message is its own exchange and nothing orders two of them, in pi either:
   a cancellation can reach the server before the request it cancels.
   A pi `await transport.send(...)` stays an await of the result.
+- **Stdio**: the framing is `transports/lines.py`'s `JsonRpcLineReader`,
+  each half driven by one reader coroutine (`read_stderr` awaits the async
+  `on_stderr`); the reaper calls `end()` once both pipes reached EOF. The
+  close ladder runs for any server not yet closed, one already reaped
+  included, and its group stays tracked until the pipes close.
 - **The client**: its state (transport, pending requests, incoming request
   tokens) is under one thread lock, and what readers see (`connection_state`,
   the session) is one published view. A pending request is settled exactly
@@ -1140,6 +1145,19 @@ runtime layer from TonIO, httpunk and punkreq.
   A cancelled refresh re-raises instead of falling back to a new
   authorization. A new Pi `signal` parameter on a flow step is covered by
   the wrapped fetch, not threaded separately.
+- **OAuth refresh** (`oauth/auth_provider.py`): one detached refresh per
+  provider, joined through an Event; `on_unauthorized` starts it at the
+  call, as pi's runs up to its first await there; `settings` is async; each
+  request is capped by the fetch's `timeout_ms` (`timed_fetch`). The
+  cross-process lock is the application's `with_refresh_lock`.
+- **Sign-in** (`oauth/sign_in.py`, `oauth/loopback.py`): pi's `signal` is
+  `McpSignInOptions.cancel`. `untilAborted` is the locked refresh run
+  detached, settling an Event, and the sign-in waiting on
+  `Waiter.any(done, cancel.event)`. `wait_for_loopback_sign_in` is a plain
+  function: its synchronous prefix registers the callback wait, so the
+  caller calls it before showing the authorization URL and awaits it after;
+  the pasted-URL racer starts when it is awaited. `McpSignInRedirect` is a
+  camelCase TypedDict (plain data an application persists).
 - **Closing the HTTP transport** sends its session `DELETE` with the token
   of the last request (`_last_token`) and never calls the auth provider, so
   a close never refreshes over the network.
@@ -1178,11 +1196,13 @@ awaits. Here those run on parallel coroutines.
   closes, is kept and closed by `close()`. `on_change` is
   async and awaited where the state changes; the extension re-checks the
   state before recording the stored-token snapshot.
-- **OAuth refresh**: one detached refresh per provider, joined through an
-  Event; each request capped by the fetch's `timeout_ms`; the cross-process
-  lock is `FileLock(stale=20, renew=True)` (proper-lockfile's renewal).
-  `on_unauthorized` starts the refresh at the call, as pi's runs up to its
-  first await there.
+- **OAuth**: the refresh and the sign-in are pidrei-mcp's (`mcp-client`).
+  `oauth.py` keeps the credential store, whose refresh lock is
+  `FileLock(stale=20, renew=True)` (proper-lockfile's renewal) and maps
+  `LockedError` to `McpRefreshLockBusyError`; the prompt; `_render_page`;
+  and PiDrei's client identity (`APP_NAME`, `PI_CLIENT_METADATA_DOCUMENTS`,
+  `_pi_settings` turning `auto` into `dcr`), handed to pidrei-mcp by thin
+  `create_mcp_auth_provider` / `sign_in_mcp_server` wrappers.
 - **I/O**: config loading and editing, the credential store's `tokens()`/
   `remove()`, settings that resolve `!command`/`${VAR}`, transport factories
   and the log are async. Every `mcp.json` edit runs under a `FileLock` on the
@@ -1219,7 +1239,8 @@ awaits. Here those run on parallel coroutines.
   `reaches_tools` and matches its words against server names
   (`_reaches_server`).
 - **Client ID Metadata Documents stay pi's**: `CLIENT_METADATA_BASE_URL` in
-  `oauth.py` is `https://pi.dev/oauth`, the one place where PiDrei presents
+  `oauth.py` (the `base_url` of `PI_CLIENT_METADATA_DOCUMENTS`) is
+  `https://pi.dev/oauth`, the one place where PiDrei presents
   itself as pi (ruled for 1.0.2: PiDrei has no document of its own). A
   rename pass must not change it, nor the document paths derived from it;
   dynamic registration keeps `APP_NAME`.

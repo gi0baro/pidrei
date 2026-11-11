@@ -12,18 +12,19 @@ as a scope child (`run_cancellable`) that the sign-in's callback or the
 import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import tonio.colored as tonio
-from tonio.colored import fs
+from tonio.colored import fs, sync
 
 from pidrei_utils.cancel import CancelToken, run_cancellable
 from pidrei_utils.timers import Timeout
 
 from ...config import APP_NAME, CONFIG_DIR_NAME
 from ...core.mcp_servers import validate_mcp_server_config
+from ...core.model_runtime import ModelRuntime
 from ...core.output_guard import drain_output, write_stderr, write_stdout
 from ...core.trust_manager import ProjectTrustStore
 from ...utils.colors import bold, dim
@@ -37,8 +38,14 @@ from .config import (
     load_mcp_config,
     remove_mcp_server_config,
 )
-from .oauth import McpSignInCancelledError, sign_in_mcp_server
-from .runtime import McpOAuthCredentialStore, McpServerConnection, McpServerLog, create_default_transport
+from .runtime import (
+    McpOAuthCredentialStore,
+    McpServerConnection,
+    McpServerLog,
+    McpSignInCancelledError,
+    create_default_transport,
+    sign_in_mcp_server,
+)
 
 
 HELP = f"""{bold("Usage:")}
@@ -98,6 +105,8 @@ class McpCommandOptions:
     agent_dir: str
     # Defaults to `mcp-auth.json` in the agent directory.
     credentials: McpOAuthCredentialStore | None = None
+    # Token of a pidrei provider, for servers with `auth.provider`. Defaults to the agent directory's `auth.json`.
+    provider_token: Callable[[str], Awaitable[str | None]] | None = None
     # Defaults to the platform browser.
     open_url: Callable[[str], None] | None = None
     # Default to the process's stdout and stderr.
@@ -110,17 +119,69 @@ def _describe_transport(entry: McpServerEntry) -> str:
     return config["url"] if "url" in config else " ".join([config["command"], *(config.get("args") or [])])
 
 
+def _get_auth_provider(entry: McpServerEntry) -> str | None:
+    return (entry.config.get("auth") or {}).get("provider") if "url" in entry.config else None
+
+
+type _ProviderToken = Callable[[str], Awaitable[str | None]]
+
+
 def _create_connection(
-    entry: McpServerEntry, options: McpCommandOptions, credentials: McpOAuthCredentialStore
+    entry: McpServerEntry,
+    options: McpCommandOptions,
+    credentials: McpOAuthCredentialStore,
+    provider_token: _ProviderToken,
 ) -> McpServerConnection:
     return McpServerConnection(
         entry=entry,
         cwd=options.cwd,
         create_transport=create_default_transport,
         credentials=credentials,
+        provider_token=provider_token,
         log=McpServerLog(os.path.join(options.agent_dir, "mcp.log")),
         on_tools=lambda _connection: None,
     )
+
+
+def _create_provider_token_reader(agent_dir: str) -> _ProviderToken:
+    """Reads provider tokens from the agent directory's credentials,
+    refreshing expired OAuth tokens like a session does. The model runtime is
+    created on the first request, so servers without `auth.provider` do not
+    load it. `list` checks its servers in parallel, so the runtime is created
+    under a lock: every server gets the one runtime (or its creation's
+    failure), as pi's shared promise gives."""
+    lock = sync.Lock()
+    created = False
+    runtime: ModelRuntime | None = None
+
+    async def get_runtime() -> ModelRuntime | None:
+        """The runtime, or None when creating it failed."""
+        nonlocal created, runtime
+        async with lock:
+            if not created:
+                created = True
+                try:
+                    runtime = await ModelRuntime(
+                        auth_path=os.path.join(agent_dir, "auth.json"),
+                        models_path=os.path.join(agent_dir, "models.json"),
+                        refresh_on_create=False,
+                    )
+                except Exception:
+                    runtime = None
+            return runtime
+
+    async def read(provider: str) -> str | None:
+        # Missing or unrefreshable credentials: the server's 401 then reports that sign-in is needed.
+        model_runtime = await get_runtime()
+        if model_runtime is None:
+            return None
+        try:
+            auth = await model_runtime.get_auth(provider)
+        except Exception:
+            return None
+        return auth.auth.api_key if auth is not None else None
+
+    return read
 
 
 # Short spellings of options. `-l`/`--local` match `pidrei install`.
@@ -207,6 +268,11 @@ async def run_mcp_command(args: list[str], options: McpCommandOptions) -> int:
         else None
     )
     credentials = options.credentials if options.credentials is not None else McpOAuthCredentialStore()
+    provider_token = (
+        options.provider_token
+        if options.provider_token is not None
+        else _create_provider_token_reader(options.agent_dir)
+    )
 
     match command:
         case "list":
@@ -216,7 +282,9 @@ async def run_mcp_command(args: list[str], options: McpCommandOptions) -> int:
             if parsed.positional:
                 error(f"Usage: {APP_NAME} mcp list [--json]\n{HELP_HINT}")
                 return 1
-            return await _list(loaded, "json" in parsed.values, untrusted_note, options, credentials, log)
+            return await _list(
+                loaded, "json" in parsed.values, untrusted_note, options, credentials, provider_token, log
+            )
         case "login" | "logout":
             parsed = _parse_options(
                 rest, {"local": "flag", "timeout": "value"} if command == "login" else {"local": "flag"}, error
@@ -238,7 +306,14 @@ async def run_mcp_command(args: list[str], options: McpCommandOptions) -> int:
             if "local" in parsed.values and entry.scope != "project":
                 error(f'MCP server "{name}" is defined in {entry.source}, not in the project; omit --local.')
                 return 1
-            connection = _create_connection(entry, options, credentials)
+            auth_provider = _get_auth_provider(entry)
+            if auth_provider:
+                error(
+                    f'MCP server "{name}" uses the credentials of provider "{auth_provider}". '
+                    f"Run /{command} {auth_provider} in {APP_NAME}."
+                )
+                return 1
+            connection = _create_connection(entry, options, credentials, provider_token)
             url = connection.oauth_url
             if not url:
                 error(f'MCP server "{name}" does not use OAuth. Only HTTP servers without an Authorization header do.')
@@ -460,8 +535,12 @@ async def _remove(args: list[str], project_config: str, options: McpCommandOptio
 
 
 async def _report(
-    entry: McpServerEntry, options: McpCommandOptions, credentials: McpOAuthCredentialStore
+    entry: McpServerEntry,
+    options: McpCommandOptions,
+    credentials: McpOAuthCredentialStore,
+    provider_token: _ProviderToken,
 ) -> dict[str, Any]:
+    auth_provider = _get_auth_provider(entry)
     exposure = entry.config.get("exposure") or "codemode"
     report: dict[str, Any] = {
         "name": entry.name,
@@ -472,12 +551,14 @@ async def _report(
         "enabled": entry.config.get("enabled") is not False,
         "exposure": exposure,
         "transport": _describe_transport(entry),
+        # The pidrei provider whose token the server receives, from `auth.provider`.
+        **({"authProvider": auth_provider} if auth_provider else {}),
         "state": "disabled",
         "tools": [],
     }
     if not report["enabled"]:
         return report
-    connection = _create_connection(entry, options, credentials)
+    connection = _create_connection(entry, options, credentials, provider_token)
     try:
         await connection.get_client()
     except Exception:
@@ -509,9 +590,10 @@ async def _list(
     untrusted_note: str | None,
     options: McpCommandOptions,
     credentials: McpOAuthCredentialStore,
+    provider_token: _ProviderToken,
     log: Output,
 ) -> int:
-    handles = [tonio.spawn(_report(entry, options, credentials)) for entry in loaded.servers]
+    handles = [tonio.spawn(_report(entry, options, credentials, provider_token)) for entry in loaded.servers]
     reports = [await handle for handle in handles]
     failed = bool(loaded.errors) or any(report["enabled"] and report["state"] != "connected" for report in reports)
 
@@ -537,7 +619,11 @@ async def _list(
         if report.get("override"):
             log(f"  project override: {report['override']}")
         if report["state"] == "needs-auth":
-            log(f"  sign in with: {APP_NAME} mcp login {report['name']}")
+            log(
+                f"  sign in with: /login {report['authProvider']} in {APP_NAME}"
+                if report.get("authProvider")
+                else f"  sign in with: {APP_NAME} mcp login {report['name']}"
+            )
         if tools:
             overrides = report.get("toolExposure") or {}
             listed = [f"{tool} [{overrides[tool]}]" if tool in overrides else tool for tool in tools]

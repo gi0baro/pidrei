@@ -1,7 +1,7 @@
 """Mirror of pi mcp src/oauth/discovery.ts.
 
 Adapted from modelcontextprotocol/typescript-sdk v1.29.0 src/client/auth.ts.
-Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see LICENSES/.
+Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see THIRD_PARTY_NOTICES/.
 Modified to remove Zod/CORS shims and enforce authorization-server issuer validation.
 
 A network failure (fetch's `TypeError` in pi) is `pidrei_http.http.TransportError`
