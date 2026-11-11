@@ -371,22 +371,22 @@ class TestHttpIdleTimeoutMs:
 
 class TestCacheWarming:
     @pytest.mark.tonio
-    async def test_defaults_to_streaming_and_ignores_project_settings(self, dirs):
+    async def test_defaults_to_idle_and_ignores_project_settings(self, dirs):
         agent_dir, project_dir = dirs
 
         async def mode() -> str:
             return (await SettingsManager(str(project_dir), str(agent_dir))).get_cache_warming_mode()
 
-        assert await mode() == "streaming"
-
-        write_json(project_dir / ".pidrei" / "settings.json", {"cacheWarming": "idle"})
-        assert await mode() == "streaming"
-
-        write_json(agent_dir / "settings.json", {"cacheWarming": "idle"})
         assert await mode() == "idle"
 
-        write_json(agent_dir / "settings.json", {"cacheWarming": "bogus"})
+        write_json(project_dir / ".pidrei" / "settings.json", {"cacheWarming": "streaming"})
+        assert await mode() == "idle"
+
+        write_json(agent_dir / "settings.json", {"cacheWarming": "streaming"})
         assert await mode() == "streaming"
+
+        write_json(agent_dir / "settings.json", {"cacheWarming": "bogus"})
+        assert await mode() == "idle"
 
     @pytest.mark.tonio
     async def test_persists_the_mode_globally(self, dirs):

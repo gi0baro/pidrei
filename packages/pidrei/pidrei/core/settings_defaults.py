@@ -72,7 +72,7 @@ SETTINGS_DEFAULTS = _frozen(
             "inlineBudget": 3000,
             "typeCheck": True,
         },
-        "cacheWarming": "streaming",
+        "cacheWarming": "idle",
         "tuiMode": "fullscreen",
         "fullscreenExitOutput": "transcript",
         "fullscreenScrollbar": "auto",

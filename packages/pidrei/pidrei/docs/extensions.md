@@ -1227,6 +1227,10 @@ This is mainly useful for debugging provider serialization and cache
 behaviour; `examples/extensions/provider_payload.py` logs every payload and
 response to a file.
 
+The payload is the full request. Providers that continue from a previous
+response (OpenAI Codex over WebSocket, Anthropic message threads) may send only
+the part that is new since the previous request.
+
 #### after_provider_response
 
 Fired after an HTTP response is received and before its stream body is

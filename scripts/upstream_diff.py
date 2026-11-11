@@ -1142,6 +1142,19 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "_PunkreqAnthropicClient"
             ),
         ),
+        (
+            "session-keyed-state",
+            (
+                "threadState sits behind a module thread lock: the entry is pinned, the prefix hashed outside "
+                "the lock, then claimed only if still the stored one; set + evict-oldest is one hold"
+            ),
+        ),
+    ),
+    "packages/ai/src/api/strict-tool-limits.ts": (
+        (
+            "session-keyed-state",
+            "the session set is an insertion-ordered dict behind a module thread lock; add + evict-oldest is one hold",
+        ),
     ),
     "packages/ai/src/api/openai-completions.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),

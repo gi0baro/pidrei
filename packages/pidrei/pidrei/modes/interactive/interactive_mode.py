@@ -590,6 +590,17 @@ class _TerminalInputSubscription:
         self.unsubscribe = unsubscribe
 
 
+class _CacheWarmingNotice:
+    """The last cache-warming notice: its component and the running total it renders."""
+
+    __slots__ = ("component", "note", "total_cost")
+
+    def __init__(self, component: ThemedText, total_cost: float, note: str | None) -> None:
+        self.component = component
+        self.total_cost = total_cost
+        self.note = note
+
+
 class InteractiveMode:
     """Options: ``{"migratedProviders"?, "startupDiagnostics"?,
     "modelFallbackMessage"?, "autoTrustOnReloadCwd"?, "initialMessage"?,
@@ -714,6 +725,9 @@ class InteractiveMode:
         self._shutdown_guard = threading.Lock()
         self._changelog_markdown: str | None = None
         self._startup_notices_shown = False
+        # Last cache-warming notice, extended in place while it is the last chat line. UI state
+        # under `state_lock`: written by `_add_cache_warming_usage`, read by the notice's render.
+        self._cache_warming_notice: _CacheWarmingNotice | None = None
         self._anthropic_subscription_warning_shown = False
         self._anthropic_subscription_warning_guard = threading.Lock()
 
@@ -4140,9 +4154,26 @@ class InteractiveMode:
     def _add_cache_warming_usage(self, entry: dict) -> None:
         if not self.settings_manager.get_show_cache_miss_notices():
             return
+        # Back-to-back warms collapse into one line with the cumulative cost.
+        previous = self._cache_warming_notice
+        children = self._chat_container.children
+        if (
+            previous is not None
+            and children
+            and children[-1] is previous.component
+            and previous.note == entry.get("note")
+        ):
+            previous.total_cost += entry["usage"].cost.total
+            previous.component.invalidate()
+            return
+        # Built at render time, so it reads the running total; `notice` is bound before any render.
+        component = ThemedText(
+            lambda: theme.fg("dim", format_cache_warming_usage(notice.total_cost, notice.note)), 1, 0
+        )
+        notice = _CacheWarmingNotice(component=component, total_cost=entry["usage"].cost.total, note=entry.get("note"))
+        self._cache_warming_notice = notice
         self._chat_container.add_child(Spacer(1))
-        usage = format_cache_warming_usage(entry)
-        self._chat_container.add_child(ThemedText(lambda: theme.fg("dim", usage), 1, 0))
+        self._chat_container.add_child(notice.component)
 
     def _add_compaction_cost_notice(self, notice: dict) -> None:
         """Render billing usage for a compaction or branch summary. The notice is derived

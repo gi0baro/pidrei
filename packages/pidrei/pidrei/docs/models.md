@@ -147,8 +147,9 @@ estimates: providers publish ranges, so pick the conservative end.
 { "id": "claude-sonnet-5", "promptCache": { "short": 300, "long": 3600 } }
 ```
 
-Cache warming (the `cacheWarming` setting: `"off"`, `"streaming"` — the
-default — or `"idle"`, also in `/settings`) re-sends the last request with a
+Cache warming (the `cacheWarming` setting: `"off"`, `"streaming"`, which warms
+only during agent runs, or `"idle"` — the default — which also warms for up to
+30 minutes between runs; also in `/settings`) re-sends the last request with a
 one-token output budget shortly before the entry expires, when the expected
 avoided cache-miss cost outweighs the refresh. A model without a lifetime for
 the tier a request used is never warmed. The built-in catalog fills this in

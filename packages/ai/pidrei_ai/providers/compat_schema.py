@@ -548,6 +548,14 @@ ANTHROPIC_MESSAGES_COMPAT_SCHEMA: dict[str, Any] = {
             ),
             default=False,
         ),
+        "supportsMessageThreads": _boolean(
+            description=(
+                "Whether the endpoint supports Anthropic message threads, which let a request with a session id "
+                "send only the new messages and continue from the previous reply. Default: true for provider "
+                "anthropic with a baseUrl on api.anthropic.com, false otherwise. Set true for gateways that forward "
+                "the thread request field."
+            )
+        ),
         "allowedFallbackModels": {
             "type": "array",
             "items": ANTHROPIC_ALLOWED_FALLBACK_MODEL_SCHEMA,

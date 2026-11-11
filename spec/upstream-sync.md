@@ -942,6 +942,39 @@ that module and `_PunkreqAnthropicClient`, read against the SDK source at
 the version pi pins. The resolver half (`providers/anthropic.ts`,
 `get_anthropic_federation`, the env constants) ports 1:1.
 
+### `session-keyed-state` (`ai/src/api/anthropic-messages.ts`, `ai/src/api/strict-tool-limits.ts`)
+
+Pi keeps per-session adapter state in module-level `Map`s and `Set`s keyed by
+session id (Anthropic message threads; the sessions over Claude's strict tool
+limits, shared with Bedrock) and reads, compares and updates an entry in one
+synchronous step. Here any worker running a `stream()` touches the same
+state, so it follows the Codex adapter's session maps
+(`openai_codex_responses.py`):
+
+- Module state behind a module `threading.Lock`, never held across an await.
+  A `Map`/`Set` used for its insertion order (the 10,000-session caps) is an
+  insertion-ordered `dict`; pi's delete + set + evict-oldest, or `add` +
+  evict-oldest, is one hold (`setdefault` where pi's `Set.add` keeps an
+  existing member in place).
+- Cleanup registered at import with `utils/session_resources.py`, Pi's
+  `registerSessionResourceCleanup` callback body under the lock (`if
+  session_id:` mirrors pi's truthiness: an empty id clears everything).
+- Work Pi does inside the step that is heavy (hashing the request prefix
+  serialises the conversation) runs outside the lock: pin the entry, compute,
+  then claim under the lock only if the stored value is still the pinned one.
+  A lost claim takes pi's path for a missing entry (a full request starting a
+  new thread). The prefix hash never leaves the process and is a `hashlib`
+  digest, not pi's `shortHash`.
+- What is recorded is a value: the thread reply is converted from a frozen
+  snapshot of the builder (`freeze-at-seam`), never the builder itself.
+- Each piece of state has a `reset_*() -> bool` for the fail-loud conftest
+  guards in the ai and pidrei conftests; mirrors mirror pi's `afterEach`
+  `cleanupSessionResources()` as a module autouse fixture.
+- **Upstream diffs**: a hunk that changes what is stored, compared or sent
+  ports 1:1 inside the hold (or, for a heavy computation, between pin and
+  claim). New per-session module state in any adapter lands on the same
+  mechanism, with a cleanup registration and conftest guards.
+
 ### `codemode-python` (`codemode/src/runtime/prelude-source.ts`, `runtime/host.ts`, `declarations.ts`, `source.ts`, `coding-agent/src/extensions/codemode/tool.ts`, `execute.ts`, `docs/codemode.md`, the codemode tests)
 
 Pi's codemode scripts are JavaScript, run in QuickJS compiled to wasm, one

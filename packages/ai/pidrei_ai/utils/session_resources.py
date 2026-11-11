@@ -1,8 +1,10 @@
 """Mirror of pi packages/ai/src/session-resources.ts.
 
-Registry of per-session resource cleanups (pi's only registrant is the Codex
-WebSocket adapter — Phase 5 here); AgentSession.dispose() calls
-cleanup_session_resources unconditionally, so the seam ships now.
+Registry of per-session resource cleanups. Registrants: the Codex WebSocket
+adapter (its cached sockets), the Anthropic adapter (message thread state) and
+`api/strict_tool_limits.py` (sessions over Claude's strict tool limits).
+AgentSession.dispose() calls cleanup_session_resources(session_id); no id
+clears every session.
 """
 
 import threading

@@ -610,6 +610,10 @@ class AnthropicMessagesCompat:
     # definitions (`inline-tools-2026-09-15`) and `tool_removal` blocks. Requires
     # `supports_mid_convo_system_messages`. Default False.
     supports_mid_convo_tool_changes: bool | None = None
+    # Whether the endpoint supports Anthropic message threads, which let a request with a
+    # session id send only the new messages and continue from the previous reply. Default
+    # True for provider "anthropic" with a base URL on api.anthropic.com, False otherwise.
+    supports_message_threads: bool | None = None
     # Models Anthropic accepts in `fallbacks` for server-side refusal fallback, with
     # local pricing metadata for returned fallback responses. When absent or empty,
     # callers must omit `fallbacks`; Anthropic rejects the field for models with no
@@ -853,6 +857,11 @@ class StreamOptions(ProviderRequestOptions):
     cache_retention: CacheRetention | None = None  # default "short"
     # Session identifier for providers supporting session-based caching/routing.
     session_id: str | None = None
+    # Do not use or record server-side continuation state for this request (for example
+    # Anthropic message threads). Set this for replays such as cache warming, which must not
+    # replace the state of the real conversation. Providers that do not keep continuation
+    # state ignore it.
+    disable_continuation: bool | None = None
     # WebSocket connect timeout (connection/open handshake only; stream idleness uses timeout_ms).
     websocket_connect_timeout_ms: float | None = None
     # Provider-extracted metadata (e.g. Anthropic `user_id`).

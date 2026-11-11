@@ -44,7 +44,6 @@ from pidrei_ai.api.bedrock_runtime import (
 )
 from pidrei_ai.api.constrained_sampling import (
     get_json_schema_tool_parameters,
-    is_strict_tool_limit_error_message,
     prefers_json_schema_strict_sampling,
     resolve_json_schema_strict_sampling,
 )
@@ -53,6 +52,11 @@ from pidrei_ai.api.simple_options import (
     build_base_options,
     clamp_max_tokens_to_context,
     clamp_reasoning,
+)
+from pidrei_ai.api.strict_tool_limits import (
+    has_exceeded_strict_tool_limits,
+    is_strict_tool_limit_error_message,
+    mark_strict_tool_limits_exceeded,
 )
 from pidrei_ai.api.transform_messages import split_error_tool_result_images, transform_messages
 from pidrei_ai.builders import (
@@ -275,7 +279,7 @@ def stream(
             initial_system_prompt = (
                 get_system_message_text(initial_system_message) if initial_system_message is not None else None
             )
-            disable_preferred_strict_tools = False
+            disable_preferred_strict_tools = has_exceeded_strict_tool_limits(opts.session_id)
             while True:
                 tool_config, has_preferred_strict_tools = convert_tool_config(
                     get_current_tools(normalized_context.messages),
@@ -313,6 +317,7 @@ def stream(
                     ):
                         raise
                     disable_preferred_strict_tools = True
+                    mark_strict_tool_limits_exceeded(opts.session_id)
                     append_assistant_message_diagnostic(
                         output,
                         AssistantMessageDiagnostic(
