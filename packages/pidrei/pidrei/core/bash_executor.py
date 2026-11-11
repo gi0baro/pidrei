@@ -41,6 +41,7 @@ async def execute_bash_with_operations(
     """Execute a bash command using custom BashOperations."""
     output_chunks: list[str] = []
     output_bytes = 0
+    discarded_output = False
     max_output_bytes = DEFAULT_MAX_BYTES * 2
 
     temp_file_path: str | None = None
@@ -79,7 +80,7 @@ async def execute_bash_with_operations(
             _append_text(rest)
 
     def _append_text(raw_text: str) -> None:
-        nonlocal output_bytes
+        nonlocal output_bytes, discarded_output
         # Sanitize: strip ANSI, replace binary garbage, normalize newlines
         text = sanitize_binary_output(strip_ansi(raw_text)).replace("\r", "")
         if not text:
@@ -98,6 +99,7 @@ async def execute_bash_with_operations(
         while output_bytes > max_output_bytes and len(output_chunks) > 1:
             removed = output_chunks.pop(0)
             output_bytes -= len(removed)
+            discarded_output = True
 
         # Stream to callback
         if on_chunk is not None:
@@ -132,6 +134,6 @@ async def execute_bash_with_operations(
         output=truncation_result.content if truncation_result.truncated else full_output,
         exit_code=None if cancelled else exit_code,
         cancelled=cancelled,
-        truncated=truncation_result.truncated,
+        truncated=discarded_output or truncation_result.truncated,
         full_output_path=temp_file_path,
     )

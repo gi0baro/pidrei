@@ -1453,3 +1453,54 @@ Updates" block; the `collapseChangelog` setting keeps its current meaning.
   `docs/packages.md`. The rest of these files ports normally.
   `interactive-mode-extension-changelog.test.ts` is `DROPPED`.
 - A new upstream consumer of extension changelogs is skipped the same way.
+
+### `group-only-kill` (`coding-agent/src/utils/shell.ts`)
+
+Pi's `killProcessTree(pid)` signals the process group and, when that fails,
+the bare pid. Since Pi 1.5.1 it is also called after the shell has exited
+(a timeout or an abort while background processes still hold the shell's
+pipes). PiDrei's `kill_process_tree` (`utils/shell.py`) signals the group
+only:
+
+- Every caller passes a shell started with `start_new_session`, so the pid
+  leads its own group. While the shell is alive the group kill reaches it;
+  the group kill fails only when no member is left, and then the pid is
+  free and may already belong to another process.
+- The bash tool keeps the shell's pid tracked for the exit handlers until
+  its stdio has settled, as Pi does; the handlers' kill is the same
+  group-only kill, so a pid tracked past the shell's exit is safe.
+- **Upstream diffs**: hunks to the macOS stop-before-kill or to who calls
+  the function port 1:1. A hunk to the single-process fallback is dropped,
+  with its test cases (`test_shell_kill_process_tree.py` asserts that the
+  bare pid is never signalled).
+
+### `edit-diff-difflib` (`coding-agent/src/core/tools/edit-diff.ts`)
+
+Pi diffs with jsdiff: `diffLines` feeds the display diff
+(`formatDisplayDiff`), `createTwoFilesPatch`/`structuredPatch`/`formatPatch`
+build the unified patch, and `generateEditDiff` diffs only a window around
+each replacement, shifting each window's `structuredPatch` hunks to file
+line numbers. PiDrei has no jsdiff; `core/tools/edit_diff.py` builds both on
+stdlib `difflib`:
+
+- `diff_lines` is jsdiff's `diffLines`: `SequenceMatcher(autojunk=False)`
+  over newline-terminated line tokens, a replace emitted as the removed run
+  before the added run.
+- The unified patch is `_unified_patch_hunks`: the same matcher's
+  `get_grouped_opcodes(context)` (`difflib.unified_diff`'s grouping and
+  range format), numbered from a 0-based line offset of each side. Offset 0
+  is `generate_unified_patch`; a window passes its first old and new lines,
+  which is pi's hunk shift. A last line without a line feed is its own token
+  (it differs from the same text with one) and is followed by
+  `\ No newline at end of file`, as jsdiff writes it.
+- The window computation (`_get_diff_windows`, the margin, the merging of
+  overlapping windows) and `_format_display_diff` port line by line.
+- **Upstream diffs**: hunks to the windows, the display formatter, the
+  line-ending splice (`apply_replacements_to_original`) and matching port
+  1:1. A change to how pi calls jsdiff (options, hunk shifting, patch
+  headers) becomes a change to `diff_lines`, `_unified_patch_hunks` or
+  `_format_patch`. Pi's mirrored tests apply unchanged, with a hand-rolled
+  patch applier in place of jsdiff's `applyPatch`.
+- **Known difference**: where several minimal diffs exist (runs of repeated
+  lines), `SequenceMatcher` can align them differently from jsdiff. Both
+  describe the same edit, and the patch applies.

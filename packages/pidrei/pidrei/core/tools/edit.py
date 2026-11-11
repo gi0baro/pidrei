@@ -16,11 +16,9 @@ from ..extensions.types import ToolDefinition
 from .edit_diff import (
     Edit,
     apply_edits_to_normalized_content,
-    detect_line_ending,
-    generate_diff_string,
-    generate_unified_patch,
+    apply_replacements_to_original,
+    generate_edit_diff,
     normalize_to_lf,
-    restore_line_endings,
 )
 from .file_mutation_queue import resolve_mutation_queue_key, with_file_mutation_queue
 from .path_utils import resolve_to_cwd
@@ -187,20 +185,27 @@ def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
 
             # Strip BOM before matching. The model will not include an invisible BOM in oldText.
             bom, content = split_bom(raw_content)
-            original_ending = detect_line_ending(content)
             normalized_content = normalize_to_lf(content)
             applied = apply_edits_to_normalized_content(normalized_content, edits, path)
+            # Diff before writing, so diff computation cannot fail after the write.
+            edit_diff = generate_edit_diff(path, applied.base_content, applied.new_content, applied.replacements)
             throw_if_aborted()
 
-            final_content = bom + restore_line_endings(applied.new_content, original_ending)
+            # Splice into the original text, so untouched lines keep their line endings. Without any CR
+            # the original is the normalized text, and the normalized result is already final.
+            final_content = bom + (
+                applied.new_content
+                if content == normalized_content
+                else apply_replacements_to_original(content, applied.replacements)
+            )
             await ops.write_file(absolute_path, final_content)
             throw_if_aborted()
 
-            diff, first_changed_line = generate_diff_string(applied.base_content, applied.new_content)
-            patch = generate_unified_patch(path, applied.base_content, applied.new_content)
             return AgentToolResult(
                 content=[TextContent(text=f"Successfully replaced {len(edits)} block(s) in {path}.")],
-                details=EditToolDetails(diff=diff, patch=patch, first_changed_line=first_changed_line),
+                details=EditToolDetails(
+                    diff=edit_diff.diff, patch=edit_diff.patch, first_changed_line=edit_diff.first_changed_line
+                ),
             )
 
         queue_key = await resolve_mutation_queue_key(absolute_path)

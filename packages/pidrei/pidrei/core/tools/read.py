@@ -1,10 +1,17 @@
 """Mirror of pi coding-agent src/core/tools/read.ts."""
 
+import codecs
+import dataclasses
+import math
+import os
+import stat
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import fs
+from tonio.colored.exceptions import CancelledError
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, JsonSchemaConstrainedSampling, ModelImageResizeOptions, TextContent
@@ -101,6 +108,186 @@ def _throw_if_aborted(cancel: Any) -> None:
         raise Exception("Operation aborted")
 
 
+# The chunk size of the default local read (Node's fs.createReadStream reads 64 KB chunks).
+_READ_CHUNK_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectedLines:
+    """The lines a read shows, with the file's line count; line counts follow `text.split("\\n")`."""
+
+    total_file_lines: int
+    truncation: TruncationResult
+    # Bytes of the first selected line, for the notice when it alone exceeds the byte limit.
+    first_line_bytes: int
+
+
+def _is_integer(value: Any) -> bool:
+    # JS `Number.isInteger`: integral floats count.
+    return isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+
+
+def _is_streamable_range(offset: Any, limit: Any) -> bool:
+    """Whether a range can be streamed. Other values (fractional, negative limit) keep the whole-file path,
+    whose list slicing defines what they select, for example limit -1 as all lines but the last.
+    """
+    return (offset is None or _is_integer(offset)) and (limit is None or (_is_integer(limit) and limit >= 0))
+
+
+def _select_lines_from_buffer(buffer: bytes, start_line: int, limit: Any) -> _SelectedLines:
+    """Select lines from a whole file in memory: for operations without create_read_stream and unusual ranges."""
+    all_lines = buffer.decode("utf-8", "replace").split("\n")
+    end_line = None if limit is None else min(start_line + int(limit), len(all_lines))
+    truncation = truncate_head("\n".join(all_lines[start_line:end_line]))
+    first_line_bytes = utf8_byte_length(all_lines[start_line]) if truncation.first_line_exceeds_limit else 0
+    return _SelectedLines(total_file_lines=len(all_lines), truncation=truncation, first_line_bytes=first_line_bytes)
+
+
+class _LineSelector:
+    """pi's selectLinesFromStream, fed one chunk at a time. Only lines truncate_head can show are stored;
+    the rest are counted, so memory does not grow with the file. Synchronous: it runs wherever the
+    chunks are read (inside the local read's pool job, or per chunk of a custom stream).
+    """
+
+    def __init__(self, start_line: int, limit: int | None) -> None:
+        self._start_line = start_line
+        self._end_line = math.inf if limit is None else start_line + limit
+        # Lossy UTF-8 that keeps a byte order mark decodes like bytes.decode("utf-8", "replace").
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._stored_lines: list[str] = []
+        self._stored_bytes = 0
+        self._stored_past_caps = False
+        self._line = 0
+        self._selected_lines = 0
+        self._selected_bytes = 0
+        self._first_line_bytes = 0
+        self._last_line_empty = True
+        # The selected line being read: its text, while it is stored, and its size.
+        self._pieces: list[str] | None = []
+        self._line_bytes = 0
+        self._line_has_text = False
+
+    def feed(self, chunk: bytes) -> None:
+        self._select(self._decoder.decode(chunk))
+
+    def finish(self) -> _SelectedLines:
+        self._select(self._decoder.decode(b"", final=True))
+        if self._start_line <= self._line < self._end_line:
+            self._finish_line()
+        truncation = dataclasses.replace(
+            truncate_head("\n".join(self._stored_lines)),
+            # truncate_head's counts for the joined selected lines, which drop a trailing empty line.
+            total_lines=0 if self._selected_bytes == 0 else self._selected_lines - (1 if self._last_line_empty else 0),
+            total_bytes=self._selected_bytes,
+        )
+        return _SelectedLines(
+            total_file_lines=self._line + 1, truncation=truncation, first_line_bytes=self._first_line_bytes
+        )
+
+    def _append_to_line(self, text: str, start: int, end: int) -> None:
+        self._line_has_text = True
+        if self._pieces is None:
+            return
+        piece = text[start:end]
+        # A line over the byte cap is never shown, and a first line over it is only measured: never store
+        # all of a 1 GB line.
+        if self._line_bytes <= DEFAULT_MAX_BYTES:
+            self._pieces.append(piece)
+        self._line_bytes += utf8_byte_length(piece)
+
+    def _finish_line(self) -> None:
+        if self._pieces is not None:
+            if self._selected_lines == 0:
+                self._first_line_bytes = self._line_bytes
+            # Storing continues one line past the caps: truncate_head ignores a trailing empty line, so the
+            # line after the cap must be there for it to decide truncation as for the full text.
+            if len(self._stored_lines) > DEFAULT_MAX_LINES or self._stored_bytes > DEFAULT_MAX_BYTES:
+                self._stored_past_caps = True
+            text = "".join(self._pieces)
+            self._stored_bytes += utf8_byte_length(text) + (1 if self._stored_lines else 0)
+            self._stored_lines.append(text)
+        self._selected_lines += 1
+        self._last_line_empty = not self._line_has_text
+        self._pieces = None if self._stored_past_caps else []
+        self._line_bytes = 0
+        self._line_has_text = False
+
+    def _select(self, text: str) -> None:
+        position = 0
+        # Start of the selected text in this piece, measured as a whole: the joined lines' size.
+        selection_start = -1
+        while True:
+            selected = self._start_line <= self._line < self._end_line
+            if selected and selection_start == -1:
+                selection_start = position
+            newline = text.find("\n", position)
+            end = len(text) if newline == -1 else newline
+            if selected and end > position:
+                self._append_to_line(text, position, end)
+            if newline == -1:
+                break
+            if selected:
+                self._finish_line()
+                if self._line + 1 == self._end_line:
+                    self._selected_bytes += utf8_byte_length(text[selection_start:newline])
+                    selection_start = -1
+            self._line += 1
+            position = newline + 1
+        if selection_start != -1:
+            self._selected_bytes += utf8_byte_length(text[selection_start:])
+
+
+def _select_local_lines_blocking(absolute_path: str, start_line: int, limit: int | None, cancel: Any) -> _SelectedLines:
+    """The default local read, whole on the pool: the file the way fs.readFile reads it. A regular file is
+    read up to its size when opened, so text appended during the read is not counted and a growing file
+    still ends; a file reporting size 0 (such as /proc files) and other file types are read until EOF.
+    The handle is closed here on every exit, so a caller that stops waiting leaves nothing to close.
+    """
+    selector = _LineSelector(start_line, limit)
+    with open(absolute_path, "rb") as file:
+        info = os.fstat(file.fileno())
+        remaining = info.st_size if stat.S_ISREG(info.st_mode) and info.st_size > 0 else None
+        while remaining is None or remaining > 0:
+            chunk = file.read(_READ_CHUNK_BYTES if remaining is None else min(_READ_CHUNK_BYTES, remaining))
+            if not chunk:
+                break
+            if remaining is not None:
+                remaining -= len(chunk)
+            _throw_if_aborted(cancel)
+            selector.feed(chunk)
+    return selector.finish()
+
+
+async def _close_stream_detached(stream: AsyncGenerator[bytes]) -> None:
+    try:
+        await stream.aclose()
+    except Exception:
+        pass
+
+
+async def _select_lines_from_stream(
+    stream: AsyncGenerator[bytes], start_line: int, limit: int | None, cancel: Any
+) -> _SelectedLines:
+    """Select lines from a custom `create_read_stream`. Stops reading when the token is cancelled.
+
+    pi's `for await` closes the stream when the loop is left early; Python's `async for` does not, so
+    the stream is closed here on every early exit.
+    """
+    selector = _LineSelector(start_line, limit)
+    try:
+        async for chunk in stream:
+            _throw_if_aborted(cancel)
+            selector.feed(chunk)
+    except CancelledError:
+        # Nothing awaited on a cancelled chain runs: the close goes on its own coroutine.
+        tonio.spawn.without_tracking(_close_stream_detached(stream))
+        raise
+    except Exception:
+        await stream.aclose()
+        raise
+    return selector.finish()
+
+
 def create_read_tool_definition(
     cwd: str,
     *,
@@ -109,7 +296,12 @@ def create_read_tool_definition(
     operations: Any = None,
 ) -> ToolDefinition:
     """`resize_options` is the fallback resize profile when the execution
-    context has no model metadata."""
+    context has no model metadata.
+
+    Custom `operations` may provide an optional `create_read_stream(absolute_path, *, cancel)` returning
+    an async generator of `bytes` chunks: text files are then read through it, keeping only the shown
+    lines, and `read` closes it with `aclose()` when it stops before the end. Without it, `read_file`
+    loads the whole file. The default local read is one blocking-pool job instead of a stream."""
     ops = operations if operations is not None else LocalReadOperations()
 
     async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
@@ -160,30 +352,40 @@ def create_read_tool_definition(
                     ImageContent(data=processed.data, mime_type=processed.mime_type),
                 ]
         else:
-            # Read text content.
-            buffer = await ops.read_file(absolute_path)
-            text_content = buffer.decode("utf-8", "replace")
-            all_lines = text_content.split("\n")
-            total_file_lines = len(all_lines)
-            # Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
+            # Read text content. Convert offset from 1-indexed input to 0-indexed line access.
             start_line = max(0, int(offset) - 1) if offset else 0
             start_line_display = start_line + 1
-            # Check if offset is out of bounds.
-            if start_line >= len(all_lines):
-                raise Exception(f"Offset {offset} is beyond end of file ({len(all_lines)} lines total)")
-            user_limited_lines: int | None = None
-            # If limit is specified by the user, honor it first. Otherwise truncate_head decides.
-            if limit is not None:
-                end_line = min(start_line + int(limit), len(all_lines))
-                selected_content = "\n".join(all_lines[start_line:end_line])
-                user_limited_lines = end_line - start_line
+            create_read_stream = getattr(ops, "create_read_stream", None)
+            if not _is_streamable_range(offset, limit):
+                selected = _select_lines_from_buffer(await ops.read_file(absolute_path), start_line, limit)
+            elif operations is None:
+                selected = await tonio.spawn_blocking(
+                    _select_local_lines_blocking,
+                    absolute_path,
+                    start_line,
+                    None if limit is None else int(limit),
+                    cancel,
+                )
+            elif create_read_stream is not None:
+                selected = await _select_lines_from_stream(
+                    create_read_stream(absolute_path, cancel=cancel),
+                    start_line,
+                    None if limit is None else int(limit),
+                    cancel,
+                )
             else:
-                selected_content = "\n".join(all_lines[start_line:])
-            # Apply truncation, respecting both line and byte limits.
-            truncation = truncate_head(selected_content)
+                selected = _select_lines_from_buffer(await ops.read_file(absolute_path), start_line, limit)
+            _throw_if_aborted(cancel)
+            total_file_lines = selected.total_file_lines
+            truncation = selected.truncation
+            # Check if offset is out of bounds.
+            if start_line >= total_file_lines:
+                raise Exception(f"Offset {offset} is beyond end of file ({total_file_lines} lines total)")
+            # A user-specified limit is honored before truncation.
+            user_limited_lines = None if limit is None else min(start_line + int(limit), total_file_lines) - start_line
             if truncation.first_line_exceeds_limit:
                 # First line alone exceeds the byte limit. Point the model at a bash fallback.
-                first_line_size = format_size(utf8_byte_length(all_lines[start_line]))
+                first_line_size = format_size(selected.first_line_bytes)
                 output_text = (
                     f"[Line {start_line_display} is {first_line_size}, exceeds {format_size(DEFAULT_MAX_BYTES)} "
                     f"limit. Use bash: sed -n '{start_line_display}p' {path} | head -c {DEFAULT_MAX_BYTES}]"
@@ -205,9 +407,9 @@ def create_read_tool_definition(
                         f"({format_size(DEFAULT_MAX_BYTES)} limit). Use offset={next_offset} to continue.]"
                     )
                 details = ReadToolDetails(truncation=truncation)
-            elif user_limited_lines is not None and start_line + user_limited_lines < len(all_lines):
+            elif user_limited_lines is not None and start_line + user_limited_lines < total_file_lines:
                 # User-specified limit stopped early, but the file still has more content.
-                remaining = len(all_lines) - (start_line + user_limited_lines)
+                remaining = total_file_lines - (start_line + user_limited_lines)
                 next_offset = start_line + user_limited_lines + 1
                 output_text = (
                     f"{truncation.content}\n\n[{remaining} more lines in file. Use offset={next_offset} to continue.]"

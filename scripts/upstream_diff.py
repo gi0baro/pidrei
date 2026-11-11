@@ -1063,6 +1063,21 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    "packages/coding-agent/src/utils/shell.ts": (
+        (
+            "group-only-kill",
+            "killProcessTree signals the shell's process group only; pi's fallback to the bare pid is not ported",
+        ),
+    ),
+    "packages/coding-agent/src/core/tools/edit-diff.ts": (
+        (
+            "edit-diff-difflib",
+            (
+                "jsdiff diffLines/structuredPatch/formatPatch are difflib SequenceMatcher(autojunk=False) and its "
+                "grouped opcodes; window hunks are numbered from the window's line offsets"
+            ),
+        ),
+    ),
     "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
         (
             "nested-calls-channel",

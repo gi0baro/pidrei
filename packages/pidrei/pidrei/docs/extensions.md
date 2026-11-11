@@ -3487,13 +3487,24 @@ built-in name inherits the built-in renderer for each slot it leaves out (see
 
 | Tool | Methods |
 |---|---|
-| `read` | `read_file(path) -> bytes`, `access(path)` (raises when the file is not readable), and optionally `detect_image_mime_type(path) -> str \| None` |
+| `read` | `read_file(path) -> bytes`, `access(path)` (raises when the file is not readable), and optionally `detect_image_mime_type(path) -> str \| None` and `create_read_stream(path, *, cancel)` |
 | `write` | `write_file(path, content)`, `mkdir(dir)` |
 | `edit` | `read_file(path) -> bytes`, `write_file(path, content)`, `access(path)` |
 | `bash` | `exec(command, cwd, *, on_data, cancel=None, timeout=None, env=None) -> BashExecResult`; `on_data` receives output chunks as `bytes`, `timeout` is in seconds |
 | `ls` | `exists(path)`, `is_directory(path)`, `readdir(path) -> list[str]` |
-| `grep` | `is_directory(path)`, `read_file(path) -> str` |
+| `grep` | `is_directory(path)` |
 | `find` | `exists(path)`, `glob(pattern, path, *, ignore, limit)` returning the matching paths |
+
+The `grep` operations only cover the directory check: grep always runs the
+local `rg`. To search a remote system, override grep's `execute()` instead.
+
+The `read` operations' `create_read_stream` is optional: an async generator
+method (`async def` with `yield`) that `read` calls without awaiting. When it
+yields the file as `bytes` chunks, `read` keeps only the lines it shows in memory, so large files
+can be read with `offset`/`limit`; without it, `read` loads the whole file
+through `read_file`. The generator should stop when `cancel` fires; `read`
+also stops consuming it then, and closes it with `aclose()` whenever it stops
+before the end.
 
 See `examples/extensions/ssh.py` for a complete SSH example with an `--ssh`
 flag.
