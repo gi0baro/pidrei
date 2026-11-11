@@ -828,17 +828,34 @@ the sessions run in parallel and a process buys nothing. The result-dict
 contract is the seam: `messages` stay camelCase wire dicts, so mode logic,
 params and rendering port side by side.
 
-- **Field renames**: `exitCode`/`stderr` don't exist. `exitCode !== 0` →
-  `is_failed_result(r)`; `exitCode === 0` → `not is_failed_result(r)`;
-  `exitCode === -1` (running) → `is_running_result(r)` / `"status":
-  "running"`; `stderr` → `errorMessage`.
+- **Fields**: `status` (`pending | running | completed | failed |
+  aborted`), `errorMessage`, `stopReason` and `isError` in the details are
+  pi's. `exitCode`, `stderr` and `terminationSignal` don't exist: the
+  `Signal:`/`stderr:` evidence and render lines are left out, and a hunk
+  keyed on them ports onto `status`/`errorMessage` or is dropped.
 - **Hunks in `runSingleAgent`** or the subprocess plumbing translate by
   intent into the in-process runner:
   - A new CLI flag becomes the matching `CreateAgentSessionOptions` field or
     construction argument.
-  - JSONL-parsing changes map onto the typed session events.
-  - Process and watchdog changes usually have no counterpart; cancellation
-    is `cancel.on_cancel` → a spawned `session.abort()`.
+  - JSONL-parsing changes map onto the typed session events (`message_end`
+    for user, assistant and tool result messages).
+  - Spawn errors and failed or signalled exits are an exception from session
+    setup or `session.prompt()`: one `except Exception` gives a `"failed"`
+    result whose `errorMessage` keeps an error the run already reported, else
+    `str(error)` (pi's `||=`). `CancelledError` passes.
+  - `signal.aborted` checks are `cancel.cancelled` at the same points.
+    Cancellation is `cancel.on_cancel` → a spawned `session.abort()`, under a
+    guard that ignores an abort once the run has ended (pi's `exited`
+    check); an aborted run returns its `"aborted"` result. An abort before
+    the session claimed its run is held and issued from
+    `PromptOptions.preflight_result("started")` (after the claim, before the
+    first request). A missing task cwd fails the task before setup (pi's
+    spawn `ENOENT`).
+  - SIGTERM/SIGKILL escalation, watchdogs, temp prompt files and the pi
+    binary lookup have no counterpart.
+- **Failures are results**: execute returns content plus details (pi's
+  `isError` comes from the `tool_result` hook reading `details.isError`),
+  never raises for a failed child.
 - **Divergences to keep**:
   - Subagent sessions load no extensions.
   - An unknown frontmatter `model:` fails the task.
@@ -852,8 +869,8 @@ params and rendering port side by side.
   `on_update`. Upstream hunks to `emitParallelUpdate` port into
   `emit_parallel_update`, per-child update hunks into `task_update`.
 - No tests (example extensions have none); Pi's subagent project-trust
-  regression is dropped, since it depends on a child process failing at
-  spawn.
+  regression and `subagent-extension.test.ts` with its child fixture are
+  dropped, since they drive a child process.
 
 ### `no-telemetry` (`first-time-setup.ts`, settings-manager analytics accessors, `settings-schema.ts`, `settings-defaults.ts`)
 
@@ -1237,8 +1254,9 @@ awaits. Here those run on parallel coroutines.
     tracked Events together with the closing connections.
 - **The manager** (`ui.py`) changes its view only through `tui.apply`; key
   handlers settle an Event the manage coroutine awaits.
-- **The CLI** reads a pasted redirect URL with `FdReader` under
-  `run_cancellable`, cancelled by the sign-in or `--timeout`.
+- **The CLI** reads a pasted redirect URL with `question_terminal`
+  (`utils/terminal_question.py`, shared with `pidrei auth login`), cancelled
+  by the sign-in or `--timeout`; end of input gives no URL, as in pi.
 - **Imports are eager**: `runtime.lazy.ts`/`cli.lazy.ts` are dropped, and the
   "MCP failed to load" reports they fed are not ported.
 - **Script API names in text** (`searchTools()`, `describeNamespace()`)

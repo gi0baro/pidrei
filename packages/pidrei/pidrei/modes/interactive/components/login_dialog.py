@@ -28,22 +28,14 @@ from pidrei_utils.cancel import CancelToken
 
 from ....utils.clipboard import copy_to_clipboard
 from ....utils.open_browser import open_browser
+from ....utils.web_url import display_url
 from ..theme import theme
 from .auth_url import AuthUrlComponent
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint
 
 
-# pi's `webUrl` is `trusted_http_url`: the `http:` or `https:` URL a value
-# names, normalized, or None. The shared launcher also opens files and custom
-# protocols, so login only opens web URLs. Normalizing percent-encodes control
-# characters, which would otherwise end a terminal hyperlink early.
-
-
-def _display_url(value: str) -> str:
-    """`value` normalized as a web URL, else with control characters replaced: an untrusted string printed as is
-    could end a hyperlink early or send its own escape sequences to the terminal."""
-    return trusted_http_url(value) or replace_control_characters(value)
+# pi's `webUrl` is `trusted_http_url` (see `utils/web_url.py`).
 
 
 def _web_link(text: str, url: str) -> str:
@@ -187,7 +179,7 @@ class LoginDialogComponent(Container):
             self._clear_device_code_action()
             self._content_container.clear()
             self._content_container.add_child(Spacer(1))
-            shown_url = _display_url(info["verificationUri"])
+            shown_url = display_url(info["verificationUri"])
             self._content_container.add_child(Text(theme.fg("accent", _web_link(shown_url, shown_url)), 1, 0))
 
             click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
@@ -325,7 +317,7 @@ class LoginDialogComponent(Container):
             self._content_container.add_child(Spacer(1))
             self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
             for link in links:
-                url = _display_url(link["url"])
+                url = display_url(link["url"])
                 text = f"{link['label']}: {url}" if link.get("label") else url
                 self._content_container.add_child(Text(theme.fg("accent", _web_link(text, url)), 1, 0))
             if show_close_hint:

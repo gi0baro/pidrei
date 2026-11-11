@@ -125,7 +125,7 @@ async def test_sends_the_token_of_the_provider_named_by_auth_provider(monkeypatc
         for command in ("login", "logout"):
             assert (await run(tmp_path, [command, "radius"], radius))[:2] == (
                 1,
-                f'MCP server "radius" uses the credentials of provider "radius". Run /{command} radius in pidrei.',
+                f'MCP server "radius" uses the credentials of provider "radius". Run "pidrei auth {command} radius".',
             )
 
 

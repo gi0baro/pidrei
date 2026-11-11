@@ -4,9 +4,9 @@ it through bash to configure servers, verify an `mcp.json` they wrote, and
 start an OAuth sign-in; the user only approves access in the browser. Running
 sessions pick up new credentials on their next turn.
 
-The redirect URL pasted in a terminal is read from stdin through `FdReader`,
-as a scope child (`run_cancellable`) that the sign-in's callback or the
-`--timeout` cancels, where pi uses readline with an abort signal.
+The redirect URL pasted in a terminal is read with `question_terminal`
+(`utils/terminal_question.py`), which the sign-in's callback or the
+`--timeout` cancels, as pi's `questionTerminal`.
 """
 
 import json
@@ -19,17 +19,17 @@ from typing import Any, Literal
 import tonio.colored as tonio
 from tonio.colored import fs, sync
 
-from pidrei_utils.cancel import CancelToken, run_cancellable
+from pidrei_utils.cancel import CancelToken
 from pidrei_utils.timers import Timeout
 
 from ...config import APP_NAME, CONFIG_DIR_NAME
 from ...core.mcp_servers import validate_mcp_server_config
 from ...core.model_runtime import ModelRuntime
-from ...core.output_guard import drain_output, write_stderr, write_stdout
+from ...core.output_guard import write_stderr, write_stdout
 from ...core.trust_manager import ProjectTrustStore
 from ...utils.colors import bold, dim
-from ...utils.fd_io import FdReader
 from ...utils.open_browser import open_browser
+from ...utils.terminal_question import question_terminal
 from .config import (
     LoadedMcpConfig,
     McpServerEntry,
@@ -310,7 +310,7 @@ async def run_mcp_command(args: list[str], options: McpCommandOptions) -> int:
             if auth_provider:
                 error(
                     f'MCP server "{name}" uses the credentials of provider "{auth_provider}". '
-                    f"Run /{command} {auth_provider} in {APP_NAME}."
+                    f'Run "{APP_NAME} auth {command} {auth_provider}".'
                 )
                 return 1
             connection = _create_connection(entry, options, credentials, provider_token)
@@ -704,32 +704,18 @@ async def _login(
     return 0
 
 
-async def _read_line() -> str:
-    """One line from stdin, read on readiness (see `main._prompt_confirm`)."""
-    reader = FdReader(sys.stdin.fileno())
-    buffer = b""
-    try:
-        while b"\n" not in buffer:
-            chunk = await reader.read()
-            if not chunk:
-                break
-            buffer += chunk
-    finally:
-        reader.close()
-    lines = buffer.decode("utf-8", "replace").splitlines()
-    return lines[0] if lines else ""
-
-
 async def _wait_for_redirect_url(cancel: CancelToken, interactive: bool) -> str | None:
     """The pasted redirect URL in a terminal; otherwise only the browser
-    callback can finish the sign-in. None when `cancel` fires: the callback
-    arrived, or the sign-in timed out."""
+    callback can finish the sign-in. None on cancellation or end of input, or
+    when the callback arrives or the sign-in times out."""
     if not interactive:
         await cancel.event.wait()
         return None
-    write_stderr("If the browser cannot reach this machine, paste the URL it was redirected to: ")
-    await drain_output()
     try:
-        return await run_cancellable(_read_line(), cancel)
+        return await question_terminal(
+            "If the browser cannot reach this machine, paste the URL it was redirected to: ",
+            output=write_stderr,
+            cancel=cancel,
+        )
     except Exception:
         return None

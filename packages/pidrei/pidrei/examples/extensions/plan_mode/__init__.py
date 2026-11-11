@@ -20,7 +20,7 @@ from tonio.colored import sync as tonio_sync
 
 from pidrei_tui.keys import Key
 
-from .utils import TodoItem, extract_todo_items, is_safe_command, mark_completed_steps
+from .utils import TodoItem, all_steps_complete, extract_todo_items, is_safe_command, mark_completed_steps
 
 
 PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"]
@@ -35,6 +35,9 @@ def _is_assistant_message(message: Any) -> bool:
     return role == "assistant" and isinstance(content, list)
 
 
+# Extract text content from an assistant message.
+# Includes thinking blocks: with reasoning-max models the [DONE:n] tags and
+# plan drafts usually land in thinking, not the visible text.
 def _get_text_content(message: Any) -> str:
     content = message.get("content") if isinstance(message, dict) else message.content
     texts = []
@@ -42,6 +45,12 @@ def _get_text_content(message: Any) -> str:
         block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
         if block_type == "text":
             texts.append(block.get("text") if isinstance(block, dict) else block.text)
+        elif block_type == "thinking":
+            # pi's `?? ""`: a missing thinking field reads as empty.
+            thinking = block.get("thinking") if isinstance(block, dict) else block.thinking
+            texts.append("" if thinking is None else thinking)
+        else:
+            texts.append("")
     return "\n".join(texts)
 
 
@@ -99,13 +108,13 @@ class PlanMode:
         if self.execution_mode and todo_items:
             lines = []
             for item in todo_items:
+                text = f"{item.text[:57]}..." if len(item.text) > 60 else item.text
                 if item.completed:
                     lines.append(
-                        ctx.ui.theme.fg("success", "☑ ")
-                        + ctx.ui.theme.fg("muted", ctx.ui.theme.strikethrough(item.text))
+                        ctx.ui.theme.fg("success", "☑ ") + ctx.ui.theme.fg("muted", ctx.ui.theme.strikethrough(text))
                     )
                 else:
-                    lines.append(f"{ctx.ui.theme.fg('muted', '☐ ')}{item.text}")
+                    lines.append(f"{ctx.ui.theme.fg('muted', '☐ ')}{text}")
             ctx.ui.set_widget("plan-todos", lines)
         else:
             ctx.ui.set_widget("plan-todos", None)
@@ -288,8 +297,9 @@ After completing a step, include a [DONE:n] tag in your response.""",
             if not _is_assistant_message(message):
                 return
 
-            if mark_completed_steps(_get_text_content(message), todo_items) > 0:
-                self.update_status(ctx)
+            mark_completed_steps(_get_text_content(message), todo_items)
+            # Always refresh: cheap, keeps the widget consistent even when nothing matched.
+            self.update_status(ctx)
             await self.persist_state()
 
     async def on_agent_end(self, event, ctx) -> None:
@@ -299,6 +309,13 @@ After completing a step, include a [DONE:n] tag in your response.""",
             todo_items: list[TodoItem] = self.todo_items
 
             if self.execution_mode and todo_items:
+                # Fallback: the model wrapped up without [DONE:n] tags ("All steps complete").
+                last_assistant = next(
+                    (message for message in reversed(event["messages"]) if _is_assistant_message(message)), None
+                )
+                if last_assistant is not None and all_steps_complete(_get_text_content(last_assistant)):
+                    for item in todo_items:
+                        item.completed = True
                 if all(item.completed for item in todo_items):
                     completed_list = "\n".join(f"~~{item.text}~~" for item in todo_items)
                     self.pi.send_message(
@@ -307,7 +324,9 @@ After completing a step, include a [DONE:n] tag in your response.""",
                             "content": f"**Plan Complete!** ✓\n\n{completed_list}",
                             "display": True,
                         },
-                        {"triggerTurn": False},
+                        # nextTurn: delivered with the next user prompt instead of triggering an
+                        # extra (expensive, reasoning-max) LLM turn to acknowledge the card.
+                        {"deliverAs": "nextTurn"},
                     )
                     self.execution_mode = False
                     self.todo_items = []

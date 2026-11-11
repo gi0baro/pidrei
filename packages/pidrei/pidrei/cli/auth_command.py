@@ -2,7 +2,7 @@
 
 import re
 
-from ..config import APP_NAME
+from ..config import APP_NAME, CONFIG_DIR_NAME
 from ..core.output_guard import write_stdout
 
 
@@ -59,11 +59,35 @@ def is_auth_command_help(args: list[str]) -> bool:
 
 def print_auth_command_help() -> None:
     write_stdout(f"""Usage:
+  {APP_NAME} auth login <provider> [--api-key] [--no-browser]
+  {APP_NAME} auth logout <provider>
   {APP_NAME} auth print-api-key [--provider <provider>] [--model <model>]
   {APP_NAME} auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
   {APP_NAME} auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
 
-Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.
+Log in to and out of model providers, print their credentials for external clients, or check that they are ready.
+Credentials are stored in ~/{CONFIG_DIR_NAME}/agent/auth.json.
+
+Commands:
+  login <provider>        Sign in with an account in the browser, or save an API key, then exit
+  logout <provider>       Remove the stored credentials; environment variables and models.json stay
+  print-api-key           Print the resolved API key
+  print-bearer-token      Print a resolved OAuth bearer token (refreshes if expired)
+  check                   Print ready, not_ready, or invalid; exit with 0, 1, or 2
+
+Options for print-api-key, print-bearer-token, and check (at least one is required):
+  --provider <provider>   Resolve credentials for a provider
+  --model <model>         Resolve credentials from a model
+
+Options for login:
+  --api-key               Save an API key instead of signing in with an account
+  --no-browser            Do not open a browser; use another sign-in method, e.g. device code
+
+Other options:
+  --min-expiry <duration> Minimum remaining token lifetime for print-bearer-token, e.g. 30m or 1h
+  --json                  Print the check result as JSON
+  --credentials           Emit the credential from check, or include it in JSON output
+  --no-refresh            Do not refresh expired OAuth credentials during check
 """)
 
 
@@ -88,7 +112,8 @@ def parse_auth_command(args: list[str]) -> AuthCommand | None:
     if kind is None:
         raise AuthCommandError(
             f'Unknown auth command "{sub if sub is not None else ""}". '
-            f'Use "{APP_NAME} auth print-api-key", "{APP_NAME} auth print-bearer-token", or "{APP_NAME} auth check".'
+            f'Use "{APP_NAME} auth login", "{APP_NAME} auth logout", "{APP_NAME} auth print-api-key", '
+            f'"{APP_NAME} auth print-bearer-token", or "{APP_NAME} auth check".'
         )
 
     command_args: list[str] = []

@@ -129,9 +129,21 @@ _LEADING_VERB = re.compile(
 )
 _WHITESPACE = re.compile(r"\s+")
 _PLAN_HEADER = re.compile(r"\*{0,2}Plan:\*{0,2}\s*\n", re.IGNORECASE)
-_NUMBERED = re.compile(r"^\s*(\d+)[.)]\s+\*{0,2}([^*\n]+)", re.MULTILINE)
+# Full-line capture: step titles may contain bold/italic/backticks ("1. **Step** `x` …").
+# clean_step_text strips the markdown; / and - items are still skipped below.
+_NUMBERED = re.compile(r"^\s*(\d+)[.)]\s+(.+)$", re.MULTILINE)
 _TRAILING_EMPHASIS = re.compile(r"\*{1,2}$")
-_DONE = re.compile(r"\[DONE:(\d+)\]", re.IGNORECASE)
+# Canonical and bracket variants: [DONE:1], [DONE: 1], [DONE 1], [Done:1]
+_DONE = re.compile(r"\[DONE\s*:?\s*(\d+)\]", re.IGNORECASE)
+# "Done: 1" without brackets
+_DONE_COLON = re.compile(r"\bDone\s*:\s*(\d+)\b", re.IGNORECASE)
+# "Step 1 done", "Step 2 is complete", "Step 3 finished" — adjacency-anchored,
+# so "Step 9 is not done" / "Step 9 incomplete" never match.
+_STEP_DONE = re.compile(r"\bStep\s*(\d+)\s+(?:is\s+)?(?:done|complete|completed|finished)\b", re.IGNORECASE)
+_ALL_STEPS_DONE = re.compile(
+    r"(?:all|every)\s+steps?\s+(?:are|is\s+)?(?:done|complete|completed|finished)", re.IGNORECASE
+)
+_PLAN_DONE = re.compile(r"\b(?:the\s+)?plan\s+(?:is\s+)?(?:complete|completed|done)\b", re.IGNORECASE)
 
 
 def clean_step_text(text: str) -> str:
@@ -142,22 +154,24 @@ def clean_step_text(text: str) -> str:
 
     if cleaned:
         cleaned = cleaned[0].upper() + cleaned[1:]
-    if len(cleaned) > 50:
-        cleaned = f"{cleaned[:47]}..."
+    # Keep full text: the exec message and widget display need the whole step.
+    # The widget truncates for display (see update_status in __init__.py).
     return cleaned
 
 
 def extract_todo_items(message: str) -> list[TodoItem]:
     items: list[TodoItem] = []
-    header = _PLAN_HEADER.search(message)
-    if header is None:
+    # Take the LAST "Plan:" section: since _get_text_content includes thinking blocks,
+    # a draft in the reasoning block can precede the user-visible plan in the text
+    # block — the text block comes last in content order.
+    headers = list(_PLAN_HEADER.finditer(message))
+    if not headers:
         return items
-
-    plan_section = message[message.index(header.group(0)) + len(header.group(0)) :]
+    plan_section = message[headers[-1].end() :]
 
     for match in _NUMBERED.finditer(plan_section):
         text = _TRAILING_EMPHASIS.sub("", match.group(2).strip()).strip()
-        if len(text) > 5 and not text.startswith(("`", "/", "-")):
+        if len(text) > 5 and not text.startswith(("/", "-")):
             cleaned = clean_step_text(text)
             if len(cleaned) > 3:
                 items.append(TodoItem(step=len(items) + 1, text=cleaned))
@@ -165,13 +179,24 @@ def extract_todo_items(message: str) -> list[TodoItem]:
 
 
 def extract_done_steps(message: str) -> list[int]:
-    return [int(match.group(1)) for match in _DONE.finditer(message)]
+    steps = [int(match.group(1)) for match in _DONE.finditer(message)]
+    steps.extend(int(match.group(1)) for match in _DONE_COLON.finditer(message))
+    steps.extend(int(match.group(1)) for match in _STEP_DONE.finditer(message))
+    return list(dict.fromkeys(steps))
 
 
 def mark_completed_steps(text: str, items: list[TodoItem]) -> int:
     done_steps = extract_done_steps(text)
+    marked = 0
     for step in done_steps:
-        item = next((candidate for candidate in items if candidate.step == step), None)
+        item = next((candidate for candidate in items if candidate.step == step and not candidate.completed), None)
         if item is not None:
             item.completed = True
-    return len(done_steps)
+            marked += 1
+    return marked
+
+
+# Whole-plan completion phrasing, used as a fallback when the model summarizes
+# without [DONE:n] tags. Only consulted on the run's final message (agent_end).
+def all_steps_complete(message: str) -> bool:
+    return _ALL_STEPS_DONE.search(message) is not None or _PLAN_DONE.search(message) is not None

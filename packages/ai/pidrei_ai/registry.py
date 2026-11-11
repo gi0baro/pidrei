@@ -145,7 +145,9 @@ class RefreshModelsContext:
 
 @dataclass(slots=True)
 class ModelsRefreshOptions:
-    allow_network: bool = True
+    # None is pi's absent `allowNetwork`: `Models.refresh` reads it as True, and the coding agent's
+    # `ModelRuntime.refresh` as its own network switch (off in offline mode).
+    allow_network: bool | None = None
     # Restrict refresh to these provider IDs. Unknown and static providers are ignored.
     providers: list[str] | None = None
     # Bypass provider freshness checks and fetch immediately when network access is allowed.
@@ -647,7 +649,8 @@ class Models:
         `providers` is omitted). Provider errors and cancellation are returned
         without raising; static, unknown, and unconfigured providers are skipped."""
         options = options or ModelsRefreshOptions()
-        allow_network = options.allow_network
+        # pi: `options.allowNetwork ?? true`.
+        allow_network = options.allow_network if options.allow_network is not None else True
         caller_cancel = operation_cancel(options.cancel)
         errors: dict[str, Exception] = {}
         if caller_cancel.cancelled:

@@ -11,6 +11,8 @@ pidrei remove <source> [-l]         # alias: uninstall
 pidrei update [source] [--extensions|--models|--all]
 pidrei list
 pidrei config [-l]
+pidrei auth login <provider> [--api-key] [--no-browser]
+pidrei auth logout <provider>
 pidrei auth <check|print-api-key|print-bearer-token> [options]
 pidrei mcp <add|remove|list|login|logout> [options]
 ```
@@ -266,11 +268,28 @@ are refused with the reinstall command to run instead.
 
 ## Credential commands
 
+`pidrei auth login <provider>` logs in to a provider in the terminal and exits,
+without starting a session. It signs in with an account and opens the
+browser, like `/login <provider>`. Providers without account sign-in ask for
+an API key. It requires an interactive terminal.
+
+| Option | Description |
+|--------|-------------|
+| `--api-key` | Save an API key instead of signing in with an account; the key is read without echoing it |
+| `--no-browser` | Do not open a browser; use the provider's other sign-in method, such as a device code, for example over SSH. Asks when there are several. Not allowed with `--api-key` |
+
+`pidrei auth logout <provider>` removes the credentials that `pidrei auth login`
+or `/login` stored, like `/logout`. Environment variables and `models.json`
+config are unchanged. It exits with status `0` when nothing is stored, so it
+is safe to repeat.
+
 ```sh
+pidrei auth login anthropic
+pidrei auth logout anthropic
 pidrei auth check --provider openai --json
 ```
 
-Each command needs `--provider <provider>`, `--model <model>`, or both.
+The other credential commands need `--provider <provider>`, `--model <model>`, or both.
 
 | Command | Output |
 |---------|--------|

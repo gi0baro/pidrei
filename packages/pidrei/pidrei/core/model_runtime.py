@@ -1169,7 +1169,11 @@ class ModelRuntime:
     async def refresh(
         self, options: ModelsRefreshOptions | None = None, *, _requested_only: bool = False
     ) -> ModelsRefreshResult:
-        options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
+        options = options if options is not None else ModelsRefreshOptions()
+        if options.allow_network is None:
+            # pi: `options.allowNetwork ?? this.modelNetworkEnabled`, also when the caller passes
+            # other options: an offline runtime does not fetch for a provider-scoped refresh.
+            options = replace(options, allow_network=self._model_network_enabled)
         cancel = options.cancel
         if options.providers is not None:
             # Provider-scoped refreshes must interleave freely (pi runs each

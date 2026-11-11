@@ -42,6 +42,9 @@ from .cli.auth_command import (
     print_auth_command_help,
     validate_auth_command_args,
 )
+from .cli.auth_login import AuthLoginOptions, run_auth_login
+from .cli.auth_logout import AuthLogoutOptions, run_auth_logout
+from .cli.auth_terminal import ProcessAuthOutput, create_process_login_terminal
 from .cli.credential_print import resolve_credential_for_print
 from .cli.file_processor import process_file_arguments_blocking
 from .cli.initial_message import InitialMessageResult, build_initial_message
@@ -169,6 +172,38 @@ def _is_plain_runtime_metadata_command(parsed: Args) -> bool:
     return not parsed.print and parsed.mode is None and (parsed.help is True or parsed.list_models is not None)
 
 
+async def _run_auth_login_command(args: list[str]) -> int:
+    """pi's runAuthLoginCommand. `_main` already applied the proxy settings of
+    the same global settings; pi's `configureHttpDispatcher` has no PiDrei
+    counterpart (the idle timeout is read per request). pi also aborts the
+    login on SIGINT: PiDrei handles no SIGINT, so only the terminal's interrupt
+    callback cancels it."""
+    settings_manager = await SettingsManager(os.getcwd(), get_agent_dir(), project_trusted=False)
+    model_runtime = await ModelRuntime(allow_model_network=False, cancel=_timeout_cancel(15_000))
+    cancel = CancelToken()
+    exit_code = await run_auth_login(
+        args,
+        AuthLoginOptions(
+            model_runtime=model_runtime,
+            terminal=create_process_login_terminal(cancel.cancel),
+            get_device_id=settings_manager.get_or_create_device_id,
+            cancel=cancel,
+        ),
+    )
+    # A device ID created by the login is a queued settings write; pi's process
+    # lives until it lands.
+    await settings_manager.flush()
+    return exit_code
+
+
+async def _run_auth_logout_command(args: list[str]) -> int:
+    cancel = _timeout_cancel(15_000)
+    model_runtime = await ModelRuntime(allow_model_network=False, cancel=cancel)
+    return await run_auth_logout(
+        args, AuthLogoutOptions(model_runtime=model_runtime, terminal=ProcessAuthOutput(), cancel=cancel)
+    )
+
+
 async def _run_auth_command(args: list[str]) -> int | None:
     """pi's runAuthCommand: handle `auth <command>` before normal startup.
     Returns the process exit code, or None when the args are not an auth
@@ -178,6 +213,11 @@ async def _run_auth_command(args: list[str]) -> int | None:
     if is_auth_command_help(args):
         print_auth_command_help()
         return 0
+    if len(args) > 1 and args[0] == "auth" and args[1] == "login":
+        # `_main` already applied --offline.
+        return await _run_auth_login_command([arg for arg in args[2:] if arg != "--offline"])
+    if len(args) > 1 and args[0] == "auth" and args[1] == "logout":
+        return await _run_auth_logout_command([arg for arg in args[2:] if arg != "--offline"])
 
     try:
         command = parse_auth_command(args)

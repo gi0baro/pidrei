@@ -104,6 +104,7 @@ from ...core.output_guard import (
     write_stdout,
 )
 from ...core.package_manager import DefaultPackageManager
+from ...core.provider_matching import find_matching_providers
 from ...core.session_cwd import (
     MissingSessionCwdChoice,
     MissingSessionCwdError,
@@ -6128,17 +6129,6 @@ class InteractiveMode:
             )
         return sorted(options, key=lambda option: (option["name"].lower(), option["name"]))
 
-    def _find_login_provider_options(self, provider_ref: str) -> list:
-        normalized_provider_ref = provider_ref.strip().lower()
-        if not normalized_provider_ref:
-            return []
-
-        return [
-            provider
-            for provider in self.get_login_provider_options()
-            if provider["id"].lower() == normalized_provider_ref or provider["name"].lower() == normalized_provider_ref
-        ]
-
     def _handle_login_command(self, provider_ref: str | None = None) -> None:
         """From the submit handler: the selector or the login dialog is shown
         here; a login flow is spawned."""
@@ -6146,7 +6136,9 @@ class InteractiveMode:
             self._show_login_auth_type_selector()
             return
 
-        provider_options = self._find_login_provider_options(provider_ref)
+        provider_options = find_matching_providers(
+            self.get_login_provider_options(), provider_ref, lambda option: (option["id"], option["name"])
+        )
         if len(provider_options) == 1:
             self._start_provider_login(provider_options[0])
             return
