@@ -1775,8 +1775,9 @@ TEST_HOMES = {
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
     "packages/coding-agent/test/git-update.test.ts": (
-        "partial mirror: test_package_manager.py holds the 1.5.1 update result cases (git stubbed); the "
-        "force-push handling cases are a PARITY GAP"
+        "home: packages/pidrei/tests/test_git_update.py (every case, against real git); the npm assertions "
+        "are not mirrored (git packages install no dependencies); test_package_manager.py also pins the "
+        "update result cases with git stubbed"
     ),
     "packages/coding-agent/test/suite/regressions/8237-node-sea-extension-loading.test.ts": (
         "not ported: guards jiti virtualModules vs filesystem aliases inside a Node SEA binary; "

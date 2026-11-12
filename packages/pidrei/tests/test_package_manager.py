@@ -12,8 +12,8 @@ resolution, metadata, `.agents` discovery, ignore files, pattern filtering,
 package dedupe and multi-file discovery — is mirrored here.
 
 The `result` events of pi's git-update.test.ts (the old and new commit of an
-updated package) are mirrored at the end, with git stubbed; the rest of that
-file is not mirrored.
+updated package) are also pinned at the end, with git stubbed;
+`test_git_update.py` mirrors that file against real git.
 """
 
 import json
@@ -1175,9 +1175,10 @@ async def test_ignores_invalid_manifest_resource_fields_without_dropping_valid_f
 
 # -- git update results (pi's git-update.test.ts) -----------------------------------
 #
-# pi's suite drives real git against a local remote; here `_run_command` is
-# stubbed with a checkout whose HEAD moves on `checkout`, so the cases pin the
-# `result` events the update reports from the HEAD before and after it.
+# pi's suite drives real git against a local remote (test_git_update.py mirrors
+# it); here `_run_command` is stubbed with a checkout whose HEAD moves on
+# `reset` to the upstream's, so the cases pin the `result` events the update
+# reports from the HEAD before and after it.
 
 OLD_COMMIT = "a" * 40
 NEW_COMMIT = "b" * 40
@@ -1186,13 +1187,17 @@ NEW_COMMIT = "b" * 40
 def stub_git_checkout(dirs, *, head_after_update: str) -> None:
     head = OLD_COMMIT
 
-    async def run_command(_command: str, args: list[str], *, cwd: str | None = None) -> str:
+    async def run_command(
+        _command: str, args: list[str], *, cwd: str | None = None, timeout_ms: int | None = None, env=None
+    ) -> str:
         nonlocal head
         if args == ["rev-parse", "HEAD"]:
             return f"{head}\n"
-        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
-            return "main\n"
-        if args[0] == "checkout":
+        if args == ["rev-parse", "--abbrev-ref", "@{upstream}"]:
+            return "origin/main\n"
+        if args == ["rev-parse", "@{upstream}^{commit}"]:
+            return f"{head_after_update}\n"
+        if args[0] == "reset":
             head = head_after_update
         return ""
 
@@ -1234,6 +1239,49 @@ async def test_git_update_reports_the_old_and_new_commit_when_the_remote_has_new
     await dirs.manager.update()
 
     assert updated == [f"{git_source} {OLD_COMMIT[:7]} -> {NEW_COMMIT[:7]}"]
+
+
+# pidrei-only: pi bounds each captured git read with NETWORK_TIMEOUT_MS and runs the update
+# check's ls-remote reads with GIT_TERMINAL_PROMPT=0 (runGitRemoteCommand); its suite has no case.
+
+
+@pytest.mark.tonio
+async def test_run_command_raises_when_the_command_outlives_its_timeout(dirs):
+    with pytest.raises(Exception, match=r"^sleep 10 timed out after 100ms$"):
+        await dirs.manager._run_command("sleep", ["10"], timeout_ms=100)
+
+
+@pytest.mark.tonio
+async def test_update_check_bounds_its_git_reads_and_disables_the_ls_remote_prompt(dirs):
+    installed_path = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
+    os.makedirs(installed_path)
+    dirs.settings.set_packages(["git:github.com/user/repo"])
+    calls: list[tuple[list[str], dict]] = []
+
+    async def run_command(_command: str, args: list[str], **options) -> str:
+        calls.append((args, options))
+        if args == ["rev-parse", "HEAD"]:
+            return f"{OLD_COMMIT}\n"
+        if args[-1] == "@{upstream}":
+            return "origin/main\n"
+        # The upstream branch is not on the remote, so the check falls back to the remote HEAD.
+        if args == ["ls-remote", "origin", "HEAD"]:
+            return f"{NEW_COMMIT}\tHEAD\n"
+        return ""
+
+    dirs.manager._run_command = run_command
+
+    [update] = await dirs.manager.check_for_available_updates()
+
+    assert update.source == "git:github.com/user/repo"
+    read = {"cwd": installed_path, "timeout_ms": 10_000}
+    remote = {**read, "env": {"GIT_TERMINAL_PROMPT": "0"}}
+    assert calls == [
+        (["rev-parse", "HEAD"], read),
+        (["rev-parse", "--abbrev-ref", "@{upstream}"], read),
+        (["ls-remote", "origin", "refs/heads/main"], remote),
+        (["ls-remote", "origin", "HEAD"], remote),
+    ]
 
 
 # pidrei-only: pi's isOfflineModeEnabled accepts only 1/true/yes; any other value is online.

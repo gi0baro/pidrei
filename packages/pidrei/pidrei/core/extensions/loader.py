@@ -41,7 +41,7 @@ import tonio.colored as tonio
 
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.event_bus import EventBus
-from pidrei.core.exec import exec_command
+from pidrei.core.exec import DEFAULT_EXEC_MAX_BUFFER, exec_command
 from pidrei.core.mcp_servers import McpServerConfig, RegisteredMcpServer, validate_mcp_server_config
 from pidrei.core.pidrei_manifest import read_pidrei_manifest_blocking
 from pidrei.core.source_info import create_synthetic_source_info, get_synthetic_path_source, is_synthetic_path
@@ -400,11 +400,20 @@ class ExtensionAPI:
         self._assert_active()
         await self._action("set_label")(entry_id, label)
 
-    def exec(self, command: str, args: list[str], *, cwd: str | None = None, **options: Any) -> Any:
+    def exec(
+        self,
+        command: str,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        cancel: Any = None,
+        timeout: float | None = None,
+        max_buffer: int = DEFAULT_EXEC_MAX_BUFFER,
+    ) -> Any:
         """Returns the coroutine, as pi returns the promise: no await here, so
         the command starts only when the extension awaits it."""
         self._assert_active()
-        return exec_command(command, args, cwd or self._cwd, **options)
+        return exec_command(command, args, cwd or self._cwd, cancel=cancel, timeout=timeout, max_buffer=max_buffer)
 
     def get_active_tools(self) -> list[str]:
         self._assert_active()

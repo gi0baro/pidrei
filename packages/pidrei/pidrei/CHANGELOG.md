@@ -6,6 +6,42 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.5.2.1] - 2026-11-12
+
+### Changed
+
+- Updating a git package removes untracked files from its checkout
+  (`git clean -fdx`) after moving it to a new commit, as Pi does. When the
+  clean fails, for example because another pidrei session has files open
+  there, the update prints a warning and the next update retries the clean.
+
+### Fixed
+
+- Updating a git package installed without a pinned ref could move it to
+  another branch: the first update left the checkout detached, and the next
+  one checked out the alphabetically first remote branch, such as `develop`
+  or `gh-pages` instead of `main`. Updates now follow the checkout's upstream
+  branch, or the remote's default branch when it has none, and hard-reset to
+  it, as Pi does. A checkout already left detached or on another branch is
+  brought back to the remote's default branch by the next `pidrei update`.
+  This affected `pidrei update`, `pidrei install` of a source that is already
+  installed, and the refresh of `-e git:…` sources at startup.
+- The startup check for package updates and the package manager's other git
+  reads give up after 10 seconds instead of waiting on an unresponsive
+  remote, and the check's remote reads no longer let git ask for credentials
+  on the terminal underneath the interface, as it did for a private or
+  deleted https remote without a credential helper.
+- `pidrei update` prints the package manager's warnings. When nothing was
+  updated and a warning was printed, it says `No packages were updated, see
+  the warnings above` (or `<source> was not updated, see the warnings
+  above`) instead of claiming the packages are up to date.
+- RPC mode could drop a command it had already received when an extension
+  called `ctx.shutdown()` while idle; the command is now answered before the
+  process exits.
+- In sessions using virtual models, a model change made while a prompt was
+  starting could leave the previous model recorded as the session's
+  selection, so resuming the session restored the older model.
+
 ## [1.5.2.0] - 2026-11-11
 
 Tracks [Pi 1.5.2](https://github.com/earendil-works/pi/releases/tag/v1.5.2).

@@ -141,6 +141,17 @@ async def test_reports_code_0_for_a_command_its_timeout_terminated():
 
 
 @pytest.mark.tonio
+async def test_lays_env_over_the_inherited_environment(monkeypatch):
+    # PiDrei: pi's package manager spawns with `{ ...baseEnv, ...options.env }`.
+    monkeypatch.setenv("PIDREI_EXEC_TEST_INHERITED", "inherited")
+    monkeypatch.setenv("PIDREI_EXEC_TEST_LAID", "inherited")
+    script = "os.write(1, ' '.join(os.environ[f'PIDREI_EXEC_TEST_{name}'] for name in ('INHERITED', 'LAID')).encode())"
+    result = await exec_command(*_python(script), os.getcwd(), env={"PIDREI_EXEC_TEST_LAID": "laid"})
+
+    assert result == ExecResult(stdout="inherited laid", stderr="", code=0, killed=False, truncated=False)
+
+
+@pytest.mark.tonio
 async def test_force_kills_a_command_that_ignores_sigterm(monkeypatch):
     # pi waits its 5 s; the grace is shortened here.
     monkeypatch.setattr(exec_module, "_FORCE_KILL_DELAY_S", 0.2)

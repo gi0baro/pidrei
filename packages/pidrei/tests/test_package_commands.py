@@ -356,6 +356,40 @@ class TestUpdateTargets:
         assert parse_package_command(["update", "--models"]).update_target == "models"
         assert parse_package_command(["update", "--all"]).update_target == "all"
 
+    # pidrei-only adaptation of pi's "does not report packages as up to date when npm left an older
+    # version installed": pi's warning is npm's stale-metadata one; pidrei's only warning is the git
+    # clean's. The checkout is current and a previous clean left its marker, so the update retries
+    # the clean, which fails again.
+    @pytest.mark.tonio
+    async def test_does_not_report_packages_as_up_to_date_when_git_clean_failed(self, workspace, monkeypatch):
+        install_root = os.path.join(workspace["agent_dir"], "git", "github.com", "user")
+        installed_path = os.path.join(install_root, "repo")
+        os.makedirs(installed_path)
+        with open(os.path.join(install_root, ".repo.pidrei-update-incomplete"), "w", encoding="utf-8"):
+            pass
+        with open(os.path.join(workspace["agent_dir"], "settings.json"), "w", encoding="utf-8") as handle:
+            json.dump({"packages": ["git:github.com/user/repo"]}, handle)
+        monkeypatch.delenv("PIDREI_OFFLINE", raising=False)
+
+        async def run_command(self, command: str, args: list[str], **_options) -> str:
+            if args[0] == "clean":
+                raise Exception("git clean -fdx failed: warning: failed to remove build/")
+            if args == ["rev-parse", "--abbrev-ref", "@{upstream}"]:
+                return "origin/main\n"
+            # HEAD and the upstream are the same commit: the checkout is current.
+            if args[0] == "rev-parse":
+                return "current-head\n"
+            return ""
+
+        monkeypatch.setattr(DefaultPackageManager, "_run_command", run_command)
+
+        with capture() as captured:
+            assert await handle_package_command(["update", "--extensions"]) == 0
+
+        assert f"Could not remove all untracked files in {installed_path}" in captured.out
+        assert "No packages were updated, see the warnings above" in captured.out
+        assert "up to date" not in captured.out
+
     @pytest.mark.tonio
     async def test_does_not_report_packages_as_up_to_date_in_offline_mode(self, workspace, monkeypatch):
         # pi configures a stale npm package; any configured git package is skipped the same way.

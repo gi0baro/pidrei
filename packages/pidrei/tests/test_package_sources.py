@@ -37,14 +37,18 @@ class _Dirs:
         self.manager = DefaultPackageManager(cwd=self.root, agent_dir=self.agent_dir, settings_manager=self.settings)
         self.commands: list[tuple[str, list[str], str | None]] = []
 
-    def stub_run_command(self, *, fail: bool = False) -> None:
-        async def run_command(command: str, args: list[str], *, cwd: str | None = None) -> str:
+    def stub_run_command(self, *, fail: bool = False, outputs: dict[tuple[str, ...], str] | None = None) -> None:
+        """Records each command; `outputs` maps a command's args to its stdout (default empty)."""
+
+        async def run_command(
+            command: str, args: list[str], *, cwd: str | None = None, timeout_ms: int | None = None, env=None
+        ) -> str:
             self.commands.append((command, args, cwd))
             if fail:
                 raise Exception("git failed")
             if args and args[0] == "clone":
                 os.makedirs(args[-1], exist_ok=True)
-            return ""
+            return (outputs or {}).get(tuple(args), "")
 
         self.manager._run_command = run_command
 
@@ -242,13 +246,44 @@ async def test_checks_out_a_pinned_ref_after_cloning(dirs):
 async def test_reconciles_an_existing_checkout_to_a_pinned_ref_instead_of_recloning(dirs):
     target = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
     os.makedirs(target)
-    dirs.stub_run_command()
+    dirs.stub_run_command(outputs={("rev-parse", "HEAD"): "old-head", ("rev-parse", "FETCH_HEAD^{commit}"): "new-head"})
 
     await dirs.manager.install("git:github.com/user/repo@v2.0.0")
 
-    assert [args[0] for _command, args, _cwd in dirs.commands] == ["fetch", "checkout"]
-    assert dirs.commands[0][1] == ["fetch", "origin", "v2.0.0"]
-    assert dirs.commands[1][1] == ["checkout", "--force", "FETCH_HEAD"]
+    assert [args for _command, args, _cwd in dirs.commands] == [
+        ["fetch", "origin", "v2.0.0"],
+        ["rev-parse", "HEAD"],
+        ["rev-parse", "FETCH_HEAD^{commit}"],
+        ["reset", "--hard", "FETCH_HEAD^{commit}"],
+        ["clean", "-fdx"],
+    ]
+    assert {cwd for _command, _args, cwd in dirs.commands} == {target}
+
+
+@pytest.mark.tonio
+async def test_reconciles_an_existing_git_checkout_to_its_update_target_when_installing_without_a_ref(dirs):
+    target = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
+    fetch_args = ["fetch", "--prune", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]
+    os.makedirs(target)
+
+    async def get_local_git_update_target(_target_dir: str) -> tuple[list[str], str]:
+        return fetch_args, "origin/HEAD"
+
+    dirs.manager._get_local_git_update_target = get_local_git_update_target
+    dirs.stub_run_command(
+        outputs={("rev-parse", "HEAD"): "old-head", ("rev-parse", "origin/HEAD^{commit}"): "new-head"}
+    )
+
+    await dirs.manager.install("git:github.com/user/repo")
+
+    assert [args for _command, args, _cwd in dirs.commands] == [
+        fetch_args,
+        ["rev-parse", "HEAD"],
+        ["rev-parse", "origin/HEAD^{commit}"],
+        ["reset", "--hard", "origin/HEAD^{commit}"],
+        ["clean", "-fdx"],
+    ]
+    assert {cwd for _command, _args, cwd in dirs.commands} == {target}
 
 
 @pytest.mark.tonio
@@ -269,7 +304,9 @@ async def test_removes_a_newly_created_checkout_when_git_clone_fails(dirs):
     # not mirrored; package sources here are git and local only.
     target_dir = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
 
-    async def run_command(command: str, args: list[str], *, cwd: str | None = None) -> str:
+    async def run_command(
+        command: str, args: list[str], *, cwd: str | None = None, timeout_ms: int | None = None, env=None
+    ) -> str:
         if command == "git" and args and args[0] == "clone":
             os.makedirs(target_dir, exist_ok=True)
             raise Exception("simulated git clone failure")
@@ -323,13 +360,21 @@ async def test_update_skips_everything_when_offline(dirs):
 async def test_update_reconciles_each_configured_git_package(dirs):
     target = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
     os.makedirs(target)
-    dirs.stub_run_command()
+    dirs.stub_run_command(outputs={("rev-parse", "FETCH_HEAD^{commit}"): "new-head"})
     dirs.settings.set_packages(["git:github.com/user/repo@v1.0.0"])
 
     await dirs.manager.update()
 
     # The HEAD is read before and after, for the update's `result` event.
-    assert [args[0] for _command, args, _cwd in dirs.commands] == ["rev-parse", "fetch", "checkout", "rev-parse"]
+    assert [args[0] for _command, args, _cwd in dirs.commands] == [
+        "rev-parse",
+        "fetch",
+        "rev-parse",
+        "rev-parse",
+        "reset",
+        "clean",
+        "rev-parse",
+    ]
 
 
 @pytest.mark.tonio
@@ -342,11 +387,15 @@ async def test_update_finishes_the_other_packages_when_one_fails(dirs):
     dirs.settings.set_packages([f"git:github.com/user/{name}@v1.0.0" for name in names])
     checked_out: list[str] = []
 
-    async def run_command(_command: str, args: list[str], *, cwd: str | None = None) -> str:
+    async def run_command(
+        _command: str, args: list[str], *, cwd: str | None = None, timeout_ms: int | None = None, env=None
+    ) -> str:
         name = os.path.basename(cwd)
         if name == "a":
             raise Exception("git failed")
-        if args[0] == "checkout":
+        if args == ["rev-parse", "FETCH_HEAD^{commit}"]:
+            return "new-head"
+        if args[0] == "reset":
             checked_out.append(name)
         return ""
 
@@ -461,7 +510,9 @@ async def test_does_not_refresh_temporary_git_sources_pinned_to_the_checked_out_
     assert isinstance(parsed, GitSource)
     os.makedirs(await dirs.manager._get_git_install_path(parsed, "temporary"))
 
-    async def run_command(command: str, args: list[str], *, cwd: str | None = None) -> str:
+    async def run_command(
+        command: str, args: list[str], *, cwd: str | None = None, timeout_ms: int | None = None, env=None
+    ) -> str:
         dirs.commands.append((command, args, cwd))
         return "ABC1234def5678901234567890123456789012345\n"
 

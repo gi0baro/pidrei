@@ -529,12 +529,19 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
 
     # Update result events describe a changed package, e.g. "git:github.com/user/repo abc1234 -> def5678".
     updated_packages: list[str] = []
+    # Progress messages are warnings, e.g. a git clean that could not remove every untracked file. They
+    # arrive from the updates running in parallel, so they are collected in a list (its append is
+    # thread-safe) rather than counted with `+= 1`.
+    warnings: list[str] = []
 
     def on_progress(event) -> None:
         if event.type == "result" and event.action == "update" and event.message:
             updated_packages.append(event.message)
         elif event.type == "start" and event.message:
             write_stdout(dim(event.message) + "\n")
+        elif event.type == "progress" and event.message:
+            warnings.append(event.message)
+            write_stdout(yellow(event.message) + "\n")
 
     package_manager.set_progress_callback(on_progress)
 
@@ -561,13 +568,18 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
         # update
         update_source = options.update_source
         await package_manager.update(update_source)
-        # Only claim "up to date" when the update actually checked. pi also
-        # prints "No packages were updated, see the warnings above" when nothing
-        # changed and a `progress` warning was printed; PiDrei's update emits no
-        # `progress` events (pi's are npm's stale-metadata warning and a git-clean
-        # warning it does not have), so that branch is not ported.
+        # Only claim "up to date" when the update actually checked and nothing warned.
         if is_offline_mode_enabled():
             write_stdout(yellow("Skipped package updates (offline mode)") + "\n")
+        elif not updated_packages and warnings:
+            write_stdout(
+                yellow(
+                    f"{update_source} was not updated, see the warnings above"
+                    if update_source
+                    else "No packages were updated, see the warnings above"
+                )
+                + "\n"
+            )
         elif not updated_packages:
             write_stdout(
                 green(f"{update_source} is already up to date" if update_source else "Packages are already up to date")

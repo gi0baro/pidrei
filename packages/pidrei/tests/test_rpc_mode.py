@@ -537,6 +537,45 @@ class TestRpcExtensionShutdownRequests:
             slow_release.set()
             await harness.stop()
 
+    # The line reaches the mode before the shutdown is requested, but nothing waits for the
+    # command to start: the mode counts it when the line is handed over, so the spawned idle
+    # check sees it. The handler holds the response until the request has had its chance.
+    @pytest.mark.tonio
+    async def test_waits_for_a_delivered_command_that_has_not_started_when_an_idle_shutdown_is_requested(
+        self, tmp_path
+    ):
+        harness = _RpcHarness()
+        contexts: list = []
+        slow_started = tonio.Event()
+        slow_release = tonio.Event()
+
+        async def factory(pi) -> None:
+            async def slow(_args, _ctx):
+                slow_started.set()
+                await slow_release.wait()
+
+            pi.register_command("slow", handler=slow)
+
+        host = await _create_runtime_host(
+            tmp_path,
+            stream_fn=_stream_fn(),
+            with_auth=False,
+            extension_factories=[_capture_shutdown(contexts), factory],
+        )
+        await harness.start(host)
+        try:
+            harness.send({"id": "s", "type": "prompt", "message": "/slow"})
+            contexts[-1].shutdown()
+            await slow_started.wait(5)
+            assert slow_started.is_set(), "the command never started"
+            slow_release.set()
+            await harness.until(lambda: len(harness.exits) > 0)
+            assert len(harness.exits) == 1
+            assert _exit_order(harness, "s") == ["response", "exit"]
+        finally:
+            slow_release.set()
+            await harness.stop()
+
 
 class TestRpcShutdownTriggers:
     """pi's "RPC shutdown triggers" describe. pi emits stdin `end` and SIGTERM on the

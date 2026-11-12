@@ -859,18 +859,26 @@ class AgentSession:
         responses cannot record a virtual selection because they name physical
         models. Responses do record a physical selection unless the branch holds a
         virtual one; checking a physical selection against responses would record
-        it on every prompt while `prepare_request` redirects to another model."""
-        model = self.model
-        if model is None:
-            return
+        it on every prompt while `prepare_request` redirects to another model.
+
+        pi compares and appends in one synchronous step. Here the append suspends
+        on the session manager, and `set_model` can change the live model and
+        append its own `model_change` meanwhile, leaving the older model last on
+        the branch. So the branch is read again after each append, and the live
+        model recorded again while they differ."""
         get_model = self._model_runtime.get_model
-        recorded = get_branch_selection(branch, get_model)
-        if recorded is None or recorded == (model.provider, model.id):
-            return
-        recorded_model = get_model(*recorded)
-        if not is_virtual_model(model) and not (recorded_model is not None and is_virtual_model(recorded_model)):
-            return
-        await self.session_manager.append_model_change(model.provider, model.id)
+        while True:
+            model = self.model
+            if model is None:
+                return
+            recorded = get_branch_selection(branch, get_model)
+            if recorded is None or recorded == (model.provider, model.id):
+                return
+            recorded_model = get_model(*recorded)
+            if not is_virtual_model(model) and not (recorded_model is not None and is_virtual_model(recorded_model)):
+                return
+            await self.session_manager.append_model_change(model.provider, model.id)
+            branch = self.session_manager.get_branch()
 
     async def _record_thinking_level(self, branch: list[dict[str, Any]]) -> None:
         """Record the thinking level on the current branch when the branch implies

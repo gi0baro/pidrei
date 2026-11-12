@@ -826,25 +826,10 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
             case _:
                 return error(id, str(command_type), f"Unknown command: {command_type}")
 
-    async def handle_input_line(line: str) -> None:
+    async def run_command(command: dict[str, Any]) -> None:
+        """The rest of pi's `handleInputLine`, from its first await; the caller has counted
+        the command."""
         nonlocal active_commands
-        try:
-            parsed = json.loads(line)
-        except Exception as parse_error:
-            output(error(None, "parse", f"Failed to parse command: {parse_error}"))
-            await drain_output()
-            return
-
-        # Handle extension UI responses
-        if isinstance(parsed, dict) and parsed.get("type") == "extension_ui_response":
-            pending = pending_extension_requests.pop(parsed.get("id"), None)
-            if pending is not None:
-                pending(parsed)
-            return
-
-        command = parsed if isinstance(parsed, dict) else {}
-        with shutdown_guard:
-            active_commands += 1
         try:
             try:
                 response = await handle_command(command)
@@ -866,10 +851,30 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
         if not failed:
             check_shutdown_requested()
 
-    # Lines are handled fire-and-forget so a long prompt does not block
-    # subsequent commands (pi: void handleInputLine(line)).
+    # pi: `void handleInputLine(line)`, which parses the line, resolves an extension UI response
+    # and counts the command before its first await. That prefix runs here, so a delivered
+    # command is counted before any later shutdown check; only the rest is spawned, so a long
+    # prompt does not block subsequent commands.
     def on_input_line(line: str) -> None:
-        tonio.spawn.without_tracking(handle_input_line(line))
+        nonlocal active_commands
+        try:
+            parsed = json.loads(line)
+        except Exception as parse_error:
+            output(error(None, "parse", f"Failed to parse command: {parse_error}"))
+            tonio.spawn.without_tracking(drain_output())
+            return
+
+        # Handle extension UI responses
+        if isinstance(parsed, dict) and parsed.get("type") == "extension_ui_response":
+            pending = pending_extension_requests.pop(parsed.get("id"), None)
+            if pending is not None:
+                pending(parsed)
+            return
+
+        command = parsed if isinstance(parsed, dict) else {}
+        with shutdown_guard:
+            active_commands += 1
+        tonio.spawn.without_tracking(run_command(command))
 
     async def on_input_end() -> None:
         # pi: `void shutdown()`. The pump waits here, so the mode does not return while the

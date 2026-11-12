@@ -29,6 +29,7 @@ import hashlib
 import os
 import re
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,6 +52,8 @@ from .source_info import BUILTIN_PATH_PREFIX, PathMetadata, get_resource_path_ke
 RESOURCE_TYPES = ("extensions", "skills", "prompts", "themes")
 # Git packages updated at once.
 GIT_UPDATE_CONCURRENCY = 4
+# Bound on each captured git read (`_run_command`'s `timeout_ms`).
+NETWORK_TIMEOUT_MS = 10_000
 # A ref that is (an abbreviation of) a commit hash, not a branch or tag name.
 _COMMIT_HASH_REF = re.compile(r"[0-9a-f]{7,64}", re.IGNORECASE)
 
@@ -91,15 +94,15 @@ class PackageInstallFailure:
 
 @dataclass(slots=True)
 class ProgressEvent:
-    """pi's ProgressEvent: `type` is start|complete|error|result, `action` is
-    install|pull|remove|update.
+    """pi's ProgressEvent: `type` is start|progress|complete|error|result,
+    `action` is install|pull|remove|update.
 
     `start` is followed by exactly one `complete` or `error` for the same
     source. `result` reports an outcome outside that pairing, e.g. one changed
     package after update(): `git:github.com/user/repo abc1234 -> def5678`.
-    pi's `progress` type (an intermediate message or warning) has no emitter
-    here: its two senders are npm's stale-metadata warning and a git-clean
-    warning PiDrei does not have.
+    `progress` is an intermediate warning; its one sender here is the failed
+    `git clean` of an update (pi's other sender is npm's stale-metadata
+    warning).
     """
 
     type: str
@@ -760,26 +763,116 @@ class DefaultPackageManager:
             with open(ignore_path, "w", encoding="utf-8") as handle:
                 handle.write("*\n")
 
-    async def _run_command(self, command: str, args: list[str], *, cwd: str | None = None) -> str:
-        result = await exec_command(command, args, cwd or self._cwd)
+    async def _run_command(
+        self,
+        command: str,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        timeout_ms: int | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        result = await exec_command(command, args, cwd or self._cwd, timeout=timeout_ms, env=env)
+        # No cancel token is passed, so a kill without truncation is the timeout. Test it before the
+        # code: a command ended by a signal reads as code 0.
+        if result.killed and not result.truncated:
+            raise Exception(f"{command} {' '.join(args)} timed out after {timeout_ms}ms")
         if result.code != 0:
             detail = (result.stderr or result.stdout or "").strip()
             raise Exception(f"{command} {' '.join(args)} failed: {detail}")
         return result.stdout
 
+    @staticmethod
+    def _get_git_update_marker_path(target_dir: str) -> str:
+        # Marks an update whose `git clean` has not succeeded yet, so the next update retries it.
+        return os.path.join(os.path.dirname(target_dir), f".{os.path.basename(target_dir)}.pidrei-update-incomplete")
+
+    async def _clean_git_checkout(self, target_dir: str, marker_path: str) -> None:
+        """pi's cleanAndInstallGitDependencies without its dependency install (module docstring)."""
+        # Clean untracked files (extensions should be pristine).
+        try:
+            await self._run_command("git", ["clean", "-fdx"], cwd=target_dir)
+        except Exception as error:
+            self._emit_progress(
+                ProgressEvent(
+                    type="progress",
+                    action="update",
+                    source=target_dir,
+                    message=(
+                        f"Could not remove all untracked files in {target_dir} ({error}). Files may be in use by "
+                        "another pidrei session; close it and run the update again."
+                    ),
+                )
+            )
+            return
+        await fs.Path(marker_path).unlink(missing_ok=True)
+
     async def _ensure_git_ref(self, target_dir: str, fetch_args: list[str], ref: str) -> None:
+        # Fetch only the ref we will reset to, avoiding unrelated branch/tag noise.
         await self._run_command("git", fetch_args, cwd=target_dir)
-        await self._run_command("git", ["checkout", "--force", ref], cwd=target_dir)
+
+        local_head = await self._run_command(
+            "git", ["rev-parse", "HEAD"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS
+        )
+        commit_ref = f"{ref}^{{commit}}"
+        target_head = await self._run_command(
+            "git", ["rev-parse", commit_ref], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS
+        )
+        marker_path = self._get_git_update_marker_path(target_dir)
+        if local_head.strip() == target_head.strip():
+            # pi also repairs missing npm dependencies here; git packages install none (module docstring).
+            if await fs.Path(marker_path).exists():
+                await self._clean_git_checkout(target_dir, marker_path)
+            return
+
+        await fs.Path(marker_path).write_text("", encoding="utf-8")
+        await self._run_command("git", ["reset", "--hard", commit_ref], cwd=target_dir)
+        await self._clean_git_checkout(target_dir, marker_path)
 
     async def _get_local_git_update_target(self, target_dir: str) -> tuple[list[str], str]:
-        """Track the checked-out branch when the source pins no ref."""
+        """The fetch and the ref to reset to when the source pins no ref: the
+        checkout's `origin` upstream branch, else the remote's default branch.
+
+        pi also returns the target's head, which no caller reads. The reads
+        stay: an upstream that does not resolve falls back to `origin/HEAD`,
+        and an `origin/HEAD` that does not resolve fails the update.
+        """
         try:
-            branch = (await self._run_command("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd=target_dir)).strip()
+            upstream = await self._run_command(
+                "git", ["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS
+            )
+            trimmed_upstream = upstream.strip()
+            if not trimmed_upstream.startswith("origin/"):
+                raise Exception(f"Unsupported upstream remote: {trimmed_upstream}")
+            branch = trimmed_upstream[len("origin/") :]
+            if not branch:
+                raise Exception("Missing upstream branch name")
+            await self._run_command("git", ["rev-parse", "@{upstream}"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS)
+            return (
+                ["fetch", "--prune", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+                "@{upstream}",
+            )
         except Exception:
-            branch = ""
-        if not branch or branch == "HEAD":
-            return ["fetch", "origin"], "FETCH_HEAD"
-        return ["fetch", "origin", branch], "FETCH_HEAD"
+            pass
+
+        try:
+            await self._run_command("git", ["remote", "set-head", "origin", "-a"], cwd=target_dir)
+        except Exception:
+            pass
+        await self._run_command("git", ["rev-parse", "origin/HEAD"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS)
+        try:
+            origin_head_ref = await self._run_command(
+                "git", ["symbolic-ref", "refs/remotes/origin/HEAD"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS
+            )
+        except Exception:
+            origin_head_ref = ""
+        branch = origin_head_ref.strip().removeprefix("refs/remotes/origin/")
+        if branch:
+            return (
+                ["fetch", "--prune", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+                "origin/HEAD",
+            )
+        return ["fetch", "--prune", "--no-tags", "origin", "+HEAD:refs/remotes/origin/HEAD"], "origin/HEAD"
 
     async def _install_git(self, source: GitSource, scope: str) -> None:
         target_dir = await self._get_git_install_path(source, scope)
@@ -796,6 +889,7 @@ class DefaultPackageManager:
         if git_root:
             await tonio.spawn_blocking(self._ensure_git_ignore_blocking, git_root)
         await fs.Path(os.path.dirname(target_dir)).mkdir(parents=True, exist_ok=True)
+        await fs.Path(self._get_git_update_marker_path(target_dir)).unlink(missing_ok=True)
 
         try:
             await self._run_command("git", ["clone", source.repo, target_dir])
@@ -824,7 +918,9 @@ class DefaultPackageManager:
             # A ref can name a moving branch, so refresh refs too. Skip the network call only when the
             # ref is a commit hash that is already checked out.
             if source.ref and _COMMIT_HASH_REF.fullmatch(source.ref):
-                head = await self._run_command("git", ["rev-parse", "HEAD"], cwd=installed_path)
+                head = await self._run_command(
+                    "git", ["rev-parse", "HEAD"], cwd=installed_path, timeout_ms=NETWORK_TIMEOUT_MS
+                )
                 if head.strip().lower().startswith(source.ref.lower()):
                     return
             await self._with_progress(
@@ -839,9 +935,8 @@ class DefaultPackageManager:
 
     async def _remove_git(self, source: GitSource, scope: str) -> None:
         target_dir = await self._get_git_install_path(source, scope)
-        if not await fs.Path(target_dir).exists():
-            return
         await tonio.spawn_blocking(shutil.rmtree, target_dir, ignore_errors=True)
+        await fs.Path(self._get_git_update_marker_path(target_dir)).unlink(missing_ok=True)
         await tonio.spawn_blocking(
             self._prune_empty_git_parents_blocking, target_dir, self._get_git_install_root(scope)
         )
@@ -902,28 +997,38 @@ class DefaultPackageManager:
 
     async def _get_git_upstream_ref(self, target_dir: str) -> str | None:
         try:
-            ref = (
-                await self._run_command(
-                    "git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=target_dir
-                )
-            ).strip()
+            upstream = await self._run_command(
+                "git", ["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS
+            )
         except Exception:
             return None
-        if not ref or "/" not in ref:
+        trimmed = upstream.strip()
+        if not trimmed.startswith("origin/"):
             return None
-        # "origin/main" -> "main": ls-remote wants the ref name, not the
-        # remote-tracking form.
-        return ref.split("/", 1)[1] or None
+        branch = trimmed[len("origin/") :]
+        return f"refs/heads/{branch}" if branch else None
 
     async def _get_remote_git_head(self, target_dir: str) -> str:
         upstream_ref = await self._get_git_upstream_ref(target_dir)
         if upstream_ref:
-            output = await self._run_command("git", ["ls-remote", "origin", upstream_ref], cwd=target_dir)
+            output = await self._run_command(
+                "git",
+                ["ls-remote", "origin", upstream_ref],
+                cwd=target_dir,
+                timeout_ms=NETWORK_TIMEOUT_MS,
+                env={"GIT_TERMINAL_PROMPT": "0"},
+            )
             match = re.search(r"^([0-9a-f]{40})\s+", output, re.MULTILINE)
             if match:
                 return match.group(1)
 
-        output = await self._run_command("git", ["ls-remote", "origin", "HEAD"], cwd=target_dir)
+        output = await self._run_command(
+            "git",
+            ["ls-remote", "origin", "HEAD"],
+            cwd=target_dir,
+            timeout_ms=NETWORK_TIMEOUT_MS,
+            env={"GIT_TERMINAL_PROMPT": "0"},
+        )
         match = re.search(r"^([0-9a-f]{40})\s+HEAD$", output, re.MULTILINE)
         if not match:
             raise Exception("Failed to determine remote HEAD")
@@ -933,7 +1038,9 @@ class DefaultPackageManager:
         if is_offline_mode_enabled():
             return False
         try:
-            local_head = (await self._run_command("git", ["rev-parse", "HEAD"], cwd=installed_path)).strip()
+            local_head = (
+                await self._run_command("git", ["rev-parse", "HEAD"], cwd=installed_path, timeout_ms=NETWORK_TIMEOUT_MS)
+            ).strip()
             return local_head != (await self._get_remote_git_head(installed_path)).strip()
         except Exception:
             return False
@@ -1046,7 +1153,7 @@ class DefaultPackageManager:
         if not await fs.Path(target_dir).exists():
             return None
         try:
-            head = await self._run_command("git", ["rev-parse", "HEAD"], cwd=target_dir)
+            head = await self._run_command("git", ["rev-parse", "HEAD"], cwd=target_dir, timeout_ms=NETWORK_TIMEOUT_MS)
         except Exception:
             return None
         return head.strip() or None

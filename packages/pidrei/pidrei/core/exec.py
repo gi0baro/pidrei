@@ -4,9 +4,11 @@ Shared command execution utilities for extensions and custom tools.
 """
 
 import codecs
+import os
 import signal
 import subprocess
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import tonio.colored as tonio
@@ -40,6 +42,7 @@ async def exec_command(
     cancel=None,
     timeout: float | None = None,
     max_buffer: int = DEFAULT_EXEC_MAX_BUFFER,
+    env: Mapping[str, str] | None = None,
 ) -> ExecResult:
     """Execute a command (no shell) and return stdout/stderr/code.
 
@@ -47,6 +50,7 @@ async def exec_command(
     (`max_buffer`, combined stdout/stderr bytes). Mirrors pi's contract: spawn
     and read errors resolve with code 1 (a spawn error's message in stderr);
     only an invalid `max_buffer` raises, before anything is spawned.
+    `env` holds variables laid over the inherited environment.
     """
     if isinstance(max_buffer, bool) or not isinstance(max_buffer, int) or max_buffer < 0:
         raise ValueError("max_buffer must be a nonnegative integer number of bytes")
@@ -58,6 +62,7 @@ async def exec_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=cwd,
+            env=None if env is None else {**os.environ, **env},
         )
     except Exception as error:
         # Child-process errors (e.g. a missing command) are failed executions.

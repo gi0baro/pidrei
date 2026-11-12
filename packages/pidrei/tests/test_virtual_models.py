@@ -476,6 +476,38 @@ async def test_records_an_explicit_model_override_on_resume_with_the_next_prompt
     assert (last["provider"], last["modelId"]) == ("faux", "small")
 
 
+# pidrei-only: pi compares and appends in one synchronous step. Here the recorder's
+# append suspends, so a model change landing in it must not leave the older model
+# last on the branch. The change is forced into the append by wrapping the session
+# manager's method.
+@pytest.mark.tonio
+async def test_records_a_model_changed_while_the_recorded_model_is_appended(temp_dir, sessions):
+    setup = await create_runtime()
+    setup.faux.set_responses([faux_assistant_message("ok")])
+    runtime = setup.runtime
+    small = runtime.get_model("faux", "small")
+    session, session_manager = await resume(temp_dir, sessions, runtime, small)
+
+    append = session_manager.append_model_change
+    changed: list[tuple[str, str]] = []
+
+    async def append_after_a_model_change(provider: str, model_id: str) -> str:
+        if not changed and (provider, model_id) == (small.provider, small.id):
+            changed.append((provider, model_id))
+            await session.set_model(setup.virtual)
+        return await append(provider, model_id)
+
+    session_manager.append_model_change = append_after_a_model_change
+    try:
+        await session.prompt("again")
+    finally:
+        del session_manager.append_model_change
+
+    assert changed == [(small.provider, small.id)]
+    assert (session.model.provider, session.model.id) == ("router", "auto")
+    assert get_branch_selection(session_manager.get_branch(), runtime.get_model) == ("router", "auto")
+
+
 # --- AgentSession (suite) -----------------------------------------------------
 
 
