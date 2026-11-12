@@ -109,6 +109,8 @@ class ExtensionEditorComponent(Container):
     async def _stop_for_external_editor(self, content: str) -> None:
         # A completion may stop the UI (spec/ui-island.md).
         await self._tui.stop()
+        # The editor owns the terminal until the restart.
+        self._tui.terminal.hand_off()
         tonio.spawn.without_tracking(self._edit_in_external_editor(content))
 
     async def _edit_in_external_editor(self, content: str) -> None:
@@ -119,5 +121,6 @@ class ExtensionEditorComponent(Container):
             if result["status"] == "complete":
                 self._tui.apply(functools.partial(self._editor.set_text, result["content"]))
         finally:
+            self._tui.terminal.take_back()
             await self._tui.start()
             self._tui.request_render(True)

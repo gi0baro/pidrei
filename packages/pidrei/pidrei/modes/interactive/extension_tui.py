@@ -10,7 +10,6 @@ what those use.
 """
 
 import inspect
-from collections.abc import Awaitable
 
 import tonio.colored as tonio
 
@@ -149,11 +148,15 @@ class ExtensionTui:
     def finish_before_next_input(self, handle) -> None:
         self._tui.finish_before_next_input(handle)
 
-    def stop(self) -> Awaitable[None]:
-        return self._tui.stop()
+    async def stop(self) -> None:
+        """Stop the UI and hand the terminal off, for another program to use
+        it until `start()`."""
+        await self._tui.stop()
+        self._tui.terminal.hand_off()
 
-    def start(self) -> Awaitable[None]:
-        return self._tui.start()
+    async def start(self) -> None:
+        self._tui.terminal.take_back()
+        await self._tui.start()
 
 
 def guard_overlay_handle(tui, handle: OverlayHandle) -> OverlayHandle:

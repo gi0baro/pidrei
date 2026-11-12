@@ -395,10 +395,9 @@ async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
 
 @pytest.mark.tonio
 async def test_released_output_is_held_until_the_terminal_is_armed_again():
-    """Between `release()` and the next `arm()` a child may own the tty:
-    nothing reaches the fd and both fds have their blocking flag back. What
-    was held goes out first, in order, at the next `arm()` — or at
-    `close()`."""
+    """Between `release()` and the next `arm()` nothing reaches the fd. What
+    was held goes out first, in order, at the next `arm()` — or at `close()`.
+    Releasing is not a hand-off: the fds stay non-blocking throughout."""
     in_r, in_w = os.pipe()
     out_r, out_w = os.pipe()
     os.set_blocking(out_r, False)
@@ -409,8 +408,8 @@ async def test_released_output_is_held_until_the_terminal_is_armed_again():
         assert not os.get_blocking(in_r)
         terminal.write_sync("armed;")
         await terminal.release()
-        assert os.get_blocking(out_w)
-        assert os.get_blocking(in_r)
+        assert not os.get_blocking(out_w)
+        assert not os.get_blocking(in_r)
         assert os.read(out_r, 1024) == b"armed;"
 
         terminal.write_sync("held-1;")
@@ -427,7 +426,58 @@ async def test_released_output_is_held_until_the_terminal_is_armed_again():
         terminal.write_sync("at-close;")
         await terminal.close()
         assert os.read(out_r, 1024) == b"at-close;"
+        assert not os.get_blocking(out_w)
+        assert not os.get_blocking(in_r)
+    finally:
+        await terminal.close()
+        for fd in (in_r, in_w, out_r, out_w):
+            os.close(fd)
+
+
+@pytest.mark.tonio
+async def test_a_handed_off_terminal_is_blocking_until_it_is_taken_back():
+    """A child that inherits the tty reads it with blocking calls: `hand_off()`
+    sets both fds blocking. Output queued before the child starts still goes
+    out through a `flush()`, which leaves them blocking again."""
+    in_r, in_w = os.pipe()
+    out_r, out_w = os.pipe()
+    os.set_blocking(out_r, False)
+    terminal = ProcessTerminal(input_fd=in_r, output_fd=out_w)
+    try:
+        terminal.arm()
+        await terminal.release()
+        terminal.hand_off()
         assert os.get_blocking(out_w)
+        assert os.get_blocking(in_r)
+
+        terminal.write_sync("before-the-child;")
+        await terminal.flush()
+        assert os.read(out_r, 1024) == b"before-the-child;"
+        assert os.get_blocking(out_w)
+        assert os.get_blocking(in_r)
+
+        terminal.take_back()
+        assert not os.get_blocking(out_w)
+        assert not os.get_blocking(in_r)
+    finally:
+        await terminal.close()
+        for fd in (in_r, in_w, out_r, out_w):
+            os.close(fd)
+
+
+@pytest.mark.tonio
+async def test_closing_a_handed_off_terminal_ends_the_hand_off():
+    """A shutdown while a child owns the tty: the process writes these fds
+    itself afterwards, so `close()` leaves them non-blocking."""
+    in_r, in_w = os.pipe()
+    out_r, out_w = os.pipe()
+    terminal = ProcessTerminal(input_fd=in_r, output_fd=out_w)
+    try:
+        terminal.hand_off()
+        assert os.get_blocking(out_w)
+        await terminal.close()
+        assert not os.get_blocking(out_w)
+        assert not os.get_blocking(in_r)
     finally:
         await terminal.close()
         for fd in (in_r, in_w, out_r, out_w):

@@ -49,13 +49,16 @@ Port deviations (documented once here):
   clear helpers, negotiation) only enqueue. pi writes `stdout` synchronously
   from its one thread, which gives it ordering and atomicity for free.
 - The output queue lives as long as the terminal (until `close()`, like the
-  input consumer); the pump and `O_NONBLOCK` only between `arm()` and
-  `release()` (pidrei-only). A TUI's session spans more than `start()` to
+  input consumer); the pump only between `arm()` and `release()`
+  (pidrei-only). A TUI's session spans more than `start()` to
   `stop()`: the alternate screen is entered before `start()` and left after
   `stop()` (pi's order: the keyboard protocol push and pop happen inside
-  it), so the TUI arms first and releases last. Released, writes are held until the next `arm()`: nothing reaches
-  the tty while a child owns it (the external editor), and the flag is
-  back where the child expects it.
+  it), so the TUI arms first and releases last. Released, writes are held until the next `arm()`.
+- The fds are non-blocking, which the reader and the pump need, except
+  between `hand_off()` and `take_back()` (pidrei-only): a child that
+  inherits the tty (the external editor) reads it with blocking calls.
+  Stopping or releasing is not a hand-off: only a caller about to give the
+  tty to another program hands it off.
 - Env rename: PI_TUI_WRITE_LOG → PIDREI_TUI_WRITE_LOG.
 """
 
@@ -172,8 +175,18 @@ class Terminal(Protocol):
         ...
 
     async def release(self) -> None:
-        """Hand the terminal back (pidrei-only) once queued output is out;
+        """End the output window (pidrei-only) once queued output is out;
         writes are held until the next `arm()`."""
+        ...
+
+    def hand_off(self) -> None:
+        """Someone else owns the terminal from here until `take_back()`
+        (pidrei-only): a child process that inherits it. Called once the
+        terminal is stopped."""
+        ...
+
+    def take_back(self) -> None:
+        """The terminal is the process's again (pidrei-only)."""
         ...
 
     async def close(self) -> None:
@@ -302,11 +315,12 @@ class ProcessTerminal:
         self._out_tx, self._out_rx = tonio_channel.unbounded()
         self._armed = False
         self._closed = False
+        # Set between `hand_off()` and `take_back()`, by the same sequenced
+        # lifecycle calls as `_armed`.
+        self._handed_off = False
         self._out_sio = None
         self._out_pump = None
         self._saved_termios: list | None = None
-        self._saved_blocking: bool | None = None
-        self._saved_output_blocking: bool | None = None
         # The UI state lock (spec/ui-island.md, "The guards") has the terminal's
         # lifetime: every TUI on this terminal shares it.
         self.state_lock = threading.RLock()
@@ -370,22 +384,18 @@ class ProcessTerminal:
         goes out through the pump."""
         if self._armed or self._closed:
             return
-        self._saved_output_blocking = os.get_blocking(self._output_fd)
-        os.set_blocking(self._output_fd, False)
-        if self._input_fd != self._output_fd:
-            self._saved_blocking = os.get_blocking(self._input_fd)
-            os.set_blocking(self._input_fd, False)
+        self._set_blocking_flag(False)
         self._out_sio = tonio_io.register(self._output_fd)
         self._out_pump = tonio.spawn(self._output_pump())
         self._armed = True
 
     async def release(self) -> None:
-        """Hand the terminal back once everything queued is on the wire: the
-        pump stops and both fds get their blocking flag back, so a child that
-        inherits the tty (the external editor) finds it the way it expects.
-        Writes from here on are held until the next `arm()`. A TUI releases
-        after the last thing it writes on stop (the alternate-screen exit
-        follows `stop()`)."""
+        """End the armed window once everything queued is on the wire: the
+        pump stops, and writes from here on are held until the next `arm()`.
+        A TUI releases after the last thing it writes on stop (the
+        alternate-screen exit follows `stop()`). The fds stay non-blocking,
+        unless the terminal is handed off (`hand_off()`): then they go back
+        to blocking for its other owner."""
         if not self._armed:
             return
         self._armed = False
@@ -396,16 +406,34 @@ class ProcessTerminal:
         self._out_pump = None
         self._out_sio.close()
         self._out_sio = None
-        os.set_blocking(self._output_fd, self._saved_output_blocking)
-        self._saved_output_blocking = None
-        if self._saved_blocking is not None:
-            os.set_blocking(self._input_fd, self._saved_blocking)
-            self._saved_blocking = None
+        if self._handed_off:
+            self._set_blocking_flag(True)
+
+    def hand_off(self) -> None:
+        """Someone else owns the tty from here until `take_back()`: a child
+        that inherits it, such as the external editor. Both fds are set
+        blocking, which is what a program reading the terminal expects.
+        Called once the terminal is stopped and released. Output queued
+        meanwhile is held; a `flush()` puts it out with the fds non-blocking
+        for that moment, before the other owner starts."""
+        self._handed_off = True
+        if not self._armed:
+            self._set_blocking_flag(True)
+
+    def take_back(self) -> None:
+        """The tty is the process's again: both fds non-blocking."""
+        self._handed_off = False
+        self._set_blocking_flag(False)
+
+    def _set_blocking_flag(self, blocking: bool) -> None:
+        os.set_blocking(self._output_fd, blocking)
+        if self._input_fd != self._output_fd:
+            os.set_blocking(self._input_fd, blocking)
 
     async def flush(self) -> None:
         """Wait until everything queued is on the wire. Released, that arms
-        the terminal for the moment it takes: only while the tty is ours
-        (before a hand-off, not during one)."""
+        the terminal for the moment it takes: only while nobody else is
+        using the tty (handed off, that is before the other owner starts)."""
         if self._armed:
             await self.write("")
             return
@@ -457,9 +485,11 @@ class ProcessTerminal:
         """Once, at app shutdown: puts out what the queue still holds (armed
         just for that, then released), ends the output queue, and ends the
         input consumer after the item it is handling (both outlive
-        stop/start). Writes after this are dropped."""
+        stop/start). Writes after this are dropped. A hand-off ends here: the
+        process goes on writing these fds itself, so they stay non-blocking."""
         if self._closed:
             return
+        self._handed_off = False
         self.arm()
         await self.release()
         self._closed = True

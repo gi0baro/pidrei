@@ -4,9 +4,8 @@ pi serializes raw writes on a promise chain, and pidrei does the same with one
 writer task for fds 1 and 2. The writer only ever writes those two fds, so each
 test points them at a pipe it owns (`dup2`, put back afterwards) and starts and
 stops the writer itself; the conftest guard fails loud if one is left running.
-The pipes are driven the way the writer drives them, which is part of what is
-pinned: readiness under the takeover, the pool with the flag left alone outside
-it, and the pool again for a stdout that shares its description with stdin.
+Each pipe's write end is non-blocking from the start, as fds 1 and 2 are from
+process entry on (`take_stdio`): the writer relies on that.
 
 Each test does its own setup/teardown (predates tonio 0.9.14 yield-fixture
 support).
@@ -29,7 +28,7 @@ from pidrei.core.output_guard import (
     write_stderr,
     write_stdout,
 )
-from pidrei.utils.fd_io import FdReader
+from pidrei.utils.fd_io import StdinReader
 
 
 @contextlib.contextmanager
@@ -49,6 +48,7 @@ def _fds_onto(target_fd: int, *fds: int):
 @contextlib.contextmanager
 def _pipe():
     read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)  # stdio's state from process entry on
     try:
         yield read_fd, write_fd
     finally:
@@ -57,16 +57,17 @@ def _pipe():
 
 
 async def _read_exactly(read_fd: int, size: int) -> bytes:
-    reader = FdReader(read_fd)
+    os.set_blocking(read_fd, False)  # what readiness needs, as for stdio from entry on
+    reader = StdinReader(read_fd)
     received = bytearray()
     try:
         while len(received) < size:
-            chunk = await reader.read()
-            if not chunk:
+            if not await reader.fill():
                 break
-            received.extend(chunk)
+            received.extend(reader.take())
     finally:
         reader.close()
+        os.set_blocking(read_fd, True)
     return bytes(received)
 
 
@@ -163,46 +164,3 @@ async def test_takeover_sends_stdout_writes_to_stderr_and_raw_writes_to_stdout()
                 restore_stdout()
         assert _read_available(out_read) == b"protocol\n"
         assert _read_available(err_read) == b"stray\nforeign\n"
-
-
-@pytest.mark.tonio
-async def test_takeover_drives_an_exclusive_stdout_by_readiness_until_the_writer_stops():
-    with _pipe() as (_read_fd, write_fd), _fds_onto(write_fd, 1):
-        take_over_stdout()
-        start_output_writer()
-        try:
-            write_raw_stdout("x\n")
-            await drain_output()
-            assert not os.get_blocking(write_fd), "the writer should hold O_NONBLOCK under the takeover"
-        finally:
-            await stop_output_writer()
-            restore_stdout()
-        assert os.get_blocking(write_fd), "stopping the writer should give the flag back"
-
-
-@pytest.mark.tonio
-async def test_outside_the_takeover_the_flag_is_left_alone():
-    """A child inheriting the terminal (the external editor) needs it blocking."""
-    with _pipe() as (_read_fd, write_fd), _fds_onto(write_fd, 1):
-        start_output_writer()
-        try:
-            write_stdout("x\n")
-            await drain_output()
-            assert os.get_blocking(write_fd)
-        finally:
-            await stop_output_writer()
-
-
-@pytest.mark.tonio
-async def test_under_the_takeover_a_stdout_shared_with_stdin_is_left_alone():
-    """stdin's readers own the flag on that description."""
-    with _pipe() as (_read_fd, write_fd), _fds_onto(write_fd, 0, 1):
-        take_over_stdout()
-        start_output_writer()
-        try:
-            write_raw_stdout("x\n")
-            await drain_output()
-            assert os.get_blocking(write_fd)
-        finally:
-            await stop_output_writer()
-            restore_stdout()

@@ -17,6 +17,7 @@ import tonio.colored as tonio
 from pidrei.core.extensions.runner import ExtensionRunner
 from pidrei.core.extensions.types import ExtensionRuntime
 from pidrei.core.session_manager import SessionManager
+from pidrei.modes.interactive.components.extension_editor import ExtensionEditorComponent
 from pidrei.modes.interactive.extension_tui import ExtensionTui, guard_overlay_handle
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import get_editor_theme, init_theme
@@ -241,3 +242,98 @@ async def test_a_guarded_overlay_handle_calls_through_the_lock():
     handle.hide()
 
     assert held == [True, True, True]
+
+
+# --- handing the terminal to another program ---------------------------------
+#
+# Stopping the UI is not a hand-off (shutdown, a renderer switch and the startup
+# dialogs stop it too). Only the callers about to run a program on the terminal
+# hand it off: an extension's `tui.stop()`, and the two external-editor paths.
+
+
+@pytest.mark.tonio
+async def test_extension_stop_hands_the_terminal_off_until_start():
+    terminal = VirtualTerminal(40, 10)
+    ui = TuiMainScreen(terminal)
+    tui = ExtensionTui(ui)
+    await ui.start()
+    try:
+        await ui.stop()
+        assert not terminal.handed_off, "the UI's own stop is not a hand-off"
+        await ui.start()
+
+        await tui.stop()
+        assert terminal.handed_off
+        await tui.start()
+        assert not terminal.handed_off
+    finally:
+        await ui.stop()
+
+
+@pytest.mark.tonio
+async def test_the_external_editor_owns_the_terminal_between_stop_and_restart(monkeypatch):
+    terminal = VirtualTerminal(40, 10)
+    ui = TuiMainScreen(terminal)
+    handed_off_while_editing: list[bool] = []
+    flows: list = []
+
+    async def fake_edit(options: dict) -> dict:
+        handed_off_while_editing.append(terminal.handed_off)
+        return {"status": "complete", "content": options["content"]}
+
+    monkeypatch.setattr("pidrei.modes.interactive.interactive_mode.edit_in_external_editor", fake_edit)
+    fake = SimpleNamespace(
+        ui=ui,
+        editor=SimpleNamespace(get_text=lambda: "draft"),
+        settings_manager=SimpleNamespace(get_external_editor_command=lambda: "vim"),
+        _set_editor_text=lambda _text: None,
+        show_status=lambda _message: None,
+        _spawn_flow=lambda flow: flows.append(tonio.spawn(flow)),
+    )
+    fake._edit_in_external_editor = partial(InteractiveMode._edit_in_external_editor, fake)
+    await ui.start()
+    try:
+        await InteractiveMode._open_external_editor(fake)
+        await flows[0]
+        assert handed_off_while_editing == [True]
+        assert not terminal.handed_off
+    finally:
+        await ui.stop()
+
+
+@pytest.mark.tonio
+async def test_the_extension_editor_hands_the_terminal_to_the_external_editor(monkeypatch):
+    terminal = VirtualTerminal(40, 10)
+    ui = TuiMainScreen(terminal)
+    handed_off_while_editing: list[bool] = []
+    restarted = tonio.Event()
+
+    async def fake_edit(options: dict) -> dict:
+        handed_off_while_editing.append(terminal.handed_off)
+        return {"status": "complete", "content": options["content"]}
+
+    monkeypatch.setattr("pidrei.modes.interactive.components.extension_editor.edit_in_external_editor", fake_edit)
+    # The component's `tui`, with the restart's last statement observable.
+    tui = SimpleNamespace(
+        stop=ui.stop,
+        start=ui.start,
+        terminal=terminal,
+        apply=ui.apply,
+        request_render=lambda _force=False: restarted.set(),
+    )
+    fake = SimpleNamespace(
+        _tui=tui,
+        _external_editor_command="vim",
+        _external_editor_status=SimpleNamespace(set_text=lambda _text: None),
+        _editor=SimpleNamespace(set_text=lambda _text: None),
+    )
+    fake._edit_in_external_editor = partial(ExtensionEditorComponent._edit_in_external_editor, fake)
+    await ui.start()
+    try:
+        await ExtensionEditorComponent._stop_for_external_editor(fake, "draft")
+        await restarted.wait(5)
+        assert restarted.is_set()
+        assert handed_off_while_editing == [True]
+        assert not terminal.handed_off
+    finally:
+        await ui.stop()

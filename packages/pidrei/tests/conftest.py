@@ -6,6 +6,7 @@ import warnings
 import pytest
 
 from pidrei.core import output_guard
+from pidrei.utils import fd_io
 from pidrei_ai.api import anthropic_messages, strict_tool_limits
 from pidrei_ai.auth import anthropic_federation, google_adc
 from pidrei_http import http
@@ -191,6 +192,23 @@ def _google_adc_token_cache_guard():
     if google_adc.reset_google_adc_token_cache():
         warnings.warn(
             "test left Google ADC access tokens cached (reset_google_adc_token_cache was not called); reset",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _suspended_stdio_guard():
+    """Fail-loud reset of the flags `suspend_stdio` keeps for the resume.
+
+    `fd_io.suspend_stdio` stores the stdio flags it found in a module-level
+    value until `resume_stdio` puts them back; a test that calls the first
+    without the second would have a later suspend keep the stale ones.
+    """
+    yield
+    if fd_io._suspended_flags is not None:
+        fd_io._suspended_flags = None
+        warnings.warn(
+            "test left stdio suspended (fd_io.suspend_stdio without resume_stdio); reset",
             stacklevel=1,
         )
 

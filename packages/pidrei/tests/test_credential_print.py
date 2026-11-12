@@ -120,7 +120,8 @@ async def test_reports_unknown_auth_options_like_package_commands():
     original_write_stderr = main_module.write_stderr
     main_module.write_stderr = captured.append
     try:
-        exit_code = await _run_auth_command(["auth", "check", "--provider", "openai-codex", "--credentails"])
+        # stdin: `auth check` reads none.
+        exit_code = await _run_auth_command(["auth", "check", "--provider", "openai-codex", "--credentails"], None)
     finally:
         main_module.write_stderr = original_write_stderr
 

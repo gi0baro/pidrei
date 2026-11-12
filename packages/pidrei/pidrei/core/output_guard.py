@@ -15,17 +15,15 @@ writer runs between `start_output_writer` and `stop_output_writer`
 (`pidrei.__main__` brackets the run with them); outside that window there is
 no runtime to protect, and writes go straight to the fd.
 
-Each fd is written with `FdWriter`, in a mode fixed by its first write. Under
-the takeover that is `arm_w` readiness, holding `O_NONBLOCK` until the writer
-stops: print and RPC modes never hand the terminal to a child (the takeover
-starts before either runs and ends only as print mode exits). The exception is
-an fd that shares its open file description with stdin, which is where the
-flag lives: stdin's readers (`FdReader`, the TUI terminal) set and restore it
-on their own schedule, so that fd is written from the blocking pool instead.
-Outside the takeover every fd is written from the pool and the flag is left
-alone, so the terminal is blocking again whenever the TUI terminal (which holds
-the flag between its start and stop) lets go of it — which is what a child
-inheriting the terminal, such as the external editor, needs.
+Each fd is written with an `FdWriter`, made on its first write and closed when
+the writer stops. A pipe, socket or tty is written by `arm_w` readiness for the
+whole writer window, takeover or not, and a regular file or `/dev/null`
+through `fs.wrap_file`. Readiness needs `O_NONBLOCK`, which lives on the open
+file description: it is set on fds 0-2 at process entry
+(`snapshot_stdio_flags`) and the inherited flags are put back at exit
+(`restore_stdio_flags`, `hard_exit`), so the writer never sets or restores it.
+A child inheriting the terminal, such as the external editor, gets it blocking
+from the terminal's `hand_off()`, until `take_back()`.
 
 A failed stdout write exits the process (pi: process.exit(1)); a failed stderr
 write is dropped.
@@ -157,7 +155,7 @@ def write_raw_stdout(text: str) -> None:
 async def drain_output() -> None:
     """Wait until everything written so far is on its fd, the attached
     terminal's queue included (which takes the tty for the moment it needs:
-    before a hand-off to a child, not during one)."""
+    handed off, that is before the child starts, not while it runs)."""
     sender = _sender
     if sender is not None:
         ticket = tonio.Event()
@@ -182,8 +180,8 @@ def start_output_writer() -> None:
 
 
 async def stop_output_writer() -> None:
-    """Deliver everything queued, then stop the writer, restoring the flags it
-    set. Writes from here on go straight to the fd."""
+    """Deliver everything queued, then stop the writer. Writes from here on go
+    straight to the fd."""
     global _sender, _writer
     sender, writer = _sender, _writer
     if sender is None:
@@ -211,8 +209,13 @@ async def attach_terminal(terminal: Terminal) -> None:
 
 def detach_terminal() -> None:
     """Stop routing to the attached terminal; right before closing it, which
-    puts out what its queue still holds."""
+    puts out what its queue still holds. A hand-off still in place (a shutdown
+    while the external editor runs) ends first: from here the writer writes
+    the tty again, and it needs the fds non-blocking."""
     global _terminal_route
+    route = _terminal_route
+    if route is not None:
+        route[0].take_back()
     _terminal_route = None
 
 
@@ -253,9 +256,8 @@ def _shares_description(fd: int, other_fd: int) -> bool:
 
 
 def _close_writers(writers: dict[int, FdWriter]) -> None:
-    # Newest first: two fds on one description (`2>&1`) restore the flag in the
-    # reverse order they set it.
-    for writer in reversed(list(writers.values())):
+    # Each drops its own registration and dup; the order does not matter.
+    for writer in writers.values():
         writer.close()
     writers.clear()
 
@@ -264,8 +266,7 @@ async def _deliver(writers: dict[int, FdWriter], fd: int, text: str) -> None:
     try:
         writer = writers.get(fd)
         if writer is None:
-            readiness = _takeover_state is not None and not _shares_description(fd, 0)
-            writer = writers[fd] = FdWriter(fd, readiness=readiness)
+            writer = writers[fd] = FdWriter(fd)
         await writer.write_all(text.encode("utf-8", _errors(fd)))
     except Exception:
         if fd == STDOUT_FD:

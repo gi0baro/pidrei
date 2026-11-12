@@ -1,9 +1,12 @@
-"""`utils/fd_io` — `FdReader`/`FdWriter`, one dispatch, three descriptor kinds.
+"""`utils/fd_io` — `StdinReader`/`FdWriter`, one dispatch, three descriptor kinds.
 
 What is pinned here is the dispatch and the descriptor hygiene, not tonio's
-primitives: a regular file goes through `fs.wrap_file`, a pipe can be driven by
-readiness or left on the pool, and in every case the descriptor comes back the
-way it was handed over — same blocking flag, still open.
+primitives: a regular file goes through `fs.wrap_file`, a pipe is driven by
+readiness through a dup, and in every case the descriptor comes back the way
+it was handed over — same blocking flag, still open, its number free for
+another registration. A pipe handed to `StdinReader` or `FdWriter` is made
+non-blocking first, as stdio is from process entry on. What the reader keeps
+across prompts is pinned in `test_terminal_question.py`.
 
 Pipes and temp files are made and torn down by hand (predates tonio 0.9.14
 yield-fixture support).
@@ -14,8 +17,9 @@ import tempfile
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import io as tonio_io
 
-from pidrei.utils.fd_io import FdReader, FdWriter, is_pollable
+from pidrei.utils.fd_io import FdWriter, StdinReader, is_pollable, write_all_blocking
 
 
 def _file_with(content: bytes) -> str:
@@ -25,11 +29,17 @@ def _file_with(content: bytes) -> str:
     return path
 
 
-async def _read_all(reader: FdReader) -> bytes:
-    chunks: list[bytes] = []
-    while chunk := await reader.read():
-        chunks.append(chunk)
-    return b"".join(chunks)
+def _nonblocking_pipe() -> tuple[int, int]:
+    """A pipe whose read end is non-blocking, as stdio is from process entry on."""
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    return read_fd, write_fd
+
+
+async def _read_all(reader: StdinReader) -> bytes:
+    while await reader.fill():
+        pass
+    return reader.take()
 
 
 def test_classifies_descriptor_kinds():
@@ -50,10 +60,13 @@ def test_classifies_descriptor_kinds():
 
 @pytest.mark.tonio
 async def test_reads_a_regular_file_to_eof():
-    fd = os.open(_file_with(b"hello from a file\n"), os.O_RDONLY)
-    reader = FdReader(fd, size=4)  # small size: several reads, then b""
+    fd = os.open(_file_with(b"hello from a file\nand more\n"), os.O_RDONLY)
+    reader = StdinReader(fd)
     try:
-        assert await _read_all(reader) == b"hello from a file\n"
+        assert reader.take_line() is None
+        assert await reader.fill()
+        assert reader.take_line() == b"hello from a file\n"
+        assert await _read_all(reader) == b"and more\n"
     finally:
         reader.close()
         os.close(fd)
@@ -61,12 +74,12 @@ async def test_reads_a_regular_file_to_eof():
 
 @pytest.mark.tonio
 async def test_reads_a_pipe_by_readiness_until_the_writer_closes():
-    read_fd, write_fd = os.pipe()
+    read_fd, write_fd = _nonblocking_pipe()
     os.write(write_fd, b"first\n")
     os.write(write_fd, b"second\n")
     os.close(write_fd)  # EOF, so the read loop terminates
 
-    reader = FdReader(read_fd)
+    reader = StdinReader(read_fd)
     try:
         assert await _read_all(reader) == b"first\nsecond\n"
     finally:
@@ -75,52 +88,24 @@ async def test_reads_a_pipe_by_readiness_until_the_writer_closes():
 
 
 @pytest.mark.tonio
-async def test_reads_a_pipe_on_the_pool_when_readiness_is_declined():
-    read_fd, write_fd = os.pipe()
-    os.write(write_fd, b"pooled\n")
-    os.close(write_fd)
-
-    reader = FdReader(read_fd, readiness=False)
+async def test_reader_close_leaves_the_fd_open_and_its_number_free_for_another_registration():
+    """The TUI terminal registers fd 0 itself while it runs, and a number can
+    be registered only once: the reader registers a dup, and closes only that."""
+    read_fd, write_fd = _nonblocking_pipe()
+    reader = StdinReader(read_fd)
     try:
-        # The whole point of declining: the descriptor is never made
-        # non-blocking, so nothing has to be restored later.
-        assert os.get_blocking(read_fd)
-        assert await _read_all(reader) == b"pooled\n"
-        assert os.get_blocking(read_fd)
+        terminal_registration = tonio_io.register(read_fd)
+        terminal_registration.close()
+        os.write(write_fd, b"still mine\n")
+        assert await reader.fill()
+        reader.close()
+        # Would raise EBADF if the reader had taken ownership.
+        os.fstat(read_fd)
+        assert not os.get_blocking(read_fd)
     finally:
         reader.close()
         os.close(read_fd)
-
-
-@pytest.mark.tonio
-async def test_readiness_restores_the_blocking_flag_it_changed():
-    read_fd, write_fd = os.pipe()
-    os.close(write_fd)
-    assert os.get_blocking(read_fd)
-
-    reader = FdReader(read_fd)
-    try:
-        # `O_NONBLOCK` lives on the shared open file description, so leaving it
-        # set would change stdin for whoever handed it to us.
-        assert not os.get_blocking(read_fd)
-        await reader.read()
-    finally:
-        reader.close()
-    assert os.get_blocking(read_fd)
-    os.close(read_fd)
-
-
-@pytest.mark.tonio
-async def test_close_does_not_close_the_descriptor():
-    fd = os.open(_file_with(b"still mine\n"), os.O_RDONLY)
-    try:
-        reader = FdReader(fd)
-        await reader.read()
-        reader.close()
-        # Would raise EBADF if `FdReader` had taken ownership.
-        os.fstat(fd)
-    finally:
-        os.close(fd)
+        os.close(write_fd)
 
 
 @pytest.mark.tonio
@@ -129,15 +114,16 @@ async def test_writer_fills_a_pipe_past_its_buffer_without_stalling_the_runtime(
     wait for the reader; a concurrent runtime task drains it. If the writer
     blocked a worker instead of parking on readiness, drain and write would
     deadlock each other."""
-    read_fd, write_fd = os.pipe()
+    read_fd, write_fd = _nonblocking_pipe()
+    os.set_blocking(write_fd, False)
     payload = b"x" * 400_000
     received = bytearray()
 
     async def drain() -> None:
-        drain_reader = FdReader(read_fd)
+        drain_reader = StdinReader(read_fd)
         try:
-            while chunk := await drain_reader.read():
-                received.extend(chunk)
+            while await drain_reader.fill():
+                received.extend(drain_reader.take())
         finally:
             drain_reader.close()
 
@@ -147,12 +133,11 @@ async def test_writer_fills_a_pipe_past_its_buffer_without_stalling_the_runtime(
     async def produce() -> None:
         nonlocal write_end_closed
         await writer.write_all(payload)
-        writer.close()  # before os.close: restoring the flag needs a live fd
+        writer.close()  # its dup is a write end too: the drain's EOF needs both closed
         os.close(write_fd)
         write_end_closed = True
 
     try:
-        assert not os.get_blocking(write_fd)
         await tonio.spawn(produce(), drain())
         assert bytes(received) == payload
     finally:
@@ -163,13 +148,12 @@ async def test_writer_fills_a_pipe_past_its_buffer_without_stalling_the_runtime(
 
 
 @pytest.mark.tonio
-async def test_pool_writer_waits_for_room_on_a_descriptor_someone_else_made_non_blocking():
-    """`readiness=False` leaves the flag alone, but whoever shares the open file
-    description (the TUI terminal, an `FdReader` on the same tty) can set it:
-    a full pipe then answers EAGAIN, and the write waits for room instead of
-    failing."""
+async def test_blocking_write_waits_for_room_on_a_non_blocking_descriptor():
+    """A pollable stdio fd is non-blocking for the whole run, so a write outside
+    the output writer's window meets a full pipe as EAGAIN: it waits for room
+    instead of failing."""
     read_fd, write_fd = os.pipe()
-    os.set_blocking(write_fd, False)  # the other owner's flag
+    os.set_blocking(write_fd, False)
     try:
         filled = 0
         try:
@@ -177,14 +161,13 @@ async def test_pool_writer_waits_for_room_on_a_descriptor_someone_else_made_non_
                 filled += os.write(write_fd, b"f" * 65536)
         except BlockingIOError:
             pass
-        writer = FdWriter(write_fd, readiness=False)
         payload = b"p" * 100_000
         done = tonio.Event()
         failures: list[BaseException] = []
 
         async def produce() -> None:
             try:
-                await writer.write_all(payload)
+                await tonio.spawn_blocking(write_all_blocking, write_fd, payload)
             except Exception as error:
                 failures.append(error)
             finally:
@@ -193,11 +176,13 @@ async def test_pool_writer_waits_for_room_on_a_descriptor_someone_else_made_non_
         producing = tonio.spawn(produce())
         await done.wait(0.2)
         assert not done.is_set(), f"gave up on the full pipe: {failures}"
-        reader = FdReader(read_fd)
+        os.set_blocking(read_fd, False)
+        reader = StdinReader(read_fd)
         received = bytearray()
         try:
             while len(received) < filled + len(payload):
-                received.extend(await reader.read())
+                await reader.fill()
+                received.extend(reader.take())
         finally:
             reader.close()
         await producing
@@ -223,17 +208,37 @@ async def test_writer_handles_a_regular_file_and_restores_nothing():
 
 
 @pytest.mark.tonio
-async def test_writer_close_restores_the_blocking_flag_and_leaves_the_fd_open():
+async def test_writer_close_leaves_the_fd_open_and_its_flag_as_it_found_it():
     read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
     try:
         writer = FdWriter(write_fd)
-        assert not os.get_blocking(write_fd)
         await writer.write_all(b"hygiene\n")
         writer.close()
-        assert os.get_blocking(write_fd)
+        assert not os.get_blocking(write_fd)
         os.fstat(write_fd)  # EBADF here would mean ownership was taken
         assert os.read(read_fd, 64) == b"hygiene\n"
     finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+@pytest.mark.tonio
+async def test_writer_leaves_the_fd_number_free_for_another_registration():
+    """The TUI terminal registers its output fd itself while armed, and a
+    number can be registered only once: the writer registers a dup."""
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+    writer = FdWriter(write_fd)
+    try:
+        terminal_registration = tonio_io.register(write_fd)
+        try:
+            await writer.write_all(b"beside the terminal\n")
+        finally:
+            terminal_registration.close()
+        assert os.read(read_fd, 64) == b"beside the terminal\n"
+    finally:
+        writer.close()
         os.close(read_fd)
         os.close(write_fd)
 
@@ -275,6 +280,57 @@ def test_hard_exit_restores_the_inherited_blocking_flag():
         "hard_exit(0)\n",
         expect_blocking_after=True,
     )
+
+
+def test_snapshot_takes_a_pollable_stdio_fd_and_leaves_a_regular_file_alone():
+    import subprocess
+    import sys
+
+    # `os._exit` skips the exit restore: the parent sees what the entry set.
+    code = "import os\nfrom pidrei.utils.fd_io import snapshot_stdio_flags\nsnapshot_stdio_flags()\nos._exit(0)\n"
+    read_fd, write_fd = os.pipe()
+    file_fd = os.open(os.path.join(tempfile.mkdtemp(), "out"), os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed interpreter, test-authored code
+            [sys.executable, "-c", code],
+            stdin=read_fd,
+            stdout=file_fd,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+        assert not os.get_blocking(read_fd), "the pipe on stdin should be non-blocking from entry"
+        assert os.get_blocking(file_fd), "a regular file's flag means nothing and stays as inherited"
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+        os.close(file_fd)
+
+
+def test_a_suspend_gives_stdio_its_inherited_flags_and_a_resume_puts_them_back():
+    """While pidrei is stopped (Ctrl+Z) the shell owns the terminal. The
+    resume puts back what the suspend found, which is not always non-blocking:
+    a terminal handed off to a child was blocking and is again."""
+    # The child checks its own stdin at each step: a failed assert ends it with
+    # a non-zero status and its message on stderr. `os._exit` skips the exit
+    # restore, so the parent sees the flag the last resume left.
+    code = (
+        "import os\n"
+        "from pidrei.utils.fd_io import resume_stdio, snapshot_stdio_flags, suspend_stdio\n"
+        "snapshot_stdio_flags()\n"
+        "assert not os.get_blocking(0), 'entry'\n"
+        "suspend_stdio()\n"
+        "assert os.get_blocking(0), 'suspended'\n"
+        "resume_stdio()\n"
+        "assert not os.get_blocking(0), 'resumed'\n"
+        "os.set_blocking(0, True)\n"
+        "suspend_stdio()\n"
+        "resume_stdio()\n"
+        "assert os.get_blocking(0), 'resumed while handed off'\n"
+        "os._exit(0)\n"
+    )
+    _run_child(code, expect_blocking_after=True)
 
 
 def test_plain_os_exit_leaks_the_flag_which_is_why_hard_exit_exists():

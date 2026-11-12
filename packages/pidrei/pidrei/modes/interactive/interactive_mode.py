@@ -125,7 +125,7 @@ from ...utils.changelog import get_new_entries, normalize_changelog_links, parse
 from ...utils.clipboard import copy_to_clipboard, read_clipboard_file_paths, read_clipboard_text
 from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboard_image
 from ...utils.colors import dim
-from ...utils.fd_io import hard_exit
+from ...utils.fd_io import hard_exit, resume_stdio
 from ...utils.git import parse_git_url
 from ...utils.image_process import convert_image_to_png_base64
 from ...utils.paths import get_cwd_relative_path, shorten_home_path
@@ -4591,6 +4591,9 @@ class InteractiveMode:
             self.ui.request_render()
 
         async def on_continue(_signum: int) -> None:
+            # Stdio first, as the handler this one replaces does: the restart
+            # below writes and reads it.
+            resume_stdio()
             resumed = self._suspend_resumed
             if resumed is not None:
                 self._suspend_resumed = None
@@ -4776,6 +4779,8 @@ class InteractiveMode:
         get_expanded = getattr(self.editor, "get_expanded_text", None)
         content = get_expanded() if get_expanded is not None else self.editor.get_text()
         await self.ui.stop()
+        # The editor owns the terminal until the restart.
+        self.ui.terminal.hand_off()
         self._spawn_flow(self._edit_in_external_editor(editor_cmd, content))
 
     async def _edit_in_external_editor(self, editor_cmd, content: str) -> None:
@@ -4786,6 +4791,7 @@ class InteractiveMode:
             else:
                 self.show_status(result["message"])
         finally:
+            self.ui.terminal.take_back()
             await self.ui.start()
             self.ui.request_render(True)
 

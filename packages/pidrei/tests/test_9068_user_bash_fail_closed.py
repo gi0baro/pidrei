@@ -132,7 +132,7 @@ async def test_rpc_user_bash_failure_handling(monkeypatch, extension, error, exe
     ready = tonio.Event()
     handler: dict[str, Any] = {}
 
-    async def fake_pump(on_line, _on_end) -> None:
+    async def fake_pump(_stdin, on_line, _on_end) -> None:
         handler["on_line"] = on_line
         ready.set()
         await stop.wait()
@@ -148,7 +148,8 @@ async def test_rpc_user_bash_failure_handling(monkeypatch, extension, error, exe
             drain_output=noop_async,
             _pump_stdin_commands=fake_pump,
         ):
-            run = tonio.spawn(rpc_mode.run_rpc_mode(_runtime_host(harness.session)))
+            # The fake pump stands in for the only reader of stdin.
+            run = tonio.spawn(rpc_mode.run_rpc_mode(_runtime_host(harness.session), stdin=None))
             try:
                 await ready.wait(5)
                 assert ready.is_set()

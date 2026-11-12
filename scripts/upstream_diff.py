@@ -1646,8 +1646,8 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         (
             "mcp-extension",
             (
-                "the pasted redirect URL is read with FdReader under run_cancellable; --timeout is a cancel token "
-                "over the whole sign-in"
+                "the pasted redirect URL is a line taken from the run's StdinReader, whose wait for input ends "
+                "when the token fires; --timeout is a cancel token over the whole sign-in"
             ),
         ),
     ),

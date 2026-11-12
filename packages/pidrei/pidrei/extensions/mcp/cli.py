@@ -11,7 +11,6 @@ The redirect URL pasted in a terminal is read with `question_terminal`
 
 import json
 import os
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -28,6 +27,7 @@ from ...core.model_runtime import ModelRuntime
 from ...core.output_guard import write_stderr, write_stdout
 from ...core.trust_manager import ProjectTrustStore
 from ...utils.colors import bold, dim
+from ...utils.fd_io import StdinReader
 from ...utils.open_browser import open_browser
 from ...utils.terminal_question import question_terminal
 from .config import (
@@ -112,6 +112,9 @@ class McpCommandOptions:
     # Default to the process's stdout and stderr.
     log: Output | None = None
     error: Output | None = None
+    # The run's stdin, where a terminal user can paste the redirect URL. None: only the browser callback can
+    # finish a sign-in.
+    stdin: StdinReader | None = None
 
 
 def _describe_transport(entry: McpServerEntry) -> str:
@@ -339,11 +342,11 @@ async def run_mcp_command(args: list[str], options: McpCommandOptions) -> int:
             return 1
 
 
-async def handle_mcp_command(args: list[str], *, cwd: str, agent_dir: str) -> bool | int:
+async def handle_mcp_command(args: list[str], *, cwd: str, agent_dir: str, stdin: StdinReader) -> bool | int:
     """False when `args` is not the mcp command; otherwise its exit code."""
     if not args or args[0] != "mcp":
         return False
-    return await run_mcp_command(args[1:], McpCommandOptions(cwd=cwd, agent_dir=agent_dir))
+    return await run_mcp_command(args[1:], McpCommandOptions(cwd=cwd, agent_dir=agent_dir, stdin=stdin))
 
 
 def _seconds(value: str | None) -> float | None:
@@ -662,7 +665,8 @@ async def _login(
             return 1
 
     open_url = options.open_url or open_browser
-    interactive = sys.stdin.isatty() and options.open_url is None
+    stdin = options.stdin
+    terminal = stdin if stdin is not None and os.isatty(stdin.fd) and options.open_url is None else None
 
     class Prompt:
         def show_authorization_url(self, authorization_url: str) -> None:
@@ -670,7 +674,7 @@ async def _login(
             open_url(authorization_url)
 
         def prompt_for_redirect_url(self, cancel: CancelToken):
-            return _wait_for_redirect_url(cancel, interactive)
+            return _wait_for_redirect_url(cancel, terminal)
 
     # `--timeout` bounds the whole sign-in (pi: `signal: AbortSignal.timeout(timeoutMs)`).
     cancel = CancelToken()
@@ -704,16 +708,18 @@ async def _login(
     return 0
 
 
-async def _wait_for_redirect_url(cancel: CancelToken, interactive: bool) -> str | None:
-    """The pasted redirect URL in a terminal; otherwise only the browser
-    callback can finish the sign-in. None on cancellation or end of input, or
-    when the callback arrives or the sign-in times out."""
-    if not interactive:
+async def _wait_for_redirect_url(cancel: CancelToken, terminal: StdinReader | None) -> str | None:
+    """The redirect URL pasted in `terminal`, stdin when it is a terminal;
+    otherwise only the browser callback can finish the sign-in. None on
+    cancellation or end of input, or when the callback arrives or the sign-in
+    times out."""
+    if terminal is None:
         await cancel.event.wait()
         return None
     try:
         return await question_terminal(
             "If the browser cannot reach this machine, paste the URL it was redirected to: ",
+            stdin=terminal,
             output=write_stderr,
             cancel=cancel,
         )

@@ -16,7 +16,6 @@ Protocol:
 
 import json
 import signal
-import sys
 import threading
 import uuid
 from typing import Any
@@ -31,15 +30,12 @@ from ...core.bash_executor import BashResult
 from ...core.json_wire import to_wire
 from ...core.output_guard import drain_output, take_over_stdout, write_raw_stdout
 from ...core.session_manager import SessionManager
-from ...utils.fd_io import FdReader, hard_exit
+from ...utils.fd_io import StdinReader, hard_exit
 from ...utils.shell import SignalDispatcher, kill_tracked_detached_children, signal_exit_status
 from ..interactive.theme import theme
 from ..json_event import to_json_event
 from .jsonl import JsonlLineDecoder, serialize_json_line
 from .rpc_types import RpcSessionState, RpcSlashCommand
-
-
-_STDIN_READ_SIZE = 65536
 
 
 async def _answer(value: Any) -> Any:
@@ -257,10 +253,10 @@ class _RpcExtensionUIContext:
         """Tool expansion not supported in RPC mode - no TUI."""
 
 
-async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | None = None) -> None:
+async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: SignalDispatcher | None = None) -> None:
     """Run in RPC mode.
 
-    Listens for JSON commands on stdin, outputs events and responses on
+    Listens for JSON commands on `stdin`, outputs events and responses on
     stdout. Never returns (the process exits on shutdown).
     """
     take_over_stdout()
@@ -913,32 +909,27 @@ async def run_rpc_mode(runtime_host, *, signal_dispatcher: SignalDispatcher | No
         input_ready = True
     # Handle a shutdown requested during startup (e.g. from session_start).
     check_shutdown_requested()
-    await _pump_stdin_commands(on_input_line, on_input_end)
+    await _pump_stdin_commands(stdin, on_input_line, on_input_end)
 
 
-async def _pump_stdin_commands(on_line, on_end) -> None:
+async def _pump_stdin_commands(stdin: StdinReader, on_line, on_end) -> None:
     """Strict-JSONL read loop over stdin.
 
     Module-level so tests can substitute it and drive lines directly (pi's
     tests mock attachJsonlLineReader the same way)."""
     decoder = JsonlLineDecoder()
-    # Readiness-driven when stdin is a pipe or socket — the usual case here,
-    # where the peer is a supervising program rather than a shell — and
-    # `fs.wrap_file` when it is a redirected file. Either way no pool thread
-    # sits parked between records.
-    reader = FdReader(sys.stdin.fileno(), size=_STDIN_READ_SIZE)
-    try:
-        while True:
-            chunk = await reader.read()
-            if not chunk:
-                for line in decoder.end():
-                    on_line(line)
-                await on_end()
-                return
-            for line in decoder.feed(chunk):
+    # `stdin` reads by readiness when it is a pipe or socket — the usual case
+    # here, where the peer is a supervising program rather than a shell — and
+    # through `fs.wrap_file` when it is a redirected file. Either way no pool
+    # thread sits parked between records.
+    while True:
+        for line in decoder.feed(stdin.take()):
+            on_line(line)
+        if not await stdin.fill():
+            for line in decoder.end():
                 on_line(line)
-    finally:
-        reader.close()
+            await on_end()
+            return
 
 
 def _parse_images(images: Any) -> list[Any] | None:

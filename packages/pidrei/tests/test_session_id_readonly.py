@@ -180,6 +180,7 @@ class TestSessionIdExactLookup:
                     dirs.project_dir,
                     dirs.session_dir,
                     SettingsManager.in_memory(),
+                    None,  # stdin: no prompt on this path
                 )
         finally:
             SessionManager.list = original_list
@@ -200,6 +201,7 @@ class TestSessionIdExactLookup:
             dirs.project_dir,
             dirs.session_dir,
             SettingsManager.in_memory(),
+            None,  # stdin: no prompt on this path
         )
 
         assert reopened.get_session_file() == renamed_path

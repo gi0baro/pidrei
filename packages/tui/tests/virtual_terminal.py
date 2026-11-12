@@ -41,6 +41,8 @@ class VirtualTerminal:
         self._screen = pyte.HistoryScreen(columns, rows, history=_HISTORY)
         self._stream = pyte.Stream(self._screen)
         self._frames = 0
+        # Whether a caller handed the terminal to another program.
+        self.handed_off = False
         # pyte's parser is a single generator: the render loop (terminal.write)
         # and a test task (hide_cursor via show/hide_overlay) feed it from two
         # worker threads, which raises "generator already executing" — or
@@ -74,6 +76,12 @@ class VirtualTerminal:
 
     async def release(self) -> None:
         """No-op, as `arm`."""
+
+    def hand_off(self) -> None:
+        self.handed_off = True
+
+    def take_back(self) -> None:
+        self.handed_off = False
 
     async def stop(self) -> None:
         # Disable bracketed paste mode

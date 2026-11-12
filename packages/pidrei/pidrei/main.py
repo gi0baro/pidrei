@@ -94,7 +94,7 @@ from .modes import run_print_mode, run_rpc_mode
 from .modes.interactive.theme import init_theme, set_theme_json_validator, stop_theme_watcher, validate_theme_json
 from .modes.print_mode import PrintModeOptions
 from .utils.colors import dim, red, yellow
-from .utils.fd_io import FdReader
+from .utils.fd_io import StdinReader
 from .utils.paths import is_local_path, normalize_path, resolve_path
 from .utils.shell import SignalDispatcher
 
@@ -118,27 +118,20 @@ def _timeout_cancel(ms: float) -> CancelToken:
     return token
 
 
-async def _read_piped_stdin() -> str | None:
+async def _read_piped_stdin(stdin: StdinReader) -> str | None:
     """Read all content from piped stdin.
 
     Returns None if stdin is a TTY (interactive terminal).
 
-    A redirected file gets `fs.wrap_file`; a pipe is driven by readiness.
-    Setting `O_NONBLOCK` on the shell's descriptor is safe now that the stdio
-    teardown policy (`snapshot_stdio_flags` at entry + `hard_exit`
-    everywhere) restores it on every exit path we control (task #92).
+    `stdin` reads a pipe by readiness and a redirected file through
+    `fs.wrap_file`; either way no pool thread is parked waiting for input.
     """
-    if sys.stdin.isatty():
+    if os.isatty(stdin.fd):
         return None
 
-    reader = FdReader(sys.stdin.fileno())
-    chunks: list[bytes] = []
-    try:
-        while chunk := await reader.read():
-            chunks.append(chunk)
-    finally:
-        reader.close()
-    return b"".join(chunks).decode("utf-8", "replace").strip() or None
+    while await stdin.fill():
+        pass
+    return stdin.take().decode("utf-8", "replace").strip() or None
 
 
 def _report_diagnostics(diagnostics: list[AgentSessionRuntimeDiagnostic]) -> None:
@@ -172,7 +165,7 @@ def _is_plain_runtime_metadata_command(parsed: Args) -> bool:
     return not parsed.print and parsed.mode is None and (parsed.help is True or parsed.list_models is not None)
 
 
-async def _run_auth_login_command(args: list[str]) -> int:
+async def _run_auth_login_command(args: list[str], stdin: StdinReader) -> int:
     """pi's runAuthLoginCommand. `_main` already applied the proxy settings of
     the same global settings; pi's `configureHttpDispatcher` has no PiDrei
     counterpart (the idle timeout is read per request). pi also aborts the
@@ -185,7 +178,7 @@ async def _run_auth_login_command(args: list[str]) -> int:
         args,
         AuthLoginOptions(
             model_runtime=model_runtime,
-            terminal=create_process_login_terminal(cancel.cancel),
+            terminal=create_process_login_terminal(stdin, cancel.cancel),
             get_device_id=settings_manager.get_or_create_device_id,
             cancel=cancel,
         ),
@@ -204,7 +197,7 @@ async def _run_auth_logout_command(args: list[str]) -> int:
     )
 
 
-async def _run_auth_command(args: list[str]) -> int | None:
+async def _run_auth_command(args: list[str], stdin: StdinReader) -> int | None:
     """pi's runAuthCommand: handle `auth <command>` before normal startup.
     Returns the process exit code, or None when the args are not an auth
     command."""
@@ -215,7 +208,7 @@ async def _run_auth_command(args: list[str]) -> int | None:
         return 0
     if len(args) > 1 and args[0] == "auth" and args[1] == "login":
         # `_main` already applied --offline.
-        return await _run_auth_login_command([arg for arg in args[2:] if arg != "--offline"])
+        return await _run_auth_login_command([arg for arg in args[2:] if arg != "--offline"], stdin)
     if len(args) > 1 and args[0] == "auth" and args[1] == "logout":
         return await _run_auth_logout_command([arg for arg in args[2:] if arg != "--offline"])
 
@@ -337,28 +330,20 @@ async def _resolve_session_path(session_arg: str, cwd: str, session_dir: str | N
     return {"type": "not_found", "arg": session_arg}
 
 
-async def _prompt_confirm(message: str) -> bool:
+async def _prompt_confirm(stdin: StdinReader, message: str) -> bool:
     """Prompt user for yes/no confirmation.
 
-    Reads the reply through `FdReader` readiness rather than parking a pool
-    thread in `sys.stdin.readline` for as long as the user takes to answer
-    (task #92; the stdio teardown policy restores the blocking flag). A TTY
-    in canonical mode delivers the whole line on Enter, so one chunk is
-    normally one answer; the loop covers pipes and partial delivery.
+    The reply is the next line `stdin` holds or reads, waited for on
+    readiness rather than with a pool thread parked for as long as the user
+    takes to answer. End of input answers with what was typed so far.
     """
     write_stdout(f"{message} [y/N] ")
     await drain_output()
-    reader = FdReader(sys.stdin.fileno())
-    buffer = b""
-    try:
-        while b"\n" not in buffer:
-            chunk = await reader.read()
-            if not chunk:
-                break
-            buffer += chunk
-    finally:
-        reader.close()
-    lines = buffer.decode("utf-8", "replace").splitlines()
+    while (line := stdin.take_line()) is None:
+        if not await stdin.fill():
+            line = stdin.take()
+            break
+    lines = line.decode("utf-8", "replace").splitlines()
     answer = lines[0].strip().lower() if lines else ""
     return answer in ("y", "yes")
 
@@ -427,7 +412,7 @@ async def _fork_session_or_exit(
 
 
 async def _create_session_manager(
-    parsed: Args, cwd: str, session_dir: str | None, settings_manager: SettingsManager
+    parsed: Args, cwd: str, session_dir: str | None, settings_manager: SettingsManager, stdin: StdinReader
 ) -> SessionManager:
     if parsed.no_session or parsed.help or parsed.list_models is not None:
         return SessionManager.in_memory(cwd, {"id": parsed.session_id} if parsed.session_id is not None else None)
@@ -455,7 +440,7 @@ async def _create_session_manager(
 
         if resolved["type"] == "global":
             write_stdout(yellow(f"Session found in different project: {resolved['cwd']}") + "\n")
-            should_fork = await _prompt_confirm("Fork this session into current directory?")
+            should_fork = await _prompt_confirm(stdin, "Fork this session into current directory?")
             if not should_fork:
                 write_stdout(dim("Aborted.") + "\n")
                 raise SystemExit(0)
@@ -601,6 +586,7 @@ def _resolve_cli_paths(cwd: str, paths: list[str] | None) -> list[str] | None:
 async def main(
     args: list[str],
     *,
+    stdin: StdinReader,
     extension_factories: list[Any] | None = None,
     signal_dispatcher: SignalDispatcher | None = None,
 ) -> int:
@@ -612,12 +598,14 @@ async def main(
     boundary. `except*` covers a plain exception and one raised inside a
     group (from spawned children) alike.
 
-    `signal_dispatcher` is the process's signal receiver, which the mode
-    installs its signal handlers on; None when the caller handles no signals
-    (the CLI entry point always passes one)."""
+    `stdin` is the run's one reader of stdin, which every prompt and the
+    modes that read stdin take their input from. `signal_dispatcher` is the
+    process's signal receiver, which the mode installs its signal handlers
+    on; None when the caller handles no signals (the CLI entry point always
+    passes one)."""
     exit_code: int | None = None
     try:
-        await _main(args, extension_factories=extension_factories, signal_dispatcher=signal_dispatcher)
+        await _main(args, stdin=stdin, extension_factories=extension_factories, signal_dispatcher=signal_dispatcher)
     except* SystemExit as group:
         code = group.exceptions[0].code
         exit_code = code if isinstance(code, int) else 0
@@ -632,6 +620,7 @@ async def main(
 async def _main(
     args: list[str],
     *,
+    stdin: StdinReader,
     extension_factories: list[Any] | None = None,
     signal_dispatcher: SignalDispatcher | None = None,
 ) -> None:
@@ -655,7 +644,7 @@ async def _main(
     bootstrap_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=False)
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
 
-    auth_exit_code = await _run_auth_command(args)
+    auth_exit_code = await _run_auth_command(args, stdin)
     if auth_exit_code is not None:
         raise SystemExit(auth_exit_code)
 
@@ -666,7 +655,7 @@ async def _main(
     if handled is False:
         handled = await handle_config_command(args, extension_factories=extension_factories)
     if handled is False:
-        handled = await handle_mcp_command(args, cwd=cwd, agent_dir=agent_dir)
+        handled = await handle_mcp_command(args, cwd=cwd, agent_dir=agent_dir, stdin=stdin)
     if handled is not False:
         raise SystemExit(handled)
 
@@ -742,7 +731,7 @@ async def _main(
         or (expand_tilde_path(env_session_dir) if env_session_dir else None)
         or startup_settings_manager.get_session_dir()
     )
-    session_manager = await _create_session_manager(parsed, cwd, session_dir, startup_settings_manager)
+    session_manager = await _create_session_manager(parsed, cwd, session_dir, startup_settings_manager, stdin)
     missing_session_cwd_issue = await get_missing_session_cwd_issue(session_manager, cwd)
     if missing_session_cwd_issue:
         if app_mode == "interactive":
@@ -981,7 +970,7 @@ async def _main(
     # Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
     stdin_content: str | None = None
     if app_mode != "rpc":
-        stdin_content = await _read_piped_stdin()
+        stdin_content = await _read_piped_stdin(stdin)
         if stdin_content is not None and app_mode == "interactive":
             app_mode = "print"
     time("readPipedStdin")
@@ -1026,7 +1015,7 @@ async def _main(
 
     if app_mode == "rpc":
         print_timings()
-        await run_rpc_mode(runtime, signal_dispatcher=signal_dispatcher)
+        await run_rpc_mode(runtime, stdin=stdin, signal_dispatcher=signal_dispatcher)
     elif app_mode == "interactive":
         # Permanent by tonio's design (its author ruled unstarted coroutines
         # unreachable for cleanup — do not wait for an upstream fix):

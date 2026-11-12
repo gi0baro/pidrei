@@ -201,7 +201,7 @@ class _RpcHarness:
 
         runtime_host.dispose = dispose
 
-        async def fake_pump(on_line, on_end) -> None:
+        async def fake_pump(_stdin, on_line, on_end) -> None:
             self.line_handler = on_line
             self.end_handler = on_end
             self._ready.set()
@@ -222,7 +222,10 @@ class _RpcHarness:
                 kill_tracked_detached_children=lambda: None,
             )
         )
-        self._handle = tonio.spawn(rpc_mode.run_rpc_mode(runtime_host, signal_dispatcher=self.signal_dispatcher))
+        # The fake pump stands in for the only reader of stdin.
+        self._handle = tonio.spawn(
+            rpc_mode.run_rpc_mode(runtime_host, stdin=None, signal_dispatcher=self.signal_dispatcher)
+        )
         await self._ready.wait(5)
         assert self._ready.is_set(), "the RPC mode never attached its input"
 

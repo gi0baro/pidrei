@@ -119,6 +119,12 @@ PiDrei skipped Pi 1.5.1, so this release also carries its changes.
   `openrouter`, `cloudflare-workers-ai` and `cloudflare-ai-gateway`.
 - The OpenAI Codex provider is named "OpenAI Codex" again instead of "OpenAI
   Codex (legacy)".
+- Standard input, output and error are non-blocking for the whole run
+  instead of being switched around each prompt and write. The shell gets
+  them back as it handed them over when pidrei exits or is suspended, and
+  the terminal is blocking while a program pidrei starts on it is using it:
+  the external editor, or what an extension runs between `tui.stop()` and
+  `tui.start()`.
 - Model catalog regenerated from models.dev.
 
 ### Fixed
@@ -306,6 +312,12 @@ PiDrei skipped Pi 1.5.1, so this release also carries its changes.
 - The plan-mode extension example missed completion markers in thinking
   blocks and common completion phrases, dropped formatted or long plan
   steps, and sent an extra model turn to acknowledge completion.
+- Input piped to a shell command that asks more than one question, such as
+  `pidrei auth login`, was dropped after the first line. Each prompt now
+  takes the next line, and a prompt that is cancelled leaves what was typed
+  so far to the next one.
+- Suspending pidrei with Ctrl+Z while a prompt waited for input left the
+  shell's terminal in non-blocking mode until pidrei was resumed.
 
 ### Not ported
 

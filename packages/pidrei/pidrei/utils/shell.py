@@ -14,7 +14,7 @@ import tonio.colored as tonio
 from tonio.colored import signals as tonio_signals
 
 from ..config import get_bin_dir
-from .fd_io import hard_exit
+from .fd_io import hard_exit, resume_stdio, suspend_stdio
 from .runtime_options import HANDLED_SIGNALS
 
 
@@ -120,8 +120,17 @@ async def exit_on_signal(signum: int) -> None:
 async def stop_on_signal(_signum: int) -> None:
     """The SIGTSTP handler: stop the process, as SIGTSTP's default action did
     before the runtime handled it. SIGSTOP cannot be handled, so the kernel
-    stops the process; SIGCONT resumes it."""
+    stops the process; SIGCONT resumes it. While it is stopped the shell owns
+    the terminal, so stdio gets its inherited blocking flags first;
+    `continue_on_signal` takes them back."""
+    suspend_stdio()
     os.kill(os.getpid(), signal.SIGSTOP)
+
+
+async def continue_on_signal(_signum: int) -> None:
+    """The SIGCONT handler while no mode installs its own: stdio is the
+    process's again, with the flags it had before `stop_on_signal`."""
+    resume_stdio()
 
 
 async def _ignore_signal(_signum: int) -> None:
