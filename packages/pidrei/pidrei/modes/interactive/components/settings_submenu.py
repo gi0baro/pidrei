@@ -3,6 +3,8 @@
 All callbacks are synchronous, as in pi.
 """
 
+from collections.abc import Sequence
+
 from pidrei_tui import Container, Input, SelectList, Spacer, Text, fuzzy_filter, get_keybindings
 
 from ..theme import get_select_list_theme, theme
@@ -200,7 +202,7 @@ class SteppedSubmenu(Container):
             submenu_options,
         )
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         return self._active_component.render(width)
 
     def handle_input(self, data: str) -> None:

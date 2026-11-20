@@ -357,9 +357,9 @@ class _RenderWatch:
             watch = cls._watches[tui] = cls()
             render_frame = tui._render_frame
 
-            async def counted_frame() -> None:
+            async def counted_frame(content_changed: bool) -> None:
                 covered = watch.requested()
-                await render_frame()
+                await render_frame(content_changed)
                 watch.drawn(covered)
 
             tui._render_frame = counted_frame

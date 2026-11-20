@@ -83,6 +83,19 @@ class TestAssistantMessageComponent:
         assert OSC133_ZONE_START in lines[0]
         assert lines[-1].startswith(OSC133_ZONE_END + OSC133_ZONE_FINAL)
 
+    # #9549: container output is reused across frames, so markers must not be added to it in place.
+    @pytest.mark.tonio
+    async def test_adds_osc_133_zone_markers_once_across_repeated_renders(self):
+        await init_theme("dark")
+
+        component = AssistantMessageComponent(create_assistant_message([TextContent(text="hello")]))
+        first = component.render(40)
+        second = component.render(40)
+
+        assert second is first
+        assert len(second[0].split(OSC133_ZONE_START)) == 2
+        assert len(second[-1].split(OSC133_ZONE_END)) == 2
+
     @pytest.mark.tonio
     async def test_does_not_add_osc_133_zone_markers_when_assistant_message_contains_tool_calls(self):
         await init_theme("dark")

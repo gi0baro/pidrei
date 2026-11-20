@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/user-message.ts."""
 
+from collections.abc import Sequence
+
 from pidrei_tui import Container, Markdown
 
 from ..theme import get_markdown_theme, theme
@@ -30,6 +32,8 @@ class UserMessageComponent(Container):
         self._markdown_transformers = markdown_transformers
         self._message_id = message_id
         self._timestamp = timestamp
+        # The last render's (container output, the copy with OSC 133 zone markers).
+        self._zone_lines: tuple[Sequence[str], list[str]] | None = None
         self._rebuild()
 
     def set_output_pad(self, padding: int) -> None:
@@ -60,11 +64,16 @@ class UserMessageComponent(Container):
             )
         )
 
-    def render(self, width: int) -> list:
+    def render(self, width: int) -> Sequence[str]:
         lines = super().render(width)
         if not lines:
             return lines
 
-        lines[0] = OSC133_ZONE_START + lines[0]
-        lines[-1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[-1]
-        return lines
+        # Container output is shared across frames; copy it once per change instead of mutating it.
+        zone_lines = self._zone_lines
+        if zone_lines is None or zone_lines[0] is not lines:
+            zoned = [*lines]
+            zoned[0] = OSC133_ZONE_START + zoned[0]
+            zoned[-1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + zoned[-1]
+            zone_lines = self._zone_lines = (lines, zoned)
+        return zone_lines[1]

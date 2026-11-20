@@ -14,6 +14,7 @@ consumer with slow work spawns it (see ``TuiBase.finish_before_next_input``).
 """
 
 import math
+from collections.abc import Sequence
 from dataclasses import replace
 
 from ..fuzzy import fuzzy_filter
@@ -76,7 +77,7 @@ class SettingsList:
             if invalidate is not None:
                 invalidate()
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         # If submenu is active, render it instead
         if self._submenu_component is not None:
             return self._submenu_component.render(width)

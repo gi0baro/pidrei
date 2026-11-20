@@ -3,9 +3,16 @@
 Port of pi tui ``components/box.ts``.
 """
 
+from collections.abc import Sequence
 from dataclasses import replace
 
-from ..tui import TuiMouseDispatchResult, TuiMouseEvent, dispatch_mouse_event
+from ..tui import (
+    ChildLines,
+    TuiMouseDispatchResult,
+    TuiMouseEvent,
+    dispatch_mouse_to_child_lines,
+    render_child_lines,
+)
 from ..utils import visible_width
 
 
@@ -21,9 +28,7 @@ class Box:
 
         # Cache for rendered output: {"childLines", "width", "bgSample", "lines"}
         self._cache: dict | None = None
-        # Geometry of the last rendered frame, for hit-testing without
-        # re-rendering: {"width", "children": [(component, height), ...]}.
-        self._mouse_layout: dict | None = None
+        self._child_lines: ChildLines | None = None
 
     def add_child(self, component) -> None:
         self.children.append(component)
@@ -55,15 +60,7 @@ class Box:
 
     def _invalidate_cache(self) -> None:
         self._cache = None
-
-    def _match_cache(self, width: int, child_lines: list[str], bg_sample: str | None) -> bool:
-        cache = self._cache
-        return (
-            cache is not None
-            and cache["width"] == width
-            and cache["bgSample"] == bg_sample
-            and cache["childLines"] == child_lines
-        )
+        self._child_lines = None
 
     def invalidate(self) -> None:
         self._invalidate_cache()
@@ -79,39 +76,25 @@ class Box:
         if content_y < 0 or content_x < 0 or content_x >= content_width:
             return None
 
-        layout = self._mouse_layout
-        mouse_children = (
-            layout["children"]
-            if layout is not None and layout["width"] == content_width
-            else [(component, len(component.render(content_width))) for component in self.children]
+        child_lines = self._child_lines
+        layout = (
+            child_lines
+            if child_lines is not None and child_lines.width == content_width
+            else render_child_lines(self.children, content_width, None)
         )
-        child_y = 0
-        for child, child_height in mouse_children:
-            if child_y <= content_y < child_y + child_height:
-                return dispatch_mouse_event(
-                    child,
-                    replace(event, x=content_x, y=content_y - child_y, width=content_width, height=child_height),
-                )
-            child_y += child_height
-        return None
+        return dispatch_mouse_to_child_lines(layout, replace(event, x=content_x, y=content_y, width=content_width))
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         if not self.children:
             return []
 
         content_width = max(1, width - self._padding_x * 2)
         left_pad = " " * self._padding_x
 
-        # Render all children. Keep the child lines unpadded: children usually return the same string
-        # objects every frame, so the cache check below is a cheap identity comparison per line.
-        # Padding here would create new strings that must be compared character by character.
-        child_lines: list[str] = []
-        mouse_children: list[tuple] = []
-        for child in self.children:
-            lines = child.render(content_width)
-            mouse_children.append((child, len(lines)))
-            child_lines.extend(lines)
-        self._mouse_layout = {"width": content_width, "children": mouse_children}
+        # Keep the child lines unpadded: unchanged children keep their line list, so the cache check
+        # below is one identity comparison. Padding here would create new strings every frame.
+        self._child_lines = render_child_lines(self.children, content_width, self._child_lines)
+        child_lines = self._child_lines.lines
 
         if not child_lines:
             return []
@@ -120,8 +103,14 @@ class Box:
         bg_sample = self._bg_fn("test") if self._bg_fn is not None else None
 
         # Check cache validity
-        if self._match_cache(width, child_lines, bg_sample):
-            return self._cache["lines"]
+        cache = self._cache
+        if (
+            cache is not None
+            and cache["childLines"] is child_lines
+            and cache["width"] == width
+            and cache["bgSample"] == bg_sample
+        ):
+            return cache["lines"]
 
         # Apply background and padding
         result: list[str] = []

@@ -7,6 +7,7 @@ underline, reset, and OSC 8 hyperlinks with http, https, or mailto URLs
 """
 
 import re
+from collections.abc import Sequence
 
 
 # Standard ANSI color palette (0-15)
@@ -246,6 +247,6 @@ def ansi_to_html(text: str) -> str:
     return result
 
 
-def ansi_lines_to_html(lines: list) -> str:
+def ansi_lines_to_html(lines: Sequence[str]) -> str:
     """Convert ANSI-escaped lines to HTML, one div per line."""
     return "".join(f'<div class="ansi-line">{ansi_to_html(line) or "&nbsp;"}</div>' for line in lines)

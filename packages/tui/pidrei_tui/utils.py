@@ -162,6 +162,20 @@ def get_word_segmenter() -> _WordSegmenter:
 
 _PRINTABLE_ASCII_RE = re.compile(r"[\x20-\x7e]*\Z")
 
+# Characters that always form a grapheme cluster on their own (pi's isStandaloneGraphemeUnit):
+# printable ASCII, Latin, punctuation, arrows, box drawing, symbols, kana, CJK ideographs and
+# fullwidth forms. These ranges hold no combining marks, joiners, variation selectors, Hangul jamo
+# or astral characters, so no Unicode grapheme rule can join two of them. Left out of
+# U+2010-U+2BFF: line and bidi controls, invisible operators and combining marks for symbols.
+_STANDALONE_GRAPHEME_CLASS = (
+    r"[\x20-\x7e"
+    r"\xa0-\xac\xae-˿"
+    r"‐-‧ - ⁰-⃏℀-⯿"
+    r"぀-ゖ゠-ヿ一-鿿！-｠]"
+)
+_STANDALONE_GRAPHEME_RUN_RE = re.compile(_STANDALONE_GRAPHEME_CLASS + r"*\Z")
+_STANDALONE_GRAPHEMES_RE = re.compile(_STANDALONE_GRAPHEME_CLASS + "+")
+
 # Default_Ignorable_Code_Point ranges (UCD PropList).
 _DEFAULT_IGNORABLE_RANGES = (
     (0x00AD, 0x00AD),
@@ -346,6 +360,38 @@ def _is_printable_ascii(s: str) -> bool:
     return _PRINTABLE_ASCII_RE.match(s) is not None
 
 
+def _segment_graphemes(text: str):
+    """Segment a run that contains complex characters. A standalone character whose neighbours
+    are standalone too is its own cluster, since no grapheme rule joins two standalone characters.
+    Only the stretches between such characters go through the segmenter; cutting there is safe
+    because both cut edges are boundaries.
+
+    pi's per-unit loop, run by run: in a run of standalone characters, the first one belongs to
+    the stretch before it and the last one to the stretch after it, unless the text ends there.
+    """
+    complex_start = 0
+    end_of_text = len(text)
+    for run in _STANDALONE_GRAPHEMES_RE.finditer(text):
+        start, end = run.span()
+        alone_start = start if start == 0 else start + 1
+        alone_end = end if end == end_of_text else end - 1
+        if alone_start >= alone_end:
+            continue
+        if complex_start < alone_start:
+            yield from grapheme_lib.graphemes(text[complex_start:alone_start])
+        yield from text[alone_start:alone_end]
+        complex_start = alone_end
+    if complex_start < end_of_text:
+        yield from grapheme_lib.graphemes(text[complex_start:])
+
+
+def _graphemes_of(text: str):
+    """Grapheme clusters of a text run without ANSI codes. Standalone characters are split per
+    character: the pure-Python segmenter costs far more than the slicing it serves, which made one
+    non-ASCII character slow down every row of a fullscreen frame."""
+    return text if _STANDALONE_GRAPHEME_RUN_RE.match(text) is not None else _segment_graphemes(text)
+
+
 # =============================================================================
 # Width measurement
 # =============================================================================
@@ -353,6 +399,11 @@ def _is_printable_ascii(s: str) -> bool:
 _WIDTH_CACHE_SIZE = 512
 _width_cache: dict[str, int] = {}
 _width_cache_lock = threading.Lock()
+
+# Widths of single non-ASCII BMP characters; bounded by the 64K code points. A memo of a pure
+# function that is never evicted: a store racing another stores the same width, so unlike
+# `_width_cache` it needs no lock.
+_single_char_widths: dict[int, int] = {}
 
 
 def _grapheme_width(segment: str) -> int:
@@ -362,13 +413,23 @@ def _grapheme_width(segment: str) -> int:
     possible-emoji check to avoid running the emoji-sequence test
     unnecessarily.
     """
-    if len(segment) == 1:
-        code = ord(segment)
-        if 0x20 <= code <= 0x7E:
-            return 1
-        if code == 0x09:
-            return 3
+    if len(segment) != 1:
+        return _cluster_width(segment)
+    code = ord(segment)
+    if 0x20 <= code <= 0x7E:
+        return 1
+    if code == 0x09:
+        return 3
+    if code > 0xFFFF:
+        # pi caches one UTF-16 unit: an astral character is two.
+        return _cluster_width(segment)
+    width = _single_char_widths.get(code)
+    if width is None:
+        width = _single_char_widths[code] = _cluster_width(segment)
+    return width
 
+
+def _cluster_width(segment: str) -> int:
     # Some marks occupy cells even without a base character.
     if _is_terminal_spacing_mark(segment):
         return len(segment)
@@ -555,7 +616,7 @@ def get_grapheme_cell_range(line: str, column: int) -> tuple[int, int] | None:
                 return (column, column + 1)
             current_col += len(text)
         else:
-            for segment in grapheme_lib.graphemes(text):
+            for segment in _graphemes_of(text):
                 width = _grapheme_width(segment)
                 if width > 0 and current_col <= column < current_col + width:
                     return (current_col, current_col + width)
@@ -1543,7 +1604,7 @@ def slice_with_width(line: str, start_col: int, length: int, strict: bool = Fals
                 result_width += last - first
             current_col = min(end_col, current_col + len(text))
         else:
-            for segment in grapheme_lib.graphemes(text):
+            for segment in _graphemes_of(text):
                 w = _grapheme_width(segment)
                 in_range = start_col <= current_col < end_col
                 fits = not strict or current_col + w <= end_col

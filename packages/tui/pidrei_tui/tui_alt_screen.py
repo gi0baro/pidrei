@@ -27,7 +27,7 @@ import base64
 import math
 import os
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, replace
 
 import tonio.colored as tonio
@@ -146,7 +146,7 @@ class _ImplicitDocument:
     def __init__(self, tui) -> None:
         self._tui = tui
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         return super(TuiAltScreen, self._tui).render(width)
 
     def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
@@ -313,7 +313,7 @@ class TuiAltScreen(TuiBase):
             self._current_layout = None
         self.request_render()
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         return self._layout_root.render(width) if self._layout_root is not None else super().render(width)
 
     def _get_mounted_roots(self) -> list:
@@ -488,15 +488,15 @@ class TuiAltScreen(TuiBase):
 
     def scroll_by(self, lines: int) -> None:
         self._get_primary_scroll_view().scroll_by(lines)
-        self.request_render()
+        self._request_view_render()
 
     def scroll_to_top(self) -> None:
         self._get_primary_scroll_view().scroll_to_start()
-        self.request_render()
+        self._request_view_render()
 
     def scroll_to_bottom(self) -> None:
         self._get_primary_scroll_view().scroll_to_end()
-        self.request_render()
+        self._request_view_render()
 
     def _scroll_to_prompt(self, direction: int) -> None:
         if self._current_layout is None:
@@ -511,7 +511,7 @@ class TuiAltScreen(TuiBase):
         while 0 <= row < len(lines):
             if OSC133_PROMPT_START.match(lines[row]):
                 scroll_view.scroll_to(row)
-                self.request_render()
+                self._request_view_render()
                 return
             row += direction
 
@@ -1053,7 +1053,9 @@ class TuiAltScreen(TuiBase):
         if remaining != 0 and all(scroll_view is not primary for scroll_view in seen):
             primary.scroll_by(remaining)
         self._update_scrollbar_hover(event["x"], event["y"])
-        self.request_render()
+        # Scrolling moves the viewport only. Reusing the previous component output keeps a wheel
+        # frame O(viewport); re-rendering a long transcript on every wheel event saturated a core.
+        self._request_view_render()
 
     def _parse_sgr_mouse_event(self, data: str) -> dict | None:
         match = _SGR_MOUSE_RE.match(data)
@@ -1340,7 +1342,8 @@ class TuiAltScreen(TuiBase):
             point = self._get_scroll_selection_point(scroll_view, pointer["x"], pointer["y"])
             if point:
                 self._update_selection_focus(point)
-            self.request_render()
+            # Selection is painted onto the screen after layout, so it needs no new component output.
+            self._request_view_render()
 
     def _stop_selection_auto_scroll(self) -> None:
         if self._selection_auto_scroll_timer is not None:
@@ -1726,15 +1729,21 @@ class TuiAltScreen(TuiBase):
             result[row] = composite_tui_line(result[row], line, width - flash_width, flash_width, width)
         return result
 
-    def _compose_frame(self) -> _AltScreenFrame | None:
+    def _compose_frame(self, content_changed: bool) -> _AltScreenFrame | None:
         if self._stopped or not self._alt_screen_active:
             return None
         width = max(1, self.terminal.columns)
         height = max(1, self.terminal.rows)
         root = self._layout_root if self._layout_root is not None else self._implicit_scroll_view
-        next_layout = render_layout_frame(root, width, height, self.request_render)
+        request_view_render = self._request_view_render
+        current_layout = self._current_layout
+        # A frame whose requests were all view requests (scrolling) reuses the
+        # previous frame's component output; the decision was taken when the
+        # render loop received the request (`content_changed`).
+        reusable_output = None if content_changed or current_layout is None else current_layout.render_cache
+        next_layout = render_layout_frame(root, width, height, request_view_render, reusable_output)
         if self._refresh_search(next_layout):
-            next_layout = render_layout_frame(root, width, height, self.request_render)
+            next_layout = render_layout_frame(root, width, height, request_view_render, next_layout.render_cache)
         # Resolve fake cursors before highlighting and compositing, which only track SGR codes
         screen = self._resolve_fake_cursors([OSC133_ZONE_PREFIX.sub("", line) for line in next_layout.lines])
         screen = self._apply_search_highlights(screen, next_layout)

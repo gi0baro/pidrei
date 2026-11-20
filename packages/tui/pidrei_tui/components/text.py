@@ -3,6 +3,8 @@
 Port of pi tui ``components/text.ts``.
 """
 
+from collections.abc import Sequence
+
 from ..utils import apply_background_to_line, visible_width, wrap_text_with_ansi
 
 
@@ -41,7 +43,7 @@ class Text:
     def invalidate(self) -> None:
         self._cache = None
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         text = self._text
         # Check cache
         cache = self._cache

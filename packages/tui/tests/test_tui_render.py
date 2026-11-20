@@ -1184,9 +1184,9 @@ async def test_a_frame_holds_the_ui_state_lock_for_the_tree_walk_only():
     held: list[tuple[str, bool]] = []
     compose_frame, write_frame = tui._compose_frame, tui._write_frame
 
-    def recorded_compose():
+    def recorded_compose(content_changed):
         held.append(("walk", _held(tui.state_lock)))
-        return compose_frame()
+        return compose_frame(content_changed)
 
     def recorded_write(frame):
         held.append(("diff", _held(tui.state_lock)))

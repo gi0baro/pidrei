@@ -21,6 +21,7 @@ render, including width changes and every streaming update.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..latex import render_latex
@@ -112,7 +113,7 @@ class Markdown:
         self._blocks = {}
         self._default_style_prefix = None
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         source_text = self._text
         # Check cache
         cache = self._cache

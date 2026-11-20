@@ -728,6 +728,11 @@ untouched: component diffs port 1:1. What diverges:
     half.
   - Diffs to *when* a frame is scheduled land in
     `request_render`/`_render_loop`.
+  - Pi's `contentChanged` (1.6.0) rides in the render request like `force`:
+    `request_render()` sets `content` before its send, scroll-only paths
+    call `_request_view_render()`, which sets nothing, and the loop hands
+    `content` to `_compose_frame`; `_set_focus_internal` requests a frame
+    where Pi only sets the flag.
 - **Timers**: `pidrei_utils.timers.Timeout`/`Interval` are plain primitives.
   A callback that touches UI state takes the lock itself. A callback whose
   late run (a fire racing `cancel()`) would undo newer state either
@@ -1349,6 +1354,8 @@ output:
 
 Widths are counted run by run, as the column walkers do, which can differ
 from `visible_width` when an escape sequence sits inside a grapheme cluster.
+Since Pi 1.6.0 the walkers split runs of standalone characters per character
+in front of the segmenter (`_graphemes_of`), with unchanged output.
 
 - **Upstream diffs**: a change to `replaceScrollbarCell`'s output (padding,
   style, background, the cell range) lands in the walk *and* in both

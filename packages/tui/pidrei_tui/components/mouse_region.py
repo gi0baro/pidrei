@@ -4,6 +4,8 @@
 like pi's ``MouseRegionHandler``.
 """
 
+from collections.abc import Sequence
+
 from ..tui import TuiMouseDispatchResult, TuiMouseEvent, TuiMouseEventResult, dispatch_mouse_event
 
 
@@ -17,7 +19,7 @@ class MouseRegion:
         self._child = child
         self._on_mouse = on_mouse
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         return self._child.render(width)
 
     def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | TuiMouseEventResult | None:

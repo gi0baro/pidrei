@@ -4,7 +4,7 @@ Shared utility for truncating text to visual lines (accounting for line
 wrapping). Used by tool renderers and bash_execution for consistent behavior.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 from pidrei_tui import Text, truncate_to_width
@@ -60,9 +60,9 @@ class VisualLinePreview:
         self._keep = keep
         self._format_hint = format_hint
         # One (width, lines) value, read once per render.
-        self._cache: tuple[int, list[str]] | None = None
+        self._cache: tuple[int, Sequence[str]] | None = None
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         cache = self._cache
         if cache is not None and cache[0] == width:
             return cache[1]

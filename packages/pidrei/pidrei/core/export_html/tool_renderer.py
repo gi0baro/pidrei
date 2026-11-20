@@ -4,6 +4,8 @@ Renders custom tool calls and results to HTML by invoking their TUI
 renderers and converting the ANSI output to HTML.
 """
 
+from collections.abc import Sequence
+
 from ...modes.interactive.components.keybinding_hints import key_hint, key_text
 from .ansi_to_html import ansi_lines_to_html, strip_ansi_escapes
 
@@ -12,7 +14,7 @@ def _is_blank_rendered_line(line: str) -> bool:
     return len(strip_ansi_escapes(line).strip()) == 0
 
 
-def _trim_rendered_result_lines(lines: list) -> list:
+def _trim_rendered_result_lines(lines: Sequence[str]) -> list:
     start = 0
     end = len(lines)
     while start < end and _is_blank_rendered_line(lines[start]):

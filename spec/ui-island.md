@@ -62,15 +62,24 @@ that thread gives, not the thread itself:
   from anywhere, including a component's own `render`. It sends a request
   object on a channel of size 1 with `send_nowait`. If the channel is full,
   a request is already pending and covers this one; if it is closed, the TUI
-  is stopped.
+  is stopped. `_request_view_render()` (scroll-only changes) sends the same
+  pending object the same way; it leaves the object's `content` flag alone,
+  which `request_render()` sets before its send, so a frame whose requests
+  were all view requests may reuse the previous frame's component output.
 - **The render loop** (one per start) receives a request, installs a fresh
-  request object, reads its `force` flag once, and draws one frame. Because
-  it receives *before* walking the tree, any change made after the receive
-  queues exactly one more frame: no update is lost, and duplicates collapse.
+  request object, reads its `force` and `content` flags once, and draws one
+  frame. Because it receives *before* walking the tree, any change made after
+  the receive queues exactly one more frame: no update is lost, and
+  duplicates collapse.
 - **`force`** (drop the differential state and repaint everything) is a
   field of the pending request object. A forced request sets it before its
-  send, so even a send dropped as full lands in the pending request. A race
-  can repeat a full redraw, never lose one.
+  send, so even a send dropped as full lands in the pending request. `content`
+  works the same way. One window is left open on purpose: a requester
+  preempted between reading the pending object and setting its flag, while
+  the loop swaps the object and a third requester sends the fresh one, has
+  its resend dropped and its flag lost (a forced repaint drawn as a plain
+  frame; a content change drawn at the next `request_render()`). Any other
+  race can only repeat a frame.
 - **No throttle.** The loop is receive, frame, receive. While a frame runs,
   requests collapse into the pending one, and the frame writer paces a slow
   terminal. Pi's 16 ms throttle and its keyboard fast path have no
