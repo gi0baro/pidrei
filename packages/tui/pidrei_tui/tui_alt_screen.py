@@ -1797,12 +1797,12 @@ class TuiAltScreen(TuiBase):
         buffer = BEGIN_SYNCHRONIZED_OUTPUT
         if full_redraw:
             self._full_redraw_count += 1
-            clear_images = (
-                delete_all_kitty_placements()
-                if self._image_protocol == "kitty" and had_uploaded_kitty_images
-                else self._delete_kitty_images()
-            )
-            buffer += f"{clear_images}\x1b[2J"
+            if self._image_protocol == "kitty" and had_uploaded_kitty_images:
+                # Kitty frees image data without placements on ED 2, which would break placement-only reuse.
+                # Every row is cleared with EL 2 below, so keep the uploads and skip the screen clear.
+                buffer += delete_all_kitty_placements()
+            else:
+                buffer += f"{self._delete_kitty_images()}\x1b[2J"
         elif images_need_redraw:
             if self._image_protocol == "iterm2":
                 buffer += "\x1b[2J"

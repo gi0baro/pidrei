@@ -1333,6 +1333,32 @@ async def test_retains_recently_offscreen_kitty_images_for_placement_only_reuse(
 
 
 @pytest.mark.tonio
+async def test_keeps_uploaded_kitty_images_across_a_full_redraw():
+    # Regression test for #12010: Kitty frees image data without placements on ED 2, so a full redraw
+    # that deleted placements and then cleared the screen left placement-only reuse pointing at nothing.
+    with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
+        terminal = RecordingTerminal(20, 6)
+        image_id = 12010
+        image_line = encode_kitty("AAAA", columns=2, rows=3, image_id=image_id, move_cursor=False)
+        register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 3, "widthPx": 100, "heightPx": 100})
+        tui = TuiAltScreen(terminal)
+        tui.set_layout_root(RenderComponent(["before", image_line, "", "", "after"]))
+        await tui.start()
+        assert await terminal.wait_for_write("\x1b_Ga=T")
+        event_count = len(terminal.events)
+
+        since = terminal.frames
+        terminal.resize(20, 8)
+        await terminal.wait_for_render(since)
+        redraw_writes = "".join(event["data"] for event in terminal.events[event_count:] if event["type"] == "write")
+        assert "\x1b_Ga=p,q=2" in redraw_writes
+        assert "\x1b_Ga=T" not in redraw_writes
+        assert "\x1b[2J" not in redraw_writes
+        assert any(line.rstrip() == "after" for line in terminal.get_viewport())
+        await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_draws_kitty_images_after_clearing_the_rows_they_cover():
     # Regression test for #11835: Orca's xterm.js image addon stores images in cells, so clearing
     # the covered rows after the placement erased all but the first image row.

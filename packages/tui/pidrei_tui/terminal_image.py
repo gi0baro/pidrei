@@ -23,6 +23,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from .utils import visible_width
+
 
 # Default cell dimensions - updated by TUI when terminal responds to query.
 # Written by the input consumer (the cell-size reply) and read by image
@@ -263,6 +265,64 @@ def is_image_line(line: str) -> bool:
         return True
     # Slow path: sequence elsewhere (multi-row images have cursor-up prefix)
     return KITTY_PREFIX in line or ITERM2_PREFIX in line
+
+
+_KITTY_COLUMNS_RE = re.compile(r"(?:^|,)c=(\d+)(?:,|$)")
+# `\Z`, not `$`: JS's `$` never matches before a trailing newline.
+_ITERM2_MOVE_UP_RE = re.compile(r"\x1b\[(\d+)A\Z")
+_ITERM2_COLUMNS_RE = re.compile(r"[;=]width=(\d+)[;:]")
+_KITTY_SEQUENCE_RE = re.compile(r"\x1b_G[^\x1b]*\x1b\\")
+_ITERM2_SEQUENCE_RE = re.compile(r"(?:\x1b\[\d+A)?\x1b\]1337;File=[^\x07]*\x07")
+
+
+def get_image_line_extent(line: str) -> dict | None:
+    """Return the cells an image line draws over. Kitty places the image at the line and extends it
+    downward; iTerm2 lines move the cursor up before drawing, so the image ends at the line.
+
+    The result is pi's ImageLineExtent, {"firstRow", "lastRow", "startCol", "endCol"}: the cells covered by
+    the image placement on an image line. Rows are relative to the line; columns are absolute, with
+    `endCol` exclusive and `math.inf` when the image width cannot be read.
+    """
+    kitty_start = line.find(KITTY_PREFIX)
+    if kitty_start != -1:
+        controls_match = _KITTY_CONTROLS_RE.search(line)
+        controls = controls_match.group(1) if controls_match is not None else ""
+        column_value = _KITTY_COLUMNS_RE.search(controls)
+        if column_value is None:
+            metadata = _get_registered_kitty_image_metadata_from_controls(controls)
+            columns = metadata["columns"] if metadata is not None else None
+        else:
+            columns = int(column_value.group(1))
+        start_col = visible_width(line[:kitty_start])
+        rows = get_kitty_image_placement_rows(line)
+        if rows is None:
+            rows = 1
+        return {
+            "firstRow": 0,
+            "lastRow": rows - 1,
+            "startCol": start_col,
+            "endCol": start_col + (math.inf if columns is None else columns),
+        }
+    iterm2_start = line.find(ITERM2_PREFIX)
+    if iterm2_start == -1:
+        return None
+    before = line[:iterm2_start]
+    move_up = _ITERM2_MOVE_UP_RE.search(before)
+    # Only a plain cell count is a known width; `auto`, pixel and percent widths depend on the image.
+    column_value = _ITERM2_COLUMNS_RE.search(line[iterm2_start:])
+    # visible_width counts the cursor-up sequence as text, so measure only what precedes it.
+    start_col = visible_width(before[: move_up.start()] if move_up else before)
+    return {
+        "firstRow": -int(move_up.group(1)) if move_up else 0,
+        "lastRow": 0,
+        "startCol": start_col,
+        "endCol": start_col + (math.inf if column_value is None else int(column_value.group(1))),
+    }
+
+
+def strip_image_sequences(line: str) -> str:
+    """Remove Kitty and iTerm2 image sequences, including iTerm2's cursor-up prefix, keeping the text."""
+    return _ITERM2_SEQUENCE_RE.sub("", _KITTY_SEQUENCE_RE.sub("", line))
 
 
 def allocate_image_id() -> int:

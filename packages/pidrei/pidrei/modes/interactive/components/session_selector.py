@@ -2,7 +2,6 @@
 
 import os
 import re
-import threading
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -317,8 +316,11 @@ class SessionList:
         self._message_text = MessageTextCache()
         self._selected_index = 0
         self._selection_touched = False
-        self._set_sessions_guard = threading.Lock()
-        self._set_sessions_seq = 0
+        # Session to select once it appears, while a progressive reload has not yet delivered it
+        self._pending_selected_path: str | None = None
+        # Set once the latest `set_sessions` call has applied (or failed); the
+        # next call applies after it. Under the UI state lock.
+        self._sessions_applied: tonio.Event | None = None
         self._search_input = Input()
         self._show_cwd = show_cwd
         self._sort_mode = sort_mode
@@ -378,46 +380,74 @@ class SessionList:
         self._name_filter = name_filter
         self._filter_sessions(self._search_input.get_value())
 
-    def set_sessions(self, sessions: list, show_cwd: bool) -> Awaitable[None]:
+    def set_sessions(self, sessions: list, show_cwd: bool, partial: bool = False) -> Awaitable[None]:
         """Replace the listed sessions; returns the awaitable remainder.
 
-        pi's setSessions is synchronous; here the canonical-path map is built
-        off the runtime first, so progressive loads can have several calls in
-        flight. The call order is taken synchronously and only the latest call
-        applies, whichever finishes last. The awaitable resolves once the list
-        is applied under the UI state lock.
+        `partial` is True when more sessions are still loading; a selected
+        session missing from a partial list stays the selection target until
+        it arrives.
+
+        pi's setSessions is synchronous, so every call takes effect, in call
+        order. Here the canonical-path map is built off the runtime first, so
+        progressive loads can have several calls in flight. A call takes its
+        place in line now (callers hold the UI state lock, so registration
+        order is call order), builds its map in parallel with the others, and
+        applies under the UI state lock once the call before it has applied,
+        as `with_file_mutation_queue` chains mutations. The awaitable resolves
+        once the list is applied.
         """
-        with self._set_sessions_guard:
-            self._set_sessions_seq += 1
-            seq = self._set_sessions_seq
-        return self._apply_sessions(seq, sessions, show_cwd)
-
-    async def _apply_sessions(self, seq: int, sessions: list, show_cwd: bool) -> None:
-        # Resolve every session path once here, off the runtime, so the
-        # per-keystroke filter below and the rows never touch the filesystem.
-        current_path = self._current_session_file_path
-        canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map_blocking, sessions, current_path)
-
-        # Input handling and rendering read this state under the UI state
-        # lock; the sequence check there is what makes the latest call win.
+        applied = tonio.Event()
         with self._state_lock:
-            if seq != self._set_sessions_seq:
-                return
-            selected_path = self.get_selected_session_path() if self._selection_touched else None
-            self._all_sessions = sessions
-            self._show_cwd = show_cwd
-            self._canonical_by_path = canonical_by_path
-            self._current_session_canonical_path = canonical_by_path.get(current_path) if current_path else None
-            self._filter_sessions(self._search_input.get_value())
-            if not self._selection_touched:
-                self._selected_index = 0
-            elif selected_path:
-                selected_index = next(
-                    (i for i, node in enumerate(self._filtered_sessions) if node["session"].path == selected_path),
-                    -1,
+            previous = self._sessions_applied
+            self._sessions_applied = applied
+        return self._apply_sessions(previous, applied, sessions, show_cwd, partial)
+
+    async def _apply_sessions(
+        self, previous: tonio.Event | None, applied: tonio.Event, sessions: list, show_cwd: bool, partial: bool
+    ) -> None:
+        try:
+            # Resolve every session path once here, off the runtime, so the
+            # per-keystroke filter below and the rows never touch the filesystem.
+            current_path = self._current_session_file_path
+            canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map_blocking, sessions, current_path)
+            if previous is not None:
+                await previous.wait()
+
+            # Input handling and rendering read this state under the UI state
+            # lock; pi's setSessions body runs in this hold.
+            with self._state_lock:
+                pending_path = self._pending_selected_path if self._selection_touched else None
+                # pi's `pendingPath ?? getSelectedSessionPath()`.
+                selected_path = (
+                    (pending_path if pending_path is not None else self.get_selected_session_path())
+                    if self._selection_touched
+                    else None
                 )
-                if selected_index >= 0:
-                    self._selected_index = selected_index
+                self._all_sessions = sessions
+                self._show_cwd = show_cwd
+                self._canonical_by_path = canonical_by_path
+                self._current_session_canonical_path = canonical_by_path.get(current_path) if current_path else None
+                self._filter_sessions(self._search_input.get_value())
+                if not self._selection_touched:
+                    self._selected_index = 0
+                elif selected_path:
+                    selected_index = next(
+                        (i for i, node in enumerate(self._filtered_sessions) if node["session"].path == selected_path),
+                        -1,
+                    )
+                    if selected_index >= 0:
+                        self._selected_index = selected_index
+                        self._pending_selected_path = None
+                    elif partial:
+                        # The selected session may not have loaded yet: keep it as the target instead of
+                        # adopting whichever session the index now points to.
+                        self._pending_selected_path = selected_path
+                    else:
+                        self._pending_selected_path = None
+        finally:
+            # Synchronous, so a call that fails or is cancelled never strands
+            # the calls behind it.
+            applied.set()
 
     def _filter_sessions(self, query: str) -> None:
         trimmed = query.strip()
@@ -634,6 +664,7 @@ class SessionList:
             return
 
         self._selection_touched = True
+        self._pending_selected_path = None
         # Up arrow
         if kb.matches(key_data, "tui.select.up"):
             self._selected_index = max(0, self._selected_index - 1)
@@ -1001,11 +1032,12 @@ class SessionSelectorComponent(Container):
         else:
             self._all_sessions = sessions
 
-    def _show_sessions(self, sessions: list, show_cwd: bool) -> None:
+    def _show_sessions(self, sessions: list, show_cwd: bool, partial: bool = False) -> None:
         """pi's `sessionList.setSessions(...)` + `requestRender()`: the call
-        order is taken now, and the list applies and renders once its
-        canonical-path map is built off the runtime."""
-        update = self._session_list.set_sessions(sessions, show_cwd)
+        takes its place in line now, and the list applies and renders once its
+        canonical-path map is built off the runtime and the calls before it
+        have applied."""
+        update = self._session_list.set_sessions(sessions, show_cwd, partial)
 
         async def finish() -> None:
             await update
@@ -1038,7 +1070,7 @@ class SessionSelectorComponent(Container):
                 if sessions is not None:
                     self._set_scope_sessions(scope, sessions)
                     if scope == self._scope:
-                        self._show_sessions(sessions, show_cwd)
+                        self._show_sessions(sessions, show_cwd, True)
                 if scope != self._scope:
                     return
                 self._header.set_progress(loaded, total)
@@ -1116,7 +1148,9 @@ class SessionSelectorComponent(Container):
         loading = (self._current_load if self._scope == "current" else self._all_load) is not None
         self._header.set_scope(self._scope)
         self._header.set_loading(loading)
-        update = self._session_list.set_sessions(sessions or [], self._scope == "all")
+        update = self._session_list.set_sessions(
+            sessions if sessions is not None else [], self._scope == "all", loading or sessions is None
+        )
         self._request_render()
         # Start the load before the list update, as pi's synchronous
         # setSessions lets it (the in-flight load is visible immediately).

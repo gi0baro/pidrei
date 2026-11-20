@@ -1322,6 +1322,17 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    # Session list (1.6.0 port): every setSessions call applies, in call order.
+    "packages/coding-agent/src/modes/interactive/components/session-selector.ts": (
+        (
+            "session-list-apply-order",
+            (
+                "SessionList.set_sessions is registered synchronously, builds its "
+                "canonical-path map off the runtime and applies under the UI state "
+                "lock in call order; setSessions hunks land in the apply's hold"
+            ),
+        ),
+    ),
     # System theme (0.99.1 port): theme applications are serialized; terminal
     # colour globals are guarded.
     "packages/coding-agent/src/modes/interactive/theme/theme-controller.ts": (

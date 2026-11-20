@@ -92,6 +92,19 @@ def test_follows_changed_reference_link_definitions(capabilities_reset):
     assert "https://two.example" in strip_ansi("\n".join(markdown.render(80)))
 
 
+# Images
+
+
+def test_keeps_hard_breaks_after_an_inline_image_as_separate_rows(capabilities_reset):
+    set_capabilities({"images": "kitty", "trueColor": False, "hyperlinks": False})
+    image = "\x1b_Ga=T,f=100,q=2,c=20,r=3,C=1;AAAA\x1b\\"
+    markdown = Markdown(f"`{image}`  \n` `  \n` `\n\n- one", 0, 0, default_markdown_theme)
+    lines = markdown.render(80)
+    assert all("\n" not in line for line in lines)
+    assert image in lines[0]
+    assert [strip_ansi(line).strip() for line in lines[1:]] == ["", "", "", "- one"]
+
+
 # Lists
 
 

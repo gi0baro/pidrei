@@ -115,7 +115,14 @@ from tonio.colored.sync import channel
 from .keys import is_key_release, matches_key
 from .terminal import ProcessTerminal
 from .terminal_colors import parse_osc_color_response, parse_terminal_color_scheme_report
-from .terminal_image import get_capabilities, is_image_line, set_cell_dimensions
+from .terminal_image import (
+    get_capabilities,
+    get_image_line_extent,
+    get_max_kitty_image_rows,
+    is_image_line,
+    set_cell_dimensions,
+    strip_image_sequences,
+)
 from .utils import extract_segments, normalize_terminal_output, slice_by_column, slice_with_width, visible_width
 
 
@@ -493,6 +500,35 @@ def composite_tui_line(base_line: str, overlay_line: str, start_col: int, overla
         return result
     # Truncate with strict=True to ensure we don't exceed total_width
     return slice_by_column(result, 0, total_width, True)
+
+
+def _hide_images_under_overlay(lines: list[str], overlay: dict, viewport_start: int) -> None:
+    """Drop image placements that intersect an overlay rectangle (`row` is viewport-relative).
+
+    Terminals draw images above text, so an overlay cannot paint over them. The renderers delete a
+    placement once its line changes and draw it again when the overlay no longer covers it.
+    Images beside the overlay stay; on the row holding such an image's sequence the overlay is not
+    drawn, because `composite_tui_line` passes image lines through.
+
+    `overlay` is pi's OverlayBounds, {"row", "col", "width", "height"}; `lines` is the frame's own copy.
+    """
+    if overlay["height"] == 0:
+        return
+    # Kitty images extend downward, so an image line above the viewport can still reach into it.
+    for index in range(max(0, viewport_start - get_max_kitty_image_rows()), len(lines)):
+        line = lines[index]
+        extent = get_image_line_extent(line)
+        if not extent:
+            continue
+        first_row = index + extent["firstRow"] - viewport_start
+        last_row = index + extent["lastRow"] - viewport_start
+        if (
+            first_row < overlay["row"] + overlay["height"]
+            and last_row >= overlay["row"]
+            and extent["startCol"] < overlay["col"] + overlay["width"]
+            and extent["endCol"] > overlay["col"]
+        ):
+            lines[index] = strip_image_sequences(line)
 
 
 # pi brands the viewport renderer with `Symbol.for(...)`; the Python stand-in
@@ -1856,12 +1892,15 @@ class TuiBase(Container, ABC):
 
         viewport_start = max(0, working_height - term_height)
 
-        # Composite each overlay
+        # Composite each overlay, back to front. Hiding images per overlay also hides images drawn by overlays below it.
         for item in rendered:
             overlay_lines = item["overlayLines"]
             row = item["row"]
             col = item["col"]
             w = item["w"]
+            _hide_images_under_overlay(
+                result, {"row": row, "col": col, "width": w, "height": len(overlay_lines)}, viewport_start
+            )
             for i, overlay_line in enumerate(overlay_lines):
                 idx = viewport_start + row + i
                 if 0 <= idx < len(result):

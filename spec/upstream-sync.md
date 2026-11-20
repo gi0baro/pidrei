@@ -1565,3 +1565,28 @@ the User-Agent.
   parameter. It must survive later syncs: a hunk that rewrites
   `requestCatalog`'s URL or query keeps it, and
   `test_remote_catalog_provider.py` asserts it.
+
+### `session-list-apply-order` (`coding-agent/src/modes/interactive/components/session-selector.ts`)
+
+Pi's `SessionList.setSessions()` is synchronous, so every call takes effect,
+in call order; since 1.6.0 its selection restore across a progressive reload
+depends on that (a complete list moves the selection, the partial lists after
+it hold it). PiDrei builds the canonical-path map (a `realpath` per session)
+on the blocking pool, so several calls can be in flight at once.
+
+- **Registration** is synchronous: `set_sessions` takes the previous call's
+  `tonio.Event` and publishes its own, under the UI state lock. Its callers
+  already hold that lock, so registration order is call order.
+- **The map** is built off the runtime, in parallel across calls.
+- **The apply** waits for the previous call's Event once its own map is
+  built, runs under the state lock, and sets its own Event in a `finally`
+  (synchronous, so a failed or cancelled apply never strands the calls
+  behind it), as `with_file_mutation_queue` chains mutations. No call is
+  skipped.
+- **Upstream diffs**: hunks to `setSessions`' body land in the apply's hold;
+  a new caller passes what Pi passes and spawns or awaits the returned
+  awaitable.
+- **Tests**: Pi's cases wait on the selector's state (`StateUpdates.until`)
+  and then on `every_list_applied`. A pidrei-only case in
+  `test_session_selector_path_delete.py` gates two map builds so that a
+  complete list's map finishes after a later partial list's.

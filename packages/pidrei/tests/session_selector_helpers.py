@@ -69,3 +69,13 @@ class InputCompletions:
 def lists_sessions(selector, sessions) -> Callable[[], bool]:
     """The session list has applied `sessions` (the load, then the canonical-path map)."""
     return lambda: selector.get_session_list()._all_sessions == sessions
+
+
+async def every_list_applied(selector) -> None:
+    """Every `set_sessions` call made so far has applied. They apply in call
+    order, so the latest call's Event covers the ones before it."""
+    with selector._state_lock:
+        applied = selector.get_session_list()._sessions_applied
+    if applied is not None:
+        await applied.wait(5)
+        assert applied.is_set(), "a session list update never applied"
