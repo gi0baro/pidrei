@@ -461,7 +461,8 @@ def _get_dropped_reasoning(message) -> _DroppedReasoning | None:
         if kind is None:
             continue
         # Session data: diagnostics details are untyped JSON.
-        transformations = (diagnostic.details or {}).get("transformations")
+        details = diagnostic.details
+        transformations = details.get("transformations") if isinstance(details, dict) else None
         if not isinstance(transformations, list):
             continue
         dropped = [

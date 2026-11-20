@@ -402,6 +402,14 @@ class SessionList:
             self._sessions_applied = applied
         return self._apply_sessions(previous, applied, sessions, show_cwd, partial)
 
+    async def sessions_applied(self) -> None:
+        """Wait until every `set_sessions` call made so far has applied."""
+        with self._state_lock:
+            # The last call's Event: each call applies after the one before it.
+            applied = self._sessions_applied
+        if applied is not None:
+            await applied.wait()
+
     async def _apply_sessions(
         self, previous: tonio.Event | None, applied: tonio.Event, sessions: list, show_cwd: bool, partial: bool
     ) -> None:
@@ -1135,7 +1143,9 @@ class SessionSelectorComponent(Container):
     def _refresh_sessions_after_mutation(self, then: Callable[[], None] | None = None) -> None:
         """pi's refresh (cancel loads, reload the scope). pi's callers await
         the reload before their follow-up; `then` is that follow-up, applied
-        once the reload has settled."""
+        once the reload has settled and its lists have applied (pi's
+        `setSessions` is synchronous, so its final list is in place by then;
+        here `_show_sessions` detaches the apply)."""
         with self._state_lock:
             self._cancel_loads()
             self._current_sessions = None
@@ -1147,6 +1157,7 @@ class SessionSelectorComponent(Container):
             try:
                 if cancel is not None:
                     await self._load_scope_rest(scope, cancel)
+                await self._session_list.sessions_applied()
             finally:
                 if then is not None:
                     with self._state_lock:

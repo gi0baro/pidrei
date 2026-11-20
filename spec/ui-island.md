@@ -67,8 +67,11 @@ that thread gives, not the thread itself:
   which `request_render()` sets before its send, so a frame whose requests
   were all view requests may reuse the previous frame's component output.
 - **The render loop** (one per start) receives a request, installs a fresh
-  request object, reads its `force` and `content` flags once, and draws one
-  frame. Because it receives *before* walking the tree, any change made after
+  request object, reads the `force` and `content` flags once, and draws one
+  frame. It reads them from the received object and from the pending one it
+  replaced: they differ when a requester sent the received object again
+  between the receive and the swap, which fills the channel and gets a later
+  requester's send of the pending object dropped. Because it receives *before* walking the tree, any change made after
   the receive queues exactly one more frame: no update is lost, and
   duplicates collapse.
 - **`force`** (drop the differential state and repaint everything) is a
@@ -141,7 +144,10 @@ that thread gives, not the thread itself:
   host's SIGTSTP handler calls `suspend_signal()`, which, while the TUI owns
   the terminal (from `start()` until the end of `stop()`) and has a suspend
   handler, queues a sentinel item with the current generation and returns
-  True; otherwise it returns False and the host stops the process.
+  True; otherwise it returns False and the host stops the process. While
+  `start()` or `stop()` is running it returns True and queues nothing: the
+  signal is dropped, since its `stop()` would overlap the rest of that start
+  or stop.
   `_route_input` runs the suspend handler (the Ctrl+Z action) for that item
   before any other stage. So an external SIGTSTP is one more key: it waits
   for the previous item's completions, and one queued behind a key that

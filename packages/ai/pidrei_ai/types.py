@@ -612,7 +612,7 @@ class AnthropicMessagesCompat:
     supports_mid_convo_tool_changes: bool | None = None
     # Whether the endpoint supports Anthropic message threads, which let a request with a
     # session id send only the new messages and continue from the previous reply. Default
-    # True for provider "anthropic" with a base URL on api.anthropic.com, False otherwise.
+    # True for a base URL on api.anthropic.com, False otherwise.
     supports_message_threads: bool | None = None
     # Models Anthropic accepts in `fallbacks` for server-side refusal fallback, with
     # local pricing metadata for returned fallback responses. When absent or empty,

@@ -250,13 +250,6 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/test/powershell-tool.test.ts",
         "powershell tool not ported (Windows-only by construction; 0.84.3 delta port)",
     ),
-    (
-        "packages/coding-agent/src/modes/interactive/session-share.ts",
-        (
-            "Radius share flow not ported (0.84.3 delta port); the surviving gist half "
-            "stays inline in interactive_mode.py and the export half is core/session_export.py"
-        ),
-    ),
 )
 #: Example extensions with no pidrei mirror (all other examples are mirrored
 #: 1:1 and map through PREFIX_MAP — see the `example` kind).
@@ -883,6 +876,13 @@ RENAMES = {
     # 0.85.1 (0.85.1 delta port): pi split its process-title/env/undici prologue into
     # cli/setup.ts; pidrei's equivalent has always been the entry module's run().
     "packages/coding-agent/src/cli/setup.ts": "packages/pidrei/pidrei/__main__.py",
+    # A mixed file: its Radius share flow is not ported (0.84.3 delta port), its gist half
+    # is inline in interactive_mode.py (`_export_and_share`, `_share_via_gist`) and its
+    # export half is core/session_export.py. Listed as a whole file until 1.6.0, which hid
+    # a gist hunk (`ef9361ab`); a Radius-only hunk is dropped when the commit is read.
+    "packages/coding-agent/src/modes/interactive/session-share.ts": (
+        "packages/pidrei/pidrei/modes/interactive/interactive_mode.py"
+    ),
     # 1.0.0: the calculate tool's only consumer is the e2e suite, which holds it.
     "packages/agent/test/utils/calculate.ts": "packages/agent/tests/test_e2e.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",

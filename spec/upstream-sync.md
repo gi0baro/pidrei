@@ -728,8 +728,9 @@ untouched: component diffs port 1:1. What diverges:
   `set_suspend_signal_handler()` ports as is. A hunk to Pi's listener
   bookkeeping (`updateSuspendSignalListener`, `suspendSignalListening`) has
   no counterpart; a hunk to when the TUI owns the terminal lands on
-  `_owns_terminal`. A SIGTSTP while `start()` runs is dropped (Pi suspends
-  once `start()` returns).
+  `_owns_terminal`. A SIGTSTP while `start()` or `stop()` runs is dropped:
+  `suspend_signal()` queues it only while `_render_active` is set (Pi
+  suspends once `start()` returns).
 - **Rendering** (`requestRender`/`doRender`, both renderers):
   - `request_render()` sends a request object on a one-slot channel; a
     render loop draws one frame per request (no throttle; `force` rides in
@@ -784,8 +785,9 @@ untouched: component diffs port 1:1. What diverges:
     `tui.timeout`/`tui.interval`; examples never import private modules.
   - A `pi.events` handler's error reaches the runner's listeners through
     `runtime.report_error`, which checks `_stale_message` and calls the
-    listeners under `ExtensionRunner._stale_guard` (a thread lock, sync only);
-    `invalidate()` sets `_stale_message` under it. Lock order: that guard, then
+    listeners under `ExtensionRunner._stale_guard` (a reentrant thread lock,
+    sync only: a host's listener may dispose its session, which invalidates
+    the runner); `invalidate()` sets `_stale_message` under it. Lock order: that guard, then
     the UI state lock (a listener may take it); `invalidate()` is never
     reached under the state lock.
 - **Program status** (OSC 7501):
@@ -1603,10 +1605,15 @@ on the blocking pool, so several calls can be in flight at once.
   (synchronous, so a failed or cancelled apply never strands the calls
   behind it), as `with_file_mutation_queue` chains mutations. No call is
   skipped.
+- **A follow-up Pi runs after an awaited reload** (leaving rename mode)
+  waits for `SessionList.sessions_applied()` first: the reload's last
+  `_show_sessions` only puts the final list in line, and until it applies
+  the visible list is a partial one.
 - **Upstream diffs**: hunks to `setSessions`' body land in the apply's hold;
   a new caller passes what Pi passes and spawns or awaits the returned
   awaitable.
 - **Tests**: Pi's cases wait on the selector's state (`StateUpdates.until`)
-  and then on `every_list_applied`. A pidrei-only case in
+  and then on `every_list_applied`, except after a rename, where list mode
+  already implies it. A pidrei-only case in
   `test_session_selector_path_delete.py` gates two map builds so that a
   complete list's map finishes after a later partial list's.

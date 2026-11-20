@@ -11,7 +11,7 @@ from pidrei.modes.interactive.components import SessionSelectorComponent
 from pidrei.modes.interactive.theme import init_theme
 from pidrei_tui import set_keybindings
 
-from .session_selector_helpers import InputCompletions, StateUpdates, every_list_applied, lists_sessions
+from .session_selector_helpers import InputCompletions, StateUpdates, lists_sessions
 
 
 def make_session(*, id, **overrides):
@@ -176,9 +176,9 @@ class TestSessionSelectorRename:
         session_list.handle_input(CTRL_R)
         selector.handle_input("X")
         selector.handle_input("\r")
-        # The rename and the reload run on detached coroutines; rename mode ends after the reload.
+        # The rename and the reload run on detached coroutines; rename mode ends after the reload's
+        # lists have applied.
         await state_updates.until(lambda: loads == 2 and selector._current_load is None and selector._mode == "list")
-        await every_list_applied(selector)
 
         assert loads == 2
         assert selector.get_session_list().get_selected_session_path() == sessions[2].path

@@ -1097,11 +1097,14 @@ def _schedule_session_websocket_expiry(session_id: str, account_id: str, entry: 
             await clock.sleep_ms(SESSION_WEBSOCKET_CACHE_TTL_MS, timer)
         except AbortError:
             return
-        if entry.busy:
-            return
-        _close_websocket_silently(entry.socket, 1000, "idle_timeout")
+        # Decided under the guard a turn claims the socket under: either the entry is forgotten
+        # first and the turn connects anew, or the turn claims first and this returns. A timer
+        # that is no longer the entry's belongs to an idle period a later turn ended.
         with _websocket_state_guard:
+            if entry.busy or entry.idle_timer is not timer:
+                return
             _forget_entry_locked(session_id, account_id, entry)
+        _close_websocket_silently(entry.socket, 1000, "idle_timeout")
 
     tonio.spawn.without_tracking(_expire())
 

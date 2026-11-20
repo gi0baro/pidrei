@@ -578,7 +578,8 @@ class ExtensionRunner:
         # report checks and calls the listeners, and `invalidate()` sets `_stale_message`, under this
         # guard: once `invalidate()` returns, no report is running or can start. Held in sync code
         # only; listeners may take the UI state lock (lock order: this guard, then the state lock).
-        self._stale_guard = threading.Lock()
+        # Reentrant: a host's error listener may dispose its session, which invalidates this runner.
+        self._stale_guard = threading.RLock()
         # A handler still running when its session is replaced must not report into the replacement's UI.
         # Published after the listeners and the guard it uses: a handler on another coroutine may call it
         # at once.

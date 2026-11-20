@@ -57,7 +57,8 @@ Port deviations (documented once here):
   (drop the differential state: repaint everything) is a field of the
   request object every requester sends until the loop receives it: a
   forced request sets it before its send, so a dropped send still lands in
-  the pending request. The loop installs a fresh object before reading it.
+  the pending request. The loop installs a fresh object, then reads the
+  flags of the received object and of the pending one it replaced.
   pi's ``contentChanged`` rides the same way: ``request_render()`` sets
   ``content`` before its send, and ``_request_view_render()`` (scroll-only
   changes) sets nothing, so a frame whose requests were all view requests
@@ -1453,10 +1454,9 @@ class TuiBase(Container, ABC):
         # Released after the last thing this session writes: the
         # alternate-screen exit comes after `terminal.stop()`.
         await self.terminal.release()
-        # Last, so a SIGTSTP during the restore above is queued as an input
-        # item instead of stopping the process with the terminal half
-        # restored; the consumer drops it once `terminal.stop()` ended its
-        # input generation.
+        # Last, so a SIGTSTP during the restore above is dropped by
+        # `suspend_signal()` instead of stopping the process with the
+        # terminal half restored.
         with self.state_lock:
             self._owns_terminal = False
 
@@ -1476,11 +1476,17 @@ class TuiBase(Container, ABC):
         this). While this TUI owns the terminal and has a handler, the
         suspend is queued as an input item, in order with the keys around
         it, and this returns True; otherwise it returns False, and the
-        caller applies the signal's default action."""
+        caller applies the signal's default action.
+
+        A signal that arrives while `start()` or `stop()` runs is dropped
+        (it returns True and queues nothing): its `stop()` would overlap
+        the rest of that start or stop."""
         with self.state_lock:
             if not self._owns_terminal or self._suspend_signal_handler is None:
                 return False
-            self.terminal.queue_suspend()
+            # True from the end of `start()` to the beginning of `stop()`.
+            if self._render_active:
+                self.terminal.queue_suspend()
             return True
 
     async def render_now(self, force: bool = False) -> None:
@@ -1616,7 +1622,7 @@ class TuiBase(Container, ABC):
         to the installed handler)."""
         while True:
             try:
-                request = await requests.receive()
+                received = await requests.receive()
             except BrokenPipeError:
                 return  # `stop()`
             # Later requests go in a fresh object; `force` and `content` are
@@ -1624,15 +1630,21 @@ class TuiBase(Container, ABC):
             # the swap either set its flag before this read, or sends the
             # object again and the next frame reads it. A request resending
             # an old object can only repeat a frame.
+            # The flags come from the received object and from the pending
+            # one being replaced. They are the same object, except when a
+            # requester sent the received one again between the receive
+            # above and the swap below: that resend then fills the channel,
+            # a later requester's send of the pending object is dropped, and
+            # its flag is only on the pending object.
             # Known limit: if a third requester sends the fresh object
             # between this swap and that resend, the resend is dropped (the
             # channel is full) and the flag is lost: a forced repaint is
             # drawn as a plain frame, a content change waits for the next
             # `request_render()`. It needs the requester preempted between
             # reading the pending object and setting its flag.
-            self._render_request = _RenderRequest()
-            force = request.force
-            content = request.content
+            pending, self._render_request = self._render_request, _RenderRequest()
+            force = received.force or pending.force
+            content = received.content or pending.content
             try:
                 async with self._render_lock:
                     if force:

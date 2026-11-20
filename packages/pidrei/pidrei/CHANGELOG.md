@@ -187,6 +187,9 @@ Tracks [Pi 1.6.0](https://github.com/earendil-works/pi/releases/tag/v1.6.0).
   it hit mid-stream, for example during long thinking. The request is now
   retried on a fresh connection, and new requests stop reusing a cached
   connection after 45 minutes instead of 55.
+- A turn that started at the moment an idle OpenAI Codex WebSocket connection
+  expired could be handed that connection as it was being closed, and fell
+  back to SSE for the rest of the session.
 - Unscoped syntax-highlighted text inherited the terminal foreground and
   became unreadable on contrasting tool cards.
 - `/copy` said "No agent messages to copy yet." after Esc during a tool call

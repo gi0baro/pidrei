@@ -2766,9 +2766,10 @@ await pi.set_thinking_level("high")
 
 A shared event bus for communication between extensions. Handlers are
 `async def` functions receiving the emitted data; `emit` starts each of them
-in the background and returns at once, and a handler's error is written to
-stderr. `on` returns an unsubscribe function, and subscriptions end with the
-extension runtime (on reload or session replacement).
+in the background and returns at once, and a handler's error is reported like
+other extension errors. `on` returns an unsubscribe function, and
+subscriptions end with the extension runtime (on reload or session
+replacement).
 
 ```python
 async def on_my_event(data): ...
