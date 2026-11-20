@@ -428,9 +428,12 @@ class ResourceList:
                             self.on_toggle(entry["item"], new_enabled)
             return
 
-        # Pass to search input
+        # Pass to search input. Cursor keys leave the query as it is and must not move the selection.
+        previous_query = self._search_input.get_value()
         self._search_input.handle_input(data)
-        self._filter_items(self._search_input.get_value())
+        query = self._search_input.get_value()
+        if query != previous_query:
+            self._filter_items(query)
 
     def _toggle_resource(self, item: dict) -> bool | None:
         if self._write_scope == "project":

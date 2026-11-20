@@ -221,8 +221,12 @@ class SettingsList:
         elif kb.matches(data, "tui.select.cancel"):
             self._on_cancel()
         elif self._search_enabled and self._search_input is not None:
+            # Cursor keys leave the query as it is and must not move the selection.
+            previous_query = self._search_input.get_value()
             self._search_input.handle_input(data)
-            self._apply_filter(self._search_input.get_value())
+            query = self._search_input.get_value()
+            if query != previous_query:
+                self._apply_filter(query)
 
     def _get_display_items(self) -> list[dict]:
         return self._filtered_items if self._search_enabled else self._items

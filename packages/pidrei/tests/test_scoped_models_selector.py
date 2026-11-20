@@ -148,3 +148,41 @@ async def test_restores_the_all_enabled_state_after_re_enabling_the_last_disable
     assert [model["enabled"] for model in models] == [True, True, True]
     assert get_marker_states(selector, models) == [True, True, True]
     assert "all enabled" in render(selector)
+
+
+# Regression test for #12245: the /login fix applied to /scoped-models.
+@pytest.mark.tonio
+async def test_selects_the_best_match_after_typing_a_query_even_after_scrolling(harnesses):
+    models = [
+        {"id": "gpt-4o", "name": "GPT-4o", "enabled": True},
+        {"id": "gpt-4o-mini", "name": "GPT-4o mini", "enabled": True},
+        {"id": "claude", "name": "Claude", "enabled": True},
+        {"id": "gemini", "name": "Gemini", "enabled": True},
+    ]
+    selector = await create_selector(harnesses, models)
+
+    for _ in range(3):
+        selector.handle_input(DOWN)
+    for char in "gpt-4o":
+        selector.handle_input(char)
+    selector.handle_input(ENTER)
+
+    assert [model["enabled"] for model in models] == [False, True, True, True]
+
+
+@pytest.mark.tonio
+async def test_keeps_the_selection_when_a_cursor_key_leaves_the_query_unchanged(harnesses):
+    models = [
+        {"id": "gpt-4o", "name": "GPT-4o", "enabled": True},
+        {"id": "gpt-4o-mini", "name": "GPT-4o mini", "enabled": True},
+        {"id": "claude", "name": "Claude", "enabled": True},
+    ]
+    selector = await create_selector(harnesses, models)
+
+    for char in "gpt":
+        selector.handle_input(char)
+    selector.handle_input(DOWN)
+    selector.handle_input("\x1b[D")  # Left
+    selector.handle_input(ENTER)
+
+    assert [model["enabled"] for model in models] == [True, False, True]

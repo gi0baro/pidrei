@@ -131,7 +131,7 @@ from ...utils.git import parse_git_url
 from ...utils.image_process import convert_image_to_png_base64
 from ...utils.paths import get_cwd_relative_path, shorten_home_path
 from ...utils.process import probe_tmux_hyperlinks, run_command
-from ...utils.shell import SignalDispatcher, kill_tracked_detached_children
+from ...utils.shell import SignalDispatcher, kill_tracked_detached_children, stop_on_signal
 from ...utils.temp_file_writer import discard_temp_file
 from ...utils.tools_manager import ensure_tool
 from ...utils.version_check import RELEASES_URL, check_for_new_version
@@ -1188,6 +1188,7 @@ class InteractiveMode:
                 next_ui.set_image_conversions(previous_ui.image_conversions)
                 next_ui.set_render_error_handler(self._uncaught_crash)
                 next_ui.on_debug = previous_ui.on_debug
+                next_ui.set_suspend_signal_handler(self._suspend)
                 if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
                     next_ui.restore_render_state(self._main_screen_render_state)
                 self._renderer = next_ui
@@ -1282,6 +1283,8 @@ class InteractiveMode:
         # stdout/stderr writes go through its queue too.
         await attach_terminal(self.ui.terminal)
 
+        # An external SIGTSTP (kill -TSTP) restores the terminal like Ctrl+Z (#12272).
+        self.ui.set_suspend_signal_handler(self._suspend)
         # Start the UI before initializing extensions so session_start
         # handlers can use interactive dialogs
         await self.ui.start()
@@ -3250,7 +3253,7 @@ class InteractiveMode:
         self._default_editor.on_action("app.clear", self._handle_ctrl_c)
         self._default_editor.on_ctrl_d = self._handle_ctrl_d
         # The UI stops before the next key, as pi's (synchronous) handler does.
-        self._default_editor.on_action("app.suspend", lambda: self._finish_before_next_input(self._handle_ctrl_z()))
+        self._default_editor.on_action("app.suspend", self._suspend)
         self._default_editor.on_action(
             "app.thinking.cycle", lambda: self._finish_before_next_input(self._cycle_thinking_level())
         )
@@ -4615,6 +4618,13 @@ class InteractiveMode:
         SIGWINCH asks for a frame (the terminal size is read fresh on every
         frame); a stopped TUI ignores the request. SIGCONT resumes a
         suspended TUI (see `_handle_ctrl_z`) and does nothing otherwise.
+
+        SIGTSTP goes to the TUI, which queues it as an input item that runs
+        the suspend key's handler while it owns the terminal (pi's TUI
+        listens for SIGTSTP itself, which a second receiver cannot do here).
+        Otherwise the process stops as the default action did:
+        `_handle_ctrl_z`'s own SIGTSTP comes back here after the TUI stopped,
+        and so does one sent while a child owns the terminal.
         """
         if self._signal_dispatcher is None:
             return
@@ -4625,6 +4635,10 @@ class InteractiveMode:
 
         async def on_resize(_signum: int) -> None:
             self.ui.request_render()
+
+        async def on_suspend(signum: int) -> None:
+            if not self.ui.suspend_signal():
+                await stop_on_signal(signum)
 
         async def on_continue(_signum: int) -> None:
             # Stdio first, as the handler this one replaces does: the restart
@@ -4638,7 +4652,13 @@ class InteractiveMode:
         self._signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
         self._signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
         self._signal_dispatcher.set_handler(signal.SIGWINCH, on_resize)
+        self._signal_dispatcher.set_handler(signal.SIGTSTP, on_suspend)
         self._signal_dispatcher.set_handler(signal.SIGCONT, on_continue)
+
+    def _suspend(self) -> None:
+        """The suspend key (`app.suspend`) and, as the TUI's suspend signal
+        handler, an external SIGTSTP: both run from input handling."""
+        self._finish_before_next_input(self._handle_ctrl_z())
 
     async def _handle_ctrl_z(self) -> None:
         """Suspend to background (Ctrl+Z): the suspend action's work, which

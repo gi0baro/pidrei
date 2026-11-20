@@ -137,6 +137,15 @@ that thread gives, not the thread itself:
 - **Generations.** Every handler change (`start`, `stop`, `drain_input`)
   bumps an input generation under the state lock, and the consumer drops
   items tagged with an older one.
+- **The suspend signal is an input item.** The TUI owns no signal: the
+  host's SIGTSTP handler calls `suspend_signal()`, which, while the TUI owns
+  the terminal (from `start()` until the end of `stop()`) and has a suspend
+  handler, queues a sentinel item with the current generation and returns
+  True; otherwise it returns False and the host stops the process.
+  `_route_input` runs the suspend handler (the Ctrl+Z action) for that item
+  before any other stage. So an external SIGTSTP is one more key: it waits
+  for the previous item's completions, and one queued behind a key that
+  stops the UI is dropped with its generation.
 
 ### When a key must wait for I/O
 

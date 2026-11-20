@@ -94,6 +94,15 @@ Port deviations (documented once here):
   theme load stays off the key path). Every other item reaches
   ``_handle_input`` from the terminal's one input consumer (or, for a
   terminal without one, from its caller), one at a time.
+- Suspend signal: pi's TUI listens for SIGTSTP itself from ``start()`` until
+  ``stop()``. Here the process's signals have one receiver, the host's
+  (pidrei's interactive mode), which forwards SIGTSTP to
+  ``suspend_signal()``: while the TUI owns the terminal and has a handler,
+  the suspend is queued with the terminal as an input item and the handler
+  runs in input order, under the lock; otherwise the host applies the
+  signal's default action. A SIGTSTP while ``start()`` runs, before the
+  terminal's input handler is installed, is dropped (pi suspends once
+  ``start()`` returns).
 - ``CURSOR_MARKER`` is an APC sequence pi brands "pi:c" — renamed to
   "pidrei:c" (pi naming itself).
 - Env renames: PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW, PI_TUI_DEBUG →
@@ -117,7 +126,7 @@ from tonio.colored import sync
 from tonio.colored.sync import channel
 
 from .keys import is_key_release, matches_key
-from .terminal import ProcessTerminal
+from .terminal import SUSPEND_SIGNAL, ProcessTerminal
 from .terminal_colors import parse_osc_color_response, parse_terminal_color_scheme_report
 from .terminal_image import (
     get_capabilities,
@@ -707,6 +716,12 @@ class TuiBase(Container, ABC):
         # Global callback for debug key (Shift+Ctrl+D). Called before input is
         # forwarded to the focused component.
         self.on_debug = None
+        # The handler an external SIGTSTP runs while this TUI owns the
+        # terminal (`suspend_signal`), and whether it does: from start() until
+        # stop(). Unlike `_stopped`, False before the first start(). Both
+        # under the state lock.
+        self._suspend_signal_handler = None
+        self._owns_terminal = False
         # Spawned work the current input item must finish before the next
         # item is handled (`finish_before_next_input`). Only the input
         # consumer touches it. `_routing` is True while an item is routed
@@ -1236,6 +1251,8 @@ class TuiBase(Container, ABC):
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
+        with self.state_lock:
+            self._owns_terminal = True
         self._stopped = False
         # Armed before anything this session writes: the alternate-screen
         # entry comes before `terminal.start()`.
@@ -1436,6 +1453,35 @@ class TuiBase(Container, ABC):
         # Released after the last thing this session writes: the
         # alternate-screen exit comes after `terminal.stop()`.
         await self.terminal.release()
+        # Last, so a SIGTSTP during the restore above is queued as an input
+        # item instead of stopping the process with the terminal half
+        # restored; the consumer drops it once `terminal.stop()` ended its
+        # input generation.
+        with self.state_lock:
+            self._owns_terminal = False
+
+    def set_suspend_signal_handler(self, handler) -> None:
+        """Sets the handler called on SIGTSTP while this TUI owns the terminal
+        (from start() until stop()), or clears it with None. After stop(), a
+        child that owns the terminal is suspended normally.
+
+        The handler is synchronous and runs as an input item, under the UI
+        state lock (see `suspend_signal`)."""
+        with self.state_lock:
+            self._suspend_signal_handler = handler
+
+    def suspend_signal(self) -> bool:
+        """An external SIGTSTP reached the process (pidrei-only: pi's TUI
+        listens for the signal itself; here the host's signal handler calls
+        this). While this TUI owns the terminal and has a handler, the
+        suspend is queued as an input item, in order with the keys around
+        it, and this returns True; otherwise it returns False, and the
+        caller applies the signal's default action."""
+        with self.state_lock:
+            if not self._owns_terminal or self._suspend_signal_handler is None:
+                return False
+            self.terminal.queue_suspend()
+            return True
 
     async def render_now(self, force: bool = False) -> None:
         """Render one frame on the caller, bypassing the render loop, and
@@ -1676,6 +1722,13 @@ class TuiBase(Container, ABC):
 
     def _route_input(self, data: str) -> None:
         """The input item's synchronous handling, under the UI state lock."""
+        # Queued by `suspend_signal`: no focus is involved.
+        if data is SUSPEND_SIGNAL:
+            handler = self._suspend_signal_handler
+            if handler is not None:
+                handler()
+            return
+
         if self._handle_pointer_input(data):
             return
 

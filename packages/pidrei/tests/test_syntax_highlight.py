@@ -41,8 +41,23 @@ class TestThemeSyntaxHighlighting:
             "",
             f"{ansi}line two\x1b[39m",
             f'{ansi}"""\x1b[39m',
-            "after",
+            f"{theme.get_fg_ansi('text')}after\x1b[39m",
         ]
 
         assert highlight_code(code, "python") == expected
         assert get_markdown_theme()["highlightCode"](code, "python") == expected
+
+    # Regression for #11092.
+    @pytest.mark.tonio
+    async def test_colors_unscoped_highlighted_code_with_the_theme_foreground(self):
+        await init_theme("light")
+
+        lines = highlight_code("plainIdentifier\nconst answer = 42;", "typescript")
+        text = theme.get_fg_ansi("text")
+
+        assert lines[0] == f"{text}plainIdentifier\x1b[39m"
+        # pi asserts `<text> answer = ` as one run: highlight.js leaves the
+        # identifier and the spaces around it as one unscoped stretch. pygments
+        # gives the space and `answer` a token each, and scopes `=` as an
+        # operator, so the identifier is asserted on its own.
+        assert f"{text}answer\x1b[39m" in lines[1]

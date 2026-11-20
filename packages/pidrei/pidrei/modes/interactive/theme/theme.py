@@ -960,6 +960,7 @@ _cached_cli_highlight_theme: dict | None = None
 
 def _build_cli_highlight_theme(t: Theme) -> dict:
     return {
+        "default": lambda s: t.fg("text", s),
         "keyword": lambda s: t.fg("syntaxKeyword", s),
         "built_in": lambda s: t.fg("syntaxType", s),
         "literal": lambda s: t.fg("syntaxNumber", s),

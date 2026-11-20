@@ -145,3 +145,54 @@ class TestOAuthSelectorComponent:
         )
 
         assert "✓ command in models.json" in strip_ansi("\n".join(selector.render(120)))
+
+    # Regression test for #12245.
+    def test_selects_the_best_match_after_typing_a_query_even_after_scrolling(self):
+        providers = [
+            {"id": name.lower().replace(" ", "-", 1), "name": name, "authType": "api_key"}
+            for name in ["Anthropic", "Google", "Groq", "Mistral", "OpenAI", "OpenCode Go", "OpenCode Zen", "xAI"]
+        ]
+        selected: list[str] = []
+        selector = OAuthSelectorComponent(
+            "login",
+            providers,
+            lambda provider_id, auth_type: selected.append(provider_id),
+            lambda: None,
+        )
+
+        for _ in range(5):
+            selector.handle_input("\x1b[B")
+        for char in "openai":
+            selector.handle_input(char)
+
+        assert "→ OpenAI" in strip_ansi("\n".join(selector.render(120)))
+        selector.handle_input("\r")
+        assert selected == ["openai"]
+
+    def test_keeps_the_selection_when_a_cursor_key_leaves_the_query_unchanged(self):
+        providers = [
+            {"id": name.lower().replace(" ", "-", 1), "name": name, "authType": "api_key"}
+            for name in ["OpenAI", "OpenCode Go", "OpenCode Zen"]
+        ]
+        selector = OAuthSelectorComponent(
+            "login",
+            providers,
+            lambda provider_id, auth_type: None,
+            lambda: None,
+        )
+
+        for char in "open":
+            selector.handle_input(char)
+        selector.handle_input("\x1b[B")
+        selector.handle_input("\x1b[B")
+
+        def selected_row():
+            rows = strip_ansi("\n".join(selector.render(120))).split("\n")
+            return next((line for line in rows if "→" in line), None)
+
+        before = selected_row()
+        selector.handle_input("\x1b[D")  # Left
+        selector.handle_input("\x1b[H")  # Home
+
+        assert "OpenAI" not in before
+        assert selected_row() == before

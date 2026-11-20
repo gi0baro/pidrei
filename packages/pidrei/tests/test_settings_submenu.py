@@ -1,17 +1,19 @@
-"""Per-model thinking-level submenu flow (pidrei-only).
+"""Mirror of pi coding-agent test/settings-submenu.test.ts, plus the
+per-model thinking-level submenu flow (pidrei-only).
 
-pi ships `settings-submenu.ts` untested; the port cannot inherit that, because
-every callback on the path — `on_select`, `on_cancel`, `on_complete`, and the
-`done` handed down by `SettingsList` — became a coroutine here, and a single
-un-awaited one silently drops a step instead of failing. This drives the whole
-two-step selector the way the settings list does: pick a model, pick a level,
-loop back, and clear the override.
+The flow cases predate pi's test file: every callback on the path —
+`on_select`, `on_cancel`, `on_complete`, and the `done` handed down by
+`SettingsList` — became a coroutine here, and a single un-awaited one silently
+drops a step instead of failing. They drive the whole two-step selector the
+way the settings list does: pick a model, pick a level, loop back, and clear
+the override.
 """
 
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.settings_selector import SettingsSelectorComponent
+from pidrei.modes.interactive.components.settings_submenu import SelectSubmenu
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.providers.faux import FauxModelDefinition, faux_provider
@@ -130,3 +132,29 @@ async def test_offers_clearing_an_existing_override():
 
     settings_list.handle_input(ESCAPE)
     assert "Default thinking level per model  none" in _render(settings_list)
+
+
+# select submenu search
+
+
+def test_keeps_the_selection_when_a_cursor_key_leaves_the_query_unchanged():
+    selected: list[str] = []
+    submenu = SelectSubmenu(
+        "Theme",
+        "",
+        [{"value": value, "label": value} for value in ["dark-blue", "dark-green", "light"]],
+        "light",
+        selected.append,
+        lambda: None,
+        None,
+        {"searchable": True},
+    )
+
+    for char in "dark":
+        submenu.handle_input(char)
+    submenu.handle_input(DOWN)
+    submenu.handle_input("\x1b[D")  # Left
+    submenu.handle_input("\x1b[H")  # Home
+    submenu.handle_input(ENTER)
+
+    assert selected == ["dark-green"]

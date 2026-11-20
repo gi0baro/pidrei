@@ -743,6 +743,14 @@ class Editor:
             if kb.matches(data, "tui.select.confirm"):
                 selected = self._autocomplete_list.get_selected_item()
                 if selected is not None and self._autocomplete_provider is not None:
+                    # Enter runs a slash command only from the command-name menu. Path and argument menus can also
+                    # have a "/" prefix ("look at /tmp/fi", "/open /tm"), so the prefix alone does not identify the
+                    # menu. Read the context before applying the completion: the completed "/model " already
+                    # contains a space.
+                    before_cursor = self._current_line()[: self._state["cursorCol"]]
+                    submits_command = self._autocomplete_prefix.startswith("/") and (
+                        self._is_in_slash_command_name_context(before_cursor)
+                    )
                     self._push_undo_snapshot()
                     self._last_action = None
                     result = self._autocomplete_provider.apply_completion(
@@ -756,7 +764,7 @@ class Editor:
                     self._state["cursorLine"] = result["cursorLine"]
                     self._set_cursor_col(result["cursorCol"])
 
-                    if self._autocomplete_prefix.startswith("/"):
+                    if submits_command:
                         self._cancel_autocomplete()
                         # Fall through to submit
                     else:
@@ -2003,6 +2011,10 @@ class Editor:
     def _is_in_slash_command_context(self, text_before_cursor: str) -> bool:
         return self._is_slash_menu_allowed() and text_before_cursor.lstrip().startswith("/")
 
+    # A slash command name is being typed: "/mo", not "/model cla" or "/open /tm".
+    def _is_in_slash_command_name_context(self, text_before_cursor: str) -> bool:
+        return self._is_in_slash_command_context(text_before_cursor) and " " not in text_before_cursor.lstrip()
+
     # Autocomplete methods
     def _get_best_autocomplete_match_index(self, items: list[dict], prefix: str) -> int:
         """Find the best autocomplete item index for the given prefix.
@@ -2066,7 +2078,7 @@ class Editor:
         current_line = self._current_line()
         before_cursor = current_line[: self._state["cursorCol"]]
 
-        if self._is_in_slash_command_context(before_cursor) and " " not in before_cursor.lstrip():
+        if self._is_in_slash_command_name_context(before_cursor):
             self._handle_slash_command_completion()
         else:
             self._force_file_autocomplete(True)

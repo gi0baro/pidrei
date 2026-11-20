@@ -656,8 +656,7 @@ class SessionList:
         # forwarded to the input
         if kb.matches(key_data, "app.session.deleteNoninvasive"):
             if len(self._search_input.get_value()) > 0:
-                self._search_input.handle_input(key_data)
-                self._filter_sessions(self._search_input.get_value())
+                self._handle_search_input(key_data)
                 return
 
             self._start_delete_confirmation_for_selected_session()
@@ -687,8 +686,23 @@ class SessionList:
                 self.on_cancel()
         # Pass everything else to search input
         else:
-            self._search_input.handle_input(key_data)
-            self._filter_sessions(self._search_input.get_value())
+            self._handle_search_input(key_data)
+
+    def _handle_search_input(self, key_data: str) -> None:
+        """Applies a key to the search query; a changed, non-empty query selects the top row, the best match."""
+        previous_query = self._search_input.get_value()
+        self._search_input.handle_input(key_data)
+        query = self._search_input.get_value()
+        # Cursor keys leave the query as it is and must not move the selection.
+        if query == previous_query:
+            return
+        self._filter_sessions(query)
+        if not query.strip():
+            return
+        self._selected_index = 0
+        # Untouched, sessions that are still loading keep the selection on the top row instead of on this session.
+        self._selection_touched = False
+        self._pending_selected_path = None
 
 
 async def delete_session_file(session_path: str) -> dict:

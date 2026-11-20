@@ -119,8 +119,12 @@ class SelectSubmenu(Container):
             if is_nav:
                 self._select_list.handle_input(data)
             else:
+                # Cursor keys leave the query as it is and must not move the selection.
+                previous_query = self._search_input.get_value()
                 self._search_input.handle_input(data)
-                self._apply_filter(self._search_input.get_value())
+                query = self._search_input.get_value()
+                if query != previous_query:
+                    self._apply_filter(query)
         else:
             self._select_list.handle_input(data)
 

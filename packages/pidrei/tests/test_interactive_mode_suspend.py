@@ -28,8 +28,8 @@ class _RecordingDispatcher:
         self.handlers[signum] = handler
 
 
-def _create_ui():
-    ui = SimpleNamespace(start_calls=[], stop_calls=[], request_render_calls=[])
+def _create_ui(takes_suspend_signal=True):
+    ui = SimpleNamespace(start_calls=[], stop_calls=[], request_render_calls=[], suspend_signal_calls=[])
 
     async def start():
         ui.start_calls.append(True)
@@ -37,9 +37,14 @@ def _create_ui():
     async def stop():
         ui.stop_calls.append(True)
 
+    def suspend_signal():
+        ui.suspend_signal_calls.append(True)
+        return takes_suspend_signal
+
     ui.start = start
     ui.stop = stop
     ui.request_render = lambda force=False: ui.request_render_calls.append(force)
+    ui.suspend_signal = suspend_signal
     return ui
 
 
@@ -118,3 +123,49 @@ async def test_cleans_up_if_suspension_fails():
     assert context._spawn_flow == []
     assert ui.start_calls == []
     assert ui.request_render_calls == []
+
+
+# pidrei-only: pi's TUI listens for SIGTSTP itself; here the mode's handler on
+# the signal dispatcher forwards it (recipe `tui-island`, "Suspend signal").
+
+
+@pytest.mark.tonio
+async def test_forwards_an_external_sigtstp_to_the_tui():
+    ui = _create_ui(takes_suspend_signal=True)
+    context = _create_context(ui)
+    stops: list = []
+
+    async def recording_stop_on_signal(signum):
+        stops.append(signum)
+
+    swaps = _Swaps()
+    swaps.set(interactive_mode_module, "stop_on_signal", recording_stop_on_signal)
+    try:
+        await context._signal_dispatcher.handlers[signal_module.SIGTSTP](signal_module.SIGTSTP)
+    finally:
+        swaps.restore()
+
+    assert ui.suspend_signal_calls == [True]
+    assert stops == []
+
+
+@pytest.mark.tonio
+async def test_stops_the_process_on_sigtstp_while_the_tui_does_not_take_it():
+    # Not started, stopped (a child owns the terminal), or `_handle_ctrl_z`'s
+    # own SIGTSTP after its stop: the default action, as before.
+    ui = _create_ui(takes_suspend_signal=False)
+    context = _create_context(ui)
+    stops: list = []
+
+    async def recording_stop_on_signal(signum):
+        stops.append(signum)
+
+    swaps = _Swaps()
+    swaps.set(interactive_mode_module, "stop_on_signal", recording_stop_on_signal)
+    try:
+        await context._signal_dispatcher.handlers[signal_module.SIGTSTP](signal_module.SIGTSTP)
+    finally:
+        swaps.restore()
+
+    assert ui.suspend_signal_calls == [True]
+    assert stops == [signal_module.SIGTSTP]

@@ -717,6 +717,19 @@ untouched: component diffs port 1:1. What diverges:
   are synchronous, as in Pi. Where Pi does I/O synchronously inside a key
   handler, PiDrei spawns it and registers the handle with
   `finish_before_next_input`, so the next key waits for it.
+- **Suspend signal** (Pi 1.6.0, `setSuspendSignalHandler`): the TUI
+  registers no signal listener; the process's signals have one receiver, the
+  `SignalDispatcher`. Interactive mode's SIGTSTP handler forwards the signal
+  with `suspend_signal()`, which queues the suspend as an input item (beside
+  the Kitty activation) while the TUI owns the terminal and has a handler,
+  and returns False otherwise; on False the handler runs `stop_on_signal`.
+  `_route_input` hands the item to the suspend handler before any other
+  stage, and a stop drops one still queued with its input generation.
+  `set_suspend_signal_handler()` ports as is. A hunk to Pi's listener
+  bookkeeping (`updateSuspendSignalListener`, `suspendSignalListening`) has
+  no counterpart; a hunk to when the TUI owns the terminal lands on
+  `_owns_terminal`. A SIGTSTP while `start()` runs is dropped (Pi suspends
+  once `start()` returns).
 - **Rendering** (`requestRender`/`doRender`, both renderers):
   - `request_render()` sends a request object on a one-slot channel; a
     render loop draws one frame per request (no throttle; `force` rides in
