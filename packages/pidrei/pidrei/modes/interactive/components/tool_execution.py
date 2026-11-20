@@ -1,6 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/tool-execution.ts."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 
 from pidrei_tui import (
@@ -214,7 +215,7 @@ class ToolExecutionComponent(Container):
         super().invalidate()
         self._update_display()
 
-    def render(self, width: int) -> list:
+    def render(self, width: int) -> Sequence[str]:
         if self._args_pending:
             self._update_display()
         if self._hide_component:

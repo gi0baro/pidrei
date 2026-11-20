@@ -6,11 +6,13 @@ has no such thing — `Tool.parameters` is a plain dict with string keys — so 
 helper has no counterpart here and was deliberately not ported.
 
 What survives the translation is the outcome pi's case actually guards: the tool
-reaches the payload with `strict: true` and a schema that serializes cleanly,
+reaches the payload with `strict: true` (on a model that sets
+`compat.supportsStrictMode`, as pi's does) and a schema that serializes cleanly,
 nesting included.
 """
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -18,7 +20,7 @@ from pidrei_ai.api import mistral_conversations as mistral
 from pidrei_ai.api.constrained_sampling import make_strict_json_schema
 from pidrei_ai.api.mistral_conversations import stream as stream_mistral
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, JsonSchemaConstrainedSampling, Tool, UserMessage
+from pidrei_ai.types import Context, JsonSchemaConstrainedSampling, MistralConversationsCompat, Tool, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
 
 
@@ -35,7 +37,10 @@ async def test_tool_schemas_reach_the_payload_intact_and_strict():
     captured.clear()
     # pi picks `devstral-medium-latest`; models.dev retired every devstral model
     # before this catalog regen, so any live mistral-conversations model stands in.
-    model = get_builtin_model("mistral", "mistral-medium-latest")
+    model = replace(
+        get_builtin_model("mistral", "mistral-medium-latest"),
+        compat=MistralConversationsCompat(supports_strict_mode=True),
+    )
     parameters = {
         "type": "object",
         "properties": {"nested": {"type": "object", "properties": {"value": {"type": "string"}}}},
@@ -72,3 +77,35 @@ async def test_tool_schemas_reach_the_payload_intact_and_strict():
     wire = json.loads(json.dumps(mistral.to_mistral_wire_payload(captured[0])))
     assert wire["tools"][0]["function"]["parameters"] == function["parameters"]
     assert response.stop_reason == "error"
+
+
+# #12148: Mistral Large 4 stalls for minutes before strict tool calls.
+@pytest.mark.tonio
+async def test_does_not_send_strict_tools_unless_the_model_enables_strict_mode():
+    captured.clear()
+    model = get_builtin_model("mistral", "mistral-large-4")
+    assert model is not None
+    context = normalize_context(
+        Context(
+            messages=[UserMessage(content="Hi", timestamp=1)],
+            tools=[
+                Tool(
+                    name="read",
+                    description="Read a file",
+                    parameters={
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}, "limit": {"type": "number"}},
+                        "required": ["path"],
+                    },
+                    constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
+                )
+            ],
+        )
+    )
+
+    await stream_mistral(
+        model, context, mistral.MistralOptions(api_key="fake-key", on_payload=_capturing_on_payload)
+    ).result()
+
+    assert captured[0]["tools"][0]["function"]["strict"] is False
+    assert captured[0]["tools"][0]["function"]["parameters"]["required"] == ["path"]

@@ -9,7 +9,6 @@ def _models(ctx: ProviderContext) -> list[ChatModel]:
         "huggingface",
         api="openai-completions",
         base_url="https://router.huggingface.co/v1",
-        compat={"supportsDeveloperRole": False},
     )
 
 

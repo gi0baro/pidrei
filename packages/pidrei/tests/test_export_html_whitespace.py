@@ -26,7 +26,7 @@ class TestExportHtmlToolOutputWhitespace:
 
     def test_trims_tui_spacing_lines_from_custom_tool_result_html(self):
         component = SimpleNamespace(
-            render=lambda width: ["", "\x1b[31mone\x1b[0m", "two", ""],
+            render=lambda width: ["", "\x1b[31mone\x1b[0m", "two", "\x1b[0m\x1b]8;;\x07"],
             invalidate=lambda: None,
         )
         tool = SimpleNamespace(

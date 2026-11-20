@@ -418,10 +418,13 @@ class ModelSelectorComponent(Container):
                 selected_model = self._filtered_models[self._selected_index]["model"]
                 self.dispose()
                 self._on_select_as_default_callback(selected_model)
-        # Pass everything else to search input
+        # Pass everything else to search input. Cursor keys leave the query as it is and must not move the selection.
         else:
+            previous_query = self._search_input.get_value()
             self._search_input.handle_input(key_data)
-            self._filter_models(self._search_input.get_value())
+            query = self._search_input.get_value()
+            if query != previous_query:
+                self._filter_models(query)
 
     def _handle_select(self, model) -> None:
         self.dispose()

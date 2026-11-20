@@ -10,7 +10,6 @@ from catalog.sources.models_dev import ModelsDevModel
 
 _BASE_COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsReasoningEffort": False,
     "supportsUsageInStreaming": True,
     "maxTokensField": "max_tokens",

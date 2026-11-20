@@ -84,7 +84,10 @@ class OutputAccumulator:
             return self._snapshot_locked(persist_if_truncated=persist_if_truncated)
 
     def _snapshot_locked(self, *, persist_if_truncated: bool):
-        tail_truncation = truncate_tail(self._get_snapshot_text(), max_lines=self._max_lines, max_bytes=self._max_bytes)
+        # Clipping drops the partial first line of the retained tail. When the tail is only the end of
+        # one over-long line, that is everything, so show the end of that line instead.
+        snapshot_text = self._get_snapshot_text() or self._tail_text
+        tail_truncation = truncate_tail(snapshot_text, max_lines=self._max_lines, max_bytes=self._max_bytes)
         truncated = self._total_lines > self._max_lines or self._total_decoded_bytes > self._max_bytes
         truncated_by = (
             (tail_truncation.truncated_by or ("bytes" if self._total_decoded_bytes > self._max_bytes else "lines"))

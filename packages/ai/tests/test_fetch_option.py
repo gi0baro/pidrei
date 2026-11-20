@@ -4,7 +4,10 @@ pi stubs `globalThis.fetch` with one that must never be called and passes a
 custom fetch through the stream options; here the pooled client behind
 `http.client_for` is the stub (it never sends) and the custom fetch is a
 `FetchFunction` returning synthetic `http.Response`s. pi's `pi-messages` case
-is not mirrored: that API is not ported.
+is not mirrored: that API is not ported. Nor is "keeps the global dispatcher
+for Google adapters when no fetch is given", which asserts the absence of
+undici's per-request `dispatcher`; the read timeouts it protects are pinned by
+`test_google_client.py`.
 """
 
 import base64
@@ -295,47 +298,24 @@ async def test_uses_fetch_for_classifier_requests(ambient):
     assert custom.requests[0].headers["authorization"] == "Bearer test-key"
 
 
-class GoogleAmbientClient:
-    """The pooled client the Google client posts through (it takes no transport)."""
-
-    def __init__(self):
-        self.posts = 0
-
-    async def post(self, url, *, json, headers, timeout):
-        self.posts += 1
-        return http.Response(
-            401,
-            headers={"content-type": "application/json"},
-            json={"error": {"message": "upstream rejected request"}},
-        )
-
-
+# Regression test for #12097: the Google adapters rejected a custom fetch.
 @pytest.mark.tonio
-async def test_rejects_custom_fetch_for_google_adapters_instead_of_silently_bypassing_it(ambient):
+async def test_passes_fetch_through_stream_simple_to_the_google_genai_sdk_adapters(ambient):
     custom = CustomFetch(rejected)
     google = await stream_google_generative_ai(
-        make_model("google-generative-ai"), make_context(), SimpleStreamOptions(api_key="test-key", fetch=custom)
-    ).result()
-    vertex = await stream_google_vertex(
-        make_model("google-vertex"), make_context(), SimpleStreamOptions(api_key="test-key", fetch=custom)
-    ).result()
-
-    assert "Custom fetch is not supported by the Google Generative AI adapter" in google.error_message
-    assert "Custom fetch is not supported by the Google Vertex adapter" in vertex.error_message
-    assert custom.requests == []
-    assert ambient.sends == 0
-
-
-@pytest.mark.tonio
-async def test_allows_google_adapters_to_receive_the_default_fetch_explicitly(monkeypatch):
-    client = GoogleAmbientClient()
-    monkeypatch.setattr(http, "client_for", lambda url, env=None: client)
-    result = await stream_google_generative_ai(
         make_model("google-generative-ai"),
         make_context(),
-        SimpleStreamOptions(api_key="test-key", fetch=http.default_fetch),
+        SimpleStreamOptions(api_key="test-key", fetch=custom, max_retries=0),
+    ).result()
+    vertex = await stream_google_vertex(
+        make_model("google-vertex"),
+        make_context(),
+        SimpleStreamOptions(api_key="test-key", fetch=custom, max_retries=0),
     ).result()
 
-    assert client.posts == 1
-    assert result.stop_reason == "error"
-    assert "Custom fetch is not supported" not in result.error_message
+    assert "upstream rejected request" in google.error_message
+    assert "upstream rejected request" in vertex.error_message
+    assert len(custom.requests) == 2
+    assert "https://upstream.test/v1" in str(custom.requests[0].url)
+    assert "https://upstream.test/v1" in str(custom.requests[1].url)
+    assert ambient.sends == 0

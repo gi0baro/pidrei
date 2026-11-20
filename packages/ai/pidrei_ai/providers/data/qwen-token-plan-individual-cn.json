@@ -5,7 +5,7 @@
       "name": "DeepSeek V4 Flash 0731",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -21,7 +21,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": true
       },
@@ -41,7 +40,7 @@
       "name": "DeepSeek V4 Pro",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -57,7 +56,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": true
       },
@@ -77,7 +75,7 @@
       "name": "DeepSeek V4 Pro 0813",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -93,7 +91,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": true
       },
@@ -108,12 +105,104 @@
       },
       "type": "chat"
     },
+    "chat:deepseek-v4.1-flash": {
+      "id": "deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan-individual-cn",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:deepseek-v4.1-flash-1017": {
+      "id": "deepseek-v4.1-flash-1017",
+      "name": "DeepSeek V4.1 Flash 1017",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan-individual-cn",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:glm-5.2": {
       "id": "glm-5.2",
       "name": "GLM-5.2",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -129,7 +218,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": true
       },
@@ -149,7 +237,7 @@
       "name": "GLM-5.3",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -165,7 +253,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": true
       },
@@ -185,7 +272,7 @@
       "name": "Qwen3.6 Flash",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -202,7 +289,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": false
       },
@@ -223,7 +309,7 @@
       "name": "Qwen3.7 Max",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text"
@@ -239,7 +325,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": false
       },
@@ -250,7 +335,7 @@
       "name": "Qwen3.7 Plus",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -267,7 +352,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": false
       },
@@ -288,7 +372,7 @@
       "name": "Qwen3.8 Flash",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -305,7 +389,6 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
         "supportsStore": false,
         "supportsReasoningEffort": true
       },
@@ -335,7 +418,7 @@
       "name": "Qwen3.8 Max",
       "api": "openai-completions",
       "provider": "qwen-token-plan-individual-cn",
-      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "reasoning": true,
       "input": [
         "text",
@@ -352,7 +435,52 @@
       "compat": {
         "supportsStrictMode": true,
         "thinkingFormat": "qwen",
-        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:qwen4-max-preview": {
+      "id": "qwen4-max-preview",
+      "name": "Qwen4 Max Preview",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan-individual-cn",
+      "baseUrl": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 393216,
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
         "supportsStore": false,
         "supportsReasoningEffort": true
       },

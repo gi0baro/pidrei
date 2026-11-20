@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/themed-text.ts."""
 
+from collections.abc import Sequence
+
 from pidrei_tui import Text
 
 
@@ -24,7 +26,7 @@ class ThemedText(Text):
         super().invalidate()
         self._stale = True
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         if self._stale:
             # After `set_text`: pidrei's goes through `invalidate()` (pi's
             # clears its cache directly), which marks the text stale again.

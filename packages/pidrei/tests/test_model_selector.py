@@ -141,6 +141,38 @@ async def test_moves_by_one_page_with_remapped_selection_page_keys():
 
 
 @pytest.mark.tonio
+async def test_keeps_the_selection_when_a_cursor_key_leaves_the_query_unchanged():
+    harness = await create_harness(models=[{"id": "alpha-1"}, {"id": "alpha-2"}, {"id": "alpha-3"}])
+    refresh_released = tonio.Event()
+
+    # Held pending, as in the first test: a refresh finishing mid-test resets the selection.
+    async def pending_refresh(_options=None, *, _requested_only=False):
+        await refresh_released.wait()
+        return ModelsRefreshResult(aborted=False, errors={})
+
+    harness.session.model_runtime.refresh = pending_refresh
+    try:
+        selector = ModelSelectorComponent(
+            fake_tui(), None, harness.session.model_runtime, [], lambda *args: None, lambda *args: None
+        )
+
+        for char in "alpha":
+            selector.handle_input(char)
+        selector.handle_input("\x1b[B")
+        selector.handle_input("\x1b[B")
+        browsed = selected_model_id(selector)
+        selector.handle_input("\x1b[D")  # Left
+        selector.handle_input("\x1b[H")  # Home
+
+        assert selected_model_id(selector) == browsed
+        assert browsed != "alpha-1"
+        selector.dispose()
+    finally:
+        refresh_released.set()
+        harness.cleanup()
+
+
+@pytest.mark.tonio
 async def test_uses_the_configured_save_binding():
     set_keybindings(KeybindingsManager.in_memory({"app.models.save": "ctrl+r"}))
     harness = await create_harness()

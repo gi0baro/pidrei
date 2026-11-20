@@ -8,7 +8,6 @@ from catalog.sources.models_dev import ModelsDevModel
 
 _BASE_COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsReasoningEffort": False,
     "maxTokensField": "max_tokens",
     "supportsStrictMode": False,
@@ -66,7 +65,6 @@ PROVIDER = ProviderDefinition(
     compat={
         "openai-completions": {
             "supportsStore": False,
-            "supportsDeveloperRole": False,
             "supportsReasoningEffort": False,
             "maxTokensField": "max_tokens",
             "thinkingFormat": "together",

@@ -487,6 +487,137 @@ async def test_routes_wheel_input_to_the_scroll_view_under_the_pointer():
     await tui.stop()
 
 
+class _CountedRender:
+    """Forwards to a component and counts its renders (pi's inline `counted`)."""
+
+    def __init__(self, component) -> None:
+        self._component = component
+        self.renders = 0
+
+    def render(self, width: int):
+        self.renders += 1
+        return self._component.render(width)
+
+    def invalidate(self) -> None:
+        self._component.invalidate()
+
+
+# #9549: re-rendering a long transcript on every wheel event saturated a core.
+@pytest.mark.tonio
+async def test_scrolls_without_re_rendering_components_until_content_changes():
+    terminal = VirtualTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    text = Text(_lines(10), 0, 0)
+    counted = _CountedRender(text)
+    tui.set_layout_root(ScrollView(counted, {"follow": "end", "primary": True}))
+    await tui.start()
+    await terminal.wait_for_render()
+    initial_renders = counted.renders
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<64;1;1M")
+    await terminal.wait_for_render(since)
+    since = terminal.frames
+    tui.scroll_by(-1)
+    await terminal.wait_for_render(since)
+    assert counted.renders == initial_renders
+    assert _viewport(terminal) == ["line 5", "line 6", "line 7", "line 8"]
+
+    text.set_text("changed")
+    since = terminal.frames
+    tui.request_render()
+    await terminal.wait_for_render(since)
+    assert counted.renders > initial_renders
+    assert _viewport(terminal)[0] == "changed"
+    await tui.stop()
+
+
+def _park_next_frame(tui: TuiAltScreen) -> tuple[tonio.Event, tonio.Event]:
+    """Park the render loop at the end of its next frame, before it receives
+    again: requests made meanwhile share the one pending request object.
+    Returns (parked, release)."""
+    parked = tonio.Event()
+    release = tonio.Event()
+    render_frame = tui._render_frame
+    armed = [True]
+
+    async def parking_frame(content_changed: bool) -> None:
+        await render_frame(content_changed)
+        if armed[0]:
+            armed[0] = False
+            parked.set()
+            await release.wait(5)
+
+    tui._render_frame = parking_frame
+    return parked, release
+
+
+# pidrei-only (spec/upstream-sync.md, `tui-island`): pi's `contentChanged`
+# rides in the render request. A content request and a view request made while
+# the loop draws share the pending request, and its frame renders in full.
+@pytest.mark.tonio
+async def test_a_view_request_sharing_the_pending_request_with_a_content_request_renders_in_full():
+    terminal = VirtualTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    text = Text(_lines(10), 0, 0)
+    counted = _CountedRender(text)
+    tui.set_layout_root(ScrollView(counted, {"follow": "end", "primary": True}))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    parked, release = _park_next_frame(tui)
+    tui.request_render()
+    await parked.wait(5)
+    assert parked.is_set()
+    renders = counted.renders
+    text.set_text("changed")
+    tui.request_render()
+    tui.scroll_by(-1)
+    release.set()
+
+    assert await terminal.until(lambda: _viewport(terminal)[0] == "changed")
+    assert counted.renders > renders
+    await tui.stop()
+
+
+class _FocusAware:
+    """Draws whether it has focus, as a component with a cursor does."""
+
+    def __init__(self) -> None:
+        self.focused = False
+
+    def render(self, width: int) -> list[str]:
+        return ["focused" if self.focused else "idle"]
+
+    def invalidate(self) -> None:
+        pass
+
+
+# pidrei-only: pi marks content changed on a focus change; here the focus
+# change requests the frame itself, so a view request pending at the time
+# does not make that frame reuse the output drawn before the change.
+@pytest.mark.tonio
+async def test_a_frame_after_a_focus_change_renders_in_full():
+    terminal = VirtualTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    target = _FocusAware()
+    tui.set_layout_root(VStack([{"component": target, "basis": "auto"}]))
+    await tui.start()
+    await terminal.wait_for_render()
+    assert _viewport(terminal)[0] == "idle"
+
+    parked, release = _park_next_frame(tui)
+    tui.request_render()
+    await parked.wait(5)
+    assert parked.is_set()
+    tui.scroll_to_bottom()
+    tui.set_focus(target)
+    release.set()
+
+    assert await terminal.until(lambda: _viewport(terminal)[0] == "focused")
+    await tui.stop()
+
+
 @pytest.mark.tonio
 async def test_scrolls_faster_while_alt_is_held_during_wheel_input():
     terminal = VirtualTerminal(20, 4)
@@ -865,6 +996,40 @@ async def test_uses_configured_styles_for_current_and_non_current_search_matches
 
     assert await terminal.wait_for_write("\x1b[42mneedle\x1b[49m")
     assert await terminal.wait_for_write("\x1b[41mneedle\x1b[49m")
+    await tui.stop()
+
+
+# #9549: scroll frames reuse earlier output; search must still see content that changed in between.
+@pytest.mark.tonio
+async def test_keeps_search_matches_current_across_view_only_scroll_frames_and_content_changes():
+    terminal = RecordingTerminal(60, 8)
+    tui = TuiAltScreen(terminal)
+    lines = ["line 5 needle one" if index == 4 else f"line {index + 1}" for index in range(12)]
+    transcript_text = Text("\n".join(lines), 0, 0)
+    transcript = ScrollView(transcript_text, {"follow": "end", "primary": True})
+    tui.set_layout_root(transcript)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    await terminal.send_input("\x1b[102;6u")
+    await terminal.send_input("needle")
+    assert await _wait_for_viewport_text(terminal, "1/1")
+
+    since = terminal.frames
+    for _ in range(3):
+        await terminal.send_input("\x1b[<65;1;4M")
+    await terminal.wait_for_render(since)
+    scrolled_top = transcript.scroll_top
+    assert scrolled_top > 0
+
+    lines[10] = "line 11 needle two"
+    transcript_text.set_text("\n".join(lines))
+    tui.request_render()
+    assert await _wait_for_viewport_text(terminal, "1/2")
+
+    await terminal.send_input("\x1b[103;6u")
+    assert await _wait_for_viewport_text(terminal, "2/2")
+    assert any("line 11 needle two" in line for line in terminal.get_viewport())
     await tui.stop()
 
 
@@ -1329,6 +1494,32 @@ async def test_retains_recently_offscreen_kitty_images_for_placement_only_reuse(
         assert "\x1b_Ga=p,q=2" in reentry_writes
         assert "\x1b_Ga=T" not in reentry_writes
         assert f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\" not in reentry_writes
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_keeps_uploaded_kitty_images_across_a_full_redraw():
+    # Regression test for #12010: Kitty frees image data without placements on ED 2, so a full redraw
+    # that deleted placements and then cleared the screen left placement-only reuse pointing at nothing.
+    with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
+        terminal = RecordingTerminal(20, 6)
+        image_id = 12010
+        image_line = encode_kitty("AAAA", columns=2, rows=3, image_id=image_id, move_cursor=False)
+        register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 3, "widthPx": 100, "heightPx": 100})
+        tui = TuiAltScreen(terminal)
+        tui.set_layout_root(RenderComponent(["before", image_line, "", "", "after"]))
+        await tui.start()
+        assert await terminal.wait_for_write("\x1b_Ga=T")
+        event_count = len(terminal.events)
+
+        since = terminal.frames
+        terminal.resize(20, 8)
+        await terminal.wait_for_render(since)
+        redraw_writes = "".join(event["data"] for event in terminal.events[event_count:] if event["type"] == "write")
+        assert "\x1b_Ga=p,q=2" in redraw_writes
+        assert "\x1b_Ga=T" not in redraw_writes
+        assert "\x1b[2J" not in redraw_writes
+        assert any(line.rstrip() == "after" for line in terminal.get_viewport())
         await tui.stop()
 
 

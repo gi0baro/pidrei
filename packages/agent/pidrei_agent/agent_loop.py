@@ -607,8 +607,10 @@ async def run_tool_call(tool_call: AgentToolCall, options: RunToolCallOptions) -
     call other tools use this so the hooks (for example permission checks)
     apply to those calls too.
 
-    Never raises for tool failures: unknown tools, validation errors, blocked
-    calls, and raised errors come back as `is_error=True`.
+    Never raises for tool failures: a cancelled `cancel`, unknown tools,
+    validation errors, blocked calls, and raised errors come back as
+    `is_error=True`. A cancelled `cancel` is checked first, before the hooks
+    run.
     """
     cancel = options.cancel
     preparation = await _prepare_tool_call(
@@ -732,9 +734,6 @@ async def _execute_tool_calls_sequential(
         finalized_calls.append(finalized)
         messages.append(tool_result_message)
 
-        if cancel is not None and cancel.cancelled:
-            break
-
     return _ExecutedToolCallBatch(messages=messages, terminate=_should_terminate_tool_batch(finalized_calls))
 
 
@@ -760,8 +759,6 @@ async def _execute_tool_calls_parallel(
             )
             await _emit_tool_execution_end(finalized, emit)
             finalized_calls.append(finalized)
-            if cancel is not None and cancel.cancelled:
-                break
             continue
 
         def make_entry(prepared: _PreparedToolCall) -> Callable[[], Awaitable[_FinalizedToolCallOutcome]]:
@@ -786,8 +783,6 @@ async def _execute_tool_calls_parallel(
             return run
 
         finalized_calls.append(make_entry(preparation))
-        if cancel is not None and cancel.cancelled:
-            break
 
     async def resolve_entry(
         entry: _FinalizedToolCallOutcome | Callable[[], Awaitable[_FinalizedToolCallOutcome]],
@@ -836,6 +831,10 @@ async def _prepare_tool_call(
     cancel: CancelToken | None,
     tools: list[AgentTool] | None = None,
 ) -> _PreparedToolCall | _ImmediateToolCallOutcome:
+    # Once aborted, skip preparation and the hooks; callers still record this result, so no call
+    # is left without one (#9986).
+    if cancel is not None and cancel.cancelled:
+        return _ImmediateToolCallOutcome(result=_create_error_tool_result("Operation aborted"), is_error=True)
     candidates = tools if tools is not None else current_context.tools or []
     tool = next((entry for entry in candidates if entry.name == tool_call.name), None)
     if tool is None:
@@ -863,8 +862,6 @@ async def _prepare_tool_call(
                 if before_result.terminate is True:
                     result.terminate = True
                 return _ImmediateToolCallOutcome(result=result, is_error=True)
-        if cancel is not None and cancel.cancelled:
-            return _ImmediateToolCallOutcome(result=_create_error_tool_result("Operation aborted"), is_error=True)
         return _PreparedToolCall(tool_call=tool_call, tool=tool, args=validated_args)
     except Exception as error:
         return _ImmediateToolCallOutcome(result=_create_error_tool_result(str(error)), is_error=True)

@@ -30,7 +30,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -70,7 +69,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -111,7 +109,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -162,7 +159,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -213,7 +209,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -264,7 +259,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -315,7 +309,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -352,12 +345,11 @@
         "cacheRead": 0.2,
         "cacheWrite": 0
       },
-      "contextWindow": 1000000,
+      "contextWindow": 1048576,
       "maxTokens": 262144,
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -406,7 +398,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -446,7 +437,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -486,7 +476,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -531,7 +520,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -577,7 +565,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -628,7 +615,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
@@ -679,7 +665,6 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",

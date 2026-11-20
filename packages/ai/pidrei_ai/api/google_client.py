@@ -13,15 +13,20 @@ It deliberately keeps the SDK's own camelCase config keys (`vertexai`,
 surface pi's `google-vertex-api-key-resolution.test.ts` asserts on, so mirroring
 that spec means mirroring the keys.
 
-Every wire detail below was read out of `@google/genai` 1.52.0 — the version pi
+Every wire detail below was read out of `@google/genai` 2.32.0 — the version pi
 pins — rather than inferred from documentation, because a wrong guess here is a
 silently broken provider:
 
 - Body: `{contents, systemInstruction?, tools?, toolConfig?, generationConfig}`,
   where `generationConfig` collects temperature / maxOutputTokens /
-  thinkingConfig and is emitted even when empty. `abortSignal` rides in
-  `params.config` and is dropped from the body, because the SDK's converter
-  reads a whitelist.
+  thinkingConfig and is emitted even when empty. `abortSignal` and
+  `automaticContinuation` ride in `params.config` and are dropped from the body,
+  because the SDK's converter reads a whitelist. The adapters set
+  `automaticContinuation: false`, as pi does; this client has no continuation
+  loop to turn off, so the key changes nothing here.
+- Transport: `httpOptions.fetch` (the adapters always set it, defaulting to
+  `http.default_fetch`) sends the prepared request, once per attempt. ADC token
+  requests do not go through it.
 - Model resource: `models/{id}` for the Gemini API, `publishers/google/models/{id}`
   for Vertex.
 - `baseUrlResourceScope: "COLLECTION"` means "do not prepend
@@ -50,7 +55,7 @@ from pidrei_utils.cancel import CancelToken
 
 # The `@google/genai` release pi pins; the label is what identifies the wire
 # protocol this module implements.
-GENAI_SDK_VERSION = "1.52.0"
+GENAI_SDK_VERSION = "2.32.0"
 LIBRARY_LABEL = f"google-genai-sdk/{GENAI_SDK_VERSION}"
 
 GEMINI_API_DEFAULT_VERSION = "v1beta"
@@ -194,8 +199,9 @@ class GoogleGenAI:
         body = build_request_body(params, vertexai=self._vertexai)
         headers = await self._headers(env)
 
-        client = http.client_for(url, env)
-        response = await client.post(url, json=body, headers=headers, timeout=http.request_timeout(timeout_ms))
+        request = http.build_request("POST", url, json=body, headers=headers, timeout=http.request_timeout(timeout_ms))
+        fetch = self._http_options.get("fetch")
+        response = await (fetch if fetch is not None else http.default_fetch)(request, env=env)
         if not 200 <= response.status_code < 300:
             raw = (await response.read()).decode("utf-8", "replace")
             raise GoogleApiError(response.status_code, _error_message(response.status_code, raw))

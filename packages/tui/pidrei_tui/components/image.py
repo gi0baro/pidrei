@@ -16,6 +16,7 @@ failed conversion keeps the fallback until the TUI gets another converter.
 """
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 import tonio.colored as tonio
@@ -116,7 +117,7 @@ class Image:
             self._tui.report_error(failure)
         self._tui.request_render()
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         caps = get_capabilities()
         convert = caps["images"] == "kitty" and self._mime_type != "image/png"
         # A PNG that arrived since the last render replaces the cached fallback.

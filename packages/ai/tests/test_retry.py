@@ -37,6 +37,10 @@ AZURE_PEAK_LOAD_ERROR = (
     "maximum usage size allowed during peak load. For improved capacity reliability, consider switching to "
     "Provisioned Throughput."
 )
+CODEX_CONNECTION_LIMIT_ERROR = (
+    "Codex error: Responses websocket connection limit reached (60 minutes). Create a new websocket connection "
+    "to continue."
+)
 
 
 def error_message(text: str):
@@ -44,6 +48,14 @@ def error_message(text: str):
 
 
 class TestProviderRetryClassification:
+    # Regression for #12124: the Codex WebSocket lifetime limit is recoverable on a fresh connection.
+    @pytest.mark.parametrize("text", [CODEX_CONNECTION_LIMIT_ERROR, "Codex error: websocket_connection_limit_reached"])
+    def test_matches_the_codex_websocket_connection_lifetime_limit(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    def test_does_not_match_a_generic_connection_limit(self):
+        assert is_retryable_assistant_error(error_message("connection limit reached")) is False
+
     def test_matches_explicit_provider_retry_guidance(self):
         assert is_retryable_assistant_error(error_message(OPENAI_EXPLICIT_RETRY_MESSAGE)) is True
         assert is_retryable_assistant_error(error_message(BEDROCK_EXPLICIT_RETRY_MESSAGE)) is True
@@ -69,6 +81,27 @@ class TestProviderRetryClassification:
     )
     def test_matches_dns_transport_failure_wording(self, text):
         assert is_retryable_assistant_error(error_message(text)) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Regression for #12128: bare Node socket error codes.
+            "read ECONNRESET",
+            "connect ETIMEDOUT 140.82.113.3:443",
+            "write EPIPE",
+            "connect ECONNREFUSED 127.0.0.1:443",
+            "ECONNABORTED",
+            "Connection reset by peer",
+        ],
+    )
+    def test_matches_node_socket_error_codes(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    @pytest.mark.parametrize(
+        "text", ["Invalid value EXECONNRESET", "Unknown field ETIMEDOUTX", "Invalid key ERR_EPIPE_ID"]
+    )
+    def test_does_not_match_socket_error_codes_inside_longer_identifiers(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is False
 
     @pytest.mark.parametrize(
         "text",
@@ -117,6 +150,11 @@ class TestProviderRetryClassification:
     def test_matches_gateway_wording_for_a_stream_cut_short_mid_reply(self):
         # Regression for #11879.
         text = "Claude Code's stream from Anthropic was cut short after the reply had begun"
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    def test_matches_gateway_wording_for_a_closed_connection(self):
+        # Regression for #12064.
+        text = '{"type":"error","error":{"type":"api_error","message":"Connection closed."}}'
         assert is_retryable_assistant_error(error_message(text)) is True
 
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):

@@ -18,6 +18,7 @@ scrollbar hidden too early.
 """
 
 import math
+from collections.abc import Sequence
 
 from pidrei_utils import clock
 from pidrei_utils.timers import Timeout
@@ -240,7 +241,7 @@ class ScrollView(Container):
     def clear(self) -> None:
         raise Exception("ScrollView child cannot be cleared")
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         content_width = self.get_content_width(width)
         lines = self._child.render(content_width)
         return lines if content_width == width else [f"{line} " for line in lines]

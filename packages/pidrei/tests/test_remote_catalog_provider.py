@@ -19,6 +19,7 @@ from pidrei.core.remote_catalog import (
     with_personalized_catalog,
     with_remote_catalog,
 )
+from pidrei.upstream import UPSTREAM_VERSION
 from pidrei_ai.auth.credential_store import InMemoryCredentialStore
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
@@ -103,6 +104,22 @@ async def test_parses_keyed_catalogs_sends_version_headers_observes_ttl_and_supp
     requested = urllib.parse.urlsplit(calls[0][0])
     assert requested.path == "/api/models/providers/test-provider"
     assert urllib.parse.parse_qs(requested.query)["types"] == [",".join(REMOTE_CATALOG_MODEL_TYPES)]
+
+
+# pidrei-only: pi.dev selects the catalog by Pi version, which pidrei's User-Agent does not carry,
+# so the request names the Pi version this build ports (spec recipe `catalog-pi-version`).
+@pytest.mark.tonio
+async def test_names_the_ported_pi_version_in_the_catalog_request():
+    urls = []
+
+    async def fetch(url, _headers, _cancel):
+        urls.append(url)
+        return CatalogResponse(status=200, headers={}, body=json.dumps({"dynamic": model_dict("dynamic")}))
+
+    await refresh_provider(make_provider(fetch=fetch), InMemoryModelsStore())
+
+    assert len(urls) == 1
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(urls[0]).query)["pi-version"] == [UPSTREAM_VERSION]
 
 
 @pytest.mark.tonio

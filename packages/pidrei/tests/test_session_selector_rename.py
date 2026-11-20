@@ -11,7 +11,7 @@ from pidrei.modes.interactive.components import SessionSelectorComponent
 from pidrei.modes.interactive.theme import init_theme
 from pidrei_tui import set_keybindings
 
-from .session_selector_helpers import InputCompletions, StateUpdates, lists_sessions
+from .session_selector_helpers import InputCompletions, StateUpdates, every_list_applied, lists_sessions
 
 
 def make_session(*, id, **overrides):
@@ -132,3 +132,53 @@ class TestSessionSelectorRename:
         await renamed.wait(5)
 
         assert rename_calls == [(sessions[0].path, "XOld")]
+
+    @pytest.mark.tonio
+    async def test_keeps_the_renamed_session_selected_when_the_reload_starts_with_another_session(self):
+        sessions = [
+            make_session(id=f"s{i}", modified=datetime.fromtimestamp((10_000 - i * 1000) / 1000, tz=UTC))
+            for i in range(1, 6)
+        ]
+        loads = 0
+
+        async def loader(on_progress=None, cancel=None):
+            nonlocal loads
+            # On reload, the first partial list holds only the file that finished loading first
+            reload = loads > 0
+            loads += 1
+            if reload and on_progress is not None:
+                on_progress(1, len(sessions), [sessions[4]])
+            return sessions
+
+        async def rename_session(session_path, name):
+            pass
+
+        keybindings = KeybindingsManager.in_memory()
+        state_updates = StateUpdates()
+        selector = SessionSelectorComponent(
+            loader,
+            _make_loader([]),
+            lambda path: None,
+            lambda: None,
+            lambda: None,
+            lambda: None,
+            {"renameSession": rename_session, "showRenameHint": True, "keybindings": keybindings},
+            state_lock=state_updates,
+            finish_before_next_input=InputCompletions(),
+        )
+        await state_updates.until(lists_sessions(selector, sessions))
+
+        session_list = selector.get_session_list()
+        session_list.handle_input("\x1b[B")
+        session_list.handle_input("\x1b[B")
+        assert session_list.get_selected_session_path() == sessions[2].path
+
+        session_list.handle_input(CTRL_R)
+        selector.handle_input("X")
+        selector.handle_input("\r")
+        # The rename and the reload run on detached coroutines; rename mode ends after the reload.
+        await state_updates.until(lambda: loads == 2 and selector._current_load is None and selector._mode == "list")
+        await every_list_applied(selector)
+
+        assert loads == 2
+        assert selector.get_session_list().get_selected_session_path() == sessions[2].path

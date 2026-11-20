@@ -11,6 +11,7 @@ than dicts — the layout pass translates and re-clips boxes in place.
 
 import math
 import re
+from collections.abc import Sequence
 
 from .components.stack import allocate_stack_sizes, visible_stack_entries
 from .layout_node import get_layout_node
@@ -67,23 +68,47 @@ class LayoutBox:
         self.layer = 0
 
 
-class LayoutFrame:
-    __slots__ = ("height", "lines", "primary_scroll_view", "root", "width")
+# Component output by width, as rendered for one layout frame. Components are
+# not hashable by contract (pi keys a Map by identity), so the key is id() with
+# the component kept alive in its entry: (component, {width: lines}).
+type LayoutRenderCache = dict[int, tuple[object, dict[int, Sequence[str]]]]
 
-    def __init__(self, root: LayoutBox, width: int, height: int, lines: list[str], primary_scroll_view) -> None:
+
+class LayoutFrame:
+    __slots__ = ("height", "lines", "primary_scroll_view", "render_cache", "root", "width")
+
+    def __init__(
+        self,
+        root: LayoutBox,
+        width: int,
+        height: int,
+        lines: list[str],
+        primary_scroll_view,
+        render_cache: LayoutRenderCache,
+    ) -> None:
         self.root = root
         self.width = width
         self.height = height
         self.lines = lines
         self.primary_scroll_view = primary_scroll_view
+        # Output of every component this frame rendered; pass it to a later frame whose content did not change.
+        self.render_cache = render_cache
 
 
 class _LayoutContext:
-    __slots__ = ("primary_scroll_view", "render_cache", "request_render", "viewport")
+    __slots__ = ("primary_scroll_view", "render_cache", "request_render", "reusable_output", "viewport")
 
-    def __init__(self, viewport: dict, request_render) -> None:
+    def __init__(
+        self,
+        viewport: dict,
+        render_cache: LayoutRenderCache,
+        reusable_output: LayoutRenderCache | None,
+        request_render,
+    ) -> None:
         self.viewport = viewport
-        self.render_cache: dict[int, tuple[object, dict[int, list[str]]]] = {}
+        self.render_cache = render_cache
+        # Output of an earlier frame with the same content; entries are copied into `render_cache` when used.
+        self.reusable_output = reusable_output
         self.request_render = request_render
         self.primary_scroll_view = None
 
@@ -96,10 +121,9 @@ def _intersect(a: LayoutRect, b: LayoutRect) -> LayoutRect:
     return LayoutRect(x, y, max(0, right - x), max(0, bottom - y))
 
 
-def _render_cached(context: _LayoutContext, component, width: int) -> list[str]:
+def _render_cached(context: _LayoutContext, component, width: int) -> Sequence[str]:
     safe_width = max(1, math.floor(width))
-    # Components are not hashable by contract (pi keys a Map by identity), so
-    # the cache is keyed by id() with the component kept alive alongside it.
+    # Keyed by id(): see `LayoutRenderCache`.
     entry = context.render_cache.get(id(component))
     if entry is None:
         entry = (component, {})
@@ -107,7 +131,11 @@ def _render_cached(context: _LayoutContext, component, width: int) -> list[str]:
     widths = entry[1]
     lines = widths.get(safe_width)
     if lines is None:
-        lines = component.render(safe_width)
+        # An earlier frame's entry keeps its component alive, so its id names this component.
+        reusable = context.reusable_output.get(id(component)) if context.reusable_output is not None else None
+        lines = reusable[1].get(safe_width) if reusable is not None else None
+        if lines is None:
+            lines = component.render(safe_width)
         widths[safe_width] = lines
     return lines
 
@@ -410,16 +438,28 @@ def _paint_box(box: LayoutBox, screen: list[str], total_width: int) -> None:
     _paint_scrollbar(box, screen, total_width)
 
 
-def render_layout_frame(root, width: int, height: int, request_render) -> LayoutFrame:
+def render_layout_frame(
+    root, width: int, height: int, request_render, reusable_output: LayoutRenderCache | None = None
+) -> LayoutFrame:
+    """Lay out and paint one frame.
+
+    ``reusable_output`` is an earlier frame's ``render_cache``; its output is used instead of calling
+    ``render()``. Pass it only when no component changed since that frame, e.g. when only a scroll
+    position moved: the frame then costs O(viewport) instead of re-rendering the whole scrollable
+    document. Each frame keeps only the output it used, so reuse never accumulates across frames.
+    """
     safe_width = max(1, math.floor(width))
     safe_height = max(1, math.floor(height))
-    context = _LayoutContext({"width": safe_width, "height": safe_height}, request_render)
+    render_cache: LayoutRenderCache = {}
+    context = _LayoutContext(
+        {"width": safe_width, "height": safe_height}, render_cache, reusable_output, request_render
+    )
     root_box = _layout_component(
         context, root, 0, 0, safe_width, safe_height, LayoutRect(0, 0, safe_width, safe_height)
     )
     lines = [""] * safe_height
     _paint_box(root_box, lines, safe_width)
-    return LayoutFrame(root_box, safe_width, safe_height, lines, context.primary_scroll_view)
+    return LayoutFrame(root_box, safe_width, safe_height, lines, context.primary_scroll_view, render_cache)
 
 
 def _contains_point(rect: LayoutRect, x: int, y: int) -> bool:

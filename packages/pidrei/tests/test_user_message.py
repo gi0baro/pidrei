@@ -29,6 +29,19 @@ class TestUserMessageComponent:
         assert lines[2].startswith(OSC133_ZONE_END + OSC133_ZONE_FINAL)
         assert lines[2].endswith(BG_RESET)
 
+    # #9549: container output is reused across frames, so markers must not be added to it in place.
+    @pytest.mark.tonio
+    async def test_adds_osc_133_zone_markers_once_across_repeated_renders(self):
+        await init_theme("dark")
+
+        component = UserMessageComponent("hello")
+        first = component.render(20)
+        second = component.render(20)
+
+        assert second is first
+        assert len(second[0].split(OSC133_ZONE_START)) == 2
+        assert len(second[2].split(OSC133_ZONE_END)) == 2
+
     @pytest.mark.tonio
     async def test_chains_markdown_transformers_with_user_message_context(self):
         await init_theme("dark")

@@ -62,7 +62,6 @@ PROVIDER = ProviderDefinition(
     compat={
         "openai-completions": {
             "supportsStore": False,
-            "supportsDeveloperRole": False,
             "supportsStrictMode": True,
             "supportsLongCacheRetention": False,
         },

@@ -2,7 +2,7 @@
 
 import re
 
-from pidrei_mcp import create_mcp_tool_name, mcp_namespace
+from pidrei_mcp import create_mcp_tool_name, mcp_namespace, mcp_server_summary
 
 
 def test_joins_server_and_tool_and_replaces_characters_outside_a_z_0_9_underscore():
@@ -34,3 +34,13 @@ def test_mcp_namespace_is_mcp_server_with_dashes_replaced_the_prefix_of_the_serv
     assert mcp_namespace("my-server") == "mcp__my_server"
     assert mcp_namespace("my-server") == mcp_namespace("my_server")
     assert create_mcp_tool_name("my-server", "search").startswith(f"{mcp_namespace('my-server')}__")
+
+
+def test_mcp_server_summary_takes_the_first_line_of_the_configured_description_else_of_the_instructions():
+    assert mcp_server_summary(" Docs search.\nMore. ", "Ignored.") == "Docs search."
+    assert (
+        mcp_server_summary(None, "\n  Web search for current information.\nDetails.")
+        == "Web search for current information."
+    )
+    assert mcp_server_summary("  ", "From instructions.") == "From instructions."
+    assert mcp_server_summary(None, None) == ""

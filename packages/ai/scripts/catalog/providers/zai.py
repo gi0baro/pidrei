@@ -28,7 +28,6 @@ def zai_coding_plan_models(ctx: ProviderContext, source: str, base_url: str) -> 
                 api_model.cost if api_model is not None and api_model.source.get("cost") is not None else source.cost
             ),
             "compat": {
-                "supportsDeveloperRole": False,
                 "thinkingFormat": "zai",
                 **({"supportsReasoningEffort": True} if thinking_level_map is not None else {}),
                 **({"zaiToolStream": True} if model["id"] not in _TOOL_STREAM_UNSUPPORTED_MODEL_IDS else {}),
@@ -46,7 +45,6 @@ def zai_coding_plan_models(ctx: ProviderContext, source: str, base_url: str) -> 
 
 ZAI_COMPLETIONS_COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsReasoningEffort": False,
     "maxTokensField": "max_tokens",
     "thinkingFormat": "zai",

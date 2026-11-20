@@ -20,7 +20,7 @@ from .config import (
 )
 from .fetch import McpFetch, McpResponse, McpResponseHeaders, default_fetch
 from .input_schema import normalize_mcp_input_schema
-from .naming import create_mcp_tool_name, mcp_namespace
+from .naming import create_mcp_tool_name, mcp_namespace, mcp_server_summary
 from .output_limit import MCP_OUTPUT_MAX_BYTES, LimitedMcpContent, McpOutputSaver, limit_mcp_content
 from .protocol.content import (
     AudioContent,
@@ -179,6 +179,7 @@ __all__ = [
     "is_mcp_server_override",
     "limit_mcp_content",
     "mcp_namespace",
+    "mcp_server_summary",
     "normalize_mcp_input_schema",
     "parse_json_rpc_message",
     "to_llm_content",

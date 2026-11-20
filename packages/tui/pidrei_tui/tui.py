@@ -58,6 +58,10 @@ Port deviations (documented once here):
   request object every requester sends until the loop receives it: a
   forced request sets it before its send, so a dropped send still lands in
   the pending request. The loop installs a fresh object before reading it.
+  pi's ``contentChanged`` rides the same way: ``request_render()`` sets
+  ``content`` before its send, and ``_request_view_render()`` (scroll-only
+  changes) sets nothing, so a frame whose requests were all view requests
+  may reuse the previous frame's component output.
 - A frame is two halves: ``_compose_frame`` walks the tree and publishes
   what input reads back (layout, overlay bounds) under the UI state lock;
   ``_write_frame`` diffs and emits under the render lock only.
@@ -90,6 +94,15 @@ Port deviations (documented once here):
   theme load stays off the key path). Every other item reaches
   ``_handle_input`` from the terminal's one input consumer (or, for a
   terminal without one, from its caller), one at a time.
+- Suspend signal: pi's TUI listens for SIGTSTP itself from ``start()`` until
+  ``stop()``. Here the process's signals have one receiver, the host's
+  (pidrei's interactive mode), which forwards SIGTSTP to
+  ``suspend_signal()``: while the TUI owns the terminal and has a handler,
+  the suspend is queued with the terminal as an input item and the handler
+  runs in input order, under the lock; otherwise the host applies the
+  signal's default action. A SIGTSTP while ``start()`` runs, before the
+  terminal's input handler is installed, is dropped (pi suspends once
+  ``start()`` returns).
 - ``CURSOR_MARKER`` is an APC sequence pi brands "pi:c" — renamed to
   "pidrei:c" (pi naming itself).
 - Env renames: PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW, PI_TUI_DEBUG →
@@ -104,7 +117,7 @@ import math
 import re
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
@@ -113,9 +126,16 @@ from tonio.colored import sync
 from tonio.colored.sync import channel
 
 from .keys import is_key_release, matches_key
-from .terminal import ProcessTerminal
+from .terminal import SUSPEND_SIGNAL, ProcessTerminal
 from .terminal_colors import parse_osc_color_response, parse_terminal_color_scheme_report
-from .terminal_image import get_capabilities, is_image_line, set_cell_dimensions
+from .terminal_image import (
+    get_capabilities,
+    get_image_line_extent,
+    get_max_kitty_image_rows,
+    is_image_line,
+    set_cell_dimensions,
+    strip_image_sequences,
+)
 from .utils import extract_segments, normalize_terminal_output, slice_by_column, slice_with_width, visible_width
 
 
@@ -239,8 +259,12 @@ def retarget_mouse_event(event: TuiMouseEvent, target: TuiMouseDispatchTarget) -
 class Component(Protocol):
     """Component interface - all components must implement this."""
 
-    def render(self, width: int) -> list[str]:
-        """Render the component to lines for the given viewport width."""
+    def render(self, width: int) -> Sequence[str]:
+        """Render the component to lines for the given viewport width.
+
+        Returns the lines to draw. Components may return a cached list: callers
+        must not modify it.
+        """
         ...
 
     def invalidate(self) -> None:
@@ -384,14 +408,66 @@ class _PendingTerminalColorQuery:
         return {"foreground": self.foreground, "background": self.background, "palette": palette}
 
 
+@dataclass(slots=True, frozen=True)
+class ChildLines:
+    """Concatenated child output of a container, kept across frames."""
+
+    width: int
+    children: tuple
+    parts: tuple[Sequence[str], ...]
+    lines: list[str]
+
+
+def _same_lines(a: Sequence[str], b: Sequence[str]) -> bool:
+    # List equality compares lengths, then items (identity first): pi's loop.
+    return a is b or a == b
+
+
+def render_child_lines(children: Sequence, width: int, previous: ChildLines | None) -> ChildLines:
+    """Render children and concatenate their lines.
+
+    Returns `previous` unchanged when the children and their lines are unchanged. Unchanged subtrees
+    then keep list identity, so every ancestor container skips its copy too. Without this, each
+    frame of a long fullscreen transcript copied every rendered line once per nesting level.
+    Callers must treat the returned lines as read-only, like any component's cached render output.
+    """
+    parts = tuple(child.render(width) for child in children)
+    if (
+        previous is not None
+        and previous.width == width
+        and len(previous.children) == len(children)
+        and all(
+            child is previous_child and _same_lines(part, previous_part)
+            for child, previous_child, part, previous_part in zip(
+                children, previous.children, parts, previous.parts, strict=True
+            )
+        )
+    ):
+        return previous
+    lines: list[str] = []
+    for part in parts:
+        lines.extend(part)
+    # A copy of the children: `add_child` appends to the container's list in place.
+    return ChildLines(width, tuple(children), parts, lines)
+
+
+def dispatch_mouse_to_child_lines(layout: ChildLines, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+    """Dispatch a mouse event to the child of a vertical child layout that covers its row."""
+    child_y = 0
+    for child, part in zip(layout.children, layout.parts, strict=True):
+        child_height = len(part)
+        if child_y <= event.y < child_y + child_height:
+            return dispatch_mouse_event(child, replace(event, y=event.y - child_y, height=child_height))
+        child_y += child_height
+    return None
+
+
 class Container:
     """A component that contains other components."""
 
     def __init__(self) -> None:
         self.children: list = []
-        # Geometry of the last rendered frame, for hit-testing without
-        # re-rendering: {"width", "children": [(component, height), ...]}.
-        self._mouse_layout: dict | None = None
+        self._child_lines: ChildLines | None = None
 
     def add_child(self, component) -> None:
         self.children.append(component)
@@ -426,31 +502,20 @@ class Container:
     def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
         if event.y < 0 or event.y >= event.height:
             return None
-        layout = self._mouse_layout
-        mouse_children = (
-            layout["children"]
-            if layout is not None and layout["width"] == event.width
-            else [(component, len(component.render(event.width))) for component in self.children]
+        child_lines = self._child_lines
+        layout = (
+            child_lines
+            if child_lines is not None and child_lines.width == event.width
+            else render_child_lines(self.children, event.width, None)
         )
-        child_y = 0
-        for child, child_height in mouse_children:
-            if child_y <= event.y < child_y + child_height:
-                result = dispatch_mouse_event(child, replace(event, y=event.y - child_y, height=child_height))
-                if result is not None and result.focus and getattr(self, "handle_input", None) is not None:
-                    return replace(result, focus_target=self)
-                return result
-            child_y += child_height
-        return None
+        result = dispatch_mouse_to_child_lines(layout, event)
+        if result is not None and result.focus and getattr(self, "handle_input", None) is not None:
+            return replace(result, focus_target=self)
+        return result
 
-    def render(self, width: int) -> list[str]:
-        lines: list[str] = []
-        mouse_children: list[tuple] = []
-        for child in self.children:
-            child_lines = child.render(width)
-            mouse_children.append((child, len(child_lines)))
-            lines.extend(child_lines)
-        self._mouse_layout = {"width": width, "children": mouse_children}
-        return lines
+    def render(self, width: int) -> Sequence[str]:
+        self._child_lines = render_child_lines(self.children, width, self._child_lines)
+        return self._child_lines.lines
 
 
 SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07"
@@ -493,6 +558,35 @@ def composite_tui_line(base_line: str, overlay_line: str, start_col: int, overla
         return result
     # Truncate with strict=True to ensure we don't exceed total_width
     return slice_by_column(result, 0, total_width, True)
+
+
+def _hide_images_under_overlay(lines: list[str], overlay: dict, viewport_start: int) -> None:
+    """Drop image placements that intersect an overlay rectangle (`row` is viewport-relative).
+
+    Terminals draw images above text, so an overlay cannot paint over them. The renderers delete a
+    placement once its line changes and draw it again when the overlay no longer covers it.
+    Images beside the overlay stay; on the row holding such an image's sequence the overlay is not
+    drawn, because `composite_tui_line` passes image lines through.
+
+    `overlay` is pi's OverlayBounds, {"row", "col", "width", "height"}; `lines` is the frame's own copy.
+    """
+    if overlay["height"] == 0:
+        return
+    # Kitty images extend downward, so an image line above the viewport can still reach into it.
+    for index in range(max(0, viewport_start - get_max_kitty_image_rows()), len(lines)):
+        line = lines[index]
+        extent = get_image_line_extent(line)
+        if not extent:
+            continue
+        first_row = index + extent["firstRow"] - viewport_start
+        last_row = index + extent["lastRow"] - viewport_start
+        if (
+            first_row < overlay["row"] + overlay["height"]
+            and last_row >= overlay["row"]
+            and extent["startCol"] < overlay["col"] + overlay["width"]
+            and extent["endCol"] > overlay["col"]
+        ):
+            lines[index] = strip_image_sequences(line)
 
 
 # pi brands the viewport renderer with `Symbol.for(...)`; the Python stand-in
@@ -585,10 +679,14 @@ class ImageConversions:
 class _RenderRequest:
     """The render loop's request message (see the module docstring)."""
 
-    __slots__ = ("force",)
+    __slots__ = ("content", "force")
 
     def __init__(self) -> None:
         self.force = False
+        # pi's `contentChanged`: whether a request since the last frame may
+        # have changed component output. Only `_request_view_render()` leaves
+        # it False, so a renderer may reuse the previous frame's output.
+        self.content = False
 
 
 class TuiBase(Container, ABC):
@@ -618,6 +716,12 @@ class TuiBase(Container, ABC):
         # Global callback for debug key (Shift+Ctrl+D). Called before input is
         # forwarded to the focused component.
         self.on_debug = None
+        # The handler an external SIGTSTP runs while this TUI owns the
+        # terminal (`suspend_signal`), and whether it does: from start() until
+        # stop(). Unlike `_stopped`, False before the first start(). Both
+        # under the state lock.
+        self._suspend_signal_handler = None
+        self._owns_terminal = False
         # Spawned work the current input item must finish before the next
         # item is handled (`finish_before_next_input`). Only the input
         # consumer touches it. `_routing` is True while an item is routed
@@ -695,12 +799,14 @@ class TuiBase(Container, ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def _compose_frame(self) -> Any:
+    def _compose_frame(self, content_changed: bool) -> Any:
         """The frame's first half, under the UI state lock (and the render
         lock): walk the tree, which reads live component state, and publish
         what input reads back from render. Returns what `_write_frame` needs,
         or None when there is nothing to draw. Never awaits: I/O the frame
-        needs goes through `_defer_frame_io`."""
+        needs goes through `_defer_frame_io`. `content_changed` is False only
+        for a frame every request of which was a view request: a renderer may
+        then reuse the previous frame's component output."""
 
     @abstractmethod
     def _write_frame(self, frame) -> None:
@@ -877,6 +983,12 @@ class TuiBase(Container, ABC):
             )
         if focused_overlay is not None:
             self._overlay_focus_restore = {"status": "eligible", "overlay": focused_overlay}
+
+        # Focused components draw a cursor, so a focus change must not reuse earlier output.
+        # pi only marks content changed (first thing in the method); a bare mark could be lost
+        # at the render loop's request swap, since nothing would deliver it, so this requests a
+        # frame, after the change as every request is.
+        self.request_render()
 
     def _clear_overlay_focus_restore(self) -> None:
         self._overlay_focus_restore = {"status": "inactive"}
@@ -1139,6 +1251,8 @@ class TuiBase(Container, ABC):
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
+        with self.state_lock:
+            self._owns_terminal = True
         self._stopped = False
         # Armed before anything this session writes: the alternate-screen
         # entry comes before `terminal.start()`.
@@ -1339,6 +1453,35 @@ class TuiBase(Container, ABC):
         # Released after the last thing this session writes: the
         # alternate-screen exit comes after `terminal.stop()`.
         await self.terminal.release()
+        # Last, so a SIGTSTP during the restore above is queued as an input
+        # item instead of stopping the process with the terminal half
+        # restored; the consumer drops it once `terminal.stop()` ended its
+        # input generation.
+        with self.state_lock:
+            self._owns_terminal = False
+
+    def set_suspend_signal_handler(self, handler) -> None:
+        """Sets the handler called on SIGTSTP while this TUI owns the terminal
+        (from start() until stop()), or clears it with None. After stop(), a
+        child that owns the terminal is suspended normally.
+
+        The handler is synchronous and runs as an input item, under the UI
+        state lock (see `suspend_signal`)."""
+        with self.state_lock:
+            self._suspend_signal_handler = handler
+
+    def suspend_signal(self) -> bool:
+        """An external SIGTSTP reached the process (pidrei-only: pi's TUI
+        listens for the signal itself; here the host's signal handler calls
+        this). While this TUI owns the terminal and has a handler, the
+        suspend is queued as an input item, in order with the keys around
+        it, and this returns True; otherwise it returns False, and the
+        caller applies the signal's default action."""
+        with self.state_lock:
+            if not self._owns_terminal or self._suspend_signal_handler is None:
+                return False
+            self.terminal.queue_suspend()
+            return True
 
     async def render_now(self, force: bool = False) -> None:
         """Render one frame on the caller, bypassing the render loop, and
@@ -1348,19 +1491,21 @@ class TuiBase(Container, ABC):
         async with self._render_lock:
             if force:
                 self._reset_for_full_redraw()
-            await self._render_frame()
+            # Composed directly, so always rendered in full.
+            await self._render_frame(True)
             await self._flush_frames()
 
     def _reset_for_full_redraw(self) -> None:
         with self.state_lock:
             self._reset_render_state()
 
-    async def _render_frame(self) -> None:
+    async def _render_frame(self, content_changed: bool) -> None:
         """One frame, under the render lock: walk the tree under the UI state
-        lock, then — released — diff it, run its I/O and hand the bytes over."""
+        lock, then — released — diff it, run its I/O and hand the bytes over.
+        `content_changed` goes to `_compose_frame`."""
         try:
             with self.state_lock:
-                frame = self._compose_frame()
+                frame = self._compose_frame(content_changed)
             if frame is not None:
                 self._write_frame(frame)
         except Exception:
@@ -1439,18 +1584,31 @@ class TuiBase(Container, ABC):
     def request_render(self, force: bool = False) -> None:
         # Sync, callable from any task (a component's render included), and
         # touches no lock. pi calls resetRenderState() right here; the diff
-        # state is the render loop's, so `force` travels in the request.
+        # state is the render loop's, so `force` travels in the request, and
+        # so does pi's `contentChanged`.
         if not self._render_active:
             return
         request = self._render_request
+        # Before the send, as `force`: if the channel is full, the pending
+        # request is this same object, so both still land.
+        request.content = True
         if force:
-            # Before the send: if the channel is full, the pending request
-            # is this same object, so the force still lands.
             request.force = True
         requests = self._render_requests
         if requests is not None:
             # Full: a pending request covers this one. Closed: stopping.
             requests.send_nowait(request)
+
+    def _request_view_render(self) -> None:
+        """Request a frame for a change that leaves component output unchanged,
+        such as a scroll position. Sets nothing on the request: a frame whose
+        requests were all view requests may reuse the previous frame's output."""
+        if not self._render_active:
+            return
+        requests = self._render_requests
+        if requests is not None:
+            # Full: a pending request covers this one. Closed: stopping.
+            requests.send_nowait(self._render_request)
 
     async def _render_loop(self, requests) -> None:
         """One frame per received request. Ends when `stop()` closes the
@@ -1461,18 +1619,25 @@ class TuiBase(Container, ABC):
                 request = await requests.receive()
             except BrokenPipeError:
                 return  # `stop()`
-            # Later requests go in a fresh object; `force` is read once, after.
-            # A forced request that took this one just before the swap either
-            # set `force` before this read, or sends it again (the channel is
-            # empty now) and forces the next frame. A plain request resending
-            # it can only repeat a full repaint, never lose one.
+            # Later requests go in a fresh object; `force` and `content` are
+            # read once, after. A requester that took this object just before
+            # the swap either set its flag before this read, or sends the
+            # object again and the next frame reads it. A request resending
+            # an old object can only repeat a frame.
+            # Known limit: if a third requester sends the fresh object
+            # between this swap and that resend, the resend is dropped (the
+            # channel is full) and the flag is lost: a forced repaint is
+            # drawn as a plain frame, a content change waits for the next
+            # `request_render()`. It needs the requester preempted between
+            # reading the pending object and setting its flag.
             self._render_request = _RenderRequest()
             force = request.force
+            content = request.content
             try:
                 async with self._render_lock:
                     if force:
                         self._reset_for_full_redraw()
-                    await self._render_frame()
+                    await self._render_frame(content)
             except Exception as error:
                 # pi crashes the process on a render throw. Here rendering
                 # stops and the error goes to the installed handler
@@ -1557,6 +1722,13 @@ class TuiBase(Container, ABC):
 
     def _route_input(self, data: str) -> None:
         """The input item's synchronous handling, under the UI state lock."""
+        # Queued by `suspend_signal`: no focus is involved.
+        if data is SUSPEND_SIGNAL:
+            handler = self._suspend_signal_handler
+            if handler is not None:
+                handler()
+            return
+
         if self._handle_pointer_input(data):
             return
 
@@ -1856,12 +2028,15 @@ class TuiBase(Container, ABC):
 
         viewport_start = max(0, working_height - term_height)
 
-        # Composite each overlay
+        # Composite each overlay, back to front. Hiding images per overlay also hides images drawn by overlays below it.
         for item in rendered:
             overlay_lines = item["overlayLines"]
             row = item["row"]
             col = item["col"]
             w = item["w"]
+            _hide_images_under_overlay(
+                result, {"row": row, "col": col, "width": w, "height": len(overlay_lines)}, viewport_start
+            )
             for i, overlay_line in enumerate(overlay_lines):
                 idx = viewport_start + row + i
                 if 0 <= idx < len(result):
@@ -1926,7 +2101,7 @@ class TuiBase(Container, ABC):
     # Terminal queries
     # ------------------------------------------------------------------
 
-    def _resolve_fake_cursors(self, lines: list[str]) -> list[str]:
+    def _resolve_fake_cursors(self, lines: Sequence[str]) -> list[str]:
         """Resolve fake cursor markers to reverse video. When the hardware cursor is shown, a fake cursor
         directly after CURSOR_MARKER is dropped because the terminal cursor is drawn there. Fake cursors
         of components without focus have no CURSOR_MARKER and stay visible.

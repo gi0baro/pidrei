@@ -132,7 +132,6 @@
       "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true,
@@ -168,7 +167,6 @@
       "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true,
@@ -205,7 +203,6 @@
       "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true,
@@ -252,7 +249,6 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -289,7 +285,6 @@
       "maxTokens": 131000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -316,7 +311,6 @@
       "maxTokens": 24000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -344,7 +338,6 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -382,7 +375,6 @@
       "maxTokens": 128000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -420,7 +412,6 @@
       "maxTokens": 256000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -467,7 +458,6 @@
       "maxTokens": 262144,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -504,7 +494,6 @@
       "maxTokens": 256000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -540,7 +529,6 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -576,7 +564,6 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -612,7 +599,6 @@
       "maxTokens": 32768,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -640,7 +626,6 @@
       "maxTokens": 262144,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -653,6 +638,52 @@
         "high": null,
         "xhigh": "xhigh",
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:@cf/thinkingmachines/inkling-2-small": {
+      "id": "@cf/thinkingmachines/inkling-2-small",
+      "name": "Inkling 2 Small",
+      "api": "openai-completions",
+      "provider": "cloudflare-workers-ai",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1,
+        "cacheRead": 0.1,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
+      "compat": {
+        "supportsStore": false,
+        "supportsStrictMode": true,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true
+      },
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
       },
       "inputLimits": {
         "images": {
@@ -686,7 +717,6 @@
       "maxTokens": 131072,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -713,7 +743,6 @@
       "maxTokens": 256000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -749,7 +778,6 @@
       "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
@@ -786,7 +814,6 @@
       "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true

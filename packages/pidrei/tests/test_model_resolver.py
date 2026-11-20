@@ -6,7 +6,6 @@ from dataclasses import dataclass, replace
 import pytest
 
 from pidrei.cli.args import is_valid_thinking_level
-from pidrei.core import model_resolver
 from pidrei.core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,
     ModelReferenceRequest,
@@ -14,7 +13,6 @@ from pidrei.core.model_resolver import (
     find_initial_model,
     resolve_cli_model,
     resolve_model_reference,
-    resolve_model_scope,
     resolve_model_scope_with_diagnostics,
 )
 from pidrei.core.settings_manager import SettingsManager
@@ -342,20 +340,6 @@ class TestResolveModelScopeWithDiagnostics:
         ]
 
     @pytest.mark.tonio
-    async def test_resolve_model_scope_preserves_cli_warning_output(self):
-        runtime = MockRuntime(ALL_MODELS)
-        captured: list[str] = []
-        original_write_stderr = model_resolver.write_stderr
-        model_resolver.write_stderr = captured.append
-        try:
-            scoped_models = await resolve_model_scope(["missing"], runtime)
-        finally:
-            model_resolver.write_stderr = original_write_stderr
-
-        assert scoped_models == []
-        assert 'Warning: No models match pattern "missing"' in "".join(captured)
-
-    @pytest.mark.tonio
     async def test_adds_every_provider_for_a_pattern_matching_the_same_id_on_several_providers(self):
         runtime = MockRuntime(
             [
@@ -552,8 +536,8 @@ class TestCustomModelFallbackWithThinkingSuffix:
 
 class TestDefaultModelSelection:
     def test_openai_defaults_track_current_models(self):
-        assert DEFAULT_MODEL_PER_PROVIDER["openai"] == "gpt-6.1-sol"
-        assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-6.1-sol"
+        assert DEFAULT_MODEL_PER_PROVIDER["openai"] == "gpt-6.2-sol"
+        assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-6.2-sol"
 
     def test_zai_minimax_cerebras_and_ant_ling_defaults_track_current_models(self):
         assert DEFAULT_MODEL_PER_PROVIDER["zai"] == "glm-5.3"

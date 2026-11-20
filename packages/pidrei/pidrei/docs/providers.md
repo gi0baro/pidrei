@@ -143,10 +143,10 @@ pidrei
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
-| Qwen Token Plan | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
-| Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan-individual` |
-| Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-cn` |
-| Qwen Token Plan (Individual, China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-individual-cn` |
+| Qwen Token Plan Team | `QWEN_TOKEN_PLAN_TEAM_API_KEY` | `qwen-token-plan` |
+| Qwen Token Plan Individual | `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY` | `qwen-token-plan-individual` |
+| Qwen Token Plan Team (China) | `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY` | `qwen-token-plan-cn` |
+| Qwen Token Plan Individual (China) | `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY` | `qwen-token-plan-individual-cn` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` | `xiaomi` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |

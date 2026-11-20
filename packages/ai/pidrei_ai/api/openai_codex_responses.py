@@ -62,10 +62,8 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.identity import ORIGINATOR, get_identity_headers
 from pidrei_ai.utils.session_resources import register_session_resource_cleanup
 from pidrei_ai.utils.sse import iterate_sse_messages
-from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import (
     get_declared_tools,
-    get_initial_system_message,
     normalize_context,
     resolve_transcript,
     resolve_transcript_tools,
@@ -99,6 +97,10 @@ CODEX_TOOL_CALL_PROVIDERS = frozenset(("openai", "openai-codex", "opencode"))
 WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009
 WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached"
 PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found"
+# The Responses API rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
+MIN_OUTPUT_TOKENS = 16
+# Fixed reasoning.effort while configuration_update items carry the thinking level.
+CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium"
 
 CODEX_RESPONSE_STATUSES = frozenset(
     ("completed", "incomplete", "failed", "cancelled", "queued", "in_progress"),
@@ -106,7 +108,9 @@ CODEX_RESPONSE_STATUSES = frozenset(
 
 OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06"
 SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000
-SESSION_WEBSOCKET_MAX_AGE_MS = 55 * 60 * 1000
+# The server closes a socket after 60 minutes, even mid-response, and the in-flight response is lost.
+# New requests open a fresh socket after 45 minutes, leaving 15 minutes for long responses.
+SESSION_WEBSOCKET_MAX_AGE_MS = 45 * 60 * 1000
 
 _TERMINAL_RATE_LIMIT_PATTERN = re.compile(
     r"GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance"
@@ -478,12 +482,14 @@ def stream(
     opts = _codex_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
     normalized_context = resolve_transcript(context, _get_compat(model).supports_mid_convo_system_messages)
+    configuration_update_effort = _get_configuration_update_effort(model, opts)
 
     output = AssistantMessageBuilder(
         content=[],
         api="openai-codex-responses",
         provider=model.provider,
         model=model.id,
+        provider_thinking_level=configuration_update_effort,
         usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=clock.now_ms(),
@@ -505,7 +511,14 @@ def stream(
             )
             cache_session_id = None if opts.cache_retention == "none" else opts.session_id
             codex_session_id = clamp_openai_prompt_cache_key(cache_session_id)
-            body = build_request_body(model, normalized_context, opts, codex_session_id, grammar_tool_input_properties)
+            body = build_request_body(
+                model,
+                normalized_context,
+                opts,
+                codex_session_id,
+                grammar_tool_input_properties,
+                configuration_update_effort,
+            )
             next_body = await maybe_call(opts.on_payload, body, model)
             if next_body is not None:
                 body = next_body
@@ -713,8 +726,9 @@ def stream_simple(
         raise Exception(f"No API key for provider: {model.provider}")
 
     base = build_base_options(model, context, options, api_key)
-    clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else None
-    reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning
+    clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else "off"
+    # Off is sent as effort none, so with configuration_update items switching to it keeps the cache.
+    reasoning_effort = clamped_reasoning if clamped_reasoning != "off" else ("none" if model.reasoning else None)
 
     opts = _codex_options(base)
     opts.tool_choice = options.tool_choice if options else None
@@ -732,6 +746,8 @@ class _ResolvedCompat:
     supports_additional_tools: bool
     supports_tool_search: bool
     supports_mid_convo_system_messages: bool
+    supports_max_output_tokens: bool
+    supports_mid_convo_effort: bool
 
 
 def _get_compat(model: Model) -> _ResolvedCompat:
@@ -746,7 +762,27 @@ def _get_compat(model: Model) -> _ResolvedCompat:
         supports_additional_tools=pick(compat.supports_additional_tools if compat else None, False),
         supports_tool_search=pick(compat.supports_tool_search if compat else None, False),
         supports_mid_convo_system_messages=pick(compat.supports_mid_convo_system_messages if compat else None, False),
+        supports_max_output_tokens=pick(compat.supports_max_output_tokens if compat else None, True),
+        supports_mid_convo_effort=pick(compat.supports_mid_convo_effort if compat else None, False),
     )
+
+
+def _get_configuration_update_effort(model: Model, options: OpenAICodexResponsesOptions | None) -> str | None:
+    """Effort to send in configuration_update items, or None to send it as reasoning.effort."""
+    if not _get_compat(model).supports_mid_convo_effort or options is None or options.reasoning_effort is None:
+        return None
+    return _resolve_reasoning_effort(model, options.reasoning_effort)
+
+
+def _resolve_reasoning_effort(model: Model, reasoning_effort: str) -> str | None:
+    """Provider-native effort for a requested level; None when the model takes no reasoning field for it."""
+    mapping = model.thinking_level_map if model.thinking_level_map is not None else {}
+    # An absent `off` entry is pi's `undefined` ("none"); an explicit None
+    # is pi's `null` (the model has no Off level: send no reasoning).
+    if reasoning_effort == "none":
+        return mapping.get("off", "none")
+    mapped = mapping.get(reasoning_effort)
+    return mapped if mapped is not None else reasoning_effort
 
 
 def build_request_body(
@@ -754,13 +790,10 @@ def build_request_body(
     context: TranscriptContext,
     options: OpenAICodexResponsesOptions | None,
     cache_session_id: str | None,
-    grammar_tool_input_properties: dict[str, str] | None = None,
+    grammar_tool_input_properties: dict[str, str],
+    configuration_update_effort: str | None,
 ) -> dict:
     compat = _get_compat(model)
-    if grammar_tool_input_properties is None:
-        grammar_tool_input_properties = create_grammar_tool_input_properties(
-            get_declared_tools(context.messages), compat.supports_openai_grammar_tools
-        )
 
     transcript_tools = resolve_transcript_tools(
         context.messages,
@@ -770,11 +803,13 @@ def build_request_body(
             supports_tool_search=compat.supports_tool_search,
         ),
     )
+    # The system prompt goes into a leading developer item, not top-level `instructions`, as in Codex.
+    # From GPT-6.2 on, the backend appends `instructions` after `input`, so every new turn changed the
+    # prompt before the system prompt and it was never served from the prompt cache (#12273).
     messages = convert_responses_messages(
         model,
         context,
         set(CODEX_TOOL_CALL_PROVIDERS),
-        include_system_prompt=False,
         grammar_tool_input_properties=grammar_tool_input_properties,
         supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
         supports_additional_tools=compat.supports_additional_tools,
@@ -784,15 +819,13 @@ def build_request_body(
             "supports_strict_mode": compat.supports_strict_mode,
             "supports_openai_grammar_tools": compat.supports_openai_grammar_tools,
         },
+        configuration_update_effort=configuration_update_effort,
     )
 
-    initial_system_message = get_initial_system_message(context.messages)
-    instructions = get_system_message_text(initial_system_message) if initial_system_message is not None else ""
     body: dict[str, Any] = {
         "model": model.id,
         "store": False,
         "stream": True,
-        "instructions": instructions or "You are a helpful assistant.",
         "input": messages,
         "text": {"verbosity": (options.text_verbosity if options else None) or "low"},
         "include": ["reasoning.encrypted_content"],
@@ -801,6 +834,9 @@ def build_request_body(
     }
     if cache_session_id is not None:
         body["prompt_cache_key"] = cache_session_id
+
+    if options is not None and options.max_tokens and compat.supports_max_output_tokens:
+        body["max_output_tokens"] = max(options.max_tokens, MIN_OUTPUT_TOKENS)
 
     if options is not None and options.temperature is not None:
         body["temperature"] = options.temperature
@@ -818,15 +854,14 @@ def build_request_body(
 
     mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}
     if options is not None and options.reasoning_effort is not None:
-        # An absent `off` entry is pi's `undefined` ("none"); an explicit None
-        # is pi's `null` (the model has no Off level: send no reasoning).
-        if options.reasoning_effort == "none":
-            effort = mapping.get("off", "none")
-        else:
-            mapped = mapping.get(options.reasoning_effort)
-            effort = mapped if mapped is not None else options.reasoning_effort
+        effort = (
+            _resolve_reasoning_effort(model, options.reasoning_effort)
+            if configuration_update_effort is None
+            else CONFIGURATION_UPDATE_REQUEST_EFFORT
+        )
         if effort is not None:
-            body["reasoning"] = {"effort": effort, "summary": options.reasoning_summary or "auto"}
+            summary = options.reasoning_summary
+            body["reasoning"] = {"effort": effort, "summary": summary if summary is not None else "auto"}
     elif model.reasoning and not ("off" in mapping and mapping["off"] is None):
         off = mapping.get("off")
         body["reasoning"] = {"effort": off if off is not None else "none"}
@@ -1445,7 +1480,6 @@ async def _process_websocket_stream(
                     model,
                     normalize_context(Context(messages=[output])),
                     set(CODEX_TOOL_CALL_PROVIDERS),
-                    include_system_prompt=False,
                     grammar_tool_input_properties=grammar_tool_input_properties,
                 )
                 if item.get("type") not in ("function_call_output", "custom_tool_call_output")

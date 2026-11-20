@@ -19,7 +19,7 @@ from ....utils.paths import format_path_relative_to_cwd_or_absolute
 from ..path_utils import resolve_to_cwd
 from ..render_utils import format_read_line_range, get_text_output, render_tool_path, replace_tabs, str_or_none
 from ..truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, format_size
-from .types import ToolRenderers, detail_truncation
+from .types import ToolRenderers, detail_field, detail_truncation
 
 
 _COMPACT_RESOURCE_FILE_NAMES = {"AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
@@ -107,8 +107,15 @@ def _trim_trailing_empty_lines(lines: list) -> list:
 
 
 def _format_read_result(args, result, options, theme, show_images, _cwd, is_error) -> str:
+    details = result.get("details") if isinstance(result, dict) else result.details
+    unsupported_by = detail_field(details, "image_unsupported_by_model")
+    image_warning = (
+        f"\n{theme.fg('warning', f'[{unsupported_by} does not support images; it saw a placeholder instead]')}"
+        if unsupported_by
+        else ""
+    )
     if not options.get("expanded") and not is_error:
-        return ""
+        return image_warning
 
     args = args or {}
     raw_path = str_or_none(args.get("file_path", args.get("path")))
@@ -131,7 +138,7 @@ def _format_read_result(args, result, options, theme, show_images, _cwd, is_erro
             + theme.fg("muted", ")")
         )
 
-    truncation = detail_truncation(result.get("details") if isinstance(result, dict) else result.details)
+    truncation = detail_truncation(details)
     if truncation is not None and truncation.truncated:
         if truncation.first_line_exceeds_limit:
             max_bytes = truncation.max_bytes if truncation.max_bytes is not None else DEFAULT_MAX_BYTES
@@ -149,7 +156,7 @@ def _format_read_result(args, result, options, theme, show_images, _cwd, is_erro
                 "warning",
                 f"[Truncated: {truncation.output_lines} lines shown ({format_size(max_bytes)} limit)]",
             )
-    return text
+    return text + image_warning
 
 
 def _render_call(args, theme, context):

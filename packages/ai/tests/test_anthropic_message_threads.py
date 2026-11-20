@@ -663,6 +663,24 @@ async def test_does_not_use_threads_with_cache_retention_none():
     assert THREADS_BETA not in h.requests[0].betas
 
 
+# #11987
+@pytest.mark.tonio
+async def test_uses_threads_for_any_provider_on_api_anthropic_com_not_for_other_endpoints():
+    alias = harness()
+    alias_model = model_with(provider="anthropic-1-api")
+    alias_messages: list[Message] = [user("first")]
+    await say(alias, alias_messages, TurnInput(model=alias_model))
+    alias_messages.append(user("second"))
+    await say(alias, alias_messages, TurnInput(model=alias_model))
+    assert thread_of(alias.requests[0]) == {"type": "create"}
+    assert thread_of(alias.requests[1]) == {"type": "continue", "previous_message_id": "msg_1"}
+
+    gateway = harness()
+    await say(gateway, [user("first")], TurnInput(model=model_with(base_url="https://gateway.example.com")))
+    assert "thread" not in gateway.requests[0].body
+    assert THREADS_BETA not in gateway.requests[0].betas
+
+
 @pytest.mark.tonio
 async def test_matches_claude_code_tool_names_across_turns_with_oauth():
     h = harness()

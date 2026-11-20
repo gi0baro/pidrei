@@ -54,6 +54,31 @@ def test_allocates_vertical_grow_space_deterministically():
     assert visible_lines(frame.lines) == ["top", "body", "", ""]
 
 
+# #9549: scroll frames reuse earlier output, but only the widths the previous frame used.
+def test_reuses_earlier_frame_output_without_accumulating_widths():
+    widths: list[int] = []
+
+    class Component:
+        def render(self, width: int) -> list[str]:
+            widths.append(width)
+            return ["line"]
+
+        def invalidate(self) -> None:
+            pass
+
+    component = Component()
+    first = render_layout_frame(component, 10, 2, _noop)
+    reused = render_layout_frame(component, 10, 2, _noop, first.render_cache)
+    assert widths == [10]
+
+    narrower = render_layout_frame(component, 8, 2, _noop, reused.render_cache)
+    assert widths == [10, 8]
+    assert list(narrower.render_cache[id(component)][1].keys()) == [8]
+
+    render_layout_frame(component, 10, 2, _noop, narrower.render_cache)
+    assert widths == [10, 8, 10]
+
+
 def test_does_not_render_fixed_basis_scroll_content_during_stack_measurement():
     render_count = 0
 

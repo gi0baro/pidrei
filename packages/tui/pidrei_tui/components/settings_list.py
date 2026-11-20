@@ -14,6 +14,7 @@ consumer with slow work spawns it (see ``TuiBase.finish_before_next_input``).
 """
 
 import math
+from collections.abc import Sequence
 from dataclasses import replace
 
 from ..fuzzy import fuzzy_filter
@@ -76,7 +77,7 @@ class SettingsList:
             if invalidate is not None:
                 invalidate()
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         # If submenu is active, render it instead
         if self._submenu_component is not None:
             return self._submenu_component.render(width)
@@ -220,8 +221,12 @@ class SettingsList:
         elif kb.matches(data, "tui.select.cancel"):
             self._on_cancel()
         elif self._search_enabled and self._search_input is not None:
+            # Cursor keys leave the query as it is and must not move the selection.
+            previous_query = self._search_input.get_value()
             self._search_input.handle_input(data)
-            self._apply_filter(self._search_input.get_value())
+            query = self._search_input.get_value()
+            if query != previous_query:
+                self._apply_filter(query)
 
     def _get_display_items(self) -> list[dict]:
         return self._filtered_items if self._search_enabled else self._items

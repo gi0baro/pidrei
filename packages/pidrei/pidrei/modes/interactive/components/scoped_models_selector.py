@@ -395,8 +395,16 @@ class ScopedModelsSelectorComponent(Container):
             self._callbacks["onCancel"]()
             return
 
-        # Pass everything else to search input
+        # Pass everything else to search input. A new query moves the selection to the top row, so the best match is
+        # highlighted; toggles and reorders call _refresh() too, so the reset lives here and not there. Cursor keys
+        # leave the query as it is and must not move the selection.
+        previous_query = self._search_input.get_value()
         self._search_input.handle_input(data)
+        query = self._search_input.get_value()
+        if query == previous_query:
+            return
+        if query:
+            self._selected_index = 0
         self._refresh()
 
     def get_search_input(self) -> Input:

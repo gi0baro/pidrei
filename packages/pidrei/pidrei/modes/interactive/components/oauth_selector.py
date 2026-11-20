@@ -132,7 +132,8 @@ class OAuthSelectorComponent(Container):
             )
         else:
             self._filtered_providers = self._all_providers
-        self._selected_index = max(0, min(self._selected_index, max(0, len(self._filtered_providers) - 1)))
+        # A query moves the selection to the top row, so the best match is highlighted.
+        self._selected_index = 0 if query else min(self._selected_index, max(0, len(self._filtered_providers) - 1))
         self._update_list()
 
     def _update_list(self) -> None:
@@ -213,7 +214,10 @@ class OAuthSelectorComponent(Container):
         # Escape or Ctrl+C
         elif kb.matches(key_data, "tui.select.cancel"):
             self._on_cancel_callback()
-        # Pass everything else to search input
+        # Pass everything else to search input. Cursor keys leave the query as it is and must not move the selection.
         else:
+            previous_query = self._search_input.get_value()
             self._search_input.handle_input(key_data)
-            self._filter_providers(self._search_input.get_value())
+            query = self._search_input.get_value()
+            if query != previous_query:
+                self._filter_providers(query)

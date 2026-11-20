@@ -167,7 +167,6 @@ def opencode_models(ctx: ProviderContext) -> list[ChatModel]:
 
 OPENCODE_COMPLETIONS_COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsStrictMode": True,
 }
 

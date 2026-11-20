@@ -1512,6 +1512,54 @@ async def test_restored_tools_when_an_extension_sets_the_loadout_before_they_reg
     assert ("mcp__docs__search" in second.session.get_active_tool_names()) is kept
 
 
+# Like extensions that register a loader tool and hide it at session_start: the restore or reload
+# activates the loader as a tool the branch never recorded, and the extension deactivates it again.
+async def drop_loader(pi) -> None:
+    async def execute(*_args):
+        return AgentToolResult(content=[])
+
+    pi.register_tool(
+        ToolDefinition(
+            name="loader",
+            label="loader",
+            description="Loads the extension's tools.",
+            parameters={"type": "object", "properties": {}},
+            execute=execute,
+        )
+    )
+
+    async def on_session_start(_event, _ctx):
+        pi.set_active_tools([name for name in pi.get_active_tools() if name != "loader"])
+
+    pi.on("session_start", on_session_start)
+
+
+@pytest.mark.tonio
+async def test_keeps_restored_tools_when_an_extension_deactivates_only_its_own_tool_before_they_register(
+    harnesses, changes
+):
+    first, _ = await setup_restored(harnesses, changes, extension_factories=(drop_loader,))
+    await load_docs_search(first)
+    second, _ = await setup_restored(harnesses, changes, first.session_manager, (drop_loader,))
+    await changes.until(lambda: has_tool(second, "mcp__docs__search"))
+
+    assert "mcp__docs__search" in second.session.get_active_tool_names()
+    assert "loader" not in second.session.get_active_tool_names()
+
+
+@pytest.mark.tonio
+async def test_keeps_tools_tool_search_loaded_after_reload_when_an_extension_deactivates_only_its_own_tool(
+    harnesses, changes
+):
+    harness, connected = await setup_restored(harnesses, changes, extension_factories=(drop_loader,))
+    await load_docs_search(harness)
+    await harness.session.reload()
+    await changes.until(lambda: connected == ["docs", "docs"])
+    await changes.until(lambda: "mcp__docs__search" in harness.session.get_active_tool_names())
+
+    assert "loader" not in harness.session.get_active_tool_names()
+
+
 @pytest.mark.tonio
 async def test_does_not_activate_restored_tools_that_register_after_the_next_prompt_starts(harnesses, changes):
     first, _ = await setup_restored(harnesses, changes)

@@ -7,15 +7,17 @@ from catalog.reasoning import get_effort_thinking_level_map
 from catalog.sources.models_dev import ModelsDevModel
 
 
-# Alibaba Cloud Model Studio Token Plan. International and China use separate
-# endpoints and API keys (sk-sp- prefix). models.dev lists them as
-# "alibaba-token-plan[-cn]".
-INTERNATIONAL_BASE_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-CN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+# Qwen Token Plan: QwenCloud (international) and Qianwen AI Platform (China). Each region has its
+# own endpoint and API keys (sk-sp- prefix). models.dev lists them as "alibaba-token-plan[-cn]".
+# The former token-plan.{ap-southeast-1,cn-beijing}.maas.aliyuncs.com hosts resolve to the same
+# gateways and keep working for configurations that still name them.
+# https://docs.qwencloud.com/developer-guides/getting-started/regions
+# https://platform.qianwenai.com/docs/developer-guides/clients-and-developer-tools/other-tools
+INTERNATIONAL_BASE_URL = "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1"
+CN_BASE_URL = "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1"
 
 _COMPAT: dict[str, Any] = {
     "thinkingFormat": "qwen",
-    "supportsDeveloperRole": False,
     "supportsStore": False,
     "supportsReasoningEffort": True,
 }
@@ -28,15 +30,13 @@ _FALLBACK_THINKING_LEVELS: dict[str, str | None] = {
     "max": "max",
 }
 _REASONING_EFFORT_FALLBACK_MODEL_IDS = frozenset({"glm-5", "glm-5.1"})
-# Retired preview id — models.dev may still list it after GA ships.
-_EXCLUDED_MODEL_IDS = frozenset({"qwen3.8-max-preview"})
 
 
 def qwen_token_plan_models(
     ctx: ProviderContext, source: str, base_url: str, model_ids: frozenset[str] | None = None
 ) -> list[ChatModel]:
     def include(model: ModelsDevModel) -> bool:
-        return model.id not in _EXCLUDED_MODEL_IDS and (model_ids is None or model.id in model_ids)
+        return model_ids is None or model.id in model_ids
 
     def map_model(model: ChatModel, source: ModelsDevModel) -> ChatModel:
         thinking_level_map = get_effort_thinking_level_map(source.reasoning_options or [])
@@ -56,6 +56,9 @@ def qwen_token_plan_models(
         api="openai-completions",
         base_url=base_url,
         record_reasoning=False,
+        # models.dev marks models dropped from the Token Plan lists deprecated, e.g. qwen3.8-max-preview,
+        # deepseek-v3.2 and deepseek-v4-flash.
+        skip_deprecated=True,
         include=include,
         map_model=map_model,
     )

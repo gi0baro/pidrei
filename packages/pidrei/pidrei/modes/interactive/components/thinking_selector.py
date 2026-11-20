@@ -134,8 +134,12 @@ class ThinkingSelectorComponent(Container):
             self._select_list.handle_input(key_data)
             return
 
+        # Cursor keys leave the query as it is and must not rebuild the list.
+        previous_query = self._search_input.get_value()
         self._search_input.handle_input(key_data)
-        self._apply_filter(self._search_input.get_value())
+        query = self._search_input.get_value()
+        if query != previous_query:
+            self._apply_filter(query)
 
     def get_select_list(self) -> SelectList:
         return self._select_list

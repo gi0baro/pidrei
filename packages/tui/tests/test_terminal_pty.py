@@ -20,7 +20,7 @@ from tonio.colored.io import FdStream
 
 from pidrei_tui.components import Text
 from pidrei_tui.keys import matches_key, set_kitty_protocol_active
-from pidrei_tui.terminal import ProcessTerminal
+from pidrei_tui.terminal import SUSPEND_SIGNAL, ProcessTerminal
 from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_utils import clock as clock_module
 
@@ -645,6 +645,57 @@ async def test_pty_items_queued_when_the_terminal_stops_are_dropped():
 
         os.write(master, b"c")
         assert await inputs.until(2) == ["a", "c"]
+    finally:
+        go.set()
+        await terminal.stop()
+        await terminal.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
+    os.close(slave)
+
+
+@pytest.mark.tonio
+async def test_pty_a_suspend_queued_behind_a_stop_is_dropped():
+    """An external SIGTSTP is an input item (`queue_suspend`, what
+    `TuiBase.suspend_signal` calls): one queued while a key that stops the
+    terminal is being handled is dropped with the items read ahead, so it
+    never stops a terminal that is already stopping. After the restart, a
+    suspend reaches the handler in order with the keys."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    inputs = _InputLog()
+    parked = tonio.Event()
+    go = tonio.Event()
+    stopped = tonio.Event()
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+
+    async def handle(data) -> None:
+        await inputs.record(data)
+        if data == "a":
+            parked.set()
+            await go.wait(5)
+            await terminal.stop()
+            await terminal.start(handle, None)
+            stopped.set()
+
+    try:
+        await terminal.start(handle, None)
+        await _receive_until(emulator, KITTY_QUERY)
+        os.write(master, b"a")
+        await parked.wait(5)
+        assert parked.is_set()
+        # Queued behind "a", which then stops the terminal.
+        with terminal.state_lock:
+            terminal.queue_suspend()
+        go.set()
+        await stopped.wait(5)
+        assert stopped.is_set()
+
+        with terminal.state_lock:
+            terminal.queue_suspend()
+        os.write(master, b"c")
+        assert await inputs.until(3) == ["a", SUSPEND_SIGNAL, "c"]
     finally:
         go.set()
         await terminal.stop()

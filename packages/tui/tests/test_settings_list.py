@@ -46,6 +46,43 @@ async def test_includes_spaces_in_an_active_search_instead_of_changing_the_selec
 
 
 @pytest.mark.tonio
+async def test_keeps_the_selection_when_a_cursor_key_leaves_the_query_unchanged():
+    changes: list[dict] = []
+
+    def on_change(item_id, value) -> None:
+        changes.append({"id": item_id, "value": value})
+
+    settings_list = SettingsList(
+        [
+            {"id": label, "label": label, "currentValue": "off", "values": ["off", "on"]}
+            for label in ["Alpha mode", "Beta mode", "Other"]
+        ],
+        10,
+        TEST_THEME,
+        on_change,
+        lambda: None,
+        {"enableSearch": True},
+    )
+
+    # Line 0 is the search input; the selected setting is the row with the cursor below it.
+    def selected_row() -> str | None:
+        return next((line for line in settings_list.render(80)[1:] if line.startswith("> ")), None)
+
+    for character in "mode":
+        settings_list.handle_input(character)
+    settings_list.handle_input("\x1b[B")
+    browsed = selected_row()
+    settings_list.handle_input("\x1b[D")  # Left
+    settings_list.handle_input("\x1b[H")  # Home
+
+    assert browsed is not None
+    assert selected_row() == browsed
+    settings_list.handle_input("\r")
+    assert len(changes) == 1
+    assert changes[0]["id"] in browsed
+
+
+@pytest.mark.tonio
 async def test_keeps_space_as_a_change_shortcut_before_a_search_query_is_entered():
     changes: list[dict] = []
     settings_list = _make_list(changes)

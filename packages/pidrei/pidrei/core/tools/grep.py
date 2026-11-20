@@ -40,8 +40,8 @@ GREP_SCHEMA = {
         "glob": {
             "type": "string",
             "description": (
-                "Filter files by glob pattern, relative to path, e.g. '*.ts', 'src/**/*.ts' or '**/*.spec.ts'. "
-                "A pattern without '/' matches file names at any depth"
+                "Filter files by glob pattern relative to path, e.g. 'src/**/*.ts'. "
+                "Without '/', e.g. '*.ts', it matches file names at any depth"
             ),
         },
         "ignoreCase": {"type": "boolean", "description": "Case-insensitive search (default: false)"},

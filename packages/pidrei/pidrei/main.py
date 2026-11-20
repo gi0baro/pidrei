@@ -65,7 +65,7 @@ from .core.agent_session_services import (
 from .core.auth_guidance import format_no_models_available_message
 from .core.auth_storage import AuthStorage, ReadOnlyAuthStorage
 from .core.http_config import apply_http_proxy_settings
-from .core.model_resolver import resolve_cli_model, resolve_model_scope
+from .core.model_resolver import ResolveModelScopeResult, resolve_cli_model, resolve_model_scope_with_diagnostics
 from .core.model_runtime import ModelRuntime
 from .core.output_guard import (
     drain_output,
@@ -91,6 +91,7 @@ from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_r
 from .extensions import builtin_extensions
 from .extensions.mcp.cli import handle_mcp_command
 from .modes import run_print_mode, run_rpc_mode
+from .modes.diagnostics_stderr import write_diagnostics_to_stderr
 from .modes.interactive.theme import init_theme, set_theme_json_validator, stop_theme_watcher, validate_theme_json
 from .modes.print_mode import PrintModeOptions
 from .utils.colors import dim, red, yellow
@@ -132,13 +133,6 @@ async def _read_piped_stdin(stdin: StdinReader) -> str | None:
     while await stdin.fill():
         pass
     return stdin.take().decode("utf-8", "replace").strip() or None
-
-
-def _report_diagnostics(diagnostics: list[AgentSessionRuntimeDiagnostic]) -> None:
-    for diagnostic in diagnostics:
-        color = red if diagnostic.type == "error" else yellow if diagnostic.type == "warning" else dim
-        prefix = "Error: " if diagnostic.type == "error" else "Warning: " if diagnostic.type == "warning" else ""
-        write_stderr(color(f"{prefix}{diagnostic.message}") + "\n")
 
 
 def _is_truthy_env_flag(value: str | None) -> bool:
@@ -880,16 +874,19 @@ async def _main(
         ]
 
         model_patterns = parsed.models if parsed.models is not None else settings_manager.get_enabled_models()
-        scoped_models = (
-            await resolve_model_scope(
+        model_scope_result = (
+            await resolve_model_scope_with_diagnostics(
                 model_patterns, model_runtime, AuthOperationOptions(cancel=_timeout_cancel(15_000))
             )
             if model_patterns
-            else []
+            else ResolveModelScopeResult(scoped_models=[], diagnostics=[])
         )
+        # Returned as diagnostics instead of printed: this factory runs again on /new, /resume and /fork,
+        # while the interactive TUI draws on the terminal (#11264).
+        diagnostics.extend(model_scope_result.diagnostics)
         session_options_result = _build_session_options(
             parsed,
-            scoped_models,
+            model_scope_result.scoped_models,
             len(session_manager.build_session_context().messages) > 0,
             model_runtime,
             settings_manager,
@@ -925,6 +922,11 @@ async def _main(
         cli_thinking_override = parsed.thinking is not None or session_options_result.cli_thinking_from_model
         if created.session.model is not None and cli_thinking_override:
             await created.session.set_thinking_level(created.session.thinking_level)
+        # "Could not restore model x/y. Using a/b." is set again on /resume and /fork. As a diagnostic, every
+        # mode reports it at startup and after each replacement. Without any model, the message is login
+        # guidance instead: interactive mode shows it at startup, the other modes exit with it below.
+        if created.model_fallback_message and created.session.model is not None:
+            diagnostics.append(AgentSessionRuntimeDiagnostic(type="warning", message=created.model_fallback_message))
 
         return CreateAgentSessionRuntimeResult(
             session=created.session,
@@ -950,11 +952,14 @@ async def _main(
     set_capability_overrides(settings_manager.get_terminal_capability_overrides())
     apply_http_proxy_settings(settings_manager.get_global_settings().get("httpProxy"))
 
-    startup_diagnostics = deduplicate_diagnostics([*startup_settings_diagnostics, *runtime.diagnostics])
+    # Taking them marks them reported, so the modes do not report them again after a session replacement.
+    startup_diagnostics = deduplicate_diagnostics(
+        [*startup_settings_diagnostics, *runtime.take_unreported_diagnostics()]
+    )
     has_runtime_errors = any(diagnostic.type == "error" for diagnostic in runtime.diagnostics)
 
     if parsed.help:
-        _report_diagnostics(startup_diagnostics)
+        write_diagnostics_to_stderr(startup_diagnostics)
         extension_flags = [
             flag for extension in resource_loader.get_extensions().extensions for flag in extension.flags.values()
         ]
@@ -962,7 +967,7 @@ async def _main(
         raise SystemExit(0)
 
     if parsed.list_models is not None:
-        _report_diagnostics(startup_diagnostics)
+        write_diagnostics_to_stderr(startup_diagnostics)
         search_pattern = parsed.list_models if isinstance(parsed.list_models, str) else None
         await list_models(model_runtime, search_pattern, _timeout_cancel(15_000))
         raise SystemExit(0)
@@ -985,7 +990,7 @@ async def _main(
 
     time("resolveModelScope")
     if app_mode != "interactive" or has_runtime_errors:
-        _report_diagnostics(startup_diagnostics)
+        write_diagnostics_to_stderr(startup_diagnostics)
     if has_runtime_errors:
         if any("Failed to load extension" in diagnostic.message for diagnostic in runtime.diagnostics):
             write_stderr(yellow(EXTENSION_LOAD_FAILURE_HINT) + "\n")
@@ -1046,7 +1051,8 @@ async def _main(
                 # migrations.ts is not ported, so there are never migrated
                 # providers to announce.
                 "startupDiagnostics": startup_diagnostics,
-                "modelFallbackMessage": runtime.model_fallback_message,
+                # A fallback to another model is already in startupDiagnostics.
+                "modelFallbackMessage": runtime.model_fallback_message if session.model is None else None,
                 "autoTrustOnReloadCwd": auto_trust_on_reload_cwd,
                 "initialMessage": initial.initial_message,
                 "initialImages": initial.initial_images,

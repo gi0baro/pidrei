@@ -50,7 +50,7 @@ async def test_shows_anthropic_thinking_drops_when_cache_miss_notices_are_enable
     )
     InteractiveMode._maybe_show_thinking_drop_notice(enabled, MESSAGE)
     output = strip_ansi("\n".join(enabled._chat_container.render(120)))
-    assert "Anthropic dropped 3 thinking blocks (details in session)" in output
+    assert "Anthropic dropped 3 thinking blocks: prefix_binding_mismatch (details in session)" in output
 
     disabled = SimpleNamespace(
         _chat_container=Container(),
@@ -92,4 +92,70 @@ async def test_ignores_the_current_message_when_it_is_already_persisted():
     InteractiveMode._maybe_show_thinking_drop_notice(context, MESSAGE)
 
     output = strip_ansi("\n".join(context._chat_container.render(120)))
-    assert "Anthropic dropped 3 thinking blocks (details in session)" in output
+    assert "Anthropic dropped 3 thinking blocks: prefix_binding_mismatch (details in session)" in output
+
+
+def openai_message(ids: list[str], reasons: list[str]) -> AssistantMessage:
+    return replace(
+        MESSAGE,
+        api="openai-responses",
+        provider="openai",
+        model="gpt-6.2-sol",
+        timestamp=3,
+        diagnostics=[
+            AssistantMessageDiagnostic(
+                type="openai_input_transformations",
+                timestamp=3,
+                details={
+                    "transformations": [
+                        {
+                            "type": "reasoning",
+                            "id": id,
+                            "action": "removed",
+                            "reason": reasons[min(index, len(reasons) - 1)],
+                        }
+                        for index, id in enumerate(ids)
+                    ]
+                },
+            )
+        ],
+    )
+
+
+@pytest.mark.tonio
+async def test_shows_openai_reasoning_removals_with_their_reasons():
+    await init_theme("dark")
+    context = SimpleNamespace(
+        _chat_container=Container(),
+        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        session_manager=SimpleNamespace(get_branch=lambda: [{"type": "message", "message": MESSAGE}]),
+    )
+
+    # The previous Anthropic response dropped more blocks; that must not hide the OpenAI removals.
+    InteractiveMode._maybe_show_thinking_drop_notice(
+        context, openai_message(["rs_1", "rs_2"], ["prefix_mismatch", "organization_mismatch"])
+    )
+
+    output = strip_ansi("\n".join(context._chat_container.render(120)))
+    assert "OpenAI dropped 2 reasoning items: prefix_mismatch, organization_mismatch (details in session)" in output
+
+
+@pytest.mark.tonio
+async def test_shows_openai_reasoning_removals_only_when_new_items_are_removed():
+    await init_theme("dark")
+    # OpenAI reports a removed item again on every later request that replays it.
+    previous = openai_message(["rs_1", "rs_2"], ["prefix_mismatch"])
+    context = SimpleNamespace(
+        _chat_container=Container(),
+        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        session_manager=SimpleNamespace(get_branch=lambda: [{"type": "message", "message": previous}]),
+    )
+
+    InteractiveMode._maybe_show_thinking_drop_notice(context, openai_message(["rs_1", "rs_2"], ["prefix_mismatch"]))
+    assert len(context._chat_container.children) == 0
+
+    InteractiveMode._maybe_show_thinking_drop_notice(
+        context, openai_message(["rs_1", "rs_2", "rs_3"], ["prefix_mismatch"])
+    )
+    output = strip_ansi("\n".join(context._chat_container.render(120)))
+    assert "OpenAI dropped 3 reasoning items: prefix_mismatch (details in session)" in output

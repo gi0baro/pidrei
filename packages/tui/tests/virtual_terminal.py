@@ -23,6 +23,8 @@ import weakref
 import pyte
 import tonio.colored as tonio
 
+from pidrei_tui.terminal import SUSPEND_SIGNAL
+
 
 _APC_RE = re.compile(r"\x1b_(?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)")
 
@@ -70,6 +72,14 @@ class VirtualTerminal:
 
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
         """No-op for virtual terminal - no stdin to drain."""
+
+    def queue_suspend(self) -> None:
+        """Hand the suspend item to the input handler, as ProcessTerminal's
+        consumer does. Called under the UI state lock, which the handler
+        takes, so it runs on its own coroutine once the caller lets go."""
+        handler = self._input_handler
+        if handler is not None:
+            tonio.spawn.without_tracking(handler(SUSPEND_SIGNAL))
 
     def arm(self) -> None:
         """No-op: writes land in the screen emulator at once."""
@@ -357,9 +367,9 @@ class _RenderWatch:
             watch = cls._watches[tui] = cls()
             render_frame = tui._render_frame
 
-            async def counted_frame() -> None:
+            async def counted_frame(content_changed: bool) -> None:
                 covered = watch.requested()
-                await render_frame()
+                await render_frame(content_changed)
                 watch.drawn(covered)
 
             tui._render_frame = counted_frame

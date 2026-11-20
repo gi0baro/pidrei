@@ -1,19 +1,27 @@
-"""Mirror of pi coding-agent test/session-selector-path-delete.test.ts."""
+"""Mirror of pi coding-agent test/session-selector-path-delete.test.ts.
+
+pi's 10 ms sleep loop waiting for the deleted file to go is a wait on the
+selector's state: the reload has finished and every list update applied.
+`test_keeps_the_next_session_selected_when_the_cached_list_applies_after_a_partial_reload_list`
+is pidrei-only (recipe `session-list-apply-order`).
+"""
 
 import os
+import threading
 from datetime import UTC, datetime
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionInfo
-from pidrei.modes.interactive.components import SessionSelectorComponent
+from pidrei.modes.interactive.components import SessionSelectorComponent, session_selector as session_selector_module
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
-from .session_selector_helpers import InputCompletions, StateUpdates, lists_sessions
+from .session_selector_helpers import InputCompletions, StateUpdates, every_list_applied, lists_sessions
 
 
 def make_session(*, id, **overrides):
@@ -300,3 +308,107 @@ class TestSessionSelectorPathDeleteInteractions:
 
         assert confirmation_changes == []
         assert error_message == "Cannot delete the currently active session"
+
+    @pytest.mark.tonio
+    async def test_keeps_the_next_session_selected_when_a_progressive_reload_after_delete_starts_with_another_session(
+        self, tmp_path
+    ):
+        sessions = _session_files(tmp_path)
+
+        async def current_loader(on_progress=None, cancel=None):
+            remaining = [session for session in sessions if await fs.Path(session.path).exists()]
+            # The first partial list holds only the file that finished loading first, here the oldest
+            if on_progress is not None:
+                on_progress(1, len(remaining), [remaining[-1]])
+                on_progress(len(remaining), len(remaining), remaining)
+            return remaining
+
+        selector, state_updates = _make_selector(current_loader, _loader([]))
+        await state_updates.until(lambda: selector._current_load is None and lists_sessions(selector, sessions)())
+        await every_list_applied(selector)
+
+        session_list = selector.get_session_list()
+        session_list.handle_input("\x1b[B")
+        session_list.handle_input("\x1b[A")
+        assert session_list.get_selected_session_path() == sessions[0].path
+
+        session_list.handle_input(CTRL_D)
+        session_list.handle_input("\r")
+        # The delete and the reload run on detached coroutines.
+        await state_updates.until(lambda: selector._current_load is None and lists_sessions(selector, sessions[1:])())
+        await every_list_applied(selector)
+
+        assert not await fs.Path(sessions[0].path).exists()
+        assert session_list.get_selected_session_path() == sessions[1].path
+
+    @pytest.mark.tonio
+    async def test_keeps_the_next_session_selected_when_the_cached_list_applies_after_a_partial_reload_list(
+        self, tmp_path, monkeypatch
+    ):
+        # pidrei-only. After a delete, the cached list (complete) is shown and
+        # the reload starts in the same hold; the reload's first partial list
+        # is registered while the cached list's canonical-path map is still
+        # being built. The lists still apply in call order: the cached one
+        # moves the selection to the next session, and the reload keeps it.
+        sessions = _session_files(tmp_path)
+        armed = threading.Event()
+        cached_map_entered = threading.Event()
+        release_cached_map = threading.Event()
+        partial_map_built = threading.Event()
+        build_map = session_selector_module.build_canonical_path_map_blocking
+
+        def gated_build_map_blocking(listed, *paths):
+            # The first build once armed is the cached list's: the reload's
+            # lists are registered only after it has entered.
+            if armed.is_set() and not cached_map_entered.is_set():
+                cached_map_entered.set()
+                release_cached_map.wait(5)
+            canonical = build_map(listed, *paths)
+            if len(listed) == 1:
+                partial_map_built.set()
+            return canonical
+
+        monkeypatch.setattr(session_selector_module, "build_canonical_path_map_blocking", gated_build_map_blocking)
+
+        async def current_loader(on_progress=None, cancel=None):
+            remaining = [session for session in sessions if await fs.Path(session.path).exists()]
+            if armed.is_set() and on_progress is not None:
+                await tonio.spawn_blocking(cached_map_entered.wait, 5)
+                on_progress(1, len(remaining), [remaining[-1]])
+                # The partial list's map is built while the cached list's is not.
+                await tonio.spawn_blocking(partial_map_built.wait, 5)
+                release_cached_map.set()
+                await state_updates.until(lists_sessions(selector, [remaining[-1]]))
+                on_progress(len(remaining), len(remaining), remaining)
+            return remaining
+
+        selector, state_updates = _make_selector(current_loader, _loader([]))
+        await state_updates.until(lambda: selector._current_load is None and lists_sessions(selector, sessions)())
+        await every_list_applied(selector)
+
+        session_list = selector.get_session_list()
+        session_list.handle_input("\x1b[B")
+        session_list.handle_input("\x1b[B")
+        assert session_list.get_selected_session_path() == sessions[2].path
+
+        armed.set()
+        session_list.handle_input(CTRL_D)
+        session_list.handle_input("\r")
+        remaining = [sessions[0], sessions[1], sessions[3], sessions[4]]
+        await state_updates.until(lambda: selector._current_load is None and lists_sessions(selector, remaining)())
+        await every_list_applied(selector)
+
+        assert cached_map_entered.is_set()
+        assert partial_map_built.is_set()
+        assert session_list.get_selected_session_path() == sessions[3].path
+
+
+def _session_files(directory) -> list:
+    """Five sessions on real files, newest first."""
+    sessions = []
+    for i in range(1, 6):
+        path = directory / f"s{i}.jsonl"
+        path.write_text("session\n")
+        modified = datetime.fromtimestamp((10_000 - i * 1000) / 1000, tz=UTC)
+        sessions.append(make_session(id=f"s{i}", path=str(path), modified=modified))
+    return sessions

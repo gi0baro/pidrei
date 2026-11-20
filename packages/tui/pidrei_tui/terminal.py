@@ -42,6 +42,9 @@ Port deviations (documented once here):
   activation as an item (`_KITTY_PROTOCOL_ACTIVE`) and the consumer applies
   it under the UI state lock in input order: keys read before the reply
   still parse in the old mode (spec/ui-island.md, "Terminal-level state").
+  An external SIGTSTP the TUI suspends on is an item too (`queue_suspend`,
+  `SUSPEND_SIGNAL`), which the consumer hands to the input handler like a
+  key.
 - Output is a single pump task (`_output_pump`): every writer enqueues a
   complete sequence, the pump emits them in FIFO order with `arm_w`
   readiness. `write()` waits for its bytes to go out (backpressure for the
@@ -141,6 +144,9 @@ def normalize_apple_terminal_input(data: str, is_apple_terminal: bool, is_shift_
 # An input item: Kitty keyboard protocol confirmed. Applied by the consumer,
 # in order with the keys around it.
 _KITTY_PROTOCOL_ACTIVE = object()
+# An input item: an external SIGTSTP the TUI suspends on (`queue_suspend`).
+# The consumer hands it to the input handler like a key.
+SUSPEND_SIGNAL = object()
 
 
 def _is_native_modifier_pressed(key: str) -> bool:
@@ -197,6 +203,13 @@ class Terminal(Protocol):
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
         """Drain stdin before exiting to prevent Kitty key release events from
         leaking to the parent shell over slow SSH connections."""
+        ...
+
+    def queue_suspend(self) -> None:
+        """Hand `SUSPEND_SIGNAL` to the input handler as an input item, in
+        order with the keys around it (pidrei-only: the TUI's stand-in for
+        pi's SIGTSTP listener, `TuiBase.suspend_signal`). Called under the
+        UI state lock."""
         ...
 
     async def write(self, data: str) -> None:
@@ -698,11 +711,17 @@ class ProcessTerminal:
         self._enqueue_input(input_)
 
     def _enqueue_input(self, item) -> None:
-        """Queue an item (an input sequence, or `_KITTY_PROTOCOL_ACTIVE`) for
-        the consumer, tagged with the current input generation."""
+        """Queue an item (an input sequence, `_KITTY_PROTOCOL_ACTIVE` or
+        `SUSPEND_SIGNAL`) for the consumer, tagged with the current input
+        generation."""
         tx = self._items_tx
         if tx is not None:
             tx.send((self._input_generation, item))
+
+    def queue_suspend(self) -> None:
+        # Tagged like a key: when a stop ends its generation before the
+        # consumer reaches it, the consumer drops it.
+        self._enqueue_input(SUSPEND_SIGNAL)
 
     def _enable_modify_other_keys(self) -> None:
         if self._kitty_protocol_active or self._modify_other_keys_active:

@@ -80,6 +80,10 @@ def _make_json_schema_node_strict(
                 rendered = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
                 raise UnsupportedStrictJsonSchemaError(f"{key}: {rendered} is unsupported")
 
+    # OpenAI strict mode rejects nodes without a type; a bare enum counts as typed, a bare const does not.
+    if "type" not in schema and "anyOf" not in schema and "enum" not in schema:
+        raise UnsupportedStrictJsonSchemaError("schemas without a type are unsupported")
+
     if "anyOf" in schema:
         any_of = schema["anyOf"]
         if not isinstance(any_of, list) or len(any_of) == 0:

@@ -29,7 +29,7 @@ own.
 A UI is a tree of components. Each renders itself into lines for a given width;
 the terminal diffs frames and writes only what changed.
 
-A component implements `render(width) -> list[str]` and `invalidate()`, which
+A component implements `render(width) -> Sequence[str]` and `invalidate()`, which
 must drop any cached output — it is called on theme changes and whenever a
 full re-render is needed. Keyboard input (`handle_input(data)`, synchronous)
 and mouse input are optional; slow work goes to `tui.spawn(...)` (see
@@ -39,6 +39,14 @@ cells (see [Width and unicode](#width-and-unicode)). Styling and hyperlinks are
 reset after every line, so reapply styles per line. After changing state,
 invalidate what changed and call the injected `tui.request_render()`; requests
 are coalesced.
+
+Treat lines returned by `render()` as read-only, including `super().render()` in
+a subclass. Built-in components such as `Container`, `Box`, `Text`, and
+`Markdown` return the same cached list while nothing changed, so modifying it in
+place corrupts later frames. Copy first, for example
+`lines = [*super().render(width)]`, and cache the result if it is expensive.
+Return a new list when your output changes: parents reuse an unchanged list
+without reading it again.
 
 Two renderers implement that contract. `TuiAltScreen` (the default,
 `--tui-mode fullscreen`) takes over the alternate screen and owns both the box

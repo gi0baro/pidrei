@@ -1,6 +1,7 @@
 """Changelog parsing and link rewriting.
 
-pi's changelog.test.ts covers `normalizeChangelogLinks` and `getNewEntries`.
+pi's changelog.test.ts covers `normalizeChangelogLinks`, `getNewEntries` and
+an unreadable changelog in `parseChangelog`.
 The two link cases are mirrored here with our repository and base path
 substituted, since the module exists to rewrite links in *our* changelog; the
 `getNewEntries` cases are mirrored with entries at build 0.
@@ -128,6 +129,14 @@ async def test_headers_without_a_version_are_skipped(tmp_path):
 @pytest.mark.tonio
 async def test_a_missing_changelog_is_not_an_error(tmp_path):
     assert await parse_changelog(os.path.join(tmp_path, "nope.md")) == []
+
+
+@pytest.mark.tonio
+async def test_returns_no_entries_for_an_unreadable_changelog(tmp_path):
+    # pi #11264: runs in the TUI (startup notes, /changelog), where a direct write draws over the screen.
+    # pi also asserts nothing is printed; the module no longer imports a writer, so only the result is checked.
+    # A directory exists but cannot be read as a file (EISDIR).
+    assert await parse_changelog(str(tmp_path)) == []
 
 
 # ---------------------------------------------------------------------------

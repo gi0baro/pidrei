@@ -386,6 +386,24 @@ class TestRuntimeSessionLifecycleEvents:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
+    async def test_emits_session_start_after_reload_when_extensions_were_bound_without_bindings(self, tmp_path):
+        events = []
+        # `_create_runtime_host` binds with an empty `ExtensionBindings()`, pi's `bindExtensions({})`.
+        runtime_host = await _create_runtime_host(
+            tmp_path,
+            [_extension({"session_shutdown": _recorder(events), "session_start": _recorder(events)})],
+        )
+        events.clear()
+
+        await runtime_host.session.reload()
+
+        assert events == [
+            {"type": "session_shutdown", "reason": "reload"},
+            {"type": "session_start", "reason": "reload"},
+        ]
+        await runtime_host.dispose()
+
+    @pytest.mark.tonio
     async def test_emits_session_before_fork_and_honors_cancellation(self, tmp_path):
         events = []
         cancel_next_fork = {"value": False}

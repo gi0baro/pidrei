@@ -21,6 +21,7 @@ render, including width changes and every streaming update.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..latex import render_latex
@@ -112,7 +113,7 @@ class Markdown:
         self._blocks = {}
         self._default_style_prefix = None
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         source_text = self._text
         # Check cache
         cache = self._cache
@@ -189,8 +190,12 @@ class Markdown:
         left_margin = " " * self._padding_x
         right_margin = " " * self._padding_x
         content_lines: list[str] = []
+        # Image lines skip wrapping, so split them here: hard breaks after an image must stay separate rows.
+        token_lines = [
+            piece for line in rendered_lines for piece in (line.split("\n") if is_image_line(line) else [line])
+        ]
 
-        for rendered in rendered_lines:
+        for rendered in token_lines:
             if is_image_line(rendered):
                 content_lines.append(rendered)
                 continue

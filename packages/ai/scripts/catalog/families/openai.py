@@ -39,6 +39,8 @@ OPENAI_STANDARD_COSTS: dict[str, dict[str, Any]] = {
     "gpt-6-sol": {"input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5},
     "gpt-6.1-sol": {"input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite": 2.5},
     "gpt-6.1-terra": {"input": 1, "output": 5, "cacheRead": 0.05, "cacheWrite": 1.25},
+    "gpt-6.2-astra": {"input": 8, "output": 40, "cacheRead": 0.4, "cacheWrite": 10},
+    "gpt-6.2-sol": {"input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite": 2.5},
 }
 
 
@@ -61,6 +63,23 @@ OPENAI_TOOL_SEARCH_MODEL_IDS = frozenset(
         "gpt-6-luna",
         "gpt-6.1-sol",
         "gpt-6.1-terra",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
+    }
+)
+# OpenAI documents configuration_update for the GPT-6 family; the Codex backend applies it to the
+# same models (verified November 2026).
+# https://developers.openai.com/api/docs/guides/reasoning
+# Models that take reasoning effort changes as configuration_update input items.
+OPENAI_MID_CONVO_EFFORT_MODEL_IDS = frozenset(
+    {
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6.1-sol",
+        "gpt-6.1-terra",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
     }
 )
 # Models that accept mid-conversation developer messages.
@@ -85,7 +104,20 @@ def supports_openai_xhigh(model_id: str) -> bool:
     return any(marker in model_id for marker in ("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6", "gpt-6"))
 
 
-_GPT_6_MODEL_IDS = frozenset({"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"})
+_GPT_6_MODEL_IDS = frozenset(
+    {
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6.1-sol",
+        "gpt-6.1-terra",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
+    }
+)
+# GPT-6 models that reject reasoning.effort "none", so `off` is unavailable. For GPT-6.2 see
+# https://developers.openai.com/api/docs/models/gpt-6.2-sol
+_GPT_6_NO_NONE_EFFORT_MODEL_IDS = frozenset({"gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"})
 
 
 def apply_openai_family_rules(model: ChatModel) -> None:
@@ -97,9 +129,8 @@ def apply_openai_family_rules(model: ChatModel) -> None:
         merge_thinking(
             model,
             {
-                # GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none"; GPT-6.1 Terra accepts it. All reject
-                # "minimal" (verified on Codex, October 2026).
-                "off": None if model_id in ("gpt-6-astra", "gpt-6.1-sol") else "none",
+                # All reject "minimal" (verified on Codex, October 2026).
+                "off": None if model_id in _GPT_6_NO_NONE_EFFORT_MODEL_IDS else "none",
                 "minimal": None,
                 "low": "low",
                 "medium": "medium",

@@ -1205,6 +1205,44 @@
       },
       "type": "chat"
     },
+    "chat:gpt-6-cyber": {
+      "id": "gpt-6-cyber",
+      "name": "GPT-6 Cyber",
+      "api": "azure-openai-responses",
+      "provider": "azure",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 20,
+        "output": 100,
+        "cacheRead": 2,
+        "cacheWrite": 25
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:gpt-6-luna": {
       "id": "gpt-6-luna",
       "name": "GPT-6 Luna",
@@ -1391,6 +1429,110 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:gpt-6.2-astra": {
+      "id": "gpt-6.2-astra",
+      "name": "GPT-6.2 Astra",
+      "api": "azure-openai-responses",
+      "provider": "azure",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8,
+        "output": 40,
+        "cacheRead": 0.4,
+        "cacheWrite": 10,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 16.0,
+            "output": 60.0,
+            "cacheRead": 0.8,
+            "cacheWrite": 20.0
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:gpt-6.2-sol": {
+      "id": "gpt-6.2-sol",
+      "name": "GPT-6.2 Sol",
+      "api": "azure-openai-responses",
+      "provider": "azure",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4.0,
+            "output": 15.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 5.0
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
         "minimal": null,
         "low": "low",
         "medium": "medium",
@@ -1683,7 +1825,6 @@
         "supportsStrictMode": true,
         "requiresReasoningContentOnAssistantMessages": true,
         "thinkingFormat": "openai",
-        "supportsDeveloperRole": false,
         "supportsMidConvoSystemMessages": true,
         "supportsLongCacheRetention": false
       },

@@ -23,6 +23,7 @@ from pidrei_ai.api.google_vertex import stream as stream_google_vertex
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, UserMessage
 from pidrei_ai.utils.identity import format_user_agent
+from pidrei_http import http
 
 
 MODEL = get_builtin_model("google-vertex", "gemini-3-flash-preview")
@@ -87,9 +88,15 @@ def _only_call() -> dict:
 
 
 def _assert_matches(config: dict, expected: dict) -> None:
-    """pi's `toMatchObject`: every expected entry present and equal."""
+    """pi's `toMatchObject`: every expected entry present and equal, recursively
+    for nested objects (so `httpOptions` may carry more keys, such as `fetch`)."""
     for key, value in expected.items():
-        assert config.get(key) == value, key
+        assert key in config, key
+        if isinstance(value, dict):
+            assert isinstance(config[key], dict), key
+            _assert_matches(config[key], value)
+        else:
+            assert config[key] == value, key
 
 
 @pytest.mark.tonio
@@ -144,14 +151,17 @@ async def test_still_uses_the_api_key_client_for_real_api_keys():
 async def test_does_not_forward_generated_vertex_base_url_placeholders():
     await _run(project="test-project", location="us-central1")
 
-    assert _only_call().get("httpOptions") == {"headers": {"User-Agent": format_user_agent()}}
+    assert _only_call().get("httpOptions") == {
+        "fetch": http.default_fetch,
+        "headers": {"User-Agent": format_user_agent()},
+    }
 
 
 @pytest.mark.tonio
 async def test_lets_explicit_headers_override_the_default_user_agent():
     await _run(project="test-project", location="us-central1", headers={"User-Agent": "custom-agent"})
 
-    assert _only_call().get("httpOptions") == {"headers": {"User-Agent": "custom-agent"}}
+    assert _only_call().get("httpOptions") == {"fetch": http.default_fetch, "headers": {"User-Agent": "custom-agent"}}
 
 
 @pytest.mark.tonio

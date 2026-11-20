@@ -600,7 +600,8 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/test/model-catalog-protocol.test.ts",
         (
             "catalog publish protocol not ported (0.99.1 delta port); the client half "
-            "(?types=, merge by type+id, unknown types ignored) is covered by test_remote_catalog_provider.py"
+            "(?types=, merge by type+id, unknown types ignored, and since 1.6.0 the pi-version the request "
+            "names) is covered by test_remote_catalog_provider.py"
         ),
     ),
     (
@@ -666,6 +667,8 @@ LIVE_API_AI_TESTS = (
     "xiaomi-token-plan-ams-anthropic-empty-signature-smoke",
     # 1.5.0 additions (1.5.0 delta port).
     "interleaved-thinking",
+    # 1.6.0 additions (1.6.0 delta port).
+    "openai-reasoning-replay-e2e",
 )
 DROPPED_PREFIXES += tuple(
     (f"packages/ai/test/{name}.test.ts", "live-API test, not ported") for name in LIVE_API_AI_TESTS
@@ -823,6 +826,11 @@ _PREFERRED_PROVIDERS_REASON = (
     "preferred partner providers (Radius and OpenRouter first in /login and /logout, brand colours) "
     "not ported (2026-11-11 ruling; 1.5.2 delta port)"
 )
+_FLUSH_STDOUT_REASON = (
+    "Node's asynchronous stdout flush before process.exit; a TUI's output is on the fd when ui.stop() "
+    "returns, and the wait before a hard exit is output_guard.drain_output() "
+    "(2026-11-20 ruling; 1.6.0 delta port)"
+)
 DROPPED_PREFIXES += (
     # `da95cd79`; the bedrock-converse-stream.lazy.ts and oauth/load.ts hunks
     # of it and of `5c6ce2b3` are per-hunk skips
@@ -848,6 +856,11 @@ DROPPED_PREFIXES += (
         "image resize worker thread teardown; pidrei resizes with Pillow as a blocking-pool job, there is no "
         "worker (1.5.2 delta port)",
     ),
+    # `7c05885b`: the wait before an exit is `output_guard.drain_output()`
+    # (the call sites are per-hunk).
+    ("packages/coding-agent/src/utils/flush-stdout.ts", _FLUSH_STDOUT_REASON),
+    ("packages/coding-agent/test/flush-stdout.test.ts", _FLUSH_STDOUT_REASON),
+    ("packages/coding-agent/test/fixtures/flush-stdout-exit.ts", _FLUSH_STDOUT_REASON),
     # `df0d88aa`: the model-selector half of the commit ports
     (
         "packages/coding-agent/test/llama-ui.test.ts",
@@ -1078,6 +1091,15 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    "packages/coding-agent/src/core/remote-catalog-provider.ts": (
+        (
+            "catalog-pi-version",
+            (
+                "requestCatalog's query also carries pi-version=UPSTREAM_VERSION (pidrei's User-Agent names no Pi "
+                "version); keep it when a hunk rewrites the request"
+            ),
+        ),
+    ),
     "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
         (
             "nested-calls-channel",
@@ -1297,6 +1319,17 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "its state has its own thread lock, held while it writes to "
                 "the terminal; lock order: UI state lock, reporter lock, "
                 "terminal protocol lock"
+            ),
+        ),
+    ),
+    # Session list (1.6.0 port): every setSessions call applies, in call order.
+    "packages/coding-agent/src/modes/interactive/components/session-selector.ts": (
+        (
+            "session-list-apply-order",
+            (
+                "SessionList.set_sessions is registered synchronously, builds its "
+                "canonical-path map off the runtime and applies under the UI state "
+                "lock in call order; setSessions hunks land in the apply's hold"
             ),
         ),
     ),
@@ -1770,10 +1803,14 @@ TEST_HOMES = {
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/constrained-sampling.test.ts": (
         "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases, "
-        "the 1.0.0 foreign-item-id replay case and the 1.5.0 grammar-input-JSON and custom-input streaming cases; "
+        "the 1.0.0 foreign-item-id replay case, the 1.5.0 grammar-input-JSON and custom-input streaming cases "
+        "and the 1.6.0 untyped-node and enum-only strict cases; "
         "the other grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
-    "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
+    "packages/ai/test/openai-completions-tool-choice.test.ts": (
+        "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored; the 1.6.0 GitHub Copilot "
+        "(reasoning_effort, top-level reasoning_tokens) and instruction-role cases are in test_openai_completions.py"
+    ),
     "packages/coding-agent/test/git-update.test.ts": (
         "home: packages/pidrei/tests/test_git_update.py (every case, against real git); the npm assertions "
         "are not mirrored (git packages install no dependencies); test_package_manager.py also pins the "
@@ -1806,7 +1843,6 @@ TEST_HOMES = {
     "packages/tui/test/tui-overlay-style-leak.test.ts": "covered by packages/tui/tests/test_tui_overlays.py",
     "packages/tui/test/tui-cell-size-input.test.ts": "covered by packages/tui/tests/test_tui_queries.py",
     "packages/tui/test/tui-shrink.test.ts": "covered by packages/tui/tests/test_tui_render.py",
-    "packages/tui/test/settings-list.test.ts": "PARITY GAP: components/settings_list.py ported, pre-existing cases unmirrored — new in-range cases port into a new test_settings_list.py",
     "packages/coding-agent/test/model-runtime-cloudflare-compat.test.ts": "covered by packages/pidrei/tests/test_model_registry.py + test_model_runtime.py",
     # deleted upstream in 1.4.0 (`adc5fa9f`); its cases moved to
     # sdk-client-identity.test.ts, which maps mechanically
@@ -1877,6 +1913,10 @@ TEST_HOMES = {
         "block is N/A (engine-specific — it specs highlight.js grammar loading and HTML-span "
         "re-rendering; pidrei highlights with pygments, which has no grammar registry and "
         "emits no HTML)"
+    ),
+    # A consolidated mirror since the first port; first touched upstream in 1.6.0 (`e03dca7a`).
+    "packages/coding-agent/test/agent-session-runtime-events.test.ts": (
+        "covered by packages/pidrei/tests/test_agent_session_runtime.py (TestRuntimeSessionLifecycleEvents)"
     ),
     # 0.84.4 additions.
     "packages/coding-agent/test/session-manager/file-operations.test.ts": (
@@ -1955,7 +1995,8 @@ TEST_HOMES = {
         "withSession callbacks for new/fork/switch are a PARITY GAP"
     ),
     "packages/coding-agent/test/suite/regressions/3302-find-path-glob.test.ts": (
-        "partial mirror: test_tools.py (TestFindTool) covers basename globs; path-based patterns are a PARITY GAP"
+        "partial mirror: test_tools.py (TestFindTool) covers basename globs; path-based patterns are a PARITY GAP "
+        "here (the 1.6.0 anchoring cases are in test_12066_find_ancestor_glob.py)"
     ),
     "packages/coding-agent/test/suite/regressions/3303-find-nested-gitignore.test.ts": (
         "PARITY GAP: nested .gitignore scoping in find unmirrored (test_tools.py covers the root .gitignore only)"

@@ -237,7 +237,8 @@ class TuiMainScreen(TuiBase):
     # Differential rendering
     # ------------------------------------------------------------------
 
-    def _compose_frame(self) -> _MainScreenFrame | None:
+    def _compose_frame(self, _content_changed: bool) -> _MainScreenFrame | None:
+        # Renders the whole document every frame: there is no output to reuse.
         if self._stopped:
             return None
         width = self.terminal.columns

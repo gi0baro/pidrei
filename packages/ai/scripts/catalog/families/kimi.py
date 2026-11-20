@@ -26,7 +26,6 @@ KIMI_K3_COST: dict[str, Any] = {
 # Kimi Chat Completions settings shared by Moonshot and Kimi Coding.
 KIMI_OPENAI_COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsReasoningEffort": False,
     "maxTokensField": "max_tokens",
     "supportsStrictMode": False,

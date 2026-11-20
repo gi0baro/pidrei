@@ -2,7 +2,8 @@
 
 Holds the 0.84.2 strict-schema-conversion cases (7915cdac), the 1.0.0
 foreign-item-id replay case (bc2d8dc1) and, from 1.5.0 (f715a15c), the
-grammar input JSON buffer cases and the streamed custom tool input cases; the
+grammar input JSON buffer cases and the streamed custom tool input cases, and
+the 1.6.0 untyped-node and enum-only strict cases (406e719a); the
 other pre-existing grammar/replay cases remain covered by the adapter suites
 and are a recorded parity gap in scripts/upstream_diff.py. pi builds schemas
 with TypeBox; plain JSON-schema dicts carry the same shapes here.
@@ -87,6 +88,19 @@ def test_derives_strict_provider_schemas_without_changing_tool_definitions():
     assert strict["properties"]["nullable"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
 
 
+# #12049: OpenAI and Anthropic strict mode accept an enum without a type
+def test_keeps_strict_mode_for_enum_only_schemas():
+    parameters = {
+        "type": "object",
+        "properties": {"level": {"enum": ["low", "high"]}},
+        "required": ["level"],
+    }
+    tool = make_tool(parameters=parameters, constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"))
+
+    assert "type" not in parameters["properties"]["level"]
+    assert convert_responses_tools([tool], supports_strict_mode=True)[0]["strict"] is True
+
+
 @pytest.mark.parametrize(
     ("parameters", "error"),
     [
@@ -132,8 +146,25 @@ def test_derives_strict_provider_schemas_without_changing_tool_definitions():
             },
             "$ref schemas are unsupported",
         ),
+        # #12049: OpenAI strict mode rejects schema nodes without a type
+        (
+            {"type": "object", "properties": {"commandArguments": {"type": "array", "items": {}}}},
+            "schemas without a type are unsupported",
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"value": {"description": "Any JSON value"}},
+                "required": ["value"],
+            },
+            "schemas without a type are unsupported",
+        ),
+        (
+            {"type": "object", "properties": {"mode": {"const": "fast"}}, "required": ["mode"]},
+            "schemas without a type are unsupported",
+        ),
     ],
-    ids=["schema-additionalProperties", "allOf", "object-union", "ref"],
+    ids=["schema-additionalProperties", "allOf", "object-union", "ref", "untyped-items", "any", "bare-const"],
 )
 def test_falls_back_or_rejects_schemas_that_cannot_be_safely_converted(parameters, error):
     tool = make_tool(parameters=parameters, constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"))

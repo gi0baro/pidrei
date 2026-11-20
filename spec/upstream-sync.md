@@ -346,6 +346,15 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Preferred partner providers** (Pi 1.5.1: Radius and OpenRouter listed
   first in `/login` and `/logout`, marked and drawn in brand colours). The
   provider lists keep the order they had before it.
+- **Captured package command output** (Pi 1.6.0, `b513b64d`: the package
+  manager's `commandOutput` option, the no-prompt git environment, the
+  captured error tail and credentials hint, the `Installing <source>...`
+  announcement). Pi ran git with inherited stdio and drew its output over the
+  TUI; PiDrei's `_run_command` captures every git command in every mode, so
+  that cannot happen. Hunks to `runCommandCaptured`, to the option or to its
+  wiring in `resource-loader.ts` and `main.ts` are skipped.
+- **Pi's stdout flush before an exit** (Pi 1.6.0, `utils/flush-stdout.ts`):
+  see the **Exit** bullet of `tui-island`.
 
 ## 7. Diverged regions
 
@@ -708,6 +717,19 @@ untouched: component diffs port 1:1. What diverges:
   are synchronous, as in Pi. Where Pi does I/O synchronously inside a key
   handler, PiDrei spawns it and registers the handle with
   `finish_before_next_input`, so the next key waits for it.
+- **Suspend signal** (Pi 1.6.0, `setSuspendSignalHandler`): the TUI
+  registers no signal listener; the process's signals have one receiver, the
+  `SignalDispatcher`. Interactive mode's SIGTSTP handler forwards the signal
+  with `suspend_signal()`, which queues the suspend as an input item (beside
+  the Kitty activation) while the TUI owns the terminal and has a handler,
+  and returns False otherwise; on False the handler runs `stop_on_signal`.
+  `_route_input` hands the item to the suspend handler before any other
+  stage, and a stop drops one still queued with its input generation.
+  `set_suspend_signal_handler()` ports as is. A hunk to Pi's listener
+  bookkeeping (`updateSuspendSignalListener`, `suspendSignalListening`) has
+  no counterpart; a hunk to when the TUI owns the terminal lands on
+  `_owns_terminal`. A SIGTSTP while `start()` runs is dropped (Pi suspends
+  once `start()` returns).
 - **Rendering** (`requestRender`/`doRender`, both renderers):
   - `request_render()` sends a request object on a one-slot channel; a
     render loop draws one frame per request (no throttle; `force` rides in
@@ -719,6 +741,11 @@ untouched: component diffs port 1:1. What diverges:
     half.
   - Diffs to *when* a frame is scheduled land in
     `request_render`/`_render_loop`.
+  - Pi's `contentChanged` (1.6.0) rides in the render request like `force`:
+    `request_render()` sets `content` before its send, scroll-only paths
+    call `_request_view_render()`, which sets nothing, and the loop hands
+    `content` to `_compose_frame`; `_set_focus_internal` requests a frame
+    where Pi only sets the flag.
 - **Timers**: `pidrei_utils.timers.Timeout`/`Interval` are plain primitives.
   A callback that touches UI state takes the lock itself. A callback whose
   late run (a fire racing `cancel()`) would undo newer state either
@@ -755,6 +782,12 @@ untouched: component diffs port 1:1. What diverges:
     lands there, guarded.
   - Pi's global `setTimeout`/`setInterval` in an example become
     `tui.timeout`/`tui.interval`; examples never import private modules.
+  - A `pi.events` handler's error reaches the runner's listeners through
+    `runtime.report_error`, which checks `_stale_message` and calls the
+    listeners under `ExtensionRunner._stale_guard` (a thread lock, sync only);
+    `invalidate()` sets `_stale_message` under it. Lock order: that guard, then
+    the UI state lock (a listener may take it); `invalidate()` is never
+    reached under the state lock.
 - **Program status** (OSC 7501):
   - The terminal's program status state (the held status, support, the
     pending support query) is under `ProcessTerminal._protocol_lock`, with the
@@ -779,6 +812,9 @@ untouched: component diffs port 1:1. What diverges:
   `terminal.ts`, `tui.ts`, `tui-alt-screen.ts`) is not ported. Every PiDrei
   exit with a TUI up runs `ui.stop()` or returns through `main()`; a hard
   kill leaves the terminal as it is. Hunks to that handler are dropped.
+  Pi 1.6.0's `flushStdout()` is `drain_output()` before a `hard_exit`; after
+  a `ui.stop()` that returns to the caller it is dropped, since the stop
+  returns once the terminal's output is written.
 
 ### `terminal-colors-loop` (`tui/src/tui.ts`, `terminal.ts`, `theme/theme-controller.ts`, `theme/theme.ts`)
 
@@ -1331,6 +1367,8 @@ output:
 
 Widths are counted run by run, as the column walkers do, which can differ
 from `visible_width` when an escape sequence sits inside a grapheme cluster.
+Since Pi 1.6.0 the walkers split runs of standalone characters per character
+in front of the segmenter (`_graphemes_of`), with unchanged output.
 
 - **Upstream diffs**: a change to `replaceScrollbarCell`'s output (padding,
   style, background, the cell range) lands in the walk *and* in both
@@ -1531,3 +1569,44 @@ stdlib `difflib`:
 - **Known difference**: where several minimal diffs exist (runs of repeated
   lines), `SequenceMatcher` can align them differently from jsdiff. Both
   describe the same edit, and the patch applies.
+
+### `catalog-pi-version` (`coding-agent/src/core/remote-catalog-provider.ts`)
+
+pi.dev serves each client the newest model catalog published for a minimum
+Pi version at or below the client's, and reads that version from a
+`pi/<version>` User-Agent. PiDrei sends `pidrei/<version> (...)`, so without
+help it would always get the newest catalog, including ones whose entries
+rely on code newer than the Pi it ports (ruled for 1.6.0). `_request_catalog`
+(`core/remote_catalog.py`) therefore adds `pi-version=<UPSTREAM_VERSION>`
+to the query, the protocol's explicit selector, which takes precedence over
+the User-Agent.
+
+- This is a deliberate difference from Pi's client, which does not send the
+  parameter. It must survive later syncs: a hunk that rewrites
+  `requestCatalog`'s URL or query keeps it, and
+  `test_remote_catalog_provider.py` asserts it.
+
+### `session-list-apply-order` (`coding-agent/src/modes/interactive/components/session-selector.ts`)
+
+Pi's `SessionList.setSessions()` is synchronous, so every call takes effect,
+in call order; since 1.6.0 its selection restore across a progressive reload
+depends on that (a complete list moves the selection, the partial lists after
+it hold it). PiDrei builds the canonical-path map (a `realpath` per session)
+on the blocking pool, so several calls can be in flight at once.
+
+- **Registration** is synchronous: `set_sessions` takes the previous call's
+  `tonio.Event` and publishes its own, under the UI state lock. Its callers
+  already hold that lock, so registration order is call order.
+- **The map** is built off the runtime, in parallel across calls.
+- **The apply** waits for the previous call's Event once its own map is
+  built, runs under the state lock, and sets its own Event in a `finally`
+  (synchronous, so a failed or cancelled apply never strands the calls
+  behind it), as `with_file_mutation_queue` chains mutations. No call is
+  skipped.
+- **Upstream diffs**: hunks to `setSessions`' body land in the apply's hold;
+  a new caller passes what Pi passes and spawns or awaits the returned
+  awaitable.
+- **Tests**: Pi's cases wait on the selector's state (`StateUpdates.until`)
+  and then on `every_list_applied`. A pidrei-only case in
+  `test_session_selector_path_delete.py` gates two map builds so that a
+  complete list's map finishes after a later partial list's.

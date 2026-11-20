@@ -6,6 +6,237 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.6.0.0] - 2026-11-20
+
+Tracks [Pi 1.6.0](https://github.com/earendil-works/pi/releases/tag/v1.6.0).
+
+### Added
+
+- GPT-6.2 Astra and GPT-6.2 Sol on the `openai`, `azure` and `openai-codex`
+  providers. Both reject reasoning effort `none` and `minimal`, so thinking
+  level `off` is unavailable. Azure serves them with a 1.05M context window;
+  Codex serves GPT-6.2 Sol with 500K and GPT-6.2 Astra with 272K.
+- `qwen4-max-preview`, `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017`
+  on the Qwen Token Plan Individual providers, and the per-plan key variables
+  `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`,
+  `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY` and
+  `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared
+  `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work.
+- A transcript notice when OpenAI drops reasoning items from a request, such
+  as `OpenAI dropped 2 reasoning items: prefix_mismatch (details in session)`
+  after compaction on GPT-6.2. Like the Anthropic thinking notice, it is
+  shown when `showCacheMissNotices` is on and only when more items are
+  dropped than in the previous response. Both notices now name the reasons.
+- `pidrei_ai`: the `google-generative-ai` and `google-vertex` adapters honor
+  the `fetch` request option (Vertex ADC token requests do not go through
+  it), and the OpenAI Responses, Azure OpenAI Responses and OpenAI Codex
+  providers record `openai_input_transformations` assistant message
+  diagnostics, which list the replayed reasoning items the API withheld from
+  the model and why, such as `prefix_mismatch` or `organization_mismatch`.
+- `pidrei_tui`: `TUI.set_suspend_signal_handler()` sets a handler for a
+  SIGTSTP received while the TUI owns the terminal, from `start()` until
+  `stop()`; the host's own SIGTSTP handler forwards the signal with
+  `TUI.suspend_signal()`, which returns False when no handler applies.
+- `pidrei_mcp`: `mcp_server_summary(description, instructions)`, a server's
+  one-line summary as pidrei's system prompt shows it: the first line of the
+  configured `description`, else of the server's `initialize` instructions.
+
+### Changed
+
+- **Breaking:** the lines a component's `render()` returns are read-only
+  (typed `Sequence[str]`), and `Container` now returns the same cached list
+  while its children are unchanged, as `Text`, `Markdown` and `Box` already
+  did. Extensions that modify render output in place, including
+  `super().render()` in a `Container` subclass or an embedded component's
+  output, must copy it first: `lines = [*super().render(width)]`.
+- The default model for the `openai`, `azure` and `openai-codex` providers is
+  GPT-6.2 Sol (`gpt-6.2-sol`) instead of GPT-6.1 Sol, at the same price.
+- The find tool's path patterns are relative to the search directory, like
+  grep's `glob`: `src/*.ts` finds `src/a.ts` but no longer `pkg/src/a.ts`;
+  use `**/src/*.ts` to match at any depth. Patterns without `/` still match
+  file names at any depth.
+- Anthropic message threads are on by default for any provider whose
+  `baseUrl` is on `api.anthropic.com`, not only the `anthropic` provider.
+- `openai-completions` sends the system messages of reasoning models (the
+  system prompt and mid-conversation system messages) with the `developer`
+  role only to `api.openai.com`; all other hosts, including Azure and
+  OpenRouter, get `system`. Set `compat.supportsDeveloperRole` in
+  `models.json` to override.
+- A Google `CONTINUATION` finish ends the turn with stop reason `length`
+  instead of an error.
+- Qwen Token Plan providers use the current gateways
+  (`token-plan.maas.qwencloudapi.com` international,
+  `token-plan.maas.qianwenaiapi.com` China), and `qwen-token-plan` and
+  `qwen-token-plan-cn` are named "Qwen Token Plan Team" and "Qwen Token Plan
+  Team CN". Provider IDs are unchanged, and the old `aliyuncs.com` hosts
+  still work.
+- The resume command printed on exit is on its own line after `To resume
+  this session:`, so it can be selected with a triple-click.
+- Model catalog updates from pi.dev are the ones published for the Pi
+  version this release tracks, instead of always the newest, whose entries
+  can rely on a newer Pi.
+- Model catalog regenerated from models.dev.
+- Bumped the pydantic-monty dependency to 1.6.0.
+
+### Removed
+
+- The retired `deepseek-v3.2` and `deepseek-v4-flash` from the Qwen Token
+  Plan Team providers; use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash`.
+- `pidrei_ai`: the unused `map_stop_reason_string()` from
+  `pidrei_ai.api.google_shared`.
+
+### Fixed
+
+- The read tool stored a note that the current model does not support
+  images, which was replayed to the model as stale text after switching to a
+  vision model. The image is still replaced with a placeholder per request
+  for models without image input, and the read result shows the warning in
+  the TUI only, also when collapsed.
+- MCP tools loaded by `tool_search` were dropped on resume and `/reload` when
+  an extension deactivated only its own tool at `session_start`.
+- The find tool returned no results for patterns starting with `./`, such as
+  `./src/*.ts`, and matched path patterns through folders above the search
+  path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts`
+  file in the project.
+- `/export` HTML showed raw terminal hyperlink escape codes around links in
+  custom tool output; links are now clickable.
+- The bash tool returned no output, with a footer like `[Showing lines 3-2
+  of 2]`, when the output ended in one line longer than about 100KB, such as
+  a `grep` match in a minified file; it now shows the end of that line.
+- Provider errors that report only a socket error code, such as
+  `read ECONNRESET`, `write EPIPE` or `connect ETIMEDOUT`, or read
+  "Connection closed.", were not retried.
+- `/resume` sometimes selected an unrelated session while the list reloaded
+  after deleting or renaming a session.
+- Groq Qwen models failed with `400 Unexpected message role`: OpenAI-compatible
+  providers other than OpenAI now receive system messages with the `system`
+  role.
+- `enabledModels`/`--models` warnings such as `No models match pattern
+  "github-copilot/nope"` were written over the interactive TUI on every
+  `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode.
+  They are now shown once at startup, in the chat in interactive mode and on
+  stderr in other modes; RPC mode no longer repeats them on stderr for each
+  `new_session`, `switch_session` or `fork`.
+- Pressing Esc during a batch of tool calls left the calls that had not
+  started yet without a result in the session; they now get an "Operation
+  aborted" result.
+- An unreadable `CHANGELOG.md` printed `Warning: Could not parse changelog`
+  over the interactive TUI; it now shows no changelog notes.
+- Problems found when replacing the session with `/new`, `/resume`, `/fork`
+  or RPC `new_session`, `switch_session` and `fork` were never shown, for
+  example a project extension that fails to load after `/resume` into
+  another project, or an `enabledModels` pattern that matches nothing after a
+  settings change. Interactive mode now shows them in the chat, and print,
+  JSON and RPC modes write them to stderr; a problem already reported is not
+  repeated. SDK hosts can call the new
+  `AgentSessionRuntime.take_unreported_diagnostics()` at startup and after
+  each replacement to get each diagnostic once.
+- RPC `new_session`, `switch_session`, `fork` and `clone` ran extension
+  `session_start` and `resources_discover` handlers twice for the new
+  session. RPC clients now also receive events emitted by `session_start`
+  handlers, such as `entry_appended` for entries they append.
+- An exception raised by an extension's `pi.events` handler was written over
+  the interactive TUI. It is now reported like other extension errors: in the
+  chat in interactive mode, as `extension_error` in RPC mode and as
+  `Extension error (...)` in print mode. Errors from a handler that fails
+  after its session was replaced are dropped.
+- `AgentSession.reload()` did not emit `session_start` to extensions when the
+  SDK host had bound them with empty bindings, after it had already emitted
+  `session_shutdown`. Extensions that start work in `session_start`, such as
+  the MCP extension connecting its servers, stayed stopped after a reload.
+- `--mode json` dropped events emitted by extension `session_start`
+  handlers, such as `entry_appended` for entries they append, at startup and
+  after an extension replaces the session.
+- `Could not restore model <provider>/<model>. Using <fallback>` was shown
+  only at interactive startup: resuming or forking into a session whose model
+  no longer exists or has no login switched to another model without notice,
+  and print, JSON and RPC modes never showed it. It is now reported in every
+  mode, at startup and after `/resume`, `/fork` and RPC `switch_session` or
+  `fork`.
+- Fullscreen scrolling in long sessions saturated a CPU core by rendering the
+  whole transcript on every wheel event and scroll key; scroll frames now
+  reuse the previous output. Containers no longer copy every rendered line on
+  every frame, and column slicing is faster for text without combining
+  characters.
+- Search in `/login`, `/logout`, `/scoped-models` and `/resume` kept the
+  highlight on the row scrolled to before typing, so Enter picked whichever
+  entry landed there instead of the best match; a query now highlights the
+  top match, as `/model` does.
+- Moving the cursor in a search field with Left, Right, Home or End moved the
+  highlight back to the first entry in `/login`, `/logout`, `/model`,
+  `/scoped-models`, `/resume`, `/settings`, the per-model settings model
+  picker and `pidrei config`.
+- Output written to stdout or stderr just before pidrei exited, for example
+  by an extension while the session shut down, could be cut off when quitting
+  a session that prints no resume command, after a fatal error, and when
+  leaving the `--resume` picker or `pidrei config`; it is now written before
+  pidrei exits.
+- `kill -TSTP` from outside pidrei stopped it without restoring the terminal,
+  which left mouse tracking and the Kitty keyboard protocol on at the shell
+  prompt. pidrei now suspends as with Ctrl+Z and redraws on `fg`.
+- Changing the thinking level on the `openai-codex` provider invalidated the
+  prompt cache on GPT-6 models; thinking level changes are now sent as
+  `configuration_update` input items, as on the `openai` provider.
+- The `openai-codex` provider got almost no prompt cache hits for the system
+  prompt on GPT-6.2 models. The system prompt is now sent as the first
+  `developer` input item, and no `instructions` field is sent.
+- The `openai-codex` provider ignored a model's `maxTokens`; it is now sent
+  as `max_output_tokens` (at least 16) unless the model sets
+  `compat.supportsMaxOutputTokens: false`.
+- The OpenAI Codex WebSocket 60-minute connection limit failed the turn when
+  it hit mid-stream, for example during long thinking. The request is now
+  retried on a fresh connection, and new requests stop reusing a cached
+  connection after 45 minutes instead of 55.
+- Unscoped syntax-highlighted text inherited the terminal foreground and
+  became unreadable on contrasting tool cards.
+- `/copy` said "No agent messages to copy yet." after Esc during a tool call
+  or after a provider error; it now copies the previous answer. RPC
+  `get_last_assistant_text` skips the same messages.
+- `pi.exec()` reported exit code 0 for commands ended by a signal, such as a
+  timeout, a cancellation or a crash; it now reports 128 + the signal number,
+  like a shell (143 for SIGTERM, 137 for SIGKILL).
+- GitHub Copilot Gemini and Kimi models (`gemini-4-argon`, `gemini-4-carbon`,
+  `gemini-3.8-flash`, `kimi-k3`) never received the thinking level, and
+  Copilot usage always reported 0 reasoning tokens.
+- Tools with `strict: "prefer"` constrained sampling whose schema has a node
+  without a `type` (such as `items: {}` or a bare `const`) were sent in strict
+  mode, which OpenAI rejects with a 400 error; they now fall back to
+  non-strict mode, and `strict: "require"` fails locally. Nodes with only an
+  `enum` stay strict.
+- Mistral Large 4 tool calls stalled for minutes: Mistral models no longer
+  receive strict tools unless `compat.supportsStrictMode` is set.
+- Non-strict Anthropic tool schemas dropped the root `additionalProperties`,
+  so the model was not told that extra arguments are forbidden.
+- GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filled
+  omitted optional tool arguments with empty strings or invented values;
+  their tools now send `strict: false`, or `strict: true` for tools with
+  constrained sampling. Copilot's Claude models also send `strict: true` for
+  those tools, as direct Anthropic does.
+- Fullscreen Kitty images disappeared after a full redraw such as a window
+  resize.
+- Text after a multi-row inline image in Markdown was drawn over the image
+  when the image's rows were joined with hard line breaks.
+- Kitty and iTerm2 images covered overlays drawn over them. An image that an
+  overlay overlaps is now removed while the overlay is open and drawn again
+  when it closes; images beside an overlay, such as a sidebar, stay visible.
+- Enter on a Tab path menu for an absolute path (`look at /tmp/fi`) or a
+  slash command argument menu (`/open /tm`) submitted the prompt instead of
+  accepting the completion.
+
+### Not ported
+
+- Pi's llama.cpp changes (the new default port, images for llama.cpp
+  decision classifiers): the llama.cpp extension is not ported.
+- Pi's captured git and npm output while packages install in interactive
+  mode, with its `Installing <source>...` announcement and git environment
+  that never prompts: pidrei has always captured git output during package
+  installs, in every mode, so it is never drawn over the interface.
+- Pi's self-update, packaging and Windows fixes (`pi update` on Windows
+  managed installs, extension npm dependencies in the standalone binary):
+  pidrei has no self-update machinery, is not a standalone binary and is
+  POSIX-only.
+- Pi's `undici` security update: pidrei does not use undici.
+
 ## [1.5.2.1] - 2026-11-12
 
 ### Changed

@@ -3,6 +3,8 @@
 Component for displaying bash command execution with streaming output.
 """
 
+from collections.abc import Sequence
+
 from pidrei_tui import Container, Loader, Spacer, Text
 
 from ....core.tools.truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncate_tail
@@ -24,9 +26,9 @@ class _CachedVisualTruncation:
         self._styled_input = styled_input
         self._output_pad = output_pad
         self._cached_width: int | None = None
-        self._cached_lines: list | None = None
+        self._cached_lines: Sequence[str] | None = None
 
-    def render(self, width: int) -> list:
+    def render(self, width: int) -> Sequence[str]:
         if self._cached_lines is None or self._cached_width != width:
             result = truncate_to_visual_lines(self._styled_input, PREVIEW_LINES, width, self._output_pad)
             self._cached_lines = result["visualLines"]

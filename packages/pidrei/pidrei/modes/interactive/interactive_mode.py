@@ -25,8 +25,8 @@ import threading
 import traceback
 import unicodedata
 import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import replace as dataclass_replace
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass, replace as dataclass_replace
 from types import SimpleNamespace
 from typing import Protocol, runtime_checkable
 
@@ -73,6 +73,7 @@ from ...config import (
 )
 from ...core.agent_session import PromptOptions, ScopedModel, parse_skill_block
 from ...core.agent_session_runtime import SessionImportFileNotFoundError
+from ...core.agent_session_services import AgentSessionRuntimeDiagnostic
 from ...core.bash_executor import BashResult
 from ...core.cache_stats import (
     CACHE_TTL_MS,
@@ -130,7 +131,7 @@ from ...utils.git import parse_git_url
 from ...utils.image_process import convert_image_to_png_base64
 from ...utils.paths import get_cwd_relative_path, shorten_home_path
 from ...utils.process import probe_tmux_hyperlinks, run_command
-from ...utils.shell import SignalDispatcher, kill_tracked_detached_children
+from ...utils.shell import SignalDispatcher, kill_tracked_detached_children, stop_on_signal
 from ...utils.temp_file_writer import discard_temp_file
 from ...utils.tools_manager import ensure_tool
 from ...utils.version_check import RELEASES_URL, check_for_new_version
@@ -426,6 +427,60 @@ def _format_login_provider_completion_description(provider: dict) -> str:
     return auth_types if provider["name"] == provider["id"] else f"{provider['name']} · {auth_types}"
 
 
+@dataclass(frozen=True, slots=True)
+class _ReasoningDropDiagnostic:
+    provider: str
+    # Transformation `type` of a withheld block.
+    dropped_type: str
+    # Singular and plural name of a withheld block.
+    noun: tuple[str, str]
+
+
+# Assistant diagnostics that list reasoning a provider withheld from the model, by diagnostic type.
+_REASONING_DROP_DIAGNOSTICS: dict[str, _ReasoningDropDiagnostic] = {
+    "anthropic_input_transformations": _ReasoningDropDiagnostic(
+        provider="Anthropic", dropped_type="thinking_dropped", noun=("thinking block", "thinking blocks")
+    ),
+    "openai_input_transformations": _ReasoningDropDiagnostic(
+        provider="OpenAI", dropped_type="reasoning", noun=("reasoning item", "reasoning items")
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _DroppedReasoning:
+    diagnostic: _ReasoningDropDiagnostic
+    count: int
+    reasons: list[str]
+
+
+def _get_dropped_reasoning(message) -> _DroppedReasoning | None:
+    """Count the reasoning blocks a provider reported as withheld from the request that produced `message`."""
+    for diagnostic in message.diagnostics or []:
+        kind = _REASONING_DROP_DIAGNOSTICS.get(diagnostic.type)
+        if kind is None:
+            continue
+        # Session data: diagnostics details are untyped JSON.
+        transformations = (diagnostic.details or {}).get("transformations")
+        if not isinstance(transformations, list):
+            continue
+        dropped = [
+            transformation
+            for transformation in transformations
+            if isinstance(transformation, dict) and transformation.get("type") == kind.dropped_type
+        ]
+        if not dropped:
+            continue
+        # pi's Set: insertion-ordered, each reason once.
+        reasons: dict[str, None] = {}
+        for transformation in dropped:
+            reason = transformation.get("reason")
+            if isinstance(reason, str):
+                reasons[reason] = None
+        return _DroppedReasoning(diagnostic=kind, count=len(dropped), reasons=list(reasons))
+    return None
+
+
 class ExtensionUIContext:
     """`ctx.ui` surface for extensions in the TUI (decided 2026-07-28).
 
@@ -637,6 +692,7 @@ class InteractiveMode:
         async def _rebind_session(new_session, swap) -> None:
             await self._rebind_current_session({"renderBeforeBind": True}, new_session, swap)
             await self._theme_controller.apply_from_settings()
+            self._show_runtime_diagnostics(self.runtime_host.take_unreported_diagnostics())
 
         self.runtime_host.set_rebind_session(_rebind_session)
         self._version = VERSION
@@ -1132,6 +1188,7 @@ class InteractiveMode:
                 next_ui.set_image_conversions(previous_ui.image_conversions)
                 next_ui.set_render_error_handler(self._uncaught_crash)
                 next_ui.on_debug = previous_ui.on_debug
+                next_ui.set_suspend_signal_handler(self._suspend)
                 if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
                     next_ui.restore_render_state(self._main_screen_render_state)
                 self._renderer = next_ui
@@ -1226,6 +1283,8 @@ class InteractiveMode:
         # stdout/stderr writes go through its queue too.
         await attach_terminal(self.ui.terminal)
 
+        # An external SIGTSTP (kill -TSTP) restores the terminal like Ctrl+Z (#12272).
+        self.ui.set_suspend_signal_handler(self._suspend)
         # Start the UI before initializing extensions so session_start
         # handlers can use interactive dialogs
         await self.ui.start()
@@ -1429,13 +1488,7 @@ class InteractiveMode:
         initial_images = self._options.get("initialImages")
         initial_messages = self._options.get("initialMessages")
 
-        for diagnostic in startup_diagnostics or []:
-            if diagnostic.type == "error":
-                self.show_error(diagnostic.message)
-            elif diagnostic.type == "warning":
-                self.show_warning(diagnostic.message)
-            else:
-                self.show_status(diagnostic.message)
+        self._show_runtime_diagnostics(startup_diagnostics or [])
 
         if migrated_providers:
             self.show_warning(f"Migrated credentials to auth.json: {', '.join(migrated_providers)}")
@@ -2315,6 +2368,8 @@ class InteractiveMode:
         self.show_error(f"{prefix}: {error}")
         stop_theme_watcher()
         await self.stop("transcript")
+        # `hard_exit` skips everything still queued.
+        await drain_output()
         hard_exit(1)
 
     def render_current_session_state(self, trust_warning: bool) -> None:
@@ -3198,7 +3253,7 @@ class InteractiveMode:
         self._default_editor.on_action("app.clear", self._handle_ctrl_c)
         self._default_editor.on_ctrl_d = self._handle_ctrl_d
         # The UI stops before the next key, as pi's (synchronous) handler does.
-        self._default_editor.on_action("app.suspend", lambda: self._finish_before_next_input(self._handle_ctrl_z()))
+        self._default_editor.on_action("app.suspend", self._suspend)
         self._default_editor.on_action(
             "app.thinking.cycle", lambda: self._finish_before_next_input(self._cycle_thinking_level())
         )
@@ -4282,52 +4337,35 @@ class InteractiveMode:
             ThemedText(lambda: theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
         )
 
-    @staticmethod
-    def _count_dropped_thinking_blocks(message) -> int:
-        count = 0
-        for diagnostic in message.diagnostics or []:
-            if diagnostic.type != "anthropic_input_transformations":
-                continue
-            transformations = (diagnostic.details or {}).get("transformations")
-            if not isinstance(transformations, list):
-                continue
-            count += sum(
-                1
-                for transformation in transformations
-                if isinstance(transformation, dict) and transformation.get("type") == "thinking_dropped"
-            )
-        return count
-
     def _maybe_show_thinking_drop_notice(self, message) -> None:
         if not self.settings_manager.get_show_cache_miss_notices():
             return
 
-        dropped_count = InteractiveMode._count_dropped_thinking_blocks(message)
-        if dropped_count == 0:
+        dropped = _get_dropped_reasoning(message)
+        if dropped is None:
             return
 
-        # Compare against the previous response on the branch. pi relies on message_end
+        # Providers report a withheld block again on every later request that replays it, so only
+        # a count above the previous response's means new losses. pi relies on message_end
         # reaching the UI before persistence; here the UI update can run after the session
         # persisted the message, so the current message is skipped by identity.
-        previous_dropped_count = 0
         for entry in reversed(self.session_manager.get_branch()):
             if entry.get("type") != "message":
                 continue
             entry_message = entry.get("message")
             if getattr(entry_message, "role", None) != "assistant" or entry_message is message:
                 continue
-            previous_dropped_count = InteractiveMode._count_dropped_thinking_blocks(entry_message)
+            previous = _get_dropped_reasoning(entry_message)
+            if previous is not None and previous.diagnostic is dropped.diagnostic and dropped.count <= previous.count:
+                return
             break
-        if dropped_count <= previous_dropped_count:
-            return
 
-        noun = "thinking block" if dropped_count == 1 else "thinking blocks"
+        provider = dropped.diagnostic.provider
+        noun = dropped.diagnostic.noun[0 if dropped.count == 1 else 1]
+        reasons = f": {', '.join(dropped.reasons)}" if dropped.reasons else ""
+        text = f"{provider} dropped {dropped.count} {noun}{reasons} (details in session)"
         self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(
-            ThemedText(
-                lambda: theme.fg("warning", f"Anthropic dropped {dropped_count} {noun} (details in session)"), 1, 0
-            )
-        )
+        self._chat_container.add_child(ThemedText(lambda: theme.fg("warning", text), 1, 0))
 
     def _maybe_show_cache_miss_notice(self, message) -> None:
         """Show a transcript notice for a significant prompt-cache miss.
@@ -4500,10 +4538,11 @@ class InteractiveMode:
 
         resume_command = await format_resume_command(self.session_manager)
         if resume_command:
-            write_stdout(f"{dim('To resume this session:')} {resume_command}\n")
-            # `hard_exit` skips everything still queued.
-            await drain_output()
+            # Own line so the command can be selected with a triple-click (#12237).
+            write_stdout(f"{dim('To resume this session:')}\n{resume_command}\n")
 
+        # `hard_exit` skips everything still queued.
+        await drain_output()
         hard_exit(0)
 
     def _emergency_terminal_exit(self) -> None:
@@ -4579,6 +4618,13 @@ class InteractiveMode:
         SIGWINCH asks for a frame (the terminal size is read fresh on every
         frame); a stopped TUI ignores the request. SIGCONT resumes a
         suspended TUI (see `_handle_ctrl_z`) and does nothing otherwise.
+
+        SIGTSTP goes to the TUI, which queues it as an input item that runs
+        the suspend key's handler while it owns the terminal (pi's TUI
+        listens for SIGTSTP itself, which a second receiver cannot do here).
+        Otherwise the process stops as the default action did:
+        `_handle_ctrl_z`'s own SIGTSTP comes back here after the TUI stopped,
+        and so does one sent while a child owns the terminal.
         """
         if self._signal_dispatcher is None:
             return
@@ -4589,6 +4635,10 @@ class InteractiveMode:
 
         async def on_resize(_signum: int) -> None:
             self.ui.request_render()
+
+        async def on_suspend(signum: int) -> None:
+            if not self.ui.suspend_signal():
+                await stop_on_signal(signum)
 
         async def on_continue(_signum: int) -> None:
             # Stdio first, as the handler this one replaces does: the restart
@@ -4602,7 +4652,13 @@ class InteractiveMode:
         self._signal_dispatcher.set_handler(signal.SIGTERM, on_shutdown_signal)
         self._signal_dispatcher.set_handler(signal.SIGHUP, on_shutdown_signal)
         self._signal_dispatcher.set_handler(signal.SIGWINCH, on_resize)
+        self._signal_dispatcher.set_handler(signal.SIGTSTP, on_suspend)
         self._signal_dispatcher.set_handler(signal.SIGCONT, on_continue)
+
+    def _suspend(self) -> None:
+        """The suspend key (`app.suspend`) and, as the TUI's suspend signal
+        handler, an external SIGTSTP: both run from input handling."""
+        self._finish_before_next_input(self._handle_ctrl_z())
 
     async def _handle_ctrl_z(self) -> None:
         """Suspend to background (Ctrl+Z): the suspend action's work, which
@@ -4812,6 +4868,17 @@ class InteractiveMode:
             self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(ThemedText(lambda: theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
             self.ui.request_render()
+
+    def _show_runtime_diagnostics(self, diagnostics: Iterable[AgentSessionRuntimeDiagnostic]) -> None:
+        # One hold: a frame shows all of them or none.
+        with self.ui.state_lock:
+            for diagnostic in diagnostics:
+                if diagnostic.type == "error":
+                    self.show_error(diagnostic.message)
+                elif diagnostic.type == "warning":
+                    self.show_warning(diagnostic.message)
+                else:
+                    self.show_status(diagnostic.message)
 
     def show_new_version_notification(self, release: dict) -> None:
         def update_instruction() -> str:

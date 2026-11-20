@@ -3,6 +3,8 @@
 All callbacks are synchronous, as in pi.
 """
 
+from collections.abc import Sequence
+
 from pidrei_tui import Container, Input, SelectList, Spacer, Text, fuzzy_filter, get_keybindings
 
 from ..theme import get_select_list_theme, theme
@@ -117,8 +119,12 @@ class SelectSubmenu(Container):
             if is_nav:
                 self._select_list.handle_input(data)
             else:
+                # Cursor keys leave the query as it is and must not move the selection.
+                previous_query = self._search_input.get_value()
                 self._search_input.handle_input(data)
-                self._apply_filter(self._search_input.get_value())
+                query = self._search_input.get_value()
+                if query != previous_query:
+                    self._apply_filter(query)
         else:
             self._select_list.handle_input(data)
 
@@ -200,7 +206,7 @@ class SteppedSubmenu(Container):
             submenu_options,
         )
 
-    def render(self, width: int) -> list[str]:
+    def render(self, width: int) -> Sequence[str]:
         return self._active_component.render(width)
 
     def handle_input(self, data: str) -> None:

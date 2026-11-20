@@ -11,6 +11,10 @@ Not mirrored:
   a dataclass, whose field order is fixed.
 - "reads a 200 MB line with a 64 MB heap": it runs the read in a Node child
   process with a capped V8 heap; there is no such heap cap to run under here.
+- "rejects without an unhandled stream error when aborted while opening a
+  local file": its subject is Node's `uncaughtException` from a file stream
+  given the signal; here the local read is one pool job that owns its file,
+  and the rejection text is what the mid-read case asserts.
 - The fractional cases of the `read_file` fallback (`offset: 2.5, limit: 1`
   and `offset: 1, limit: 1.5`): pi's output there comes from JS array
   indexing with fractional numbers (`Use offset=3.5`), while pidrei floors
@@ -233,6 +237,32 @@ async def test_reads_a_local_file_up_to_its_size_when_opened(tmp_path, monkeypat
 
     assert _AppendingSelector.appended
     assert result.content[0].text == "head\n\n[1 more lines in file. Use offset=2 to continue.]"
+
+
+@pytest.mark.tonio
+async def test_stops_reading_a_local_file_when_aborted_mid_read(tmp_path, monkeypatch):
+    # #11956
+    path = tmp_path / "abort-mid-read.txt"
+    # Many 64 KB chunks, so the abort lands with most of the file unread.
+    path.write_text("x" * (1024 * 1024))
+    token = CancelToken()
+
+    class _AbortingSelector(read_module._LineSelector):
+        fed = 0
+
+        def feed(self, chunk: bytes) -> None:
+            # Runs on the pool, inside the read's job.
+            _AbortingSelector.fed += 1
+            token.cancel()
+            super().feed(chunk)
+
+    monkeypatch.setattr(read_module, "_LineSelector", _AbortingSelector)
+    definition = create_read_tool_definition(str(tmp_path))
+
+    with pytest.raises(Exception, match="Operation aborted"):
+        await definition.execute("call", {"path": str(path)}, token, None, None)
+
+    assert _AbortingSelector.fed == 1
 
 
 @pytest.mark.tonio

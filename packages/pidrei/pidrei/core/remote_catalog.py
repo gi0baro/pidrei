@@ -22,6 +22,7 @@ from pidrei_utils import clock
 from pidrei_utils.cancel import run_cancellable
 
 from ..config import VERSION
+from ..upstream import UPSTREAM_VERSION
 from ..utils.management_http import fetch_with_retry
 from ..utils.user_agent import get_pidrei_user_agent
 from .model_wire import parse_any_model_dict
@@ -120,8 +121,16 @@ def _remote_models(entry: ModelsStoreEntry | None, local_generated_at: int | Non
 def _request_catalog(
     fetch: Any, provider_id: str, catalog_base_url: str, cancel: Any, validator: str | None = None
 ) -> Awaitable[CatalogResponse]:
+    """Request one provider's catalog from pi.dev. The query names the Pi version this build ports
+    (`pi-version`), and pi.dev serves the newest catalog published for a minimum version at or below
+    it (see Pi's `scripts/model-catalog-minimum-version.mjs` and `selectModelCatalog()` in
+    `scripts/model-catalog-protocol.ts`). pi.dev reads Pi's own version from a `pi/<version>`
+    User-Agent, which pidrei does not send; the parameter takes precedence over the User-Agent. So a
+    client receives catalogs published after its release, and those catalogs must work with this
+    client's code."""
     url = urllib.parse.urljoin(catalog_base_url, f"/api/models/providers/{urllib.parse.quote(provider_id, safe='')}")
-    url = f"{url}?{urllib.parse.urlencode({'types': ','.join(REMOTE_CATALOG_MODEL_TYPES)})}"
+    query = {"types": ",".join(REMOTE_CATALOG_MODEL_TYPES), "pi-version": UPSTREAM_VERSION}
+    url = f"{url}?{urllib.parse.urlencode(query)}"
     headers = {"accept": "application/json", "User-Agent": get_pidrei_user_agent(VERSION)}
     if validator is not None:
         headers["if-none-match"] = validator

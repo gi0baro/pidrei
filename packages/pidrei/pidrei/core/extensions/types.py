@@ -410,6 +410,10 @@ def _record_tools(extension: Extension, registered: list[RegisteredTool], _updat
     extension.tools.update({tool.definition.name: tool for tool in registered})
 
 
+def _drop_error(_error: ExtensionError) -> None:
+    """`report_error` before the runner exists."""
+
+
 class ExtensionRuntime:
     """Shared mutable runtime the loader creates and AgentSession binds.
 
@@ -434,6 +438,10 @@ class ExtensionRuntime:
         self.register_tools: Callable[
             [Extension, list[RegisteredTool], Callable[[list[str]], list[str] | None] | None], None
         ] = _record_tools
+
+        # Report an error raised by a `pi.events` handler. Nothing can show an error yet: dropped
+        # until the runner exists, which replaces this to call its emit_error() until it is invalidated.
+        self.report_error: Callable[[ExtensionError], None] = _drop_error
 
         # Actions copied in by ExtensionRunner.bind_core().
         self.send_message: Callable[..., None] | None = None

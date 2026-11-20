@@ -20,7 +20,6 @@
       "maxTokens": 65536,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "ant-ling",
@@ -49,7 +48,6 @@
       "maxTokens": 65536,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "ant-ling",
@@ -78,7 +76,6 @@
       "maxTokens": 65536,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "ant-ling",

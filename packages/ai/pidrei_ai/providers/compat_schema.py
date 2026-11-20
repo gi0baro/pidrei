@@ -192,7 +192,8 @@ OPENAI_COMPLETIONS_COMPAT_SCHEMA: dict[str, Any] = {
         ),
         "supportsDeveloperRole": _boolean(
             description=(
-                "Whether the provider supports the developer role instead of system. Default: auto-detected from URL."
+                "Whether to send system messages of reasoning models (the system prompt and mid-conversation system "
+                "messages) with the developer role instead of system. Default: true only for api.openai.com."
             )
         ),
         "supportsReasoningEffort": _boolean(
@@ -452,8 +453,8 @@ OPENAI_RESPONSES_COMPAT_SCHEMA: dict[str, Any] = {
         "supportsMidConvoEffort": _boolean(
             description=(
                 "Whether thinking level changes are sent as configuration_update input items instead of changing "
-                "reasoning.effort, so a change keeps the prompt cache. Only used by the openai-responses API, and "
-                "ignored with Sign in with ChatGPT on the openai provider."
+                "reasoning.effort, so a change keeps the prompt cache. Used by the openai-responses and "
+                "openai-codex-responses APIs, and ignored with Sign in with ChatGPT on the openai provider."
             ),
             default=False,
         ),
@@ -551,9 +552,8 @@ ANTHROPIC_MESSAGES_COMPAT_SCHEMA: dict[str, Any] = {
         "supportsMessageThreads": _boolean(
             description=(
                 "Whether the endpoint supports Anthropic message threads, which let a request with a session id "
-                "send only the new messages and continue from the previous reply. Default: true for provider "
-                "anthropic with a baseUrl on api.anthropic.com, false otherwise. Set true for gateways that forward "
-                "the thread request field."
+                "send only the new messages and continue from the previous reply. Default: true for a baseUrl on "
+                "api.anthropic.com, false otherwise. Set true for gateways that forward the thread request field."
             )
         ),
         "allowedFallbackModels": {
@@ -591,6 +591,9 @@ MISTRAL_CONVERSATIONS_COMPAT_SCHEMA: dict[str, Any] = {
                 "later system messages are folded into the leading system message."
             ),
             default=False,
+        ),
+        "supportsStrictMode": _boolean(
+            description="Whether the model supports strict (schema-constrained) function tools.", default=False
         ),
     },
     "description": "Compatibility settings for the Mistral chat API.",
@@ -648,7 +651,8 @@ _PROVIDER_COMPAT_PROPERTY_OVERRIDES: dict[str, Any] = {
     "supportsMidConvoEffort": _boolean(
         description=(
             "Whether thinking level changes are sent inside the conversation instead of changing the request's "
-            "effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs."
+            "effort, so a change keeps the prompt cache. Used by the anthropic-messages, openai-responses, and "
+            "openai-codex-responses APIs."
         ),
         default=False,
     ),

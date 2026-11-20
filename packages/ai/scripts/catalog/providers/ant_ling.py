@@ -7,7 +7,6 @@ from catalog.define import ChatModel, ProviderContext, ProviderDefinition, merge
 
 _COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsReasoningEffort": False,
     "maxTokensField": "max_tokens",
     "supportsLongCacheRetention": False,
@@ -54,7 +53,6 @@ PROVIDER = ProviderDefinition(
     compat={
         "openai-completions": {
             "supportsStore": False,
-            "supportsDeveloperRole": False,
             "supportsReasoningEffort": False,
             "maxTokensField": "max_tokens",
             "thinkingFormat": "ant-ling",

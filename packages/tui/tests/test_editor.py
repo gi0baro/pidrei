@@ -2318,6 +2318,78 @@ async def test_completes_chinese_path_prefixes_after_whitespace_or_cjk_punctuati
         assert editor.get_cursor() == {"line": 0, "col": len(editor.get_text())}
 
 
+# Regression test for #12309: Enter on a Tab menu for an absolute path submitted the prompt.
+@pytest.mark.tonio
+async def test_enter_on_a_tab_path_menu_with_a_slash_prefix_completes_without_submitting():
+    editor = Editor(create_test_tui(), default_editor_theme)
+    submitted: list[str] = []
+    editor.on_submit = submitted.append
+
+    async def get_suggestions(*_args, **_kwargs):
+        return {
+            "items": [
+                {"value": "/tmp/x/file-one.md", "label": "file-one.md"},
+                {"value": "/tmp/x/file-two.md", "label": "file-two.md"},
+            ],
+            "prefix": "/tmp/x/fi",
+        }
+
+    editor.set_autocomplete_provider(MockProvider(get_suggestions))
+    editor.set_text("look at /tmp/x/fi")
+
+    editor.handle_input("\t")
+    await flush_autocomplete(editor)
+    assert editor.is_showing_autocomplete() is True
+    editor.handle_input("\r")
+
+    assert submitted == []
+    assert editor.get_text() == "look at /tmp/x/file-one.md"
+
+
+@pytest.mark.tonio
+async def test_enter_on_an_argument_menu_with_a_slash_prefix_completes_without_submitting():
+    editor = Editor(create_test_tui(), default_editor_theme)
+    submitted: list[str] = []
+    editor.on_submit = submitted.append
+
+    async def get_argument_completions(prefix):
+        return [{"value": "/tmp/alpha", "label": "alpha"}] if prefix.startswith("/") else None
+
+    editor.set_autocomplete_provider(
+        CombinedAutocompleteProvider(
+            [{"name": "open", "getArgumentCompletions": get_argument_completions}],
+            os.getcwd(),
+        )
+    )
+
+    for char in "/open /tm":
+        editor.handle_input(char)
+    await flush_autocomplete(editor)
+    assert editor.is_showing_autocomplete() is True
+    editor.handle_input("\r")
+
+    assert submitted == []
+    assert editor.get_text() == "/open /tmp/alpha"
+
+
+@pytest.mark.tonio
+async def test_enter_on_a_tab_slash_command_menu_submits_the_command():
+    editor = Editor(create_test_tui(), default_editor_theme)
+    submitted: list[str] = []
+    editor.on_submit = submitted.append
+    editor.set_autocomplete_provider(
+        CombinedAutocompleteProvider([{"name": "model"}, {"name": "session"}], os.getcwd())
+    )
+    editor.set_text("/mo")
+
+    editor.handle_input("\t")
+    await flush_autocomplete(editor)
+    assert editor.is_showing_autocomplete() is True
+    editor.handle_input("\r")
+
+    assert submitted == ["/model"]
+
+
 @pytest.mark.tonio
 async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_punctuation(monkeypatch):
     for separator in [" ", "　", "，", "。"]:

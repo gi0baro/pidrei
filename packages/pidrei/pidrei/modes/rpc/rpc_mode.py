@@ -32,6 +32,7 @@ from ...core.output_guard import drain_output, take_over_stdout, write_raw_stdou
 from ...core.session_manager import SessionManager
 from ...utils.fd_io import StdinReader, hard_exit
 from ...utils.shell import SignalDispatcher, kill_tracked_detached_children, signal_exit_status
+from ..diagnostics_stderr import write_diagnostics_to_stderr
 from ..interactive.theme import theme
 from ..json_event import to_json_event
 from .jsonl import JsonlLineDecoder, serialize_json_line
@@ -397,12 +398,30 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
     async def rebind_from_runtime(_session, swap) -> None:
         swap()
         await rebind_session()
+        # stderr, never stdout: stdout carries the RPC protocol.
+        write_diagnostics_to_stderr(runtime_host.take_unreported_diagnostics())
 
     runtime_host.set_rebind_session(rebind_from_runtime)
 
     async def rebind_session() -> None:
         nonlocal session, unsubscribe, unsubscribe_backpressure
         session = runtime_host.session
+        # Subscribe before binding so events emitted by session_start handlers (e.g. appended entries) reach the client.
+        if unsubscribe is not None:
+            unsubscribe()
+        if unsubscribe_backpressure is not None:
+            unsubscribe_backpressure()
+
+        def on_event(event) -> None:
+            output(to_json_event(event))
+            if getattr(event, "type", None) == "agent_settled":
+                check_shutdown_requested()
+
+        async def on_agent_event(*_args) -> None:
+            await drain_output()
+
+        unsubscribe = session.subscribe(on_event)
+        unsubscribe_backpressure = session.agent.subscribe(on_agent_event)
 
         async def fork(entry_id, fork_options=None):
             result = await runtime_host.fork(entry_id, **(fork_options or {}))
@@ -469,22 +488,6 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
                 on_error=on_error,
             )
         )
-
-        if unsubscribe is not None:
-            unsubscribe()
-        if unsubscribe_backpressure is not None:
-            unsubscribe_backpressure()
-
-        def on_event(event) -> None:
-            output(to_json_event(event))
-            if getattr(event, "type", None) == "agent_settled":
-                check_shutdown_requested()
-
-        async def on_agent_event(*_args) -> None:
-            await drain_output()
-
-        unsubscribe = session.subscribe(on_event)
-        unsubscribe_backpressure = session.agent.subscribe(on_agent_event)
 
     await rebind_session()
 
@@ -561,8 +564,6 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
                 if command.get("parentSession"):
                     kwargs["parent_session"] = command["parentSession"]
                 result = await runtime_host.new_session(**kwargs)
-                if not result["cancelled"]:
-                    await rebind_session()
                 return success(id, "new_session", result)
 
             # =================================================================
@@ -726,14 +727,10 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
 
             case "switch_session":
                 result = await runtime_host.switch_session(command.get("sessionPath"))
-                if not result["cancelled"]:
-                    await rebind_session()
                 return success(id, "switch_session", result)
 
             case "fork":
                 result = await runtime_host.fork(command.get("entryId"))
-                if not result["cancelled"]:
-                    await rebind_session()
                 return success(id, "fork", {"text": result.get("selectedText"), "cancelled": result["cancelled"]})
 
             case "clone":
@@ -741,8 +738,6 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
                 if not leaf_id:
                     return error(id, "clone", "Cannot clone session: no current entry selected")
                 result = await runtime_host.fork(leaf_id, position="at")
-                if not result["cancelled"]:
-                    await rebind_session()
                 return success(id, "clone", {"cancelled": result["cancelled"]})
 
             case "get_fork_messages":
