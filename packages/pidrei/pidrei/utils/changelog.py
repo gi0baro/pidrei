@@ -28,8 +28,6 @@ import urllib.parse
 
 from tonio.colored import fs
 
-from ..core.output_guard import write_stderr
-
 
 GITHUB_REPO = "gi0baro/pidrei"
 _CHANGELOG_LINK_BASE_PATH = "packages/pidrei/pidrei"
@@ -175,8 +173,9 @@ async def parse_changelog(changelog_path: str) -> list:
             entries.append({**current_version, "content": "\n".join(current_lines).strip()})
 
         return entries
-    except Exception as error:
-        write_stderr(f"Warning: Could not parse changelog: {error}\n")
+    except Exception:
+        # Shown in the TUI (startup notes, /changelog), where printing would draw over the screen. An unreadable
+        # changelog shows no notes instead.
         return []
 
 

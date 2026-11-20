@@ -20,6 +20,7 @@ from ..core.json_wire import to_wire
 from ..core.output_guard import drain_output, write_raw_stdout, write_stderr
 from ..utils.fd_io import hard_exit
 from ..utils.shell import SignalDispatcher, kill_tracked_detached_children, signal_exit_status
+from .diagnostics_stderr import write_diagnostics_to_stderr
 from .json_event import to_json_event
 
 
@@ -104,12 +105,29 @@ async def run_print_mode(
     async def rebind_from_runtime(_session, swap) -> None:
         swap()
         await rebind_session()
+        write_diagnostics_to_stderr(runtime_host.take_unreported_diagnostics())
 
     runtime_host.set_rebind_session(rebind_from_runtime)
 
     async def rebind_session() -> None:
         nonlocal session, unsubscribe, unsubscribe_backpressure
         session = runtime_host.session
+        # Subscribe before binding so events emitted by session_start handlers (e.g. appended entries) reach the
+        # JSON output.
+        if unsubscribe is not None:
+            unsubscribe()
+        if unsubscribe_backpressure is not None:
+            unsubscribe_backpressure()
+
+        def on_event(event) -> None:
+            if mode == "json":
+                write_raw_stdout(json.dumps(to_wire(to_json_event(event)), ensure_ascii=False) + "\n")
+
+        async def on_agent_event(*_args) -> None:
+            await drain_output()
+
+        unsubscribe = session.subscribe(on_event)
+        unsubscribe_backpressure = session.agent.subscribe(on_agent_event) if mode == "json" else None
 
         async def fork(entry_id, fork_options=None):
             result = await runtime_host.fork(entry_id, **(fork_options or {}))
@@ -154,21 +172,6 @@ async def run_print_mode(
                 on_error=on_error,
             )
         )
-
-        if unsubscribe is not None:
-            unsubscribe()
-        if unsubscribe_backpressure is not None:
-            unsubscribe_backpressure()
-
-        def on_event(event) -> None:
-            if mode == "json":
-                write_raw_stdout(json.dumps(to_wire(to_json_event(event)), ensure_ascii=False) + "\n")
-
-        async def on_agent_event(*_args) -> None:
-            await drain_output()
-
-        unsubscribe = session.subscribe(on_event)
-        unsubscribe_backpressure = session.agent.subscribe(on_agent_event) if mode == "json" else None
 
     try:
         if mode == "json":

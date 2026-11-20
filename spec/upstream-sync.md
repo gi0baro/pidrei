@@ -794,6 +794,9 @@ untouched: component diffs port 1:1. What diverges:
   `terminal.ts`, `tui.ts`, `tui-alt-screen.ts`) is not ported. Every PiDrei
   exit with a TUI up runs `ui.stop()` or returns through `main()`; a hard
   kill leaves the terminal as it is. Hunks to that handler are dropped.
+  Pi 1.6.0's `flushStdout()` is `drain_output()` before a `hard_exit`; after
+  a `ui.stop()` that returns to the caller it is dropped, since the stop
+  returns once the terminal's output is written.
 
 ### `terminal-colors-loop` (`tui/src/tui.ts`, `terminal.ts`, `theme/theme-controller.ts`, `theme/theme.ts`)
 

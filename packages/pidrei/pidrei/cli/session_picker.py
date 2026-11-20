@@ -12,6 +12,7 @@ from pidrei_tui import set_keybindings
 from pidrei_utils.cancel import CancelToken
 
 from ..core.keybindings import KeybindingsManager
+from ..core.output_guard import drain_output
 from ..core.session_manager import SessionInfo, SessionListProgress
 from ..modes.interactive.components.session_selector import SessionSelectorComponent
 from ..utils.fd_io import hard_exit
@@ -55,6 +56,8 @@ async def select_session(
         async def stop_and_exit() -> None:
             await ui.stop()
             await close_startup_tui(ui)
+            # `hard_exit` skips everything still queued.
+            await drain_output()
             hard_exit(0)
 
         tonio.spawn.without_tracking(stop_and_exit())

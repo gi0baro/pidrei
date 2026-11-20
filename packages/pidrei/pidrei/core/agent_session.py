@@ -699,6 +699,8 @@ class AgentSession:
         self._extension_shutdown_handler: Callable[[], None] | None = None
         self._extension_error_listener: Callable[[Any], None] | None = None
         self._extension_error_unsubscriber: Callable[[], None] | None = None
+        # Set by bind_extensions(): reload() restarts extensions only if the host started them.
+        self._extensions_bound = False
 
         self._model_runtime = config.model_runtime
         self._runtime_stream_function = config.runtime_stream_function
@@ -3851,6 +3853,7 @@ class AgentSession:
         if bindings.on_error is not None:
             self._extension_error_listener = bindings.on_error
 
+        self._extensions_bound = True
         self._apply_extension_bindings(self._extension_runner)
         await self._extension_runner.emit(self._session_start_event)
         self._extension_runner.report_unhandled_mcp_servers()
@@ -4325,13 +4328,7 @@ class AgentSession:
                 include_all_extension_tools=True,
             )
 
-        has_bindings = (
-            self._extension_ui_context
-            or self._extension_command_context_actions
-            or self._extension_shutdown_handler
-            or self._extension_error_listener
-        )
-        if has_bindings:
+        if self._extensions_bound:
             if before_session_start is not None:
                 await before_session_start()
             await self._extension_runner.emit({"type": "session_start", "reason": "reload"})

@@ -166,7 +166,8 @@ async def test_interactive_quit_prints_a_resume_hint_for_persisted_sessions(temp
         await call_shutdown(context)
         # `dim()` decides on colour from the *current* stdout, so the expected
         # string has to be built while the tty stand-in is still installed.
-        expected = f"{dim('To resume this session:')} {APP_NAME} --session test-session\n"
+        # Command on its own line (#12237).
+        expected = f"{dim('To resume this session:')}\n{APP_NAME} --session test-session\n"
 
     assert order == ["drainInput", "stop", "dispose"]
     assert out.getvalue() == expected

@@ -16,7 +16,6 @@ from pidrei_ai.types import Model
 
 from ..cli.args import is_valid_thinking_level
 from .defaults import DEFAULT_THINKING_LEVEL
-from .output_guard import write_stderr, write_stdout
 
 
 # Default chat model IDs for providers with built-in chat models.
@@ -476,19 +475,6 @@ async def resolve_model_scope_with_diagnostics(
     return resolve_model_scope_from_models(patterns, list(await model_runtime.get_available(None, options)))
 
 
-def _warn(message: str) -> None:
-    write_stderr(f"\x1b[33mWarning: {message}\x1b[0m\n")
-
-
-async def resolve_model_scope(
-    patterns: list[str], model_runtime, options: AuthOperationOptions | None = None
-) -> list[ScopedModel]:
-    result = await resolve_model_scope_with_diagnostics(patterns, model_runtime, options)
-    for diagnostic in result.diagnostics:
-        _warn(diagnostic.message)
-    return result.scoped_models
-
-
 @dataclass(slots=True)
 class ResolveCliModelResult:
     model: Model | None
@@ -630,61 +616,3 @@ async def find_initial_model(
 
     # 4. No model found
     return InitialModelResult(model=None, thinking_level=DEFAULT_THINKING_LEVEL)
-
-
-async def restore_model_from_session(
-    saved_provider: str,
-    saved_model_id: str,
-    current_model: Model | None,
-    should_print_messages: bool,
-    model_runtime,
-) -> tuple[Model | None, str | None]:
-    """Restore model from session, with fallback to available models."""
-    restored_model = model_runtime.get_model(saved_provider, saved_model_id)
-
-    has_configured_auth = (
-        model_runtime.has_configured_auth(restored_model.provider) if restored_model is not None else False
-    )
-
-    if restored_model is not None and has_configured_auth:
-        if should_print_messages:
-            write_stdout(f"Restored model: {saved_provider}/{saved_model_id}\n")
-        return restored_model, None
-
-    reason = "model no longer exists" if restored_model is None else "no auth configured"
-
-    if should_print_messages:
-        _warn(f"Could not restore model {saved_provider}/{saved_model_id} ({reason}).")
-
-    if current_model is not None:
-        if should_print_messages:
-            write_stdout(f"Falling back to: {current_model.provider}/{current_model.id}\n")
-        return current_model, (
-            f"Could not restore model {saved_provider}/{saved_model_id} ({reason}). "
-            f"Using {current_model.provider}/{current_model.id}."
-        )
-
-    available_models = list(model_runtime.get_available_snapshot())
-
-    if available_models:
-        fallback_model: Model | None = None
-        for provider, default_id in DEFAULT_MODEL_PER_PROVIDER.items():
-            match = next(
-                (model for model in available_models if model.provider == provider and model.id == default_id), None
-            )
-            if match is not None:
-                fallback_model = match
-                break
-
-        if fallback_model is None:
-            fallback_model = available_models[0]
-
-        if should_print_messages:
-            write_stdout(f"Falling back to: {fallback_model.provider}/{fallback_model.id}\n")
-
-        return fallback_model, (
-            f"Could not restore model {saved_provider}/{saved_model_id} ({reason}). "
-            f"Using {fallback_model.provider}/{fallback_model.id}."
-        )
-
-    return None, None

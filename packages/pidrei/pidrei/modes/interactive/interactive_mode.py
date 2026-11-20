@@ -25,7 +25,7 @@ import threading
 import traceback
 import unicodedata
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace as dataclass_replace
 from types import SimpleNamespace
 from typing import Protocol, runtime_checkable
@@ -73,6 +73,7 @@ from ...config import (
 )
 from ...core.agent_session import PromptOptions, ScopedModel, parse_skill_block
 from ...core.agent_session_runtime import SessionImportFileNotFoundError
+from ...core.agent_session_services import AgentSessionRuntimeDiagnostic
 from ...core.bash_executor import BashResult
 from ...core.cache_stats import (
     CACHE_TTL_MS,
@@ -691,6 +692,7 @@ class InteractiveMode:
         async def _rebind_session(new_session, swap) -> None:
             await self._rebind_current_session({"renderBeforeBind": True}, new_session, swap)
             await self._theme_controller.apply_from_settings()
+            self._show_runtime_diagnostics(self.runtime_host.take_unreported_diagnostics())
 
         self.runtime_host.set_rebind_session(_rebind_session)
         self._version = VERSION
@@ -1483,13 +1485,7 @@ class InteractiveMode:
         initial_images = self._options.get("initialImages")
         initial_messages = self._options.get("initialMessages")
 
-        for diagnostic in startup_diagnostics or []:
-            if diagnostic.type == "error":
-                self.show_error(diagnostic.message)
-            elif diagnostic.type == "warning":
-                self.show_warning(diagnostic.message)
-            else:
-                self.show_status(diagnostic.message)
+        self._show_runtime_diagnostics(startup_diagnostics or [])
 
         if migrated_providers:
             self.show_warning(f"Migrated credentials to auth.json: {', '.join(migrated_providers)}")
@@ -2369,6 +2365,8 @@ class InteractiveMode:
         self.show_error(f"{prefix}: {error}")
         stop_theme_watcher()
         await self.stop("transcript")
+        # `hard_exit` skips everything still queued.
+        await drain_output()
         hard_exit(1)
 
     def render_current_session_state(self, trust_warning: bool) -> None:
@@ -4537,10 +4535,11 @@ class InteractiveMode:
 
         resume_command = await format_resume_command(self.session_manager)
         if resume_command:
-            write_stdout(f"{dim('To resume this session:')} {resume_command}\n")
-            # `hard_exit` skips everything still queued.
-            await drain_output()
+            # Own line so the command can be selected with a triple-click (#12237).
+            write_stdout(f"{dim('To resume this session:')}\n{resume_command}\n")
 
+        # `hard_exit` skips everything still queued.
+        await drain_output()
         hard_exit(0)
 
     def _emergency_terminal_exit(self) -> None:
@@ -4849,6 +4848,17 @@ class InteractiveMode:
             self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(ThemedText(lambda: theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
             self.ui.request_render()
+
+    def _show_runtime_diagnostics(self, diagnostics: Iterable[AgentSessionRuntimeDiagnostic]) -> None:
+        # One hold: a frame shows all of them or none.
+        with self.ui.state_lock:
+            for diagnostic in diagnostics:
+                if diagnostic.type == "error":
+                    self.show_error(diagnostic.message)
+                elif diagnostic.type == "warning":
+                    self.show_warning(diagnostic.message)
+                else:
+                    self.show_status(diagnostic.message)
 
     def show_new_version_notification(self, release: dict) -> None:
         def update_instruction() -> str:

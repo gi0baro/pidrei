@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -88,6 +89,11 @@ class AgentSessionRuntime:
         self._create_runtime = create_runtime
         self._diagnostics = diagnostics if diagnostics is not None else []
         self._model_fallback_message = model_fallback_message
+        # `(type, message)` of every diagnostic take_unreported_diagnostics() returned so far. Touched only
+        # under `_diagnostics_guard` (synchronous sections only): the method is public, so an SDK host can
+        # call it from any coroutine while a mode's rebind callback calls it under `_replacement_lock`.
+        self._diagnostics_guard = threading.Lock()
+        self._reported_diagnostic_keys: set[tuple[str, str]] = set()
 
     @property
     def services(self) -> AgentSessionServices:
@@ -108,6 +114,25 @@ class AgentSessionRuntime:
     @property
     def model_fallback_message(self) -> str | None:
         return self._model_fallback_message
+
+    def take_unreported_diagnostics(self) -> list[AgentSessionRuntimeDiagnostic]:
+        """Return the current runtime's diagnostics that were not reported yet, and mark them reported.
+
+        The host calls this at startup and after each session replacement (/new, /resume, /fork,
+        import), whose runtime collects its diagnostics again. A diagnostic with the same type and
+        message as one returned before is left out, so an unchanged settings warning is not repeated
+        on every replacement."""
+        # One pinned list, filtered and marked in one hold: two takers never both return a diagnostic.
+        diagnostics = self._diagnostics
+        unreported: list[AgentSessionRuntimeDiagnostic] = []
+        with self._diagnostics_guard:
+            for diagnostic in diagnostics:
+                key = (diagnostic.type, diagnostic.message)
+                if key in self._reported_diagnostic_keys:
+                    continue
+                self._reported_diagnostic_keys.add(key)
+                unreported.append(diagnostic)
+        return unreported
 
     def set_rebind_session(
         self, rebind_session: Callable[[AgentSession, Callable[[], None]], Any] | None = None

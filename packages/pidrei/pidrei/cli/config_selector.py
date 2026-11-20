@@ -12,7 +12,7 @@ import tonio.colored as tonio
 from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen, prime_capabilities, set_keybindings
 
 from ..core.keybindings import KeybindingsManager
-from ..core.output_guard import attach_terminal, detach_terminal
+from ..core.output_guard import attach_terminal, detach_terminal, drain_output
 from ..modes.interactive.components.config_selector import ConfigSelectorComponent, build_canonical_path_map_blocking
 from ..modes.interactive.theme import init_theme, stop_theme_watcher
 from ..utils.fd_io import hard_exit
@@ -71,6 +71,8 @@ async def select_config(
         await ui.stop()
         stop_theme_watcher()
         await close_terminal()
+        # `hard_exit` skips everything still queued.
+        await drain_output()
         hard_exit(0)
 
     def exit_now() -> None:
