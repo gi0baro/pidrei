@@ -40,6 +40,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils.cancel import CancelToken
 
 
 VALUE_SCHEMA = {
@@ -112,6 +113,45 @@ def done_stream(message: AssistantMessage, reason: str = "stop") -> AssistantMes
     stream = AssistantMessageEventStream()
     stream.push(DoneEvent(reason=reason, message=message))
     return stream
+
+
+async def run_tool_batch(tool: AgentTool, config: AgentLoopConfig, cancel: CancelToken):
+    """Run one turn whose assistant message calls `tool` three times, then a final aborted turn."""
+    context = AgentContext(messages=[], tools=[tool])
+    call_index = 0
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal call_index
+        if call_index == 0:
+            message = create_assistant_message(
+                [
+                    ToolCall(id=f"tool-{index + 1}", name=tool.name, arguments={"value": value})
+                    for index, value in enumerate(["first", "second", "third"])
+                ],
+                "toolUse",
+            )
+            stream = done_stream(message, "toolUse")
+        else:
+            stream = AssistantMessageEventStream()
+            stream.push(ErrorEvent(reason="aborted", error=create_assistant_message([], "aborted")))
+        call_index += 1
+        return stream
+
+    stream = agent_loop([create_user_message("run three")], context, config, cancel, stream_fn)
+    events = [event async for event in stream]
+    return events, await stream.result()
+
+
+def tool_result_texts(messages) -> list[tuple[str, str]]:
+    return [
+        (message.tool_call_id, "".join(block.text if block.type == "text" else "" for block in message.content))
+        for message in messages
+        if message.role == "toolResult"
+    ]
+
+
+def tool_event_ids(events, event_type: str) -> list[str]:
+    return [event.tool_call_id for event in events if event.type == event_type]
 
 
 @pytest.mark.tonio
@@ -748,6 +788,68 @@ async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_defa
         if e.type == "message_end" and getattr(e.message, "role", None) == "toolResult"
     ]
     assert tool_result_ids == ["tool-1", "tool-2"]
+
+
+# #9986
+@pytest.mark.tonio
+async def test_answers_every_tool_call_of_a_sequential_batch_aborted_mid_batch():
+    cancel = CancelToken()
+    executed: list[str] = []
+
+    async def execute(_tool_call_id, params):
+        executed.append(params["value"])
+        # The user aborts while the first call runs.
+        cancel.cancel()
+        raise Exception("interrupted")
+
+    tool = FnTool("slow", "Slow", "Slow tool", VALUE_SCHEMA, execute, execution_mode="sequential")
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
+
+    events, messages = await run_tool_batch(tool, config, cancel)
+
+    assert executed == ["first"]
+    assert tool_result_texts(messages) == [
+        ("tool-1", "interrupted"),
+        ("tool-2", "Operation aborted"),
+        ("tool-3", "Operation aborted"),
+    ]
+    assert tool_event_ids(events, "tool_execution_start") == ["tool-1", "tool-2", "tool-3"]
+    assert tool_event_ids(events, "tool_execution_end") == ["tool-1", "tool-2", "tool-3"]
+
+
+# #9986
+@pytest.mark.tonio
+async def test_answers_every_tool_call_of_a_parallel_batch_aborted_while_calls_are_prepared():
+    cancel = CancelToken()
+    executed: list[str] = []
+
+    async def execute(_tool_call_id, params):
+        executed.append(params["value"])
+        return AgentToolResult(content=[TextContent(text=params["value"])], details={"value": params["value"]})
+
+    tool = FnTool("slow", "Slow", "Slow tool", VALUE_SCHEMA, execute)
+    # The user aborts while a hook decides about the second call, for example at a permission prompt.
+    hook_calls: list[str] = []
+
+    async def before_tool_call(ctx, _cancel):
+        hook_calls.append(ctx.tool_call.id)
+        if ctx.tool_call.id == "tool-2":
+            cancel.cancel()
+
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, before_tool_call=before_tool_call)
+
+    events, messages = await run_tool_batch(tool, config, cancel)
+
+    assert executed == []
+    # The hook is not asked about a call that will not run.
+    assert hook_calls == ["tool-1", "tool-2"]
+    assert tool_result_texts(messages) == [
+        ("tool-1", "Operation aborted"),
+        ("tool-2", "Operation aborted"),
+        ("tool-3", "Operation aborted"),
+    ]
+    assert tool_event_ids(events, "tool_execution_start") == ["tool-1", "tool-2", "tool-3"]
+    assert sorted(tool_event_ids(events, "tool_execution_end")) == ["tool-1", "tool-2", "tool-3"]
 
 
 @pytest.mark.tonio

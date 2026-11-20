@@ -3,6 +3,7 @@
 import dataclasses
 import math
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,10 @@ FIND_SCHEMA = {
     "properties": {
         "pattern": {
             "type": "string",
-            "description": "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
+            "description": (
+                "Glob pattern relative to the search directory, e.g. 'src/**/*.ts'. "
+                "Without '/', e.g. '*.ts', it matches file names at any depth"
+            ),
         },
         "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
         "limit": {"type": "number", "description": "Maximum number of results (default: 1000)"},
@@ -41,6 +45,9 @@ FIND_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
 DEFAULT_LIMIT = 1000
 # JS `Number.MAX_SAFE_INTEGER`.
 _MAX_SAFE_INTEGER = 2**53 - 1
+_LEADING_DOT_SLASH = re.compile(r"^(?:\./)+")
+# The characters fd's glob treats as special, escaped in the search path a relative pattern is prefixed with.
+_GLOB_SPECIAL = re.compile(r"[\\*?\[\]{}]")
 
 
 @dataclass(slots=True)
@@ -157,21 +164,28 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             args.append("--no-require-git")
 
         # fd --glob matches against the basename unless --full-path is set; in --full-path
-        # mode it matches against the absolute candidate path, so a path-containing
-        # pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
-        effective_pattern = pattern
+        # mode it matches against the absolute candidate path.
+        # fd's full paths never contain "/./", so "./src/*.ts" would find nothing; drop the "./".
+        effective_pattern = _LEADING_DOT_SLASH.sub("", pattern)
         is_path_pattern = "/" in effective_pattern
-        if (
-            is_path_pattern
-            and not effective_pattern.startswith("/")
-            and not effective_pattern.startswith("**/")
-            and effective_pattern != "**"
-        ):
-            effective_pattern = f"**/{effective_pattern}"
+        # fd's smart case: an all-lowercase pattern matches case-insensitively.
+        ignore_case = effective_pattern == effective_pattern.lower()
+        # A relative path pattern is anchored at the search path, like grep's glob (#12066):
+        # 'src/*.ts' finds 'src/a.ts' but not 'pkg/src/b.ts'; '**/src/*.ts' finds both.
+        # Absolute patterns are matched as given.
+        is_relative_path_pattern = is_path_pattern and not os.path.isabs(effective_pattern)
         # One result past the limit tells "exactly N matches" apart from "more than N" (#7121).
         args.extend(["--glob", "--max-results", str(effective_limit + 1)])
         if is_path_pattern:
             args.append("--full-path")
+        if is_relative_path_pattern:
+            # fd matches the absolute path, so the pattern is prefixed with the glob-escaped
+            # search path. Smart case is decided by the user's pattern, not by the search
+            # path's letters, so it is set explicitly.
+            escaped_root = _GLOB_SPECIAL.sub(r"\\\g<0>", search_path.rstrip("/"))
+            effective_pattern = f"{escaped_root}/{effective_pattern}"
+            if ignore_case:
+                args.append("--ignore-case")
         args.extend(["--", effective_pattern, search_path])
 
         # An abort during the .git lookup above must not start fd.

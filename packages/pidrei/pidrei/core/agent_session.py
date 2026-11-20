@@ -726,10 +726,13 @@ class AgentSession:
         # Tools of the restored or reloaded loadout that are not registered yet,
         # such as tools of MCP servers that are still connecting. They are
         # activated when they are registered, and dropped when
-        # `set_active_tools_by_name()` deactivates a tool or the next agent run
-        # starts. Under `_tool_loadout_guard`. A dict, for pi's insertion-ordered
-        # Set: the order is the order they are declared in.
+        # `set_active_tools_by_name()` deactivates a tool of that loadout or the
+        # next agent run starts. Under `_tool_loadout_guard`. A dict, for pi's
+        # insertion-ordered Set: the order is the order they are declared in.
         self._pending_tool_names: dict[str, None] = {}
+        # The restored or reloaded loadout that `_pending_tool_names` belongs to.
+        # Under `_tool_loadout_guard`.
+        self._restored_tool_names: set[str] = set()
         self._tool_prompt_snippets: dict[str, str] = {}
         self._tool_prompt_guidelines: dict[str, list[str]] = {}
 
@@ -1934,10 +1937,12 @@ class AgentSession:
         with self._tool_loadout_guard:
             previous = self.get_active_tool_names()
             self._set_active_tools(tool_names)
-            # A loadout that deactivates a tool replaces the restored one, whose pending tools are dropped.
-            # One that only adds tools, like activating tool_search, keeps them.
+            # A loadout that deactivates a tool of the restored one replaces it, and its pending tools are
+            # dropped. One that only adds tools, like activating tool_search, keeps them, and so does one
+            # that only deactivates tools outside the restored loadout, such as an extension's own tool that
+            # the restore or reload activated as newly registered.
             active = set(self.get_active_tool_names())
-            if any(name not in active for name in previous):
+            if any(name not in active and name in self._restored_tool_names for name in previous):
                 self._pending_tool_names.clear()
 
     def update_active_tools(self, update: Callable[[list[str]], list[str] | None]) -> None:
@@ -2275,6 +2280,7 @@ class AgentSession:
         }
         with self._tool_loadout_guard:
             self._pending_tool_names.clear()
+            self._restored_tool_names.clear()
             # No recorded loadout: keep the current tools.
             if not system_messages:
                 return
@@ -2294,6 +2300,9 @@ class AgentSession:
             # Recorded tools that are not registered yet, such as MCP tools of servers still connecting, are
             # activated when they register. Excluded tools never register, so they are not kept pending.
             self._pending_tool_names = dict.fromkeys(name for name in names if self._is_allowed_tool(name))
+            self._restored_tool_names = set(
+                apply_tool_modifiers([tool.name for tool in get_current_tools(system_messages)], modifiers)
+            )
             # Ignores names that are not registered.
             self._set_active_tools(names)
 
@@ -4309,6 +4318,7 @@ class AgentSession:
             active_tool_names = self.get_active_tool_names()
             # Tools the new extensions register later, such as MCP tools, are pending until then.
             self._pending_tool_names.update(dict.fromkeys(active_tool_names))
+            self._restored_tool_names = set(active_tool_names)
             self._build_runtime(
                 active_tool_names=[*active_tool_names, *added_default_tools],
                 flag_values=previous_flag_values,
@@ -4905,13 +4915,17 @@ class AgentSession:
     # =========================================================================
 
     def get_last_assistant_text(self) -> str | None:
-        """Text content of last assistant message (for /copy)."""
+        """Text content of the last assistant reply (for /copy). None if no
+        assistant message exists or the last reply has no text."""
         last_assistant = None
         for message in reversed(self.messages):
             if getattr(message, "role", None) != "assistant":
                 continue
-            # Skip aborted messages with no content
-            if message.stop_reason == "aborted" and len(message.content) == 0:
+            # Skip messages without text from a turn that did not end normally: aborted, failed or only
+            # calling tools (#12119). A reply that ended normally stays the last reply even without text.
+            if message.stop_reason != "stop" and not any(
+                block.type == "text" and block.text.strip() for block in message.content
+            ):
                 continue
             last_assistant = message
             break

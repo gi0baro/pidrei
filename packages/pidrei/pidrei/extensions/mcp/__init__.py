@@ -69,7 +69,7 @@ from typing import Any
 import tonio.colored as tonio
 
 from pidrei_ai.utils.tasks import gather
-from pidrei_mcp import create_mcp_tool_name, mcp_namespace
+from pidrei_mcp import create_mcp_tool_name, mcp_namespace, mcp_server_summary
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
@@ -210,14 +210,6 @@ class McpServerListing:
     connection: Any = None
 
 
-def _server_summary(server: Any) -> str:
-    """First line of the configured description, or of the server instructions once connected."""
-    description = (server.entry.config.get("description") or "").strip()
-    connection = server.connection
-    instructions = connection.instructions if connection is not None else None
-    return _first_line(description or instructions or "").strip()
-
-
 def render_servers_section(servers: Sequence[Any]) -> str | None:
     """The `mcp_servers` section: every enabled server with codemode or
     deferred tools, with how its tools are reached and a one-line summary. The
@@ -251,7 +243,18 @@ def render_servers_section(servers: Sequence[Any]) -> str | None:
     )
     lines = []
     for server, head in zip(listed[:kept], heads, strict=False):
-        summary = _truncate(_server_summary(server), per_server) if per_server > 0 else ""
+        connection = server.connection
+        summary = (
+            _truncate(
+                mcp_server_summary(
+                    server.entry.config.get("description"),
+                    connection.instructions if connection is not None else None,
+                ),
+                per_server,
+            )
+            if per_server > 0
+            else ""
+        )
         lines.append(f"{head}: {summary}" if summary else head)
     return "\n".join([intro, *lines, *omitted(len(listed) - kept)])
 

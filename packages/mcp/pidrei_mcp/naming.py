@@ -1,8 +1,9 @@
 """Mirror of pi mcp src/naming.ts.
 
-Names of MCP tools and of their servers' namespaces as models and codemode
-scripts see them. Applications that name tools the same way rank and group
-them the same way in tool search and codemode.
+Names of MCP tools and of their servers' namespaces, and the servers' one-line
+summaries, as models and codemode scripts see them. Applications that name
+tools the same way rank and group them the same way in tool search and
+codemode.
 """
 
 import hashlib
@@ -32,3 +33,12 @@ def mcp_namespace(server: str) -> str:
     `_`, like the tool names. Server names that differ only in `-` and `_`
     share a namespace, so a configuration must not have both."""
     return f"mcp__{server.replace('-', '_')}"
+
+
+def mcp_server_summary(description: str | None, instructions: str | None) -> str:
+    """A server's one-line summary for the system prompt: the first line of
+    its configured `description`, else of the instructions it sent in
+    `initialize`; empty when it has neither."""
+    # A blank description falls through to the instructions.
+    text = (description or "").strip() or (instructions or "").strip()
+    return text.split("\n", 1)[0].strip()

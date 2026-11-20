@@ -15,6 +15,7 @@ import re
 import shutil
 import struct
 import sys
+from types import SimpleNamespace
 
 import pytest
 import tonio.colored as tonio
@@ -57,6 +58,7 @@ from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.core.tools.renderers.bash import _format_shell_call
 from pidrei.core.tools.truncate import truncate_head
 from pidrei.core.tools.write import create_write_tool_definition
+from pidrei.modes.interactive.components import ToolExecutionComponent
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_utils.cancel import CancelToken
@@ -256,6 +258,39 @@ class TestReadTool:
             "mimeType": "image/png",
             "note": get_text_output(result),
         }
+
+    @pytest.mark.tonio
+    async def test_keeps_a_text_only_models_image_warning_out_of_what_the_model_gets(self, tmp_path):
+        test_file = tmp_path / "text-model.png"
+        test_file.write_bytes(base64.b64decode(PNG_1X1_BASE64))
+        model = SimpleNamespace(id="text-only", input=["text"], input_limits=None)
+        ctx = ExtensionContext(cwd=str(tmp_path), model=model)
+
+        result = await create_read_tool_definition(str(tmp_path)).execute(
+            "test-call-img-text-model", {"path": str(test_file)}, None, None, ctx
+        )
+
+        # The result is replayed after a switch to a vision model, so it keeps the image and no
+        # note saying the model cannot see it; pidrei-ai replaces the image per request instead.
+        assert get_text_output(result) == "Read image file [image/png]"
+        assert any(block.type == "image" for block in result.content)
+
+        # The user still sees the warning, collapsed and expanded.
+        await init_theme("dark")
+        component = ToolExecutionComponent(
+            "read",
+            "test-call-img-text-model",
+            {"path": str(test_file)},
+            {},
+            create_read_tool_definition(str(tmp_path)),
+            SimpleNamespace(request_render=lambda: None),
+            str(tmp_path),
+        )
+        component.update_result({"content": result.content, "details": result.details, "isError": False})
+        warning = "[text-only does not support images; it saw a placeholder instead]"
+        assert warning in strip_ansi("\n".join(component.render(120)))
+        component.set_expanded(True)
+        assert warning in strip_ansi("\n".join(component.render(120)))
 
     @pytest.mark.tonio
     async def test_reads_bmp_files_from_disk_as_png_image_attachments(self, tmp_path):
@@ -748,6 +783,29 @@ class TestBashTool:
         assert re.search(r"\[Showing lines 2001-4000 of 4000\. Full output: ", output)
         assert "4001" not in output
 
+    # #12062: a short line followed by one line far past the limit returned no output at all.
+    @pytest.mark.tonio
+    async def test_shows_the_end_of_an_over_long_last_line_after_a_short_line(self, tmp_path):
+        import re
+
+        long_line = f"{'y' * 219_000}END"
+
+        class LongLastLineOperations:
+            async def exec(self, _command, _cwd, *, on_data, cancel=None, timeout=None, env=None):
+                data = f"first line\n{long_line}\n".encode()
+                for i in range(0, len(data), 8192):
+                    on_data(data[i : i + 8192])
+                return BashExecResult(exit_code=0)
+
+        bash = create_bash_tool(str(tmp_path), operations=LongLastLineOperations())
+
+        result = await bash.execute("test-call-long-last-line", {"command": "grep -n x bundle.min.js"})
+        output = get_text_output(result)
+
+        assert result.details.truncation.last_line_partial is True
+        assert "yyyyEND" in output
+        assert re.search(r"\[Showing last 50\.0KB of line 2 ", output)
+
     @pytest.mark.tonio
     async def test_decodes_utf8_characters_split_across_output_chunks(self, tmp_path):
         euro = "€\n".encode()
@@ -1193,6 +1251,22 @@ class TestFindTool:
         find_tool = create_find_tool(str(tmp_path))
         result = await find_tool.execute("test-call-find-flag-pattern", {"pattern": "--help", "path": str(tmp_path)})
         assert "No files found matching pattern" in get_text_output(result)
+
+    # #12020: fd matches nothing for a leading "./", so the tool drops it.
+    @pytest.mark.tonio
+    async def test_ignores_a_leading_dot_slash_in_the_pattern(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.ts").write_text("a")
+        (tmp_path / "package.json").write_text("{}")
+        find_tool = create_find_tool(str(tmp_path))
+
+        for pattern in ("./src/*.ts", "./src/**/*.ts", "././src/*.ts"):
+            result = await find_tool.execute("test-call-find-dot-slash", {"pattern": pattern, "path": str(tmp_path)})
+            assert get_text_output(result) == "src/a.ts", pattern
+        # Without a "/" left, "./*.json" matches basenames at any depth, like "*.json".
+        (tmp_path / "src" / "b.json").write_text("{}")
+        json = await find_tool.execute("test-call-find-dot-slash-json", {"pattern": "./*.json", "path": str(tmp_path)})
+        assert sorted(get_text_output(json).split("\n")) == ["package.json", "src/b.json"]
 
     # #7121: exactly `limit` matches must not report that the limit was reached.
     @pytest.mark.tonio

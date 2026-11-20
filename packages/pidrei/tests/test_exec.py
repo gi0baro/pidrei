@@ -11,9 +11,11 @@ import signal
 import sys
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.core import exec as exec_module
 from pidrei.core.exec import ExecResult, exec_command
+from pidrei_utils.cancel import CancelToken
 
 
 def _python(script: str) -> tuple[str, list[str]]:
@@ -132,12 +134,49 @@ async def test_returns_once_the_command_exits_while_a_background_process_holds_i
         os.kill(pid, signal.SIGKILL)
 
 
-@pytest.mark.tonio
-async def test_reports_code_0_for_a_command_its_timeout_terminated():
-    # PiDrei: pi reads Node's null exit code of a signal-ended child as 0; `killed` says it was terminated.
-    result = await exec_command("sleep", ["10"], os.getcwd(), timeout=100)
+# Regression tests for https://github.com/earendil-works/pi/issues/12088: signal-terminated commands.
+_IDLE = "while True:\n    time.sleep(1)"
 
-    assert result == ExecResult(stdout="", stderr="", code=0, killed=True, truncated=False)
+
+class _SubscribedToken(CancelToken):
+    """Sets `subscribed` once `exec_command` listens for the cancel, so the test cancels a running command
+    where pi aborts after 100 ms."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribed = tonio.Event()
+
+    def on_cancel(self, callback):
+        unsubscribe = super().on_cancel(callback)
+        self.subscribed.set()
+        return unsubscribe
+
+
+@pytest.mark.tonio
+async def test_reports_128_plus_sigterm_for_a_timeout():
+    result = await exec_command(*_python(_IDLE), os.getcwd(), timeout=100)
+
+    assert (result.code, result.killed, result.truncated) == (143, True, False)
+
+
+@pytest.mark.tonio
+async def test_reports_128_plus_sigterm_for_an_abort():
+    token = _SubscribedToken()
+    handle = tonio.spawn(exec_command(*_python(_IDLE), os.getcwd(), cancel=token))
+    await token.subscribed.wait(10)
+    assert token.subscribed.is_set()
+    token.cancel()
+    result = await handle
+
+    assert (result.code, result.killed, result.truncated) == (143, True, False)
+
+
+@pytest.mark.tonio
+async def test_reports_128_plus_the_signal_number_for_a_command_killed_by_someone_else():
+    # Not killed by pidrei, so `killed` is false and only the code tells this apart from success.
+    result = await exec_command(*_python("os.kill(os.getpid(), signal.SIGKILL)"), os.getcwd())
+
+    assert (result.code, result.killed, result.truncated) == (137, False, False)
 
 
 @pytest.mark.tonio

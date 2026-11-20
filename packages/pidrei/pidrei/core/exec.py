@@ -27,6 +27,7 @@ _FORCE_KILL_DELAY_S = 5.0
 class ExecResult:
     stdout: str
     stderr: str
+    #: Exit code, or 128 + signal number when a signal terminated the command (143 for SIGTERM).
     code: int
     #: The command was terminated by pidrei: timeout, cancel, or output over `max_buffer`.
     killed: bool
@@ -198,9 +199,9 @@ async def exec_command(
         stdout_parts.append(stdout_decoder.decode(b"", final=True))
         stderr_parts.append(stderr_decoder.decode(b"", final=True))
 
-    # pi reads Node's exit code, which is null for a child ended by a signal, as 0: a terminated
-    # command reports `killed`, not a code. Here a signal is a negative return code.
-    exit_code = code if code is not None and code >= 0 else 0
+    # A signal-killed command reports -signum. Use the shell convention, as the bash tool does, so a
+    # timeout, an abort or a crash does not read as success (#12088).
+    exit_code = 128 - code if code < 0 else code
     return ExecResult(
         stdout="".join(stdout_parts),
         stderr="".join(stderr_parts),

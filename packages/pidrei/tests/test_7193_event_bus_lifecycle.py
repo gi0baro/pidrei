@@ -2,10 +2,11 @@
 
 `EventBus.emit` spawns each handler's awaitable, so no part of an `async def`
 handler runs inside `emit` and pi's `setImmediate` drain has no equivalent
-wait (any fixed pause can be overrun). The handlers here are plain callables
-that count when `emit` calls them — the part of pi's async handlers that runs
-before their first await — and return an already-finished awaitable, so the
-counts are final once `emit` returns.
+wait (any fixed pause can be overrun). `pi.events.on` subscribes a coroutine
+function that wraps the extension's handler (it reports a raising handler,
+#11264), so nothing of the extension's handler runs inside `emit` either. The
+bus here counts each subscriber when `emit` calls it, so the counts are final
+once `emit` returns.
 """
 
 import os
@@ -31,9 +32,26 @@ async def _handled() -> None:
     pass
 
 
+class _CountingEventBus(EventBus):
+    """Counts each subscriber when `emit` calls it: the host's handler as "host", any other as "extension"."""
+
+    def __init__(self, counts: dict, host_handler) -> None:
+        super().__init__()
+        self._counts = counts
+        self._host_handler = host_handler
+
+    def on(self, channel, handler):
+        key = "host" if handler is self._host_handler else "extension"
+
+        def counted(data):
+            self._counts[key] += 1
+            return handler(data)
+
+        return super().on(channel, counted)
+
+
 @pytest.mark.tonio
 async def test_removes_extension_owned_event_bus_listeners_on_reload_and_dispose(harnesses):
-    event_bus = EventBus()
     counts = {"extension": 0, "host": 0}
     first_api: list = []
 
@@ -41,16 +59,15 @@ async def test_removes_extension_owned_event_bus_listeners_on_reload_and_dispose
         if not first_api:
             first_api.append(pi)
 
-        def on_reload_test(_data):
-            counts["extension"] += 1
-            return _handled()
+        async def on_reload_test(_data):
+            pass
 
         pi.events.on("reload:test", on_reload_test)
 
     def on_host(_data):
-        counts["host"] += 1
         return _handled()
 
+    event_bus = _CountingEventBus(counts, on_host)
     event_bus.on("reload:test", on_host)
 
     state: dict = {}

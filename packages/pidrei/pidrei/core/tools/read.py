@@ -71,6 +71,10 @@ READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
 @dataclass(slots=True)
 class ReadToolDetails:
     truncation: TruncationResult | None = None
+    #: Id of the model that was selected when the image was read, if it has no image input. Shown to the user
+    #: only: the model gets pidrei-ai's placeholder per request, so the stored result stays right after a model
+    #: switch.
+    image_unsupported_by_model: str | None = None
 
 
 class LocalReadOperations:
@@ -95,12 +99,6 @@ def _to_read_output(content: list[TextContent | ImageContent]) -> str | dict[str
     if image is None:
         return text
     return {"type": "image", "data": image.data, "mimeType": image.mime_type, "note": text}
-
-
-def _get_non_vision_image_note(model: Any) -> str | None:
-    if model is None or "image" in model.input:
-        return None
-    return "[Current model does not support images. The image will be omitted from this request.]"
 
 
 def _throw_if_aborted(cancel: Any) -> None:
@@ -320,7 +318,6 @@ def create_read_tool_definition(
         detect = getattr(ops, "detect_image_mime_type", None)
         mime_type = await detect(absolute_path) if detect is not None else None
         model = getattr(ctx, "model", None)
-        non_vision_image_note = _get_non_vision_image_note(model)
         details: ReadToolDetails | None = None
 
         if mime_type:
@@ -338,19 +335,17 @@ def create_read_tool_definition(
             )
             if not processed.ok:
                 text_note = f"Read image file [{mime_type}]\n{processed.message}"
-                if non_vision_image_note:
-                    text_note += f"\n{non_vision_image_note}"
                 content: list[TextContent | ImageContent] = [TextContent(text=text_note)]
             else:
                 text_note = f"Read image file [{processed.mime_type}]"
                 if processed.hints:
                     text_note += "\n" + "\n".join(processed.hints)
-                if non_vision_image_note:
-                    text_note += f"\n{non_vision_image_note}"
                 content = [
                     TextContent(text=text_note),
                     ImageContent(data=processed.data, mime_type=processed.mime_type),
                 ]
+                if model is not None and "image" not in model.input:
+                    details = ReadToolDetails(image_unsupported_by_model=model.id)
         else:
             # Read text content. Convert offset from 1-indexed input to 0-indexed line access.
             start_line = max(0, int(offset) - 1) if offset else 0

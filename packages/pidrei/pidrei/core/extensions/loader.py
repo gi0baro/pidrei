@@ -33,6 +33,7 @@ import os
 import re
 import sys
 import threading
+import traceback
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -52,6 +53,7 @@ from pidrei.utils.paths import canonicalize_path_blocking, paths_equal, resolve_
 from .types import (
     RUNTIME_NOT_INITIALIZED,
     Extension,
+    ExtensionError,
     ExtensionFlag,
     ExtensionLoadError,
     ExtensionRuntime,
@@ -137,7 +139,25 @@ class _ExtensionEventBus:
 
     def on(self, channel: str, handler: Any) -> Callable[[], None]:
         self._api._assert_active()
-        unsubscribe = self._api._runtime.track_event_bus_subscription(self._event_bus.on(channel, handler))
+        runtime = self._api._runtime
+        extension_path = self._api._extension.path
+
+        # Report a raising handler like other extension errors. The event bus would write it to stderr,
+        # which draws over the interactive TUI (#11264).
+        async def reporting_handler(data: Any) -> None:
+            try:
+                await handler(data)
+            except Exception as error:
+                runtime.report_error(
+                    ExtensionError(
+                        extension_path=extension_path,
+                        event=f"events:{channel}",
+                        error=str(error),
+                        stack=traceback.format_exc(),
+                    )
+                )
+
+        unsubscribe = runtime.track_event_bus_subscription(self._event_bus.on(channel, reporting_handler))
         if self._api._state == "loading":
             self._api._loading_unsubscribers.append(unsubscribe)
         return unsubscribe

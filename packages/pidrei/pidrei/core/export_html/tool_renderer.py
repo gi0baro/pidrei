@@ -4,17 +4,12 @@ Renders custom tool calls and results to HTML by invoking their TUI
 renderers and converting the ANSI output to HTML.
 """
 
-import re
-
 from ...modes.interactive.components.keybinding_hints import key_hint, key_text
-from .ansi_to_html import ansi_lines_to_html
-
-
-_ANSI_ESCAPE_REGEX = re.compile(r"\x1b\[[\d;]*m")
+from .ansi_to_html import ansi_lines_to_html, strip_ansi_escapes
 
 
 def _is_blank_rendered_line(line: str) -> bool:
-    return len(_ANSI_ESCAPE_REGEX.sub("", line).strip()) == 0
+    return len(strip_ansi_escapes(line).strip()) == 0
 
 
 def _trim_rendered_result_lines(lines: list) -> list:

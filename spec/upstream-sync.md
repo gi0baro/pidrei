@@ -764,6 +764,12 @@ untouched: component diffs port 1:1. What diverges:
     lands there, guarded.
   - Pi's global `setTimeout`/`setInterval` in an example become
     `tui.timeout`/`tui.interval`; examples never import private modules.
+  - A `pi.events` handler's error reaches the runner's listeners through
+    `runtime.report_error`, which checks `_stale_message` and calls the
+    listeners under `ExtensionRunner._stale_guard` (a thread lock, sync only);
+    `invalidate()` sets `_stale_message` under it. Lock order: that guard, then
+    the UI state lock (a listener may take it); `invalidate()` is never
+    reached under the state lock.
 - **Program status** (OSC 7501):
   - The terminal's program status state (the held status, support, the
     pending support query) is under `ProcessTerminal._protocol_lock`, with the

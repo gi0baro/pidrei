@@ -2,7 +2,8 @@
 
 ANSI escape code to HTML converter (inline styles). Supports standard and
 bright colors, the 256-color palette, RGB true color, bold/dim/italic/
-underline, and reset.
+underline, reset, and OSC 8 hyperlinks with http, https, or mailto URLs
+(other CSI, OSC, and APC sequences and stray ESC characters are dropped).
 """
 
 import re
@@ -154,8 +155,22 @@ def _apply_sgr_code(params: list, style: dict) -> None:
         i += 1
 
 
-# Match ANSI escape sequences: ESC[ followed by params and ending with 'm'
-_ANSI_REGEX = re.compile(r"\x1b\[([\d;]*)m")
+# Match escape sequences: SGR (ESC[...m), other CSI sequences, OSC sequences, and APC sequences (terminated by BEL or ST)
+_ANSI_REGEX = re.compile(
+    r"\x1b\[([\d;]*)m|\x1b\[[0-?]*[ -/]*[@-~]|\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)|\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)"
+)
+
+# OSC 8 hyperlink payload: "8;params;url"
+_OSC8_REGEX = re.compile(r"^8;[^;]*;(.*)$", re.DOTALL)
+
+_SAFE_LINK_REGEX = re.compile(r"^(?:https?:|mailto:)", re.IGNORECASE)
+
+_C0_CONTROLS_REGEX = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def strip_ansi_escapes(text: str) -> str:
+    """Remove all escape sequences matched by the converter, plus stray ESC characters."""
+    return _ANSI_REGEX.sub("", text).replace("\x1b", "")
 
 
 def _parse_int(value: str) -> int:
@@ -171,40 +186,62 @@ def ansi_to_html(text: str) -> str:
     result = ""
     last_index = 0
     in_span = False
+    in_link = False
+
+    def close_span() -> None:
+        nonlocal result, in_span
+        if in_span:
+            result += "</span>"
+            in_span = False
+
+    def open_span() -> None:
+        nonlocal result, in_span
+        if _has_style(style):
+            result += f'<span style="{_style_to_inline_css(style)}">'
+            in_span = True
 
     for match in _ANSI_REGEX.finditer(text):
         # Add text before this escape sequence
         before_text = text[last_index : match.start()]
         if before_text:
-            result += _escape_html(before_text)
+            result += _escape_html(before_text.replace("\x1b", ""))
 
-        # Parse SGR parameters
-        param_str = match.group(1)
-        params = [_parse_int(p) for p in param_str.split(";")] if param_str else [0]
+        if match.group(1) is not None:
+            # Parse SGR parameters
+            param_str = match.group(1)
+            params = [_parse_int(p) for p in param_str.split(";")] if param_str else [0]
 
-        # Close existing span if we have one
-        if in_span:
-            result += "</span>"
-            in_span = False
-
-        # Apply the codes
-        _apply_sgr_code(params, style)
-
-        # Open new span if we have any styling
-        if _has_style(style):
-            result += f'<span style="{_style_to_inline_css(style)}">'
-            in_span = True
+            close_span()
+            _apply_sgr_code(params, style)
+            open_span()
+        elif match.group(2) is not None:
+            hyperlink = _OSC8_REGEX.match(match.group(2))
+            if hyperlink:
+                # Keep spans nested inside the link: close and reopen the current style around link changes
+                # Browsers strip C0 controls from URLs, so strip them before checking the scheme
+                url = _C0_CONTROLS_REGEX.sub("", hyperlink.group(1).strip())
+                close_span()
+                if in_link:
+                    result += "</a>"
+                    in_link = False
+                if url and _SAFE_LINK_REGEX.match(url):
+                    result += f'<a href="{_escape_html(url)}">'
+                    in_link = True
+                open_span()
+            # Other OSC sequences are dropped
+        # Other CSI and APC sequences are dropped
 
         last_index = match.end()
 
     # Add remaining text
     remaining_text = text[last_index:]
     if remaining_text:
-        result += _escape_html(remaining_text)
+        result += _escape_html(remaining_text.replace("\x1b", ""))
 
-    # Close any open span
-    if in_span:
-        result += "</span>"
+    # Close any open span and link
+    close_span()
+    if in_link:
+        result += "</a>"
 
     return result
 

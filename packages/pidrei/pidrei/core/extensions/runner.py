@@ -573,6 +573,16 @@ class ExtensionRunner:
         self._error_listeners: list[Callable[[ExtensionError], None]] = []
         self._shortcut_diagnostics: list[ResourceDiagnostic] = []
         self._stale_message: str | None = None
+        # pi's `if (!staleMessage) emitError(error)` is one step on its thread. Here a `pi.events`
+        # handler reports on its own coroutine while `invalidate()` runs on the replacing one, so the
+        # report checks and calls the listeners, and `invalidate()` sets `_stale_message`, under this
+        # guard: once `invalidate()` returns, no report is running or can start. Held in sync code
+        # only; listeners may take the UI state lock (lock order: this guard, then the state lock).
+        self._stale_guard = threading.Lock()
+        # A handler still running when its session is replaced must not report into the replacement's UI.
+        # Published after the listeners and the guard it uses: a handler on another coroutine may call it
+        # at once.
+        self._runtime.report_error = self._report_unless_stale
         # Prompts open and settle on any coroutine (a handler's, a key's): the
         # depth and the active prompt change under the guard.
         self._ui_prompt_guard = threading.Lock()
@@ -988,9 +998,11 @@ class ExtensionRunner:
     # -- staleness / errors --------------------------------------------------------
 
     def invalidate(self, message: str = _STALE_MESSAGE_DEFAULT) -> None:
-        if not self._stale_message:
+        with self._stale_guard:
+            if self._stale_message:
+                return
             self._stale_message = message
-            self._runtime.invalidate(message)
+        self._runtime.invalidate(message)
 
     def _default_system_prompt_options(self) -> BuildSystemPromptOptions:
         return normalize_build_system_prompt_options(BuildSystemPromptOptions(cwd=self._cwd))
@@ -1011,6 +1023,12 @@ class ExtensionRunner:
     def emit_error(self, error: ExtensionError) -> None:
         for listener in list(self._error_listeners):
             listener(error)
+
+    def _report_unless_stale(self, error: ExtensionError) -> None:
+        """`runtime.report_error`: a `pi.events` handler's error, dropped once this runner is invalidated."""
+        with self._stale_guard:
+            if not self._stale_message:
+                self.emit_error(error)
 
     def has_handlers(self, event_type: str) -> bool:
         return any(ext.handlers.get(event_type) for ext in self._extensions)

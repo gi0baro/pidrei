@@ -774,7 +774,8 @@ class DefaultPackageManager:
     ) -> str:
         result = await exec_command(command, args, cwd or self._cwd, timeout=timeout_ms, env=env)
         # No cancel token is passed, so a kill without truncation is the timeout. Test it before the
-        # code: a command ended by a signal reads as code 0.
+        # code: the timeout's SIGTERM reads as code 143 (128 + the signal number), which would report
+        # the timeout as an ordinary failure.
         if result.killed and not result.truncated:
             raise Exception(f"{command} {' '.join(args)} timed out after {timeout_ms}ms")
         if result.code != 0:

@@ -2669,7 +2669,9 @@ When the output exceeds `max_buffer`, pidrei terminates the command and
 returns the output up to the limit with `truncated` and `killed` True and a
 nonzero `code`. `killed` is True whenever pidrei terminated the command:
 timeout, cancellation or `max_buffer`. A command that ignores SIGTERM gets
-SIGKILL after 5 seconds. A command that cannot be started resolves with
+SIGKILL after 5 seconds. A command terminated by a signal, by pidrei or
+otherwise, reports 128 + the signal number as `code`, like a shell: 143 for
+SIGTERM, 137 for SIGKILL. A command that cannot be started resolves with
 `code` 1 and the error in `stderr`; only an invalid `max_buffer` raises.
 
 ### pi.get_active_tools() / pi.get_all_tools() / pi.set_active_tools(names) / pi.update_active_tools(update)
