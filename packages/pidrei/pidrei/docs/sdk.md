@@ -191,7 +191,7 @@ The request options also take `fetch`, a per-request transport that receives
 the prepared `pidrei_http.http.Request` and returns the `Response`, for
 logging, rewriting or answering a request without the network. It is honored
 by every built-in HTTP implementation (chat, images and classifiers), not by
-WebSocket transports or the Google adapters. See
+WebSocket transports. See
 [custom-provider.md](custom-provider.md#request-transport) for the contract.
 
 ## Registering a provider

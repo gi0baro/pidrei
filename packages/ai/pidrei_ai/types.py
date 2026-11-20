@@ -635,6 +635,8 @@ class MistralConversationsCompat:
     # Whether the exact model accepts system messages after the conversation has started.
     # When False, later system messages are folded into the leading system message. Default False.
     supports_mid_convo_system_messages: bool | None = None
+    # Whether the model supports strict (schema-constrained) function tools. Default False.
+    supports_strict_mode: bool | None = None
 
 
 # How a System One service takes classifier images (see `api/system_one_shared.py`).
@@ -819,8 +821,8 @@ class ProviderRequestOptions:
     # Transport for this request's HTTP exchanges (pi: `fetch`). Receives the
     # prepared request and returns the response; the adapter's error handling,
     # retries and parsing run on what it returns. `http.default_fetch` is the
-    # ambient transport to delegate to. Ignored by WebSocket transports; the
-    # Google adapters reject anything but the default.
+    # ambient transport to delegate to. Ignored by WebSocket transports; Vertex
+    # ADC token requests do not go through it.
     fetch: FetchFunction | None = None
     timeout_ms: float | None = None
     max_retries: int | None = None

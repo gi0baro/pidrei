@@ -4,7 +4,7 @@ No pi spec covers any of this — pi's Google tests stub the SDK away, so its UR
 joining, params→body mapping and auth headers are only ever exercised against
 the live API. Here that code is ours (`api/google_client.py`), and a wrong URL or
 a dropped body field is a silently broken provider, so each rule read out of
-`@google/genai` 1.52.0 gets pinned here.
+`@google/genai` 2.32.0 gets pinned here.
 """
 
 import contextlib
@@ -283,8 +283,8 @@ async def test_each_read_is_bounded_by_the_callers_timeout_or_the_streaming_defa
             pass
 
     class _Client:
-        async def post(self, url, *, json, headers, timeout):
-            timeouts.append(timeout)
+        async def send(self, request):
+            timeouts.append(request.timeout)
             return _Response()
 
     monkeypatch.setattr(http, "client_for", lambda _url, _env=None: _Client())

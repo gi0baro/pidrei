@@ -137,11 +137,22 @@ def test_omits_cache_affinity_headers_when_session_is_absent():
     assert "x-session-id" not in headers
 
 
-def test_sets_strict_mode_explicitly_for_cloudflare_openai_responses_tools():
+# #12286: Copilot treats tools without `strict` as strict and fills omitted optional arguments.
+@pytest.mark.parametrize(
+    ("provider", "model_id"),
+    [
+        ("cloudflare-ai-gateway", "gpt-5.6-sol"),
+        ("github-copilot", "gpt-5.3-codex"),
+        ("github-copilot", "mai-code-2"),
+        ("github-copilot", "grok-4.7"),
+    ],
+)
+def test_sets_strict_mode_explicitly_for_responses_tools(provider, model_id):
     from pidrei_ai.providers.all import get_builtin_model
     from pidrei_ai.types import JsonSchemaConstrainedSampling, Tool
 
-    model = get_builtin_model("cloudflare-ai-gateway", "gpt-5.6-sol")
+    model = get_builtin_model(provider, model_id)
+    assert model is not None
     assert model.compat is not None and model.compat.supports_strict_mode is True
 
     context = Context(

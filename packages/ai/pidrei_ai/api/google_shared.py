@@ -486,22 +486,12 @@ def map_stop_reason(reason: str) -> StopReason:
     """Map Gemini `FinishReason` to our `StopReason`."""
     if reason == "STOP":
         return "stop"
-    if reason == "MAX_TOKENS":
+    # Per-request token limit reached before generation completed; pidrei does not resume with the continuation token.
+    if reason in ("MAX_TOKENS", "CONTINUATION"):
         return "length"
     if reason in _STOP_REASON_ERROR:
         return "error"
     raise ValueError(f"Unhandled stop reason: {reason}")
-
-
-def map_stop_reason_string(reason: str) -> StopReason:
-    """Map string finish reason to our `StopReason` (for raw API responses)."""
-    match reason:
-        case "STOP":
-            return "stop"
-        case "MAX_TOKENS":
-            return "length"
-        case _:
-            return "error"
 
 
 async def retry_google_request[T](request: Callable[[], Awaitable[T]], options: StreamOptions | None = None) -> T:

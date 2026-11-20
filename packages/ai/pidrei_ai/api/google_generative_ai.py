@@ -122,13 +122,10 @@ def stream(
 
     async def _run() -> None:
         try:
-            # pi: `options.fetch !== globalThis.fetch`; the client cannot take a transport.
-            if opts.fetch is not None and opts.fetch is not http.default_fetch:
-                raise RuntimeError("Custom fetch is not supported by the Google Generative AI adapter")
             api_key = opts.api_key
             if not api_key:
                 raise RuntimeError(f"No API key for provider: {model.provider}")
-            client = create_client(model, api_key, opts.headers, opts.identity)
+            client = create_client(model, api_key, opts.headers, opts.identity, opts.fetch)
             params = build_params(model, normalized_context, opts)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
@@ -374,8 +371,11 @@ def create_client(
     api_key: str | None = None,
     options_headers: ProviderHeaders | None = None,
     identity: ClientIdentity | None = None,
+    fetch: http.FetchFunction | None = None,
 ):
-    http_options: dict[str, Any] = {}
+    # pi always passes fetch so @google/genai adds no per-request undici dispatcher; here the
+    # client sends through it once per attempt, and the default is the pooled transport.
+    http_options: dict[str, Any] = {"fetch": fetch if fetch is not None else http.default_fetch}
     if model.base_url:
         http_options["baseUrl"] = model.base_url
         http_options["apiVersion"] = ""  # baseUrl already includes version path, don't append
@@ -383,7 +383,7 @@ def create_client(
     if headers:
         http_options["headers"] = headers
 
-    return GoogleGenAI({"apiKey": api_key, "httpOptions": http_options if http_options else None})
+    return GoogleGenAI({"apiKey": api_key, "httpOptions": http_options})
 
 
 def build_params(model: Model, context: TranscriptContext, options: GoogleOptions | None = None) -> dict[str, Any]:
@@ -414,6 +414,9 @@ def build_params(model: Model, context: TranscriptContext, options: GoogleOption
             if function_calling_mode is not None
             else {}
         ),
+        # Off for now, until we have evaluated the implications of the SDK's automatic continuation
+        # (extra requests and stream resumes inside the SDK). A CONTINUATION finish ends the turn as "length".
+        "automaticContinuation": False,
     }
 
     if options.thinking is not None and options.thinking.enabled and model.reasoning:

@@ -140,17 +140,20 @@ def stream(
 
     async def _run() -> None:
         try:
-            # pi: `options.fetch !== globalThis.fetch`; the client cannot take a transport.
-            if opts.fetch is not None and opts.fetch is not http.default_fetch:
-                raise RuntimeError("Custom fetch is not supported by the Google Vertex adapter")
             api_key = resolve_api_key(opts)
             # Create the client using either a Vertex API key, if provided, or ADC
             # with project and location
             client = (
-                create_client_with_api_key(model, api_key, opts.headers, opts.identity)
+                create_client_with_api_key(model, api_key, opts.headers, opts.identity, opts.fetch)
                 if api_key
                 else create_client(
-                    model, resolve_project(opts), resolve_location(opts), opts.headers, opts.env, opts.identity
+                    model,
+                    resolve_project(opts),
+                    resolve_location(opts),
+                    opts.headers,
+                    opts.env,
+                    opts.identity,
+                    opts.fetch,
                 )
             )
             params = build_params(model, normalized_context, opts)
@@ -401,6 +404,7 @@ def create_client(
     options_headers: ProviderHeaders | None = None,
     env: ProviderEnv | None = None,
     identity: ClientIdentity | None = None,
+    fetch: http.FetchFunction | None = None,
 ) -> GoogleGenAI:
     google_auth_options = build_google_auth_options(env)
     return GoogleGenAI(
@@ -410,7 +414,7 @@ def create_client(
             "location": location,
             "apiVersion": API_VERSION,
             **({"googleAuthOptions": google_auth_options} if google_auth_options else {}),
-            "httpOptions": build_http_options(model, options_headers, identity),
+            "httpOptions": build_http_options(model, options_headers, identity, fetch),
         }
     )
 
@@ -420,13 +424,14 @@ def create_client_with_api_key(
     api_key: str,
     options_headers: ProviderHeaders | None = None,
     identity: ClientIdentity | None = None,
+    fetch: http.FetchFunction | None = None,
 ) -> GoogleGenAI:
     return GoogleGenAI(
         {
             "vertexai": True,
             "apiKey": api_key,
             "apiVersion": API_VERSION,
-            "httpOptions": build_http_options(model, options_headers, identity),
+            "httpOptions": build_http_options(model, options_headers, identity, fetch),
         }
     )
 
@@ -435,8 +440,11 @@ def build_http_options(
     model: Model,
     options_headers: ProviderHeaders | None = None,
     identity: ClientIdentity | None = None,
-) -> dict[str, Any] | None:
-    http_options: dict[str, Any] = {}
+    fetch: http.FetchFunction | None = None,
+) -> dict[str, Any]:
+    # pi always passes fetch so @google/genai adds no per-request undici dispatcher; here the
+    # client sends through it once per attempt, and the default is the pooled transport.
+    http_options: dict[str, Any] = {"fetch": fetch if fetch is not None else http.default_fetch}
     base_url = resolve_custom_base_url(model.base_url)
     if base_url:
         http_options["baseUrl"] = base_url
@@ -448,7 +456,7 @@ def build_http_options(
     if headers:
         http_options["headers"] = headers
 
-    return http_options if http_options else None
+    return http_options
 
 
 def resolve_custom_base_url(base_url: str) -> str | None:
@@ -535,6 +543,9 @@ def build_params(
             if function_calling_mode is not None
             else {}
         ),
+        # Off for now, until we have evaluated the implications of the SDK's automatic continuation
+        # (extra requests and stream resumes inside the SDK). A CONTINUATION finish ends the turn as "length".
+        "automaticContinuation": False,
     }
 
     if options.thinking is not None and options.thinking.enabled and model.reasoning:

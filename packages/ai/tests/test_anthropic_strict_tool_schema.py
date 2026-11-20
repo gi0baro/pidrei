@@ -71,6 +71,7 @@ async def test_only_sends_the_full_input_schema_for_strict_json_schema_tools():
         "type": "object",
         "properties": legacy_parameters["properties"],
         "required": legacy_parameters["required"],
+        "additionalProperties": False,
     }
 
     strict_tool = await capture_first_tool(

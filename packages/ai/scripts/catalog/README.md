@@ -36,7 +36,7 @@ def _models(ctx):
 PROVIDER = ProviderDefinition(
     id="example",
     models=_models,
-    compat={"openai-completions": {"supportsStore": False, "supportsDeveloperRole": False}},
+    compat={"openai-completions": {"supportsStore": False}},
 )
 ```
 

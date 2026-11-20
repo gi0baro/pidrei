@@ -32,6 +32,7 @@ from pidrei_ai.builders import (
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AssistantMessage,
+    AssistantMessageDiagnostic,
     Model,
     OnProviderStreamEvent,
     StopReason,
@@ -49,12 +50,14 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import TranscriptToolSupport, resolve_transcript, resolve_transcript_tools
+from pidrei_utils import clock
 
 
 # Python has one absent value where JavaScript has two; this stands in for
@@ -157,7 +160,6 @@ def convert_responses_messages(
     context: TranscriptContext,
     allowed_tool_call_providers: set[str],
     *,
-    include_system_prompt: bool = True,
     grammar_tool_input_properties: dict[str, str] | None = None,
     supports_mid_convo_system_messages: bool | None = None,
     supports_additional_tools: bool = False,
@@ -278,22 +280,19 @@ def convert_responses_messages(
             system_index += 1
             if anchors_tool_changes:
                 append_system_tool_additions(msg, f"system:{msg_index}")
-            if not is_leading_system_message or include_system_prompt:
-                parts = [
-                    get_system_message_text(msg) if is_leading_system_message else render_system_message_update(msg)
-                ]
-                if anchors_tool_changes:
-                    # A redefinition is a removal plus an addition of the same name; only true removals are announced.
-                    added = {tool.name for tool in msg.tools_added or []}
-                    removed = [tool.name for tool in msg.tools_removed or [] if tool.name not in added]
-                    if removed:
-                        parts.append(_render_tool_removal_notice(removed))
-                    # Recorded after this message's additions, whose notice precedes this removal notice.
-                    for name in removed:
-                        unavailable_tools[name] = None
-                text = "\n\n".join(part for part in parts if part)
-                if text:
-                    messages.append({"role": instruction_role, "content": sanitize_surrogates(text)})
+            parts = [get_system_message_text(msg) if is_leading_system_message else render_system_message_update(msg)]
+            if anchors_tool_changes:
+                # A redefinition is a removal plus an addition of the same name; only true removals are announced.
+                added = {tool.name for tool in msg.tools_added or []}
+                removed = [tool.name for tool in msg.tools_removed or [] if tool.name not in added]
+                if removed:
+                    parts.append(_render_tool_removal_notice(removed))
+                # Recorded after this message's additions, whose notice precedes this removal notice.
+                for name in removed:
+                    unavailable_tools[name] = None
+            text = "\n\n".join(part for part in parts if part)
+            if text:
+                messages.append({"role": instruction_role, "content": sanitize_surrogates(text)})
         elif msg.role == "user":
             if isinstance(msg.content, str):
                 messages.append(
@@ -636,6 +635,7 @@ async def process_responses_stream(
         nonlocal saw_terminal_response_event
         saw_terminal_response_event = True
         backfill_reasoning_signatures(response.get("output") or [])
+        _append_reasoning_removals(output, response.get("input_transformations"))
         if response.get("id"):
             output.response_id = response["id"]
         usage = response.get("usage")
@@ -806,3 +806,42 @@ async def process_responses_stream(
                     "OpenAI Responses stream completed with an unfinished tool call: "
                     f"{slot.block.name} ({slot.block.id})"
                 )
+
+
+def _append_reasoning_removals(output: AssistantMessageBuilder, transformations: Any) -> None:
+    """Record the replayed reasoning items the API withheld from the model, with the reason for each.
+    From GPT-6.2 on, OpenAI removes reasoning that follows an edit of earlier input (`prefix_mismatch`)
+    and reasoning created under another organization, end user, or model. A removal is reported again
+    on every later request that replays the item.
+
+    `turn_boundary` removals are left out: models that use only current-turn reasoning (all models
+    before GPT-5.6) report every earlier turn's reasoning item on every request. That is their normal
+    behavior, and storing it would grow the session quadratically with the conversation.
+    """
+    # Wire input: older servers and proxies omit the field, and Codex tolerates malformed entries too.
+    if not isinstance(transformations, list):
+        return
+    removals = [
+        transformation
+        for transformation in transformations
+        if isinstance(transformation, dict)
+        and transformation.get("type") == "reasoning"
+        and transformation.get("action") == "removed"
+        and transformation.get("reason") != "turn_boundary"
+    ]
+    if not removals:
+        return
+    append_assistant_message_diagnostic(
+        output,
+        AssistantMessageDiagnostic(
+            type="openai_input_transformations",
+            timestamp=clock.now_ms(),
+            details={
+                # pi's `{type, id, action, reason}` drops an absent key when the session is written.
+                "transformations": [
+                    {key: removal[key] for key in ("type", "id", "action", "reason") if key in removal}
+                    for removal in removals
+                ]
+            },
+        ),
+    )

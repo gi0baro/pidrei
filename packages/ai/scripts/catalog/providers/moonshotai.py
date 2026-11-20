@@ -50,7 +50,6 @@ def moonshot_models(ctx: ProviderContext, source: str, base_url: str) -> list[Ch
 
 MOONSHOT_COMPLETIONS_COMPAT = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "supportsReasoningEffort": False,
     "maxTokensField": "max_tokens",
 }

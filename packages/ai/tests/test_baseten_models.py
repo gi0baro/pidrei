@@ -47,7 +47,6 @@ def baseten_model(model_id: str, *, supports_reasoning_effort: bool, thinking_le
         max_tokens=262144,
         compat=OpenAICompletionsCompat(
             supports_store=False,
-            supports_developer_role=False,
             supports_reasoning_effort=supports_reasoning_effort,
             supports_usage_in_streaming=True,
             max_tokens_field="max_tokens",

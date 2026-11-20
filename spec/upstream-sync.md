@@ -346,6 +346,15 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Preferred partner providers** (Pi 1.5.1: Radius and OpenRouter listed
   first in `/login` and `/logout`, marked and drawn in brand colours). The
   provider lists keep the order they had before it.
+- **Captured package command output** (Pi 1.6.0, `b513b64d`: the package
+  manager's `commandOutput` option, the no-prompt git environment, the
+  captured error tail and credentials hint, the `Installing <source>...`
+  announcement). Pi ran git with inherited stdio and drew its output over the
+  TUI; PiDrei's `_run_command` captures every git command in every mode, so
+  that cannot happen. Hunks to `runCommandCaptured`, to the option or to its
+  wiring in `resource-loader.ts` and `main.ts` are skipped.
+- **Pi's stdout flush before an exit** (Pi 1.6.0, `utils/flush-stdout.ts`):
+  see the **Exit** bullet of `tui-island`.
 
 ## 7. Diverged regions
 
@@ -1531,3 +1540,19 @@ stdlib `difflib`:
 - **Known difference**: where several minimal diffs exist (runs of repeated
   lines), `SequenceMatcher` can align them differently from jsdiff. Both
   describe the same edit, and the patch applies.
+
+### `catalog-pi-version` (`coding-agent/src/core/remote-catalog-provider.ts`)
+
+pi.dev serves each client the newest model catalog published for a minimum
+Pi version at or below the client's, and reads that version from a
+`pi/<version>` User-Agent. PiDrei sends `pidrei/<version> (...)`, so without
+help it would always get the newest catalog, including ones whose entries
+rely on code newer than the Pi it ports (ruled for 1.6.0). `_request_catalog`
+(`core/remote_catalog.py`) therefore adds `pi-version=<UPSTREAM_VERSION>`
+to the query, the protocol's explicit selector, which takes precedence over
+the User-Agent.
+
+- This is a deliberate difference from Pi's client, which does not send the
+  parameter. It must survive later syncs: a hunk that rewrites
+  `requestCatalog`'s URL or query keeps it, and
+  `test_remote_catalog_provider.py` asserts it.

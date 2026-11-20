@@ -57,7 +57,6 @@ def _models(ctx: ProviderContext) -> list[ChatModel]:
         headers={"NVCF-POLL-SECONDS": "3600"},
         compat={
             "supportsStore": False,
-            "supportsDeveloperRole": False,
             "supportsReasoningEffort": False,
             "maxTokensField": "max_tokens",
             "supportsStrictMode": False,
@@ -74,7 +73,6 @@ PROVIDER = ProviderDefinition(
     compat={
         "openai-completions": {
             "supportsStore": False,
-            "supportsDeveloperRole": False,
             "supportsReasoningEffort": False,
             "maxTokensField": "max_tokens",
             "supportsLongCacheRetention": False,

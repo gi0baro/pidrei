@@ -94,6 +94,8 @@ def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
         "gpt-6-luna",
         "gpt-6.1-sol",
         "gpt-6.1-terra",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
     ],
 )
 def test_includes_xhigh_for_openai_codex_models(model_id):
@@ -121,6 +123,8 @@ def test_includes_xhigh_and_max_for_openai_models(model_id):
         # Codex serves GPT-6.1 Sol with a 500K default context window (#10840)
         ("gpt-6.1-sol", ModelCost(input=2, output=10, cache_read=0.1, cache_write=2.5), 500000),
         ("gpt-6.1-terra", ModelCost(input=1, output=5, cache_read=0.05, cache_write=1.25), 500000),
+        ("gpt-6.2-astra", ModelCost(input=8, output=40, cache_read=0.4, cache_write=10), 272000),
+        ("gpt-6.2-sol", ModelCost(input=2, output=10, cache_read=0.1, cache_write=2.5), 500000),
     ],
 )
 def test_includes_official_metadata_for_openai_and_codex(model_id, cost, codex_context_window):
@@ -152,15 +156,16 @@ def test_includes_official_metadata_for_openai_and_codex(model_id, cost, codex_c
         assert model.compat.supports_tool_search is True
 
 
-# OpenAI and Codex reject reasoning.effort "none" for GPT-6.1 Sol.
-def test_does_not_support_off_for_gpt_6_1_sol():
+# OpenAI and Codex reject reasoning.effort "none" for GPT-6.1 Sol and GPT-6.2.
+@pytest.mark.parametrize("model_id", ["gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"])
+def test_does_not_support_off(model_id):
     expected = {
         "openai": ["low", "medium", "high", "xhigh", "max"],
         "azure": ["low", "medium", "high", "xhigh", "max"],
         "openai-codex": ["minimal", "low", "medium", "high", "xhigh", "max"],
     }
     for provider, levels in expected.items():
-        model = next((model for model in MODELS[provider] if model.id == "gpt-6.1-sol"), None)
+        model = next((model for model in MODELS[provider] if model.id == model_id), None)
         assert model is not None, provider
         assert get_supported_thinking_levels(model) == levels
         assert model.thinking_level_map["off"] is None
@@ -175,7 +180,10 @@ def test_supports_off_but_not_minimal_for_gpt_6_1_terra():
         assert model.thinking_level_map["minimal"] == ("low" if provider == "openai-codex" else None)
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra"])
+@pytest.mark.parametrize(
+    "model_id",
+    ["gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2-astra", "gpt-6.2-sol"],
+)
 def test_uses_the_azure_foundry_1_05m_context_window(model_id):
     model = next((model for model in MODELS["azure"] if model.id == model_id), None)
     assert model is not None

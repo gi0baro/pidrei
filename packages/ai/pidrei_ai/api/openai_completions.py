@@ -281,9 +281,9 @@ def detect_compat(model: Model) -> _ResolvedCompat:
     )
 
     is_grok = provider == "xai" or "api.x.ai" in base_url
-    is_openrouter_developer_role_model = is_openrouter and (
-        model.id.startswith("anthropic/") or model.id.startswith("openai/")
-    )
+    # The developer role is OpenAI's. Other hosts' chat templates often reject it (#10741),
+    # and every host accepts system, so only OpenAI's own API gets developer by default.
+    is_openai = provider == "openai" or "api.openai.com" in base_url
     cache_control_format = "anthropic" if provider == "openrouter" and model.id.startswith("anthropic/") else None
 
     if is_deepseek:
@@ -301,7 +301,7 @@ def detect_compat(model: Model) -> _ResolvedCompat:
 
     return _ResolvedCompat(
         supports_store=not is_non_standard,
-        supports_developer_role=is_openrouter_developer_role_model or (not is_non_standard and not is_openrouter),
+        supports_developer_role=is_openai,
         supports_reasoning_effort=(
             not is_grok
             and not is_zai
@@ -617,7 +617,7 @@ def _parse_chunk_usage(raw_usage: dict, model: Model) -> UsageBuilder:
         output=output_tokens,
         cache_read=cache_read_tokens,
         cache_write=cache_write_tokens,
-        reasoning=completion_details.get("reasoning_tokens") or 0,
+        reasoning=completion_details.get("reasoning_tokens") or raw_usage.get("reasoning_tokens") or 0,
         total_tokens=input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
     )
     calculate_cost(model, usage)

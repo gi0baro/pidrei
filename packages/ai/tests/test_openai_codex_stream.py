@@ -56,6 +56,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils import websocket
+from pidrei_ai.utils.retry import RetryPolicy, retry_assistant_call
 from pidrei_ai.utils.transcript import normalize_context
 from pidrei_http import http
 from pidrei_utils import clock
@@ -87,6 +88,23 @@ def make_model(model_id: str = "gpt-5.1-codex", **overrides) -> Model:
     }
     defaults.update(overrides)
     return Model(**defaults)
+
+
+def build_codex_model(
+    model_id: str, compat: OpenAIResponsesCompat | None = None, thinking_level_map: dict | None = None
+) -> Model:
+    """pi's `buildCodexModel`."""
+    return make_model(model_id, name=model_id, compat=compat, thinking_level_map=thinking_level_map)
+
+
+def summarize_input(body: dict) -> list[str]:
+    """Input items as roles, with configuration_update items shown with their effort."""
+    return [
+        f"configuration_update:{(item.get('reasoning') or {}).get('effort')}"
+        if item.get("type") == "configuration_update"
+        else item.get("role") or f"{item.get('type')}"
+        for item in body.get("input") or []
+    ]
 
 
 def hello_context() -> TranscriptContext:
@@ -676,6 +694,129 @@ async def test_forwards_required_tool_choice():
     assert client.requests[0].payload()["tool_choice"] == "required"
 
 
+# Regression test for https://github.com/earendil-works/pi/issues/12273
+@pytest.mark.tonio
+async def test_sends_the_system_prompt_as_a_leading_developer_item_instead_of_instructions():
+    client = sse_client()
+    model = build_codex_model("gpt-6.2-sol")
+    messages = [UserMessage(content="Say hello", timestamp=1)]
+
+    await stream_codex(
+        model,
+        normalize_context(Context(system_prompt="Be terse.", messages=messages)),
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", client=client),
+    ).result()
+    await stream_codex(
+        model,
+        normalize_context(Context(messages=messages)),
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", client=client),
+    ).result()
+
+    user_item = {"role": "user", "content": [{"type": "input_text", "text": "Say hello"}]}
+    first, second = (request.payload() for request in client.requests)
+    assert "instructions" not in first
+    assert first["input"] == [{"role": "developer", "content": "Be terse."}, user_item]
+    assert "instructions" not in second
+    assert second["input"] == [user_item]
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/12269
+@pytest.mark.tonio
+async def test_sends_thinking_level_changes_as_configuration_update_items_with_a_fixed_request_effort():
+    client = sse_client()
+    model = build_codex_model("gpt-6.2-sol", OpenAIResponsesCompat(supports_mid_convo_effort=True))
+    first_messages = [UserMessage(content="Say hello", timestamp=1)]
+
+    first = await stream_codex(
+        model,
+        normalize_context(Context(messages=first_messages)),
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", reasoning_effort="low", client=client),
+    ).result()
+    second = await stream_codex(
+        model,
+        normalize_context(Context(messages=[*first_messages, first, UserMessage(content="Again", timestamp=2)])),
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", reasoning_effort="high", client=client),
+    ).result()
+
+    bodies = [request.payload() for request in client.requests]
+    assert first.provider_thinking_level == "low"
+    assert second.provider_thinking_level == "high"
+    assert [body.get("reasoning") for body in bodies] == [
+        {"effort": "medium", "summary": "auto"},
+        {"effort": "medium", "summary": "auto"},
+    ]
+    assert [summarize_input(body) for body in bodies] == [
+        ["user", "configuration_update:low"],
+        ["user", "configuration_update:low", "assistant", "user", "configuration_update:high"],
+    ]
+
+
+@pytest.mark.tonio
+async def test_sends_the_off_level_an_omitted_reasoning_option_as_a_configuration_update_item(monkeypatch):
+    from pidrei_ai.types import SimpleStreamOptions
+
+    client = sse_client()
+    # stream_simple builds its own options, so the fake replaces the default client.
+    monkeypatch.setattr(codex, "_PunkreqCodexClient", lambda _env, _fetch=None: client)
+    model = build_codex_model("gpt-6-sol", OpenAIResponsesCompat(supports_mid_convo_effort=True), {"off": "none"})
+
+    result = await stream_simple_codex(
+        model,
+        normalize_context(Context(messages=[UserMessage(content="Say hello", timestamp=1)])),
+        SimpleStreamOptions(api_key=mock_token(), transport="sse"),
+    ).result()
+
+    body = client.requests[0].payload()
+    assert result.provider_thinking_level == "none"
+    assert body["reasoning"] == {"effort": "medium", "summary": "auto"}
+    assert summarize_input(body) == ["user", "configuration_update:none"]
+
+
+@pytest.mark.tonio
+async def test_sends_thinking_levels_as_reasoning_effort_without_supports_mid_convo_effort():
+    client = sse_client()
+    result = await stream_codex(
+        build_codex_model("gpt-5.6-sol"),
+        normalize_context(Context(messages=[UserMessage(content="Say hello", timestamp=1)])),
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", reasoning_effort="high", client=client),
+    ).result()
+
+    body = client.requests[0].payload()
+    assert result.provider_thinking_level is None
+    assert body["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert summarize_input(body) == ["user"]
+
+
+@pytest.mark.tonio
+async def test_sends_max_tokens_as_max_output_tokens_unless_the_model_opts_out(monkeypatch):
+    from pidrei_ai.types import SimpleStreamOptions
+
+    client = sse_client()
+    monkeypatch.setattr(codex, "_PunkreqCodexClient", lambda _env, _fetch=None: client)
+    context = normalize_context(Context(messages=[UserMessage(content="Say hello", timestamp=1)]))
+
+    await stream_simple_codex(
+        build_codex_model("gpt-6.2-sol"),
+        context,
+        SimpleStreamOptions(api_key=mock_token(), transport="sse", max_tokens=5000),
+    ).result()
+    await stream_codex(
+        build_codex_model("gpt-6.2-sol"),
+        context,
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", max_tokens=4, client=client),
+    ).result()
+    await stream_codex(
+        build_codex_model("gpt-6.2-sol", OpenAIResponsesCompat(supports_max_output_tokens=False)),
+        context,
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", max_tokens=5000, client=client),
+    ).result()
+
+    bodies = [request.payload() for request in client.requests]
+    assert bodies[0]["max_output_tokens"] == 5000
+    assert bodies[1]["max_output_tokens"] == 16
+    assert "max_output_tokens" not in bodies[2]
+
+
 @pytest.mark.tonio
 async def test_sets_codex_strict_mode_explicitly_and_honors_constrained_sampling():
     captured: dict = {}
@@ -788,7 +929,7 @@ async def test_zstd_compresses_sse_request_bodies():
     request = client.requests[0]
     assert request.headers["content-encoding"] == "zstd"
     assert isinstance(request.body, bytes)
-    assert request.payload()["input"][0]["content"][0]["text"] == large_text
+    assert request.payload()["input"][1]["content"][0]["text"] == large_text
 
     await stream_codex(
         make_model(),
@@ -1091,6 +1232,103 @@ async def test_reconnects_once_when_the_websocket_connection_limit_is_reached_be
     assert sse.call_count == 0
 
 
+# Regression for #12124: metadata and thinking already mark the provider stream as started.
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("name", "events"),
+    [
+        ("response metadata", [{"type": "response.created", "response": {"id": "resp_expired"}}]),
+        (
+            "rate-limit metadata",
+            [{"type": "codex.rate_limits", "rate_limits": {"allowed": True, "limit_reached": False}}],
+        ),
+        (
+            "partial thinking",
+            [
+                {"type": "response.output_item.added", "item": {"type": "reasoning", "id": "rs_1", "summary": []}},
+                {"type": "response.reasoning_summary_part.added", "part": {"type": "summary_text", "text": ""}},
+                {"type": "response.reasoning_summary_text.delta", "delta": "unfinished thinking"},
+            ],
+        ),
+    ],
+)
+async def test_retries_a_connection_lifetime_limit_on_a_fresh_websocket(name, events):
+    sent_bodies: list[dict] = []
+
+    def events_for(socket, body):
+        sent_bodies.append(body)
+        if socket.connection_id == 1:
+            return [
+                *events,
+                {
+                    "type": "error",
+                    "error": {
+                        "code": "websocket_connection_limit_reached",
+                        "message": (
+                            "Responses websocket connection limit reached (60 minutes). Create a new websocket "
+                            "connection to continue."
+                        ),
+                    },
+                },
+            ]
+        return [
+            {
+                "type": "response.output_item.added",
+                "item": {"type": "message", "id": "msg_2", "role": "assistant", "content": []},
+            },
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "id": "msg_2",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Recovered"}],
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_2",
+                    "status": "completed",
+                    "usage": {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8},
+                },
+            },
+        ]
+
+    connect, sockets = responding_websocket(events_for)
+    sse = unexpected_sse_client()
+    attempts = []
+
+    async def produce():
+        message = await stream_codex(
+            make_model(),
+            normalize_context(Context(messages=[])),
+            OpenAICodexResponsesOptions(
+                api_key=mock_token(),
+                session_id=f"connection-limit-{name}",
+                transport="websocket-cached",
+                client=sse,
+            ),
+        ).result()
+        attempts.append(message)
+        return message
+
+    with stub_websocket(connect):
+        result = await retry_assistant_call(produce, RetryPolicy(enabled=True, max_retries=1, base_delay_ms=0), None)
+
+    assert result.stop_reason == "stop", result.error_message
+    assert [(block.type, block.text) for block in result.content] == [("text", "Recovered")]
+    assert len(attempts) == 2
+    assert attempts[0].stop_reason == "error"
+    if name == "partial thinking":
+        assert [(block.type, block.thinking) for block in attempts[0].content] == [("thinking", "unfinished thinking")]
+    assert len(sockets) == 2
+    assert sockets[0].closes
+    assert len(sent_bodies) == 2
+    assert "previous_response_id" not in sent_bodies[1]
+    assert sse.call_count == 0
+
+
 @pytest.mark.tonio
 async def test_falls_back_to_sse_when_a_websocket_is_idle_before_the_first_event():
     connect, sockets = responding_websocket(lambda _socket, _body: [])
@@ -1153,7 +1391,7 @@ async def test_opens_a_fresh_cached_websocket_before_the_backend_connection_age_
             first_context,
             OpenAICodexResponsesOptions(api_key=mock_token(), session_id=session_id, transport="websocket-cached"),
         ).result()
-        now["now"] += 56 * 60 * 1000
+        now["now"] += 46 * 60 * 1000
         second_context = normalize_context(
             Context(messages=[*first_context.messages, first, UserMessage(content="Now finish", timestamp=2)])
         )
@@ -1168,6 +1406,72 @@ async def test_opens_a_fresh_cached_websocket_before_the_backend_connection_age_
     stats = get_openai_codex_websocket_debug_stats(session_id)
     assert stats.connections_created == 2
     assert stats.connections_reused == 0
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/12269
+@pytest.mark.tonio
+async def test_keeps_sending_input_deltas_in_websocket_cached_mode_when_the_thinking_level_changes():
+    sent_bodies: list[dict] = []
+
+    def events_for(_socket, body):
+        sent_bodies.append(body)
+        response_id = f"resp_{len(sent_bodies)}"
+        item = {
+            "type": "message",
+            "id": f"msg_{len(sent_bodies)}",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "OK"}],
+        }
+        return [
+            {"type": "response.created", "response": {"id": response_id}},
+            {"type": "response.output_item.added", "item": {**item, "status": "in_progress", "content": []}},
+            {"type": "response.content_part.added", "part": {"type": "output_text", "text": ""}},
+            {"type": "response.output_text.delta", "delta": "OK"},
+            {"type": "response.output_item.done", "item": item},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": response_id,
+                    "status": "completed",
+                    "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+                },
+            },
+        ]
+
+    connect, _sockets = responding_websocket(events_for)
+    model = build_codex_model("gpt-6.2-sol", OpenAIResponsesCompat(supports_mid_convo_effort=True))
+    session_id = "session-effort-deltas"
+    messages: list = []
+    with stub_websocket(connect):
+        for turn, reasoning_effort in enumerate(["low", "high", "high"]):
+            messages.append(UserMessage(content=f"Turn {turn + 1}", timestamp=turn))
+            reply = await stream_codex(
+                model,
+                normalize_context(Context(messages=list(messages))),
+                OpenAICodexResponsesOptions(
+                    api_key=mock_token(),
+                    session_id=session_id,
+                    transport="websocket-cached",
+                    reasoning_effort=reasoning_effort,
+                ),
+            ).result()
+            messages.append(reply)
+
+    assert [body.get("reasoning") for body in sent_bodies] == [
+        {"effort": "medium", "summary": "auto"},
+        {"effort": "medium", "summary": "auto"},
+        {"effort": "medium", "summary": "auto"},
+    ]
+    assert [body.get("previous_response_id") for body in sent_bodies] == [None, "resp_1", "resp_2"]
+    assert [summarize_input(body) for body in sent_bodies] == [
+        ["user", "configuration_update:low"],
+        ["user", "configuration_update:high"],
+        ["user", "configuration_update:high"],
+    ]
+    stats = get_openai_codex_websocket_debug_stats(session_id)
+    assert stats.full_context_requests == 1
+    assert stats.delta_requests == 2
 
 
 @pytest.mark.tonio
@@ -1262,7 +1566,10 @@ async def test_sends_only_response_input_deltas_in_websocket_cached_mode():
     assert len(sent_bodies) == 2
     assert sent_bodies[0]["store"] is False
     assert "previous_response_id" not in sent_bodies[0]
-    assert sent_bodies[0]["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "Use the tool"}]}]
+    assert sent_bodies[0]["input"] == [
+        {"role": "developer", "content": "You are a helpful assistant."},
+        {"role": "user", "content": [{"type": "input_text", "text": "Use the tool"}]},
+    ]
     assert sent_bodies[1]["store"] is False
     assert sent_bodies[1]["previous_response_id"] == "resp_1"
     assert sent_bodies[1]["input"] == [
@@ -1403,7 +1710,7 @@ async def test_recovers_a_missing_cached_websocket_continuation(recovery_transpo
     assert sent_bodies[1]["previous_response_id"] == "resp_1"
     assert sent_bodies[1]["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "Now finish"}]}]
     assert "previous_response_id" not in sent_bodies[2]
-    assert len(sent_bodies[2]["input"]) == 3
+    assert len(sent_bodies[2]["input"]) == 4
     assert sent_bodies[2]["input"][-1] == {
         "role": "user",
         "content": [{"type": "input_text", "text": "Now finish"}],

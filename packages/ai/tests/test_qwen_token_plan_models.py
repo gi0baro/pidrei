@@ -7,14 +7,25 @@ comes straight from `build_params`, which is the object pi's mock captures.
 import pytest
 
 from pidrei_ai.api.openai_completions import OpenAICompletionsOptions, build_params
+from pidrei_ai.env_api_keys import find_env_keys, get_env_api_key
 from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
+from pidrei_ai.providers.qwen_token_plan import qwen_token_plan_provider
+from pidrei_ai.providers.qwen_token_plan_cn import qwen_token_plan_cn_provider
+from pidrei_ai.providers.qwen_token_plan_individual import qwen_token_plan_individual_provider
+from pidrei_ai.providers.qwen_token_plan_individual_cn import qwen_token_plan_individual_cn_provider
+from pidrei_ai.registry import create_models
 from pidrei_ai.types import Context, UserMessage
 
 
+QWEN_PROVIDERS = {
+    "qwen-token-plan": qwen_token_plan_provider,
+    "qwen-token-plan-cn": qwen_token_plan_cn_provider,
+    "qwen-token-plan-individual": qwen_token_plan_individual_provider,
+    "qwen-token-plan-individual-cn": qwen_token_plan_individual_cn_provider,
+}
+
 TEXT_MODELS = [
     "MiniMax-M2.5",
-    "deepseek-v3.2",
-    "deepseek-v4-flash",
     "deepseek-v4-pro",
     "glm-5",
     "glm-5.1",
@@ -34,6 +45,8 @@ INDIVIDUAL_TEXT_MODELS = [
     "deepseek-v4-flash-0731",
     "deepseek-v4-pro",
     "deepseek-v4-pro-0813",
+    "deepseek-v4.1-flash",
+    "deepseek-v4.1-flash-1017",
     "glm-5.2",
     "glm-5.3",
     "qwen3.6-flash",
@@ -41,6 +54,7 @@ INDIVIDUAL_TEXT_MODELS = [
     "qwen3.7-plus",
     "qwen3.8-flash",
     "qwen3.8-max",
+    "qwen4-max-preview",
 ]
 
 IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-image-pro"]
@@ -61,9 +75,11 @@ def test_exposes_all_text_models(provider):
 
 
 @pytest.mark.parametrize("provider", ALL_PROVIDERS)
-def test_omits_retired_qwen38_max_preview(provider):
+def test_omits_retired_models(provider):
     model_ids = [model.id for model in get_builtin_models(provider)]
-    assert "qwen3.8-max-preview" not in model_ids
+    # #11773: deepseek-v3.2 and deepseek-v4-flash left the Token Plan model lists.
+    for retired in ["qwen3.8-max-preview", "deepseek-v3.2", "deepseek-v4-flash"]:
+        assert retired not in model_ids
 
 
 def test_exposes_exactly_the_documented_individual_text_models():
@@ -72,26 +88,50 @@ def test_exposes_exactly_the_documented_individual_text_models():
     assert model_ids == sorted(INDIVIDUAL_TEXT_MODELS)
 
 
-def test_reuses_the_international_token_plan_environment_variable():
-    from pidrei_ai.env_api_keys import find_env_keys
-
-    assert find_env_keys("qwen-token-plan-individual", {"QWEN_TOKEN_PLAN_API_KEY": "test"}) == [
-        "QWEN_TOKEN_PLAN_API_KEY"
-    ]
-
-
 def test_exposes_exactly_the_documented_individual_text_models_on_the_china_endpoint():
     model_ids = sorted(model.id for model in get_builtin_models("qwen-token-plan-individual-cn"))
 
     assert model_ids == sorted(INDIVIDUAL_TEXT_MODELS)
 
 
-def test_uses_the_china_token_plan_environment_variable():
-    from pidrei_ai.env_api_keys import find_env_keys
+class _EnvAuthContext:
+    def __init__(self, env: dict[str, str]):
+        self._env = env
 
-    assert find_env_keys("qwen-token-plan-individual-cn", {"QWEN_TOKEN_PLAN_CN_API_KEY": "test"}) == [
-        "QWEN_TOKEN_PLAN_CN_API_KEY"
-    ]
+    async def env(self, name: str) -> str | None:
+        return self._env.get(name)
+
+    async def file_exists(self, _path: str) -> bool:
+        return False
+
+
+# #11773
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("provider", "plan_var", "shared_var"),
+    [
+        ("qwen-token-plan", "QWEN_TOKEN_PLAN_TEAM_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"),
+        ("qwen-token-plan-cn", "QWEN_TOKEN_PLAN_TEAM_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"),
+        ("qwen-token-plan-individual", "QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"),
+        ("qwen-token-plan-individual-cn", "QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"),
+    ],
+)
+async def test_prefers_the_per_plan_key_and_falls_back_to_the_shared_one(provider, plan_var, shared_var):
+    async def resolve(env: dict[str, str]) -> str | None:
+        models = create_models(auth_context=_EnvAuthContext(env))
+        models.set_provider(QWEN_PROVIDERS[provider]())
+        result = await models.get_auth(provider)
+        return result.auth.api_key if result is not None else None
+
+    assert await resolve({plan_var: "plan", shared_var: "shared"}) == "plan"
+    assert await resolve({shared_var: "shared"}) == "shared"
+    assert await get_env_api_key(provider, {plan_var: "plan", shared_var: "shared"}) == "plan"
+    assert await get_env_api_key(provider, {shared_var: "shared"}) == "shared"
+
+
+def test_keeps_a_per_plan_key_away_from_the_other_plan():
+    assert find_env_keys("qwen-token-plan", {"QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY": "test"}) is None
+    assert find_env_keys("qwen-token-plan-individual-cn", {"QWEN_TOKEN_PLAN_TEAM_CN_API_KEY": "test"}) is None
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -103,8 +143,6 @@ def test_omits_image_models(provider):
 
 
 THINKING_MODELS = [
-    "deepseek-v3.2",
-    "deepseek-v4-flash",
     "deepseek-v4-pro",
     "glm-5",
     "glm-5.1",
@@ -120,7 +158,7 @@ THINKING_MODELS = [
     "qwen3.8-max",
 ]
 
-REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"]
+REASONING_EFFORT_MODELS = ["deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"]
 
 INDIVIDUAL_REASONING_EFFORT_MODELS = [
     "deepseek-v4-flash-0731",
@@ -197,7 +235,6 @@ def test_exposes_glm_5_3_reasoning_effort_levels_for_qwen_token_plan_individual(
     )
     assert model is not None, "Missing model: qwen-token-plan-individual/glm-5.3"
 
-    assert model.base_url == "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
     _assert_matches(
         model.thinking_level_map,
         {

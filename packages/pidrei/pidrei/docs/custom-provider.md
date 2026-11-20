@@ -278,8 +278,8 @@ timeout=request.timeout)`. A fetch may also answer without the network by
 returning `http.Response(status, headers=..., json=...)` or a response with a
 streaming body; the implementation closes whatever response it receives. A
 wrapper that reuses a built-in implementation sets the option on the options
-it forwards. The Google adapters take no custom transport and fail the
-request if one is set; WebSocket transports ignore it.
+it forwards. WebSocket transports ignore it, and the Google Vertex
+implementation's ADC token requests do not go through it.
 
 Write your own stream only when none fits, and study `pidrei_ai/api/` first.
 The context it receives is a normalized transcript: read the system prompt and

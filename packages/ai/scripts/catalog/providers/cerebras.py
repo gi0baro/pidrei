@@ -10,5 +10,5 @@ def _models(ctx: ProviderContext) -> list[ChatModel]:
 PROVIDER = ProviderDefinition(
     id="cerebras",
     models=_models,
-    compat={"openai-completions": {"supportsStore": False, "supportsDeveloperRole": False}},
+    compat={"openai-completions": {"supportsStore": False}},
 )

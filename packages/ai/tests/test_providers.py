@@ -124,6 +124,10 @@ def test_stores_native_constrained_sampling_capabilities_in_model_metadata():
     assert gpt54.compat.supports_openai_grammar_tools is True
 
     assert get_builtin_model("anthropic", "claude-haiku-4-5").compat.supports_strict_tools is True
+    copilot_claude = [model for model in get_builtin_models("github-copilot") if model.api == "anthropic-messages"]
+    assert len(copilot_claude) > 0
+    for model in copilot_claude:
+        assert model.compat is not None and model.compat.supports_strict_tools is True, model.id
 
 
 DEFAULT_IMAGE_RESIZE = ModelImageResizeOptions(

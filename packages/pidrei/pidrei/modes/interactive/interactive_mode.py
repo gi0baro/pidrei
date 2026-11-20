@@ -26,7 +26,7 @@ import traceback
 import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import replace as dataclass_replace
+from dataclasses import dataclass, replace as dataclass_replace
 from types import SimpleNamespace
 from typing import Protocol, runtime_checkable
 
@@ -424,6 +424,60 @@ def _format_login_provider_completion_description(provider: dict) -> str:
         format_auth_selector_provider_type(auth_type, provider["subscription"]) for auth_type in provider["authTypes"]
     )
     return auth_types if provider["name"] == provider["id"] else f"{provider['name']} · {auth_types}"
+
+
+@dataclass(frozen=True, slots=True)
+class _ReasoningDropDiagnostic:
+    provider: str
+    # Transformation `type` of a withheld block.
+    dropped_type: str
+    # Singular and plural name of a withheld block.
+    noun: tuple[str, str]
+
+
+# Assistant diagnostics that list reasoning a provider withheld from the model, by diagnostic type.
+_REASONING_DROP_DIAGNOSTICS: dict[str, _ReasoningDropDiagnostic] = {
+    "anthropic_input_transformations": _ReasoningDropDiagnostic(
+        provider="Anthropic", dropped_type="thinking_dropped", noun=("thinking block", "thinking blocks")
+    ),
+    "openai_input_transformations": _ReasoningDropDiagnostic(
+        provider="OpenAI", dropped_type="reasoning", noun=("reasoning item", "reasoning items")
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _DroppedReasoning:
+    diagnostic: _ReasoningDropDiagnostic
+    count: int
+    reasons: list[str]
+
+
+def _get_dropped_reasoning(message) -> _DroppedReasoning | None:
+    """Count the reasoning blocks a provider reported as withheld from the request that produced `message`."""
+    for diagnostic in message.diagnostics or []:
+        kind = _REASONING_DROP_DIAGNOSTICS.get(diagnostic.type)
+        if kind is None:
+            continue
+        # Session data: diagnostics details are untyped JSON.
+        transformations = (diagnostic.details or {}).get("transformations")
+        if not isinstance(transformations, list):
+            continue
+        dropped = [
+            transformation
+            for transformation in transformations
+            if isinstance(transformation, dict) and transformation.get("type") == kind.dropped_type
+        ]
+        if not dropped:
+            continue
+        # pi's Set: insertion-ordered, each reason once.
+        reasons: dict[str, None] = {}
+        for transformation in dropped:
+            reason = transformation.get("reason")
+            if isinstance(reason, str):
+                reasons[reason] = None
+        return _DroppedReasoning(diagnostic=kind, count=len(dropped), reasons=list(reasons))
+    return None
 
 
 class ExtensionUIContext:
@@ -4282,52 +4336,35 @@ class InteractiveMode:
             ThemedText(lambda: theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
         )
 
-    @staticmethod
-    def _count_dropped_thinking_blocks(message) -> int:
-        count = 0
-        for diagnostic in message.diagnostics or []:
-            if diagnostic.type != "anthropic_input_transformations":
-                continue
-            transformations = (diagnostic.details or {}).get("transformations")
-            if not isinstance(transformations, list):
-                continue
-            count += sum(
-                1
-                for transformation in transformations
-                if isinstance(transformation, dict) and transformation.get("type") == "thinking_dropped"
-            )
-        return count
-
     def _maybe_show_thinking_drop_notice(self, message) -> None:
         if not self.settings_manager.get_show_cache_miss_notices():
             return
 
-        dropped_count = InteractiveMode._count_dropped_thinking_blocks(message)
-        if dropped_count == 0:
+        dropped = _get_dropped_reasoning(message)
+        if dropped is None:
             return
 
-        # Compare against the previous response on the branch. pi relies on message_end
+        # Providers report a withheld block again on every later request that replays it, so only
+        # a count above the previous response's means new losses. pi relies on message_end
         # reaching the UI before persistence; here the UI update can run after the session
         # persisted the message, so the current message is skipped by identity.
-        previous_dropped_count = 0
         for entry in reversed(self.session_manager.get_branch()):
             if entry.get("type") != "message":
                 continue
             entry_message = entry.get("message")
             if getattr(entry_message, "role", None) != "assistant" or entry_message is message:
                 continue
-            previous_dropped_count = InteractiveMode._count_dropped_thinking_blocks(entry_message)
+            previous = _get_dropped_reasoning(entry_message)
+            if previous is not None and previous.diagnostic is dropped.diagnostic and dropped.count <= previous.count:
+                return
             break
-        if dropped_count <= previous_dropped_count:
-            return
 
-        noun = "thinking block" if dropped_count == 1 else "thinking blocks"
+        provider = dropped.diagnostic.provider
+        noun = dropped.diagnostic.noun[0 if dropped.count == 1 else 1]
+        reasons = f": {', '.join(dropped.reasons)}" if dropped.reasons else ""
+        text = f"{provider} dropped {dropped.count} {noun}{reasons} (details in session)"
         self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(
-            ThemedText(
-                lambda: theme.fg("warning", f"Anthropic dropped {dropped_count} {noun} (details in session)"), 1, 0
-            )
-        )
+        self._chat_container.add_child(ThemedText(lambda: theme.fg("warning", text), 1, 0))
 
     def _maybe_show_cache_miss_notice(self, message) -> None:
         """Show a transcript notice for a significant prompt-cache miss.

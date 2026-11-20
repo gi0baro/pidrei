@@ -56,7 +56,6 @@ PROVIDER = ProviderDefinition(
     compat={
         "openai-completions": {
             "supportsStore": False,
-            "supportsDeveloperRole": False,
             "maxTokensField": "max_tokens",
             "requiresReasoningContentOnAssistantMessages": True,
             "thinkingFormat": "deepseek",

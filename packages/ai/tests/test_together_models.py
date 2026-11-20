@@ -23,11 +23,10 @@ def test_registers_default_kimi_k3_via_openai_completions():
     assert model.thinking_level_map == {"minimal": None, "low": None, "medium": None}
     assert model.input == ["text", "image"]
     assert model.context_window == 1048576
-    assert model.max_tokens == 131072
+    assert model.max_tokens == 1048576
     assert model.cost == ModelCost(input=3, output=15, cache_read=0.3, cache_write=0)
     assert model.compat == OpenAICompletionsCompat(
         supports_store=False,
-        supports_developer_role=False,
         supports_reasoning_effort=False,
         max_tokens_field="max_tokens",
         thinking_format="together",

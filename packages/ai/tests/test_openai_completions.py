@@ -8,6 +8,7 @@ detection, and params-builder coverage that pi exercises via e2e suites.
 
 import json
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -17,6 +18,7 @@ from pidrei_ai.api.openai_completions import (
     detect_compat,
     get_compat,
     stream as stream_completions,
+    stream_simple as stream_simple_completions,
 )
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
@@ -26,6 +28,7 @@ from pidrei_ai.types import (
     Model,
     ModelCost,
     OpenAICompletionsCompat,
+    SimpleStreamOptions,
     TextContent,
     ThinkingContent,
     Tool,
@@ -232,6 +235,30 @@ async def test_parses_usage_with_cache_and_reasoning_details():
     assert result.usage.total_tokens == 1050
 
 
+# #12019 (pi: openai-completions-tool-choice.test.ts)
+@pytest.mark.tonio
+async def test_reads_top_level_reasoning_tokens_when_completion_tokens_details_has_none():
+    chunks = [
+        {"id": "chatcmpl-copilot-reasoning", "choices": [{"delta": {"content": "OK"}, "finish_reason": None}]},
+        {
+            "id": "chatcmpl-copilot-reasoning",
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 40,
+                "prompt_tokens_details": {"cached_tokens": 0},
+                "reasoning_tokens": 30,
+            },
+        },
+    ]
+    model = get_builtin_model("github-copilot", "gemini-4-argon")
+    assert model is not None
+    result = await consume(FakeClient(chunk_body(chunks)), model)
+
+    assert result.usage.reasoning == 30
+    assert result.usage.output == 40
+
+
 @pytest.mark.tonio
 async def test_usage_in_choice_fallback():
     chunks = [
@@ -382,7 +409,8 @@ def test_detect_compat_openrouter_anthropic_models():
     compat = detect_compat(model)
     assert compat.thinking_format == "openrouter"
     assert compat.cache_control_format == "anthropic"
-    assert compat.supports_developer_role is True  # anthropic/ prefixed models
+    # 1.6.0 (b82477b7): only OpenAI's own API gets the developer role by default.
+    assert compat.supports_developer_role is False
     assert compat.session_affinity_format == "openrouter"
 
     other = detect_compat(make_model(provider="openrouter", base_url="https://openrouter.ai/api/v1", id="meta/llama"))
@@ -513,6 +541,31 @@ def test_build_params_reasoning_effort_mapping():
     assert params["reasoning_effort"] == "none"
 
 
+async def capture_simple_params(model: Model, reasoning: str | None) -> dict:
+    """pi's `captureSimpleParams`: the params `stream_simple` would send, captured
+    by `on_payload`, which then aborts the request before any transport."""
+    captured: dict = {}
+
+    async def on_payload(payload, _model):
+        captured["payload"] = payload
+        raise RuntimeError("payload captured")
+
+    await stream_simple_completions(
+        model, user_context(), SimpleStreamOptions(api_key="test", reasoning=reasoning, on_payload=on_payload)
+    ).result()
+    return captured["payload"]
+
+
+# #12019 (pi: openai-completions-tool-choice.test.ts)
+@pytest.mark.tonio
+async def test_sends_reasoning_effort_for_github_copilot_completions_models_with_effort_levels():
+    model = get_builtin_model("github-copilot", "gemini-4-argon")
+    assert model is not None
+
+    assert (await capture_simple_params(model, "low"))["reasoning_effort"] == "low"
+    assert (await capture_simple_params(model, "high"))["reasoning_effort"] == "high"
+
+
 def test_build_params_deepseek_thinking():
     model = make_model(provider="deepseek", base_url="https://api.deepseek.com", reasoning=True)
     enabled = build_params(model, user_context(), opts(reasoning_effort="high"))
@@ -593,6 +646,68 @@ def test_developer_role_for_reasoning_models():
 
     non_reasoning = build_params(make_model(), context, opts())
     assert non_reasoning["messages"][0] == {"role": "system", "content": "sys"}
+
+
+async def first_instruction_role(model: Model) -> str | None:
+    """pi's `firstInstructionRole`: the role of the first message `stream_simple` would send."""
+    captured: dict = {}
+
+    async def on_payload(payload, _model):
+        captured["payload"] = payload
+        raise RuntimeError("payload captured")
+
+    context = normalize_context(
+        Context(system_prompt="Follow instructions.", messages=[UserMessage(content="Hi", timestamp=1)])
+    )
+    await stream_simple_completions(model, context, SimpleStreamOptions(api_key="test", on_payload=on_payload)).result()
+    messages = captured["payload"].get("messages") or []
+    return messages[0].get("role") if messages else None
+
+
+# pi: openai-completions-tool-choice.test.ts (1.6.0, b82477b7)
+LOCAL_OPENAI_COMPLETIONS_MODEL: dict = {
+    "api": "openai-completions",
+    "provider": "local-vllm",
+    "base_url": "http://localhost:8000/v1",
+    "reasoning": True,
+    "input": ["text"],
+    "cost": ModelCost(),
+    "context_window": 128000,
+    "max_tokens": 8192,
+}
+
+
+@pytest.mark.tonio
+async def test_keeps_developer_messages_for_openai_reasoning_model_instructions():
+    model = replace(get_builtin_model("openai", "gpt-5.5"), compat=None, api="openai-completions")
+
+    assert await first_instruction_role(model) == "developer"
+
+
+@pytest.mark.tonio
+async def test_uses_system_messages_for_reasoning_model_instructions_on_other_openai_compatible_hosts():
+    # #10741: Groq's Qwen chat template rejects the developer role.
+    groq_qwen = get_builtin_model("groq", "qwen/qwen3.8-27b")
+    custom_host = Model(id="qwen3.8-27b", name="Qwen3.8 27B", **LOCAL_OPENAI_COMPLETIONS_MODEL)
+    open_router_models = [
+        get_builtin_model("openrouter", "deepseek/deepseek-v4-pro"),
+        get_builtin_model("openrouter", "openai/gpt-5.2-codex"),
+        get_builtin_model("openrouter", "anthropic/claude-fable-5.1:batch"),
+    ]
+    azure_base_url = "https://my-resource.openai.azure.com/openai/v1"
+    # The built-in model has no baseUrl; it is resolved from AZURE_* variables at runtime.
+    azure_deep_seek = replace(get_builtin_model("azure", "deepseek-v4-pro"), base_url=azure_base_url)
+    azure_host = Model(
+        id="gpt-5.5",
+        name="GPT-5.5",
+        **{**LOCAL_OPENAI_COMPLETIONS_MODEL, "provider": "my-azure", "base_url": azure_base_url},
+    )
+
+    for model in [groq_qwen, custom_host, *open_router_models, azure_deep_seek, azure_host]:
+        assert model is not None
+        assert model.api == "openai-completions", model.id
+        assert model.reasoning is True, model.id
+        assert await first_instruction_role(model) == "system", model.id
 
 
 def test_requires_assistant_after_tool_result_bridges_user_messages():

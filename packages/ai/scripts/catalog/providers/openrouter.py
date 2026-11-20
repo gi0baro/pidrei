@@ -31,7 +31,6 @@ def _correct_upstream(model: ChatModel) -> ChatModel:
         merge_compat(
             model,
             {
-                "supportsDeveloperRole": False,
                 "requiresReasoningContentOnAssistantMessages": True,
             },
         )
@@ -71,7 +70,6 @@ ROUTER_MODELS: list[ChatModel] = [
     },
 ]
 
-_ANTHROPIC_OR_OPENAI_RE = re.compile(r"^(anthropic|openai)/")
 _ANTHROPIC_RE = re.compile(r"^~?anthropic/")
 
 
@@ -92,8 +90,6 @@ def _classifiers(ctx: ProviderContext) -> list[dict[str, Any]]:
 
 def _completions_compat(model: ChatModel) -> dict[str, Any]:
     return {
-        # OpenRouter passes developer messages through to Anthropic and OpenAI models only.
-        **({} if _ANTHROPIC_OR_OPENAI_RE.search(model["id"]) is not None else {"supportsDeveloperRole": False}),
         "thinkingFormat": "openrouter",
         "supportsStrictMode": True,
         **({"cacheControlFormat": "anthropic"} if _ANTHROPIC_RE.search(model["id"]) is not None else {}),

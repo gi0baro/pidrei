@@ -458,8 +458,13 @@ def build_chat_payload(
     }
 
     current_tools = get_current_tools(context.messages)
+    # Strict tools are opt-in: Mistral Large 4 can go silent for minutes before a strict tool call (#12148).
     if current_tools:
-        payload["tools"] = to_function_tools(current_tools)
+        compat = model.compat if isinstance(model.compat, MistralConversationsCompat) else None
+        supports_strict_mode = compat.supports_strict_mode if compat is not None else None
+        payload["tools"] = to_function_tools(
+            current_tools, supports_strict_mode if supports_strict_mode is not None else False
+        )
     if options is not None and options.temperature is not None:
         payload["temperature"] = options.temperature
     if options is not None and options.max_tokens is not None:
@@ -640,10 +645,10 @@ async def consume_chat_stream(
         out_stream.push(ToolCallEndEvent(content_index=position, tool_call=block, partial=output))
 
 
-def to_function_tools(tools: list[Tool]) -> list[dict[str, Any]]:
+def to_function_tools(tools: list[Tool], supports_strict_mode: bool) -> list[dict[str, Any]]:
     result = []
     for tool in tools:
-        strict = resolve_json_schema_strict_sampling(tool, True)
+        strict = resolve_json_schema_strict_sampling(tool, supports_strict_mode)
         result.append(
             {
                 "type": "function",

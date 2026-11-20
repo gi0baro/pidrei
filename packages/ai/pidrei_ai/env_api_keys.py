@@ -25,12 +25,13 @@ ANTHROPIC_SERVICE_ACCOUNT_ID_ENV = "ANTHROPIC_SERVICE_ACCOUNT_ID"
 ANTHROPIC_IDENTITY_TOKEN_FILE_ENV = "ANTHROPIC_IDENTITY_TOKEN_FILE"  # noqa: S105
 ANTHROPIC_WORKSPACE_ID_ENV = "ANTHROPIC_WORKSPACE_ID"
 
-_ENV_MAP: dict[str, str] = {
+# Qwen Token Plan: the per-plan variable first, then the region variable both plans used to share.
+_ENV_MAP: dict[str, str | tuple[str, ...]] = {
     "ant-ling": "ANT_LING_API_KEY",
-    "qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
-    "qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
-    "qwen-token-plan-individual": "QWEN_TOKEN_PLAN_API_KEY",
-    "qwen-token-plan-individual-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
+    "qwen-token-plan": ("QWEN_TOKEN_PLAN_TEAM_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"),
+    "qwen-token-plan-cn": ("QWEN_TOKEN_PLAN_TEAM_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"),
+    "qwen-token-plan-individual": ("QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"),
+    "qwen-token-plan-individual-cn": ("QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"),
     "openai": "OPENAI_API_KEY",
     "azure": "AZURE_OPENAI_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
@@ -96,8 +97,10 @@ def _get_api_key_env_vars(provider: str) -> list[str] | None:
     if provider == "anthropic":
         return [ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV]
 
-    env_var = _ENV_MAP.get(provider)
-    return [env_var] if env_var else None
+    env_vars = _ENV_MAP.get(provider)
+    if env_vars is None:
+        return None
+    return [env_vars] if isinstance(env_vars, str) else list(env_vars)
 
 
 def find_env_keys(provider: str, env: ProviderEnv | None = None) -> list[str] | None:

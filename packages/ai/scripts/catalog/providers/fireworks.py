@@ -28,7 +28,6 @@ _ANTHROPIC_COMPAT: dict[str, Any] = {
 }
 _OPENAI_COMPAT: dict[str, Any] = {
     "supportsStore": False,
-    "supportsDeveloperRole": False,
     "sendSessionAffinityHeaders": True,
     "supportsLongCacheRetention": False,
 }

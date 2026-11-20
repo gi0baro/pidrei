@@ -10,9 +10,13 @@ from pidrei_ai.registry import Provider, create_provider
 def qwen_token_plan_provider() -> Provider:
     return create_provider(
         id="qwen-token-plan",
-        name="Qwen Token Plan",
-        base_url="https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
-        auth=ProviderAuth(api_key=env_api_key_auth("Qwen Token Plan API key", ["QWEN_TOKEN_PLAN_API_KEY"])),
+        name="Qwen Token Plan Team",
+        base_url="https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
+        auth=ProviderAuth(
+            api_key=env_api_key_auth(
+                "Qwen Token Plan Team API key", ["QWEN_TOKEN_PLAN_TEAM_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"]
+            )
+        ),
         models=list(MODELS.get("qwen-token-plan", [])),
         api=openai_completions_api(),
     )

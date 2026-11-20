@@ -15,6 +15,7 @@ from catalog.define import (
 )
 from catalog.families.openai import (
     OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+    OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
     OPENAI_STANDARD_COSTS,
     OPENAI_TOOL_SEARCH_MODEL_IDS,
     enable_openai_grammar_tools,
@@ -43,6 +44,8 @@ SHORT_CONTEXT_CAPPED_MODEL_IDS = frozenset(
         "gpt-6-luna",
         "gpt-6.1-sol",
         "gpt-6.1-terra",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
     }
 )
 LONG_CONTEXT_PRICING_MODEL_IDS = frozenset({*SHORT_CONTEXT_CAPPED_MODEL_IDS, "gpt-5.4-pro", "gpt-5.5-pro"})
@@ -63,9 +66,6 @@ NONE_REASONING_MODEL_IDS = frozenset(
         "gpt-6-luna",
     }
 )
-# OpenAI documents configuration_update for the GPT-6 family.
-# https://developers.openai.com/api/docs/guides/reasoning
-MID_CONVO_EFFORT_MODEL_IDS = frozenset({"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"})
 
 # Not listed by models.dev.
 GPT_5_CHAT_LATEST: ChatModel = {
@@ -154,7 +154,7 @@ def _finalize(model: ChatModel, _ctx: ProviderContext) -> None:
     # https://developers.openai.com/api/docs/guides/prompt-caching
     if model["cost"]["cacheWrite"] > 0:
         merge_compat(model, {"supportsExplicitPromptCacheMode": True})
-    if model["id"] in MID_CONVO_EFFORT_MODEL_IDS:
+    if model["id"] in OPENAI_MID_CONVO_EFFORT_MODEL_IDS:
         merge_compat(model, {"supportsMidConvoEffort": True})
     with_input_limits(model, {"maxRequestBytes": 512 * 1024 * 1024, "images": {"maxPerRequest": 1500}})
 
