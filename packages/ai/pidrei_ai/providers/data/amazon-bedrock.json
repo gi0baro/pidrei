@@ -15,7 +15,7 @@
         "input": 0.33,
         "output": 2.75,
         "cacheRead": 0.0825,
-        "cacheWrite": 0.33
+        "cacheWrite": 0
       },
       "contextWindow": 1000000,
       "maxTokens": 65535,
@@ -47,7 +47,7 @@
         "input": 0.06,
         "output": 0.24,
         "cacheRead": 0.015,
-        "cacheWrite": 0.06
+        "cacheWrite": 0
       },
       "contextWindow": 300000,
       "maxTokens": 10000,
@@ -78,7 +78,7 @@
         "input": 0.035,
         "output": 0.14,
         "cacheRead": 0.00875,
-        "cacheWrite": 0.035
+        "cacheWrite": 0
       },
       "contextWindow": 128000,
       "maxTokens": 10000,
@@ -99,7 +99,7 @@
         "input": 0.8,
         "output": 3.2,
         "cacheRead": 0.2,
-        "cacheWrite": 0.8
+        "cacheWrite": 0
       },
       "contextWindow": 300000,
       "maxTokens": 10000,
@@ -128,10 +128,10 @@
         "image"
       ],
       "cost": {
-        "input": 10,
-        "output": 50,
-        "cacheRead": 1,
-        "cacheWrite": 12.5
+        "input": 11,
+        "output": 55,
+        "cacheRead": 1.1,
+        "cacheWrite": 13.75
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -168,10 +168,10 @@
         "image"
       ],
       "cost": {
-        "input": 10,
-        "output": 50,
-        "cacheRead": 0.25,
-        "cacheWrite": 12.5
+        "input": 11,
+        "output": 55,
+        "cacheRead": 0.275,
+        "cacheWrite": 13.75
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -208,10 +208,10 @@
         "image"
       ],
       "cost": {
-        "input": 8,
-        "output": 40,
-        "cacheRead": 0.2,
-        "cacheWrite": 10
+        "input": 8.8,
+        "output": 44,
+        "cacheRead": 0.22,
+        "cacheWrite": 11
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -248,10 +248,10 @@
         "image"
       ],
       "cost": {
-        "input": 1,
-        "output": 5,
-        "cacheRead": 0.1,
-        "cacheWrite": 1.25
+        "input": 1.1,
+        "output": 5.5,
+        "cacheRead": 0.11,
+        "cacheWrite": 1.375
       },
       "contextWindow": 200000,
       "maxTokens": 64000,
@@ -283,17 +283,17 @@
         "image"
       ],
       "cost": {
-        "input": 0.1,
-        "output": 0.5,
-        "cacheRead": 0.01,
-        "cacheWrite": 0.125,
+        "input": 0.11,
+        "output": 0.55,
+        "cacheRead": 0.011,
+        "cacheWrite": 0.1375,
         "tiers": [
           {
             "inputTokensAbove": 100000,
-            "input": 0.5,
-            "output": 2.5,
-            "cacheRead": 0.05,
-            "cacheWrite": 0.625
+            "input": 0.55,
+            "output": 2.75,
+            "cacheRead": 0.055,
+            "cacheWrite": 0.6875
           }
         ]
       },
@@ -363,10 +363,10 @@
         "image"
       ],
       "cost": {
-        "input": 5,
-        "output": 25,
-        "cacheRead": 0.5,
-        "cacheWrite": 6.25
+        "input": 5.5,
+        "output": 27.5,
+        "cacheRead": 0.55,
+        "cacheWrite": 6.875
       },
       "contextWindow": 200000,
       "maxTokens": 64000,
@@ -436,10 +436,10 @@
         "image"
       ],
       "cost": {
-        "input": 5,
-        "output": 25,
-        "cacheRead": 0.5,
-        "cacheWrite": 6.25
+        "input": 5.5,
+        "output": 27.5,
+        "cacheRead": 0.55,
+        "cacheWrite": 6.875
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -475,10 +475,10 @@
         "image"
       ],
       "cost": {
-        "input": 5,
-        "output": 25,
-        "cacheRead": 0.5,
-        "cacheWrite": 6.25
+        "input": 5.5,
+        "output": 27.5,
+        "cacheRead": 0.55,
+        "cacheWrite": 6.875
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -514,10 +514,10 @@
         "image"
       ],
       "cost": {
-        "input": 4,
-        "output": 20,
-        "cacheRead": 0.2,
-        "cacheWrite": 5
+        "input": 4.4,
+        "output": 22,
+        "cacheRead": 0.22,
+        "cacheWrite": 5.5
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -553,10 +553,10 @@
         "image"
       ],
       "cost": {
-        "input": 3,
-        "output": 15,
-        "cacheRead": 0.3,
-        "cacheWrite": 3.75
+        "input": 3.3,
+        "output": 16.5,
+        "cacheRead": 0.33,
+        "cacheWrite": 4.125
       },
       "contextWindow": 200000,
       "maxTokens": 64000,
@@ -626,10 +626,10 @@
         "image"
       ],
       "cost": {
-        "input": 2,
-        "output": 10,
-        "cacheRead": 0.2,
-        "cacheWrite": 2.5
+        "input": 2.2,
+        "output": 11,
+        "cacheRead": 0.22,
+        "cacheWrite": 2.75
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -665,10 +665,10 @@
         "image"
       ],
       "cost": {
-        "input": 2,
-        "output": 10,
-        "cacheRead": 0.1,
-        "cacheWrite": 2.5
+        "input": 2.2,
+        "output": 11,
+        "cacheRead": 0.11,
+        "cacheWrite": 2.75
       },
       "contextWindow": 1000000,
       "maxTokens": 128000,
@@ -2012,7 +2012,7 @@
         "input": 0.3,
         "output": 2.5,
         "cacheRead": 0.075,
-        "cacheWrite": 0.3
+        "cacheWrite": 0
       },
       "contextWindow": 1000000,
       "maxTokens": 65535,
@@ -3066,6 +3066,100 @@
             "output": 7.5,
             "cacheRead": 0.1,
             "cacheWrite": 2.5
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:global.openai.gpt-6.2-astra": {
+      "id": "global.openai.gpt-6.2-astra",
+      "name": "GPT-6.2 Astra (Global)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8,
+        "output": 40,
+        "cacheRead": 0.4,
+        "cacheWrite": 10,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 16,
+            "output": 60,
+            "cacheRead": 0.8,
+            "cacheWrite": 20
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:global.openai.gpt-6.2-sol": {
+      "id": "global.openai.gpt-6.2-sol",
+      "name": "GPT-6.2 Sol (Global)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4,
+            "output": 15,
+            "cacheRead": 0.2,
+            "cacheWrite": 5
           }
         ]
       },
@@ -4949,6 +5043,100 @@
       },
       "type": "chat"
     },
+    "chat:openai.gpt-6.2-astra": {
+      "id": "openai.gpt-6.2-astra",
+      "name": "GPT-6.2 Astra",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8.8,
+        "output": 44,
+        "cacheRead": 0.44,
+        "cacheWrite": 11,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 17.6,
+            "output": 66,
+            "cacheRead": 0.88,
+            "cacheWrite": 22
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:openai.gpt-6.2-sol": {
+      "id": "openai.gpt-6.2-sol",
+      "name": "GPT-6.2 Sol",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.2,
+        "output": 11,
+        "cacheRead": 0.11,
+        "cacheWrite": 2.75,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4.4,
+            "output": 16.5,
+            "cacheRead": 0.22,
+            "cacheWrite": 5.5
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:openai.gpt-oss-120b": {
       "id": "openai.gpt-oss-120b",
       "name": "gpt-oss-120b",
@@ -5321,7 +5509,7 @@
         "input": 0.33,
         "output": 2.75,
         "cacheRead": 0.0825,
-        "cacheWrite": 0.33
+        "cacheWrite": 0
       },
       "contextWindow": 1000000,
       "maxTokens": 65535,
@@ -5353,7 +5541,7 @@
         "input": 0.06,
         "output": 0.24,
         "cacheRead": 0.015,
-        "cacheWrite": 0.06
+        "cacheWrite": 0
       },
       "contextWindow": 300000,
       "maxTokens": 10000,
@@ -5384,7 +5572,7 @@
         "input": 0.035,
         "output": 0.14,
         "cacheRead": 0.00875,
-        "cacheWrite": 0.035
+        "cacheWrite": 0
       },
       "contextWindow": 128000,
       "maxTokens": 10000,
@@ -5437,7 +5625,7 @@
         "input": 0.8,
         "output": 3.2,
         "cacheRead": 0.2,
-        "cacheWrite": 0.8
+        "cacheWrite": 0
       },
       "contextWindow": 300000,
       "maxTokens": 10000,
@@ -6679,6 +6867,100 @@
             "output": 8.25,
             "cacheRead": 0.11,
             "cacheWrite": 2.75
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:us.openai.gpt-6.2-astra": {
+      "id": "us.openai.gpt-6.2-astra",
+      "name": "GPT-6.2 Astra (US)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 8.8,
+        "output": 44,
+        "cacheRead": 0.44,
+        "cacheWrite": 11,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 17.6,
+            "output": 66,
+            "cacheRead": 0.88,
+            "cacheWrite": 22
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "maxPerMessage": 20,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:us.openai.gpt-6.2-sol": {
+      "id": "us.openai.gpt-6.2-sol",
+      "name": "GPT-6.2 Sol (US)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.2,
+        "output": 11,
+        "cacheRead": 0.11,
+        "cacheWrite": 2.75,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4.4,
+            "output": 16.5,
+            "cacheRead": 0.22,
+            "cacheWrite": 5.5
           }
         ]
       },

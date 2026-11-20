@@ -7,6 +7,7 @@ The resources are pidrei extension modules (`.py`, pi's are `.ts`) from a
 import os
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.package_manager import ResolvedPaths, ResolvedResource
@@ -55,7 +56,8 @@ async def test_keeps_the_selection_when_a_cursor_key_leaves_the_query_unchanged(
         lambda: None,
         lambda: None,
         lambda: None,
-        canonical_by_path=build_canonical_path_map_blocking(both_scopes),
+        # Off the runtime, as `cli/config_selector.py` builds it.
+        canonical_by_path=await tonio.spawn_blocking(build_canonical_path_map_blocking, both_scopes),
     )
     resource_list = selector.get_resource_list()
 

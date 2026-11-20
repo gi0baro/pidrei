@@ -19,8 +19,7 @@
       "contextWindow": 131072,
       "maxTokens": 40960,
       "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false
+        "supportsStore": false
       },
       "thinkingLevelMap": {
         "off": null,
@@ -53,8 +52,7 @@
       "contextWindow": 131072,
       "maxTokens": 40960,
       "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false
+        "supportsStore": false
       },
       "thinkingLevelMap": {
         "off": "none",

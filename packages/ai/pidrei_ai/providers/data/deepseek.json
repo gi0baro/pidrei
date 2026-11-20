@@ -28,7 +28,6 @@
       "maxTokens": 384000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "maxTokensField": "max_tokens",
         "requiresReasoningContentOnAssistantMessages": true,
         "thinkingFormat": "deepseek",
@@ -66,7 +65,6 @@
       "maxTokens": 384000,
       "compat": {
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "maxTokensField": "max_tokens",
         "requiresReasoningContentOnAssistantMessages": true,
         "thinkingFormat": "deepseek",

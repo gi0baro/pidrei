@@ -18,11 +18,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStrictMode": false,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
@@ -69,11 +68,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 131072,
+      "maxTokens": 262144,
       "compat": {
         "supportsStrictMode": false,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
@@ -120,11 +118,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStrictMode": false,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
@@ -171,11 +168,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStrictMode": false,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
@@ -226,7 +222,6 @@
       "compat": {
         "supportsStrictMode": false,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
@@ -277,7 +272,6 @@
       "compat": {
         "supportsStrictMode": false,
         "supportsStore": false,
-        "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "deepseek",
