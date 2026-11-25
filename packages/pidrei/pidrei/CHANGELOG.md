@@ -6,6 +6,14 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped the pydantic-monty dependency to 1.7.0.
+- Codemode scripts can import `colorsys`, `keyword`, `stat` and `statistics`,
+  use `from module import *` and `typing.cast`, and subclass a class they
+  define (without `super()`). `await` inside a plain `def` is now a syntax
+  error.
+
 ## [1.6.0.0] - 2026-11-20
 
 Tracks [Pi 1.6.0](https://github.com/earendil-works/pi/releases/tag/v1.6.0).

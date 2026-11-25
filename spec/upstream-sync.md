@@ -266,8 +266,8 @@ report the capture. Don't chase it mid-port.
 
 ## 5. Dependency bumps
 
-TonIO, httpunk and punkreq releases are ported as their own small change,
-usually a `.N` PiDrei release:
+TonIO, httpunk, punkreq and pydantic-monty releases are ported as their own
+small change, usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
    (TonIO: all eight packages; httpunk and punkreq: `pidrei-http` only),
@@ -288,9 +288,17 @@ usually a `.N` PiDrei release:
    `uv sync --all-packages`).
 3. For TonIO, recheck the TonIO contract section of `AGENTS.md` against the
    release.
-4. The full suite in slices, `make lint`, `make audit`, the blocking-fs
+4. For pydantic-monty (pinned in `pidrei-codemode` only), run the codemode
+   suites, then recheck what PiDrei tells the model about the interpreter
+   against the new release: run one script per unsupported construct and
+   per importable module, with and without the type check. The list of
+   modules and the details go into `docs/codemode.md`. The `codemode` tool
+   description (`extensions/codemode/tool.py`) is a short list of what to
+   avoid and stays broad: an entry leaves it only when the construct works
+   in full under the default type check, never to describe partial support.
+5. The full suite in slices, `make lint`, `make audit`, the blocking-fs
    detector (same sites as before), `make release-check`.
-5. A one-line CHANGELOG entry in the current untagged section, or a new
+6. A one-line CHANGELOG entry in the current untagged section, or a new
    `.N` section.
 
 ## 6. What is not ported

@@ -8,9 +8,9 @@ Scripts run on [Monty](https://github.com/pydantic/monty), a sandboxed Python in
 
 The tool input is raw Python source, not JSON and not a markdown code fence. It runs in a sandboxed interpreter: top-level `await` works, and if the last line is an expression, its value is added to the output. Scripts have no third-party packages, file system, network, environment, subprocesses, or sleep; they reach the outside world only through tools and `models`.
 
-The interpreter supports a subset of Python. Not supported: `yield`, `del`, class inheritance (so no custom exception classes), method decorators, `async with` and `async for`, `asyncio.create_task`, and `asyncio.gather(return_exceptions=True)` (use `all_settled()`).
+The interpreter supports a subset of Python. Not supported: `yield`, `del`, class inheritance (so no custom exception classes), method decorators, `async with` and `async for`, `asyncio.create_task`, and `asyncio.gather(return_exceptions=True)` (use `all_settled()`). Inheritance is partial: a class can subclass another class the script defines, but without `super()`; a `@dataclass` subclass does not get its parent's fields. `asyncio.create_task` runs only with the type check off.
 
-Standard library modules that can be imported, each in part: `annotationlib`, `asyncio`, `base64`, `binascii`, `bisect`, `collections`, `copy`, `csv`, `dataclasses`, `datetime`, `decimal`, `fnmatch`, `functools`, `hashlib`, `itertools`, `json`, `math`, `os` (with `os.path`), `pathlib`, `random`, `re`, `sys`, `time`, `tomllib`, `typing`, and `unicodedata`. No other module is available.
+Standard library modules that can be imported, each in part: `annotationlib`, `asyncio`, `base64`, `binascii`, `bisect`, `collections`, `colorsys`, `copy`, `csv`, `dataclasses`, `datetime`, `decimal`, `fnmatch`, `functools`, `hashlib`, `itertools`, `json`, `keyword`, `math`, `os` (with `os.path`), `pathlib`, `random`, `re`, `stat`, `statistics`, `sys`, `time`, `tomllib`, `typing`, and `unicodedata`. No other module is available.
 
 Operations that would reach the system, such as reading a file, the environment, or `time.sleep()`, raise an error.
 
