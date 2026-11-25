@@ -20,9 +20,9 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -90,9 +90,9 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -139,9 +139,9 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -609,13 +609,13 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "minimal": null,
         "low": "low",
         "medium": "medium",
         "high": "high",
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -833,13 +833,13 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "minimal": null,
         "low": "low",
         "medium": "medium",
         "high": "high",
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,

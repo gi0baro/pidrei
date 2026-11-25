@@ -61,8 +61,7 @@ def test_replays_function_and_custom_tool_calls_with_the_status_the_api_returned
         "id": "fc_1",
         "call_id": "call_1",
         "name": "read",
-        # pi's text is compact ('{"path":"calc.py"}'); json.dumps writes it spaced. The difference is known.
-        "arguments": '{"path": "calc.py"}',
+        "arguments": '{"path":"calc.py"}',
         "status": "completed",
     } in input
     assert {

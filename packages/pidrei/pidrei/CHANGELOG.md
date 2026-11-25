@@ -6,13 +6,236 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.6.1.0] - 2026-11-25
+
+Tracks [Pi 1.6.1](https://github.com/earendil-works/pi/releases/tag/v1.6.1).
+
+### Added
+
+- `compat.supportsStrictMode` for `google-generative-ai` and `google-vertex`
+  models in `models.json`, so Gemini 3+ models served under IDs without the
+  version can use strict tools (`VALIDATED` function calling). Unset keeps
+  the detection by model ID.
+- A `blockedKind` option for `ctx.ui.select()`, `ctx.ui.confirm()` and
+  `ctx.ui.input()` that sets the kind of blocked program status (OSC 7501) the
+  dialog reports, for example `{"blockedKind": "permission"}` for a select
+  that approves an action. `confirm()` reports `permission` by default,
+  `select()` and `input()` `question`.
+- `full_output_error` in the bash tool's structured output, and
+  `fullOutputError` in its details, in `BashResult` and in
+  `BashExecutionMessage`: the reason when truncated output could not be saved
+  to a temp file. `!` command output that was truncated without a saved file
+  now says so in the model context and in the TUI.
+- The `gpt-6-luna-decisions` decision model on GitHub Copilot, callable from
+  codemode `models.classify()` with text and images.
+- `responseId` on codemode `models.classify()` results, and `response_id` on
+  `pidrei_ai` classifier results, when the service reports one. OpenRouter's
+  System One fills it with its generation ID, and the cost OpenRouter billed
+  now replaces the catalog estimate (`cost.total_from_provider`), as it does
+  for chat.
+- `pidrei_mcp`: `create_mcp_result_schema(output_schema)`, the output schema
+  of an MCP tool for programs that call it: the whole `CallToolResult`, with
+  the tool's own output schema as `structuredContent` and its local `$ref`s
+  rewritten to resolve there.
+- `pidrei_mcp`: `to_mcp_model_content(server, result, options)`, a result's
+  model-facing content: embedded text blobs as text, binary resources saved
+  through the caller's `McpOutputSaver` (left out without one), and resource
+  links that name the caller's `read_resource_tool`.
+
 ### Changed
 
+- **Breaking:** the `showCacheMissNotices` setting is replaced by one setting
+  per transcript notice: `notices.cacheMisses`, `notices.cacheWarming`,
+  `notices.compactionCosts` and `notices.reasoningDrops`, configured under
+  Notices in `/settings`. An existing `showCacheMissNotices` value is migrated
+  to all four. `SettingsManager.get_show_cache_miss_notices()` and
+  `set_show_cache_miss_notices()` are removed; use `get_notices()` and
+  `set_notice()` instead.
+- `after_provider_response` also fires for HTTP error responses (4xx/5xx) and
+  for each retried attempt on OpenAI, Azure OpenAI, Anthropic and Google
+  models, as it already did for OpenAI Codex, Mistral and Amazon Bedrock, so
+  extensions can read the status and `retry-after` of rate-limited requests.
+- `pidrei_ai`: `on_response` is also called for HTTP error responses and for
+  each retried attempt by the `openai-completions`, `openai-responses`,
+  `azure-openai-responses`, `anthropic-messages`, `google-generative-ai` and
+  `google-vertex` APIs, OpenRouter image generation and classifiers. Google
+  reports error responses with empty headers.
+- `pidrei_ai`: the Google client follows `@google/genai` 3.6.1.
+  `GoogleApiThinkingLevel` now includes `"XHIGH"` and
+  `ResolvedGoogleThinkingLevel` includes `"xhigh"`, and a
+  `google-generative-ai` model with an empty base URL uses API version `v1`
+  instead of `v1beta`.
+- Model catalog regenerated from models.dev.
+- The default model of Cloudflare Workers AI and Cloudflare AI Gateway is now
+  `@cf/zai-org/glm-5.3`: models.dev no longer lists the previous default,
+  `@cf/moonshotai/kimi-k2.7-code`, on Workers AI.
+- Qwen Token Plan Individual lists `qwen4-max` in place of
+  `qwen4-max-preview`, which models.dev renamed.
 - Bumped the pydantic-monty dependency to 1.7.0.
 - Codemode scripts can import `colorsys`, `keyword`, `stat` and `statistics`,
   use `from module import *` and `typing.cast`, and subclass a class they
   define (without `super()`). `await` inside a plain `def` is now a syntax
   error.
+
+### Removed
+
+- The experimental first-time setup dialog, which only ran with
+  `PIDREI_EXPERIMENTAL=1` and only asked for a theme. A new installation
+  starts in the system theme, which follows the terminal's colors; `/settings`
+  changes it.
+
+### Fixed
+
+- Selecting the `xhigh` thinking level for Gemini 4 Hydrogen and Neon on the
+  `google` and `google-vertex` providers failed with `Unsupported Google
+  thinking level mapping ... xhigh -> xhigh` before any request. It is now
+  sent as `thinkingLevel: "XHIGH"`; models that use token budgets use the
+  `high` budget for it.
+- `google-vertex` Gemini 2.5 Flash-Lite got the Gemini 2.5 Flash thinking
+  budgets (`minimal` sent 128 tokens instead of 512); both Google APIs now
+  share one budget table.
+- Google responses ending with the finish reasons `MISSING_THOUGHT_SIGNATURE`,
+  `MALFORMED_RESPONSE`, `ESCALATION`, `PUP_LIMITED_DISABLED` or `MODEL_ARMOR`
+  failed with `Unhandled stop reason`; they now end as errors.
+- Gemini 3+ models whose IDs carry a prefix, such as `vendor-gemini-4-argon`,
+  were treated as older Gemini models: they now get strict tools, tool-call
+  IDs and images inside function responses.
+- Google prompt blocks were reported and retried as incomplete streams. The
+  error now names the block reason and the safety ratings, and a stream that
+  really ends early reports how many chunks arrived.
+- `ctx.ui.paste_to_editor()` and `ctx.ui.set_editor_text()` did not repaint
+  the editor when called outside terminal input handling, such as after an
+  `await` in a command handler.
+- The bash tool returned `(no output)` when the output ended with a line over
+  50KB followed by an empty line; it now shows the end of that line.
+- `/tree` navigation added the branch's prompts to Up-arrow history again on
+  every navigation; prompts already in history now move to the most recent
+  position instead of repeating. `pidrei_tui`: `Editor.add_to_history()`
+  moves an existing entry instead of storing it again.
+- Copies on Wayland silently failed when `wl-copy` guessed a non-text MIME
+  type from the copied text, for example `application/x-ruby` for text
+  starting with `def`, which clipboard managers such as Klipper discard;
+  pidrei now copies as `text/plain`.
+- With the temp directory full, over a per-user quota or not writable, the
+  bash tool's result was only the operating system error, and the command's
+  output and exit code were lost; a `!` command's result was not recorded in
+  the session; and Ctrl+G ended pidrei. The bash tool and `!` commands now
+  keep the truncated output and say why the full output could not be saved,
+  and the external editor reports the failure and leaves the prompt
+  unchanged.
+- A `!` command that had already finished was reported as cancelled when Esc
+  was pressed while its full output was still being written to the temp
+  file.
+- A failed crash-log write replaced the rendered-line-width error, so the
+  error named the log file instead of the component that overflowed.
+- `/login` showed a provider as configured when its stored `auth.json` key is
+  a `!command` that fails, while requests failed with `No API key found`.
+  `/login` now shows `stored key did not resolve`,
+  `get_provider_auth_status()` returns
+  `AuthStatus(configured=False, source="stored")`, and entering the same
+  `!command` again in `/login` runs it again instead of reusing the cached
+  failure.
+- Dialogs shown before interactive mode starts, such as the project trust
+  prompt and the missing session folder prompt, reported no `blocked`
+  program status (OSC 7501). Blocked messages of multi-line dialog titles are
+  now the first line only, for example `Trust project folder?` instead of the
+  folder path and explanation. The project trust prompt reports
+  `kind=permission`.
+- Pressing the confirm key twice on a startup prompt, such as the project
+  trust prompt or the missing session folder prompt, could tear the prompt
+  down twice.
+- GitHub Copilot listed decision models the account cannot use, such as
+  `microsoft-decision-1` on plans that do not include it, where every call
+  failed with HTTP 400. After `/login` or the next token refresh, only the
+  decision models in the account's Copilot model catalog are listed.
+- RPC mode, session loading, large pastes and MCP Streamable HTTP events
+  rescanned an incomplete line on every chunk, which made large lines, such
+  as messages with images or multi-MiB tool results, take time quadratic in
+  their size.
+- Streamed provider responses ended an event early when a CRLF line ending
+  was split across two network chunks.
+- `!` command output came back collapsed after compaction, `/reload`,
+  `/resume` or `/tree` while ctrl+o was set to expanded.
+- More temporary provider failures are retried automatically: Cloudflare
+  HTTP 525, gateway errors such as "The provider is temporarily unavailable"
+  and partial responses, Anthropic `api_error` events during streaming,
+  OpenRouter's "Provider returned an empty response" and "stopped before
+  completing the response", streams ending with `finish_reason: "error"`,
+  "Repeat the request later" and "admission ceiling" responses, and "request
+  rate increased too quickly" throttling.
+- Mistral's `finish_reason: "error"` message carried a " (server error)"
+  suffix that only existed to match the retry classifier; it now reads
+  "Provider stopped with: error" and is still retried.
+- Request errors whose code contains `request_too_large` inside a longer
+  identifier, such as `plugin_request_too_large`, triggered compact-and-retry
+  as if the context had overflowed.
+- Thinking `off` failed with HTTP 400 on Claude Sonnet 5.5 through GitHub
+  Copilot, and on Claude Opus 5.5 and Sonnet 5.5 through Cloudflare AI
+  Gateway and Vercel AI Gateway. The catalog now takes whether a Claude model
+  can turn thinking off from Anthropic's own models.dev entry, for every host
+  that serves it (Amazon Bedrock included), and selecting `off` on those
+  models uses the lowest supported level.
+- `openai-codex` started GPT-6 requests at `medium` regardless of the
+  selected thinking level. Requests now start at the selected effort and send
+  updates only when it changes.
+- GPT-6.2 dropped earlier reasoning as `prefix_mismatch` after the OpenAI
+  Codex WebSocket connection expired or pidrei was restarted, because
+  replayed tool calls lacked the `status: "completed"` the API had returned
+  on them, and their arguments were written with spaces the API's own copy
+  did not have.
+- A proxy set in the Amazon Bedrock credential's `env` in `auth.json` was
+  ignored; it now applies to the Bedrock request and to the AWS credential
+  requests (SSO, STS).
+- HTTP 400 after tool calls without text on Cloudflare Workers AI's GPT-OSS
+  120B and 20B, Granite 4.0 H Micro, and Llama 3.3 70B Instruct FP8 Fast.
+- HTTP 400 for non-strict Anthropic tools with Draft 7 tuples: their declared
+  `$schema` is now preserved.
+- OpenAI Decisions (`gpt-6-luna`) usage dropped cache read and write tokens;
+  they are now reported separately from input, at an unchanged cost.
+- Extension providers with `fetch_models` re-merged the whole model catalog
+  on every lookup, which made model lookups quadratic in catalog size. The
+  merge now runs once per published refresh.
+- The model list still offered models their providers shut down:
+  `gpt-5-chat-latest` on `openai` and `azure`, Groq's `llama-3.1-8b-instant`,
+  `llama-3.3-70b-versatile` and `qwen/qwen3.6-27b`, and the undocumented
+  `mistral-medium-3.5` (use `mistral-medium-latest` or `mistral-medium-2604`).
+- Markdown after an unclosed `$` before a number, such as `+$50`, rendered as
+  raw text for the rest of the paragraph.
+- A bare URL that runs into a multi-megabyte line made the rendered output
+  grow with the square of its length in terminals with OSC 8 hyperlinks:
+  `hyperlink()` no longer links URLs longer than 8192 characters.
+- Requests to MCP servers that echo request IDs as strings (`"1"` for `1`)
+  timed out instead of matching the response.
+- `openai-completions` dropped OpenRouter's `native_finish_reason`, the
+  upstream provider's own finish reason. `raw_stop_reason` now records it
+  next to `finish_reason`, such as `stop.MALFORMED_RESPONSE`, and error
+  messages include it, such as `Provider finish_reason: error
+  (native_finish_reason: MALFORMED_FUNCTION_CALL)`.
+- OpenRouter turns ended silently when the upstream provider failed after
+  streaming only reasoning, such as Gemini's `MALFORMED_RESPONSE`, which
+  OpenRouter reports as `finish_reason: "stop"`. A `stop` without text or
+  tool calls whose `native_finish_reason` is not a clean stop is now an
+  empty-response error and is retried.
+- The `thinkingLevelMap` description in the `models.json` schema and
+  reference suggested that `xhigh` and `max` are unsupported; it now says
+  they are opt-in and only offered when mapped to a string, and the models
+  guide explains how to map thinking levels.
+- Mistral streams failed on an event without data; such events are now
+  skipped.
+- `pidrei_ai`: OpenRouter image generation never retried a failed request,
+  whatever `max_retries` said.
+
+### Not ported
+
+- Pi's `pi-decision` API and the Radius decision models that use it: Radius
+  is not ported.
+- Pi's Windows fixes (shutdown cleanup when the console window closes, Git
+  Bash discovery through `git` on `PATH`, the double right-click paste in
+  Tabby, `pi update` run from WSL): pidrei is POSIX-only and has no
+  self-update machinery.
+- Pi's note for Mermaid diagrams wider than the terminal: pidrei does not
+  render Mermaid diagrams.
+- Pi's first-time setup analytics question: pidrei sends no telemetry.
 
 ## [1.6.0.0] - 2026-11-20
 

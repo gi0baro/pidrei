@@ -54,6 +54,7 @@ from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.schema.checks import json_stringify
 from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import TranscriptToolSupport, resolve_transcript, resolve_transcript_tools
@@ -484,7 +485,9 @@ def _render_responses_transcript(
                             {
                                 "type": "function_call",
                                 **replayed_call,
-                                "arguments": json.dumps(block.arguments),
+                                # pi's `JSON.stringify`, not `json.dumps`: OpenAI compares the replayed call
+                                # with its own copy (see above), and Python's default spacing made it differ.
+                                "arguments": json_stringify(block.arguments),
                             }
                         )
             if not output:

@@ -51,8 +51,12 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "opencode-go": "kimi-k3.1-pro",
     "kimi-coding": "kimi-for-coding",
     "meta": "muse-spark-1.3",
-    "cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.7-code",
-    "cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.7-code",
+    # Deviation: pi still names `@cf/moonshotai/kimi-k2.7-code` for both, which
+    # models.dev dropped from Workers AI on 2026-11-25, after pi 1.6.1's catalog
+    # was built; a default that resolves to nothing is worse than a one-id
+    # drift. Follow pi's pick once it has one.
+    "cloudflare-workers-ai": "@cf/zai-org/glm-5.3",
+    "cloudflare-ai-gateway": "workers-ai/@cf/zai-org/glm-5.3",
     "qwen-token-plan": "qwen3.8-max",
     "qwen-token-plan-cn": "qwen3.8-max",
     "qwen-token-plan-individual": "qwen3.8-max",

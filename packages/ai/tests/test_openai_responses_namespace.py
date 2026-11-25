@@ -131,7 +131,7 @@ async def test_round_trips_a_function_namespace_received_only_on_output_item_don
         "id": "fc_test",
         "call_id": "call_test",
         "name": "lookup",
-        "arguments": '{"value": "hello"}',
+        "arguments": '{"value":"hello"}',
         "namespace": "dynamic_tools",
         "status": "completed",
     }

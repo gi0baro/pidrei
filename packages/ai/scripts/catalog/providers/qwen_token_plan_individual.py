@@ -23,7 +23,10 @@ INDIVIDUAL_MODEL_IDS = frozenset(
         "qwen3.7-plus",
         "qwen3.8-flash",
         "qwen3.8-max",
-        "qwen4-max-preview",
+        # Deviation: pi still lists `qwen4-max-preview`, which models.dev renamed to `qwen4-max` on
+        # 2026-11-25, after pi 1.6.1's catalog was built; with the old id the plan has no max model.
+        # Follow pi's list once it changes.
+        "qwen4-max",
     }
 )
 

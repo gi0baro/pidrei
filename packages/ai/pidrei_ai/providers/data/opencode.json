@@ -20,9 +20,9 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -60,9 +60,9 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -101,9 +101,9 @@
       "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
-        "off": null,
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "off": null
       },
       "compat": {
         "forceAdaptiveThinking": true,
@@ -491,7 +491,7 @@
         "cacheWrite": 3.75
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000,
+      "maxTokens": 128000,
       "thinkingLevelMap": {
         "max": "max"
       },
@@ -1158,9 +1158,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
-        "cacheRead": 0.006,
+        "input": 0.12,
+        "output": 0.48,
+        "cacheRead": 0.0024,
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
@@ -1284,9 +1284,9 @@
         "text"
       ],
       "cost": {
-        "input": 1.4,
-        "output": 4.4,
-        "cacheRead": 0.26,
+        "input": 0.56,
+        "output": 1.76,
+        "cacheRead": 0.104,
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
@@ -1422,82 +1422,6 @@
       },
       "type": "chat"
     },
-    "chat:kimi-k2.5": {
-      "id": "kimi-k2.5",
-      "name": "Kimi K2.5",
-      "api": "openai-completions",
-      "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/openai/v1",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.6,
-        "output": 3,
-        "cacheRead": 0.1,
-        "cacheWrite": 0
-      },
-      "contextWindow": 262144,
-      "maxTokens": 65536,
-      "compat": {
-        "supportsStore": false,
-        "supportsStrictMode": true,
-        "maxTokensField": "max_tokens",
-        "supportsLongCacheRetention": false
-      },
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
-    "chat:kimi-k2.6": {
-      "id": "kimi-k2.6",
-      "name": "Kimi K2.6",
-      "api": "openai-completions",
-      "provider": "opencode",
-      "baseUrl": "https://opencode.ai/inference/openai/v1",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.95,
-        "output": 4,
-        "cacheRead": 0.16,
-        "cacheWrite": 0
-      },
-      "contextWindow": 262144,
-      "maxTokens": 65536,
-      "compat": {
-        "supportsStore": false,
-        "supportsStrictMode": true,
-        "thinkingFormat": "deepseek",
-        "supportsReasoningEffort": false,
-        "maxTokensField": "max_tokens",
-        "supportsLongCacheRetention": false
-      },
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
     "chat:kimi-k2.7-code": {
       "id": "kimi-k2.7-code",
       "name": "Kimi K2.7 Code",
@@ -1581,9 +1505,9 @@
       },
       "type": "chat"
     },
-    "chat:longcat-2.5-free": {
-      "id": "longcat-2.5-free",
-      "name": "LongCat 2.5 Free",
+    "chat:kimi-k3.1-pro": {
+      "id": "kimi-k3.1-pro",
+      "name": "Kimi K3.1 Pro",
       "api": "openai-completions",
       "provider": "opencode",
       "baseUrl": "https://opencode.ai/inference/openai/v1",
@@ -1593,17 +1517,28 @@
         "image"
       ],
       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.2,
+        "cacheWrite": 2
       },
-      "contextWindow": 1000000,
-      "maxTokens": 262144,
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
         "supportsStrictMode": true,
-        "maxTokensField": "max_tokens"
+        "maxTokensField": "max_tokens",
+        "supportsMidConvoSystemMessages": true,
+        "supportsMidConvoToolAdditions": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
       },
       "inputLimits": {
         "images": {

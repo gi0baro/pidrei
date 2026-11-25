@@ -1,25 +1,36 @@
 {
   "openai-completions": {
-    "chat:MiniMaxAI/MiniMax-M1-80k": {
-      "id": "MiniMaxAI/MiniMax-M1-80k",
-      "name": "MiniMax M1 80K",
+    "chat:CohereLabs/command-a-plus-05-2026-bf16": {
+      "id": "CohereLabs/command-a-plus-05-2026-bf16",
+      "name": "Command A Plus",
       "api": "openai-completions",
       "provider": "huggingface",
       "baseUrl": "https://router.huggingface.co/v1",
       "reasoning": true,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
-        "input": 0.55,
-        "output": 2.2,
+        "input": 0.3,
+        "output": 1.5,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1000000,
-      "maxTokens": 80000,
+      "contextWindow": 192000,
+      "maxTokens": 64000,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       },
       "type": "chat"
     },
@@ -82,11 +93,11 @@
       "cost": {
         "input": 0.3,
         "output": 1.2,
-        "cacheRead": 0.03,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 204800,
-      "maxTokens": 131072,
+      "contextWindow": 65536,
+      "maxTokens": 65536,
       "compat": {
         "supportsStrictMode": true
       },
@@ -103,12 +114,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
-        "cacheRead": 0.06,
+        "input": 0.6,
+        "output": 1.8,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 204800,
+      "contextWindow": 196608,
       "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
@@ -127,12 +138,12 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
+        "input": 0.23,
+        "output": 0.96,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 524288,
+      "contextWindow": 1048576,
       "maxTokens": 512000,
       "compat": {
         "supportsStrictMode": true
@@ -161,12 +172,12 @@
         "image"
       ],
       "cost": {
-        "input": 0.15,
-        "output": 0.6,
+        "input": 0.075,
+        "output": 0.3,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1000000,
+      "contextWindow": 1048576,
       "maxTokens": 512000,
       "compat": {
         "supportsStrictMode": true
@@ -192,6 +203,29 @@
       },
       "type": "chat"
     },
+    "chat:NousResearch/Hermes-3-Llama-3.1-70B": {
+      "id": "NousResearch/Hermes-3-Llama-3.1-70B",
+      "name": "Hermes 3 70B Instruct",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": false,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.7,
+        "output": 0.7,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 16384,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "type": "chat"
+    },
     "chat:Qwen/Qwen2.5-Coder-32B-Instruct": {
       "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
       "name": "Qwen2.5-Coder-32B-Instruct",
@@ -203,36 +237,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.06,
-        "output": 0.2,
+        "input": 0.66,
+        "output": 1,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 131072,
+      "contextWindow": 32768,
       "maxTokens": 8192,
-      "compat": {
-        "supportsStrictMode": true
-      },
-      "type": "chat"
-    },
-    "chat:Qwen/Qwen3-235B-A22B": {
-      "id": "Qwen/Qwen3-235B-A22B",
-      "name": "Qwen3 235B-A22B",
-      "api": "openai-completions",
-      "provider": "huggingface",
-      "baseUrl": "https://router.huggingface.co/v1",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.2,
-        "output": 0.8,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "contextWindow": 40960,
-      "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
       },
@@ -249,12 +260,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.855,
-        "output": 2.565,
+        "input": 0.15,
+        "output": 0.75,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 262144,
+      "contextWindow": 131072,
       "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
@@ -272,12 +283,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 3,
+        "input": 0.45,
+        "output": 3.5,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 262144,
+      "contextWindow": 128000,
       "maxTokens": 81920,
       "compat": {
         "supportsStrictMode": true
@@ -318,7 +329,7 @@
         "text"
       ],
       "cost": {
-        "input": 0.09,
+        "input": 0.1,
         "output": 0.3,
         "cacheRead": 0,
         "cacheWrite": 0
@@ -341,12 +352,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.29,
-        "output": 0.59,
+        "input": 0.08,
+        "output": 0.28,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 131072,
+      "contextWindow": 40960,
       "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
@@ -396,8 +407,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.07,
-        "output": 0.26,
+        "input": 0.15,
+        "output": 0.6,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -419,8 +430,8 @@
         "text"
       ],
       "cost": {
-        "input": 2,
-        "output": 2,
+        "input": 0.3,
+        "output": 1,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -442,8 +453,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.2,
-        "output": 1.5,
+        "input": 0.12,
+        "output": 0.8,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -465,8 +476,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.25,
-        "output": 1,
+        "input": 0.09,
+        "output": 1.1,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -489,58 +500,15 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.5,
+        "input": 0.2,
+        "output": 0.88,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 131072,
+      "contextWindow": 262144,
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
-      },
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
-    "chat:Qwen/Qwen3-VL-235B-A22B-Thinking": {
-      "id": "Qwen/Qwen3-VL-235B-A22B-Thinking",
-      "name": "Qwen3 VL 235B A22B Thinking",
-      "api": "openai-completions",
-      "provider": "huggingface",
-      "baseUrl": "https://router.huggingface.co/v1",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.98,
-        "output": 3.95,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "contextWindow": 131072,
-      "maxTokens": 32768,
-      "compat": {
-        "supportsStrictMode": true
-      },
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
       },
       "inputLimits": {
         "images": {
@@ -566,12 +534,12 @@
         "image"
       ],
       "cost": {
-        "input": 0.2,
-        "output": 0.7,
+        "input": 0.15,
+        "output": 0.6,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 131072,
+      "contextWindow": 262144,
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
@@ -634,8 +602,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 2.4,
+        "input": 0.26,
+        "output": 2.6,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -668,8 +636,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.25,
-        "output": 2,
+        "input": 0.14,
+        "output": 1,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -702,8 +670,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.6,
-        "output": 3.6,
+        "input": 0.45,
+        "output": 3,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -745,8 +713,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.17,
-        "output": 0.25,
+        "input": 0.1,
+        "output": 0.15,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -779,8 +747,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.47,
-        "output": 3.19,
+        "input": 0.32,
+        "output": 3.2,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -813,8 +781,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.15,
-        "output": 0.95,
+        "input": 0.1,
+        "output": 0.89,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -846,12 +814,12 @@
         "text"
       ],
       "cost": {
-        "input": 2.5,
-        "output": 6.25,
+        "input": 2,
+        "output": 6,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 262144,
+      "contextWindow": 1000000,
       "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
@@ -879,13 +847,99 @@
         "image"
       ],
       "cost": {
-        "input": 0.4,
-        "output": 3,
+        "input": 0.04,
+        "output": 1.35,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:Qwen/Qwen3.8-Flash-Next": {
+      "id": "Qwen/Qwen3.8-Flash-Next",
+      "name": "Qwen3.8 Flash Next",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.15,
+        "output": 0.5,
         "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 32768,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:Qwen/Qwen3.8-Flash-Next-FP8": {
+      "id": "Qwen/Qwen3.8-Flash-Next-FP8",
+      "name": "Qwen3.8 Flash Next",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.15,
+        "output": 0.47,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
       },
@@ -921,8 +975,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.4,
-        "output": 2,
+        "input": 0.14,
+        "output": 0.28,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1008,8 +1062,8 @@
         "text"
       ],
       "cost": {
-        "input": 3,
-        "output": 5,
+        "input": 0.5,
+        "output": 2.15,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1031,12 +1085,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.4,
-        "output": 1.3,
+        "input": 0.32,
+        "output": 0.89,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 64000,
+      "contextWindow": 163840,
       "maxTokens": 8192,
       "compat": {
         "supportsStrictMode": true
@@ -1054,13 +1108,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.27,
-        "output": 1.12,
+        "input": 1,
+        "output": 2.625,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 163840,
-      "maxTokens": 163840,
+      "contextWindow": 131072,
+      "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
       },
@@ -1077,12 +1131,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.27,
-        "output": 1,
+        "input": 0.25,
+        "output": 0.95,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 131072,
+      "contextWindow": 163840,
       "maxTokens": 8192,
       "compat": {
         "supportsStrictMode": true
@@ -1100,8 +1154,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.28,
-        "output": 0.4,
+        "input": 0.26,
+        "output": 0.38,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1123,8 +1177,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.14,
-        "output": 0.28,
+        "input": 0.07,
+        "output": 0.14,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1146,8 +1200,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.14,
-        "output": 0.28,
+        "input": 0.07,
+        "output": 0.14,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1179,8 +1233,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.44,
-        "output": 1.32,
+        "input": 0.2156,
+        "output": 0.6468,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1221,9 +1275,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.435,
-        "output": 0.87,
-        "cacheRead": 0.003625,
+        "input": 0.745334,
+        "output": 1.5016,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
@@ -1253,12 +1307,12 @@
         "text"
       ],
       "cost": {
-        "input": 1.32,
-        "output": 3.96,
+        "input": 1.3,
+        "output": 2.6,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1000000,
+      "contextWindow": 1048576,
       "maxTokens": 384000,
       "compat": {
         "supportsStrictMode": true
@@ -1286,8 +1340,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
+        "input": 0.14,
+        "output": 0.42,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1329,8 +1383,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
+        "input": 0.05,
+        "output": 0.3,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1440,8 +1494,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.05,
-        "output": 0.1,
+        "input": 0.04,
+        "output": 0.05,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1474,8 +1528,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.13,
-        "output": 0.4,
+        "input": 0.07,
+        "output": 0.24,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1508,8 +1562,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.14,
-        "output": 0.4,
+        "input": 0.34,
+        "output": 0.1,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1527,6 +1581,141 @@
             "jpegQuality": 80
           }
         }
+      },
+      "type": "chat"
+    },
+    "chat:ibm-granite/granite-4.2-8b": {
+      "id": "ibm-granite/granite-4.2-8b",
+      "name": "Granite 4.2 8B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.06,
+        "output": 0.15,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 117964,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
+      "type": "chat"
+    },
+    "chat:inclusionAI/Ling-3.0-flash": {
+      "id": "inclusionAI/Ling-3.0-flash",
+      "name": "Ling 3.0 Flash",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.06,
+        "output": 0.18,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "type": "chat"
+    },
+    "chat:inclusionAI/Ling-3.0-flash-Fin": {
+      "id": "inclusionAI/Ling-3.0-flash-Fin",
+      "name": "Ling 3.0 Flash Fin",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.075,
+        "output": 0.22,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "type": "chat"
+    },
+    "chat:inclusionAI/Ling-3.0-flash-VL": {
+      "id": "inclusionAI/Ling-3.0-flash-VL",
+      "name": "Ling 3.0 Flash VL",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.06,
+        "output": 0.18,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:inclusionAI/Ling-3.1-flash": {
+      "id": "inclusionAI/Ling-3.1-flash",
+      "name": "Ling 3.1 Flash",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 0.9,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true
       },
       "type": "chat"
     },
@@ -1564,8 +1753,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.06,
-        "output": 0.06,
+        "input": 0.02,
+        "output": 0.04,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1610,13 +1799,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.0509,
-        "output": 0.335,
+        "input": 0.05,
+        "output": 0.33,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 80000,
-      "maxTokens": 80000,
+      "contextWindow": 131072,
+      "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
       },
@@ -1633,8 +1822,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.59,
-        "output": 0.79,
+        "input": 0.1,
+        "output": 0.32,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1642,6 +1831,203 @@
       "maxTokens": 4096,
       "compat": {
         "supportsStrictMode": true
+      },
+      "type": "chat"
+    },
+    "chat:meta-llama/Llama-4-Maverick-17B-128E-Instruct": {
+      "id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+      "name": "Llama 4 Maverick 17B Instruct",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.35,
+        "output": 1,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 524288,
+      "maxTokens": 16384,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:meta-llama/Llama-4-Scout-17B-16E-Instruct": {
+      "id": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+      "name": "Llama 4 Scout 17B Instruct",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.3,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 327680,
+      "maxTokens": 16384,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:meta-models/Muse-Glimmer-30B": {
+      "id": "meta-models/Muse-Glimmer-30B",
+      "name": "Muse Glimmer 30B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:meta-models/Muse-Spark-Open-816B-A42B": {
+      "id": "meta-models/Muse-Spark-Open-816B-A42B",
+      "name": "Muse Spark Open",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.25,
+        "output": 4.25,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:mistralai/Mistral-Large-4-1T-A52B": {
+      "id": "mistralai/Mistral-Large-4-1T-A52B",
+      "name": "Mistral Large 4",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.7,
+        "output": 2.1,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       },
       "type": "chat"
     },
@@ -1656,8 +2042,8 @@
         "text"
       ],
       "cost": {
-        "input": 1,
-        "output": 3,
+        "input": 0.57,
+        "output": 2.3,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1679,8 +2065,8 @@
         "text"
       ],
       "cost": {
-        "input": 1,
-        "output": 3,
+        "input": 0.6,
+        "output": 2.5,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1728,7 +2114,7 @@
       "cost": {
         "input": 0.6,
         "output": 3,
-        "cacheRead": 0.1,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 262144,
@@ -1760,9 +2146,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.95,
-        "output": 4,
-        "cacheRead": 0.16,
+        "input": 0.57,
+        "output": 2.4,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 262144,
@@ -1794,8 +2180,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.95,
-        "output": 4,
+        "input": 0.6,
+        "output": 3,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1828,13 +2214,13 @@
         "image"
       ],
       "cost": {
-        "input": 3,
-        "output": 15,
+        "input": 0.276,
+        "output": 9.6,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1000000,
-      "maxTokens": 1000000,
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStrictMode": true
       },
@@ -1871,8 +2257,8 @@
         "image"
       ],
       "cost": {
-        "input": 2,
-        "output": 10,
+        "input": 1.24,
+        "output": 6.2,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1902,6 +2288,184 @@
       },
       "type": "chat"
     },
+    "chat:nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
+      "id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+      "name": "Nemotron 3 Nano 30B A3B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.06,
+        "output": 0.24,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "type": "chat"
+    },
+    "chat:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": {
+      "id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+      "name": "Nemotron 3 Super 120B A12B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.075,
+        "output": 0.4,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": null,
+        "max": null
+      },
+      "type": "chat"
+    },
+    "chat:nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": {
+      "id": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+      "name": "Nemotron 3 Ultra 550B A55B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.5,
+        "output": 2.15,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": null,
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
+      "type": "chat"
+    },
+    "chat:nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": {
+      "id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "name": "Nemotron 3.5 Lightning 30B A3B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.06,
+        "output": 0.16,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "type": "chat"
+    },
+    "chat:nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": {
+      "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+      "name": "Nemotron 3.5 Super VL 120B A12B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.4,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 8192,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4": {
+      "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+      "name": "Nemotron 3.5 Super VL 120B A12B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.2,
+        "output": 0.5,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 8192,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
       "name": "GPT OSS 120B",
@@ -1913,8 +2477,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.25,
-        "output": 0.69,
+        "input": 0.03,
+        "output": 0.15,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1945,8 +2509,8 @@
         "text"
       ],
       "cost": {
-        "input": 0.1,
-        "output": 0.5,
+        "input": 0.018,
+        "output": 0.09,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -1963,6 +2527,70 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "type": "chat"
+    },
+    "chat:openai/gpt-oss-safeguard-20b": {
+      "id": "openai/gpt-oss-safeguard-20b",
+      "name": "GPT OSS Safeguard 20B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.07,
+        "output": 0.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
+      "type": "chat"
+    },
+    "chat:reflection/Beam-1.0-501B-A23B": {
+      "id": "reflection/Beam-1.0-501B-A23B",
+      "name": "Beam 1.0 501B A23B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.25,
+        "output": 1,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
       },
       "type": "chat"
     },
@@ -2076,8 +2704,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.417,
-        "output": 1.2505,
+        "input": 0.7089,
+        "output": 2.12585,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -2119,8 +2747,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.035,
-        "output": 0.1405,
+        "input": 0.07,
+        "output": 0.281,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -2166,8 +2794,8 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1000000,
-      "maxTokens": 64000,
+      "contextWindow": 1048576,
+      "maxTokens": 65536,
       "compat": {
         "supportsStrictMode": true
       },
@@ -2225,6 +2853,49 @@
       },
       "type": "chat"
     },
+    "chat:thinkingmachines/Inkling-2-Mini": {
+      "id": "thinkingmachines/Inkling-2-Mini",
+      "name": "Inkling 2 Mini",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.075,
+        "output": 0.3,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true
+      },
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
     "chat:thinkingmachines/Inkling-2-Small": {
       "id": "thinkingmachines/Inkling-2-Small",
       "name": "Inkling 2 Small",
@@ -2237,8 +2908,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1,
+        "input": 0.15,
+        "output": 0.5,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -2280,7 +2951,7 @@
         "image"
       ],
       "cost": {
-        "input": 0.5,
+        "input": 0.45,
         "output": 1.2,
         "cacheRead": 0,
         "cacheWrite": 0
@@ -2393,12 +3064,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.55,
-        "output": 2.2,
+        "input": 0.43,
+        "output": 1.75,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 204800,
+      "contextWindow": 202752,
       "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
@@ -2484,12 +3155,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.6,
-        "output": 2.2,
-        "cacheRead": 0.11,
+        "input": 0.4,
+        "output": 1.75,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 204800,
+      "contextWindow": 202752,
       "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
@@ -2507,12 +3178,12 @@
         "text"
       ],
       "cost": {
-        "input": 0,
-        "output": 0,
+        "input": 0.0605,
+        "output": 0.4,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 200000,
+      "contextWindow": 131072,
       "maxTokens": 128000,
       "compat": {
         "supportsStrictMode": true
@@ -2532,7 +3203,7 @@
       "cost": {
         "input": 1,
         "output": 3.2,
-        "cacheRead": 0.2,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 202752,
@@ -2576,12 +3247,12 @@
         "text"
       ],
       "cost": {
-        "input": 1.4,
-        "output": 4.4,
+        "input": 0.5625,
+        "output": 1.8,
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 262144,
+      "contextWindow": 1048576,
       "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
@@ -2599,8 +3270,8 @@
         "text"
       ],
       "cost": {
-        "input": 1.4,
-        "output": 4.4,
+        "input": 0.0699,
+        "output": 1.4,
         "cacheRead": 0,
         "cacheWrite": 0
       },
@@ -2632,8 +3303,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.15,
-        "output": 0.5,
+        "input": 0.042,
+        "output": 0.184,
         "cacheRead": 0,
         "cacheWrite": 0
       },

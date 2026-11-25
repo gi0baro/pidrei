@@ -211,7 +211,12 @@ In order:
 
 1. **Catalog regen**: `make models-data`, then rerun `packages/ai/tests`.
    The regen-dependent failures noted during the port must clear. One run
-   covers chat, image and classifier models.
+   covers chat, image and classifier models. models.dev can have moved past
+   the catalog Pi's release was built from (a default model or an
+   allowlisted id that is gone or renamed): check Pi's default branch for a
+   fix first; if there is none, follow models.dev with a `Deviation:`
+   comment at the id, adapt the mirrored test with a note, and add a
+   CHANGELOG line. The comment goes when Pi catches up.
 2. **Versions**: the published packages (`packages/{utils,http,ai,agent,tui,codemode,mcp,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
