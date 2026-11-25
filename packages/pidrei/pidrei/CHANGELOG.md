@@ -154,6 +154,10 @@ Tracks [Pi 1.6.1](https://github.com/earendil-works/pi/releases/tag/v1.6.1).
   their size.
 - Streamed provider responses ended an event early when a CRLF line ending
   was split across two network chunks.
+- A UTF-8 byte order mark at the start of a command's output, for example
+  from `cat` on a file saved with one, reached the model and the `!` command
+  display as an invisible character. At the start of a streamed provider or
+  MCP response it hid the first event. It is now dropped.
 - `!` command output came back collapsed after compaction, `/reload`,
   `/resume` or `/tree` while ctrl+o was set to expanded.
 - More temporary provider failures are retried automatically: Cloudflare

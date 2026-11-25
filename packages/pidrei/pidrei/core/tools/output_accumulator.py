@@ -30,7 +30,8 @@ class OutputAccumulator:
         self._max_bytes = max_bytes if max_bytes is not None else DEFAULT_MAX_BYTES
         self._max_rolling_bytes = max(self._max_bytes * 2, 1)
         self._temp_file_prefix = temp_file_prefix if temp_file_prefix is not None else "pidrei-output"
-        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # `utf-8-sig`, here and in the full-output reads below, drops a leading BOM as pi's `TextDecoder` does.
+        self._decoder = codecs.getincrementaldecoder("utf-8-sig")("replace")
 
         self._raw_chunks: list[bytes] = []
         self._tail_text = ""
@@ -125,7 +126,7 @@ class OutputAccumulator:
             elif full_output_file.kind == "failed":
                 return self._read_retained_output(max_bytes)
         if full_output_file is None:
-            return FullOutput(content=raw.decode("utf-8", "replace"), truncated=False)
+            return FullOutput(content=raw.decode("utf-8-sig", "replace"), truncated=False)
         return await tonio.spawn_blocking(_read_full_output_blocking, full_output_file.path, max_bytes)
 
     def get_last_line_bytes(self) -> int:
@@ -230,7 +231,7 @@ def _read_full_output_blocking(path: str, max_bytes: int) -> FullOutput:
     with open(path, "rb") as file:
         size = os.fstat(file.fileno()).st_size
         if size <= max_bytes:
-            return FullOutput(content=file.read().decode("utf-8", "replace"), truncated=False)
+            return FullOutput(content=file.read().decode("utf-8-sig", "replace"), truncated=False)
         head_bytes = max_bytes // 2
         tail_bytes = max_bytes - head_bytes
         head = file.read(head_bytes)
@@ -238,11 +239,11 @@ def _read_full_output_blocking(path: str, max_bytes: int) -> FullOutput:
         tail = file.read(tail_bytes)
     # Cut at character boundaries: the incremental decode holds back an
     # incomplete trailing sequence, and the tail skips leading continuation bytes.
-    head_text = codecs.getincrementaldecoder("utf-8")("replace").decode(head)
+    head_text = codecs.getincrementaldecoder("utf-8-sig")("replace").decode(head)
     tail_start = 0
     while tail_start < len(tail) and (tail[tail_start] & 0xC0) == 0x80:
         tail_start += 1
-    tail_text = tail[tail_start:].decode("utf-8", "replace")
+    tail_text = tail[tail_start:].decode("utf-8-sig", "replace")
     omitted = size - head_bytes - tail_bytes
     return FullOutput(content=f"{head_text}\n\n[... {omitted} bytes omitted ...]\n\n{tail_text}", truncated=True)
 

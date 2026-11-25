@@ -142,12 +142,6 @@ def _show_startup_dialog(ui: TUI, component, blocked: BlockedStatus, settings_ma
     return start_startup_tui(ui, settings_manager)
 
 
-async def _clear_startup_tui(ui: TUI) -> None:
-    ui.clear()
-    ui.request_render()
-    await tonio.time.sleep(0.025)
-
-
 async def show_startup_selector(
     settings_manager: SettingsManager, title: str, options: list, blocked_kind: str = "question"
 ):
@@ -159,17 +153,21 @@ async def show_startup_selector(
 
     def settle(result) -> bool:
         """pi's `void finish(result)` runs `finish` up to its first await in the key handler: the
-        "answered once" claim. The callbacks run in the input consumer one at a time (the dialog has
-        no countdown), so the claim needs no lock."""
+        "answered once" claim, then clearing the dialog (pi's `clearStartupTui` up to its timer).
+        The callbacks run in the input consumer one at a time (the dialog has no countdown), so the
+        claim needs no lock."""
         nonlocal settled
         if settled:
             return False
         settled = True
         outcome["value"] = result
+        ui.clear()
+        ui.request_render()
         return True
 
     async def finish() -> None:
-        await _clear_startup_tui(ui)
+        # The rest of pi's `clearStartupTui`: the cleared frame gets 25 ms to go out.
+        await tonio.time.sleep(0.025)
         await ui.stop()
         await close_startup_tui(ui)
         done.set()
@@ -211,10 +209,12 @@ async def show_startup_input(
         settled = True
         outcome["value"] = result
         input_component.dispose()
+        ui.clear()
+        ui.request_render()
         return True
 
     async def finish() -> None:
-        await _clear_startup_tui(ui)
+        await tonio.time.sleep(0.025)
         await ui.stop()
         await close_startup_tui(ui)
         done.set()

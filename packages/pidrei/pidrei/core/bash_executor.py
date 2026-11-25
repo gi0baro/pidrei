@@ -62,7 +62,8 @@ async def execute_bash_with_operations(
         for chunk in output_chunks:
             temp_file.write(chunk.encode("utf-8", "replace"))
 
-    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    # `utf-8-sig` drops a leading BOM, as pi's `TextDecoder` does.
+    decoder = codecs.getincrementaldecoder("utf-8-sig")("replace")
     # Unfinished escape sequence at the end of the previous chunk, completed by the next chunk.
     pending_ansi = ""
     # Backends may deliver stdout and stderr from parallel readers; the

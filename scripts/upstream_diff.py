@@ -872,11 +872,12 @@ _FIRST_TIME_SETUP_REASON = (
 DROPPED_PREFIXES += (
     # `c2f3a5ce` added it as pi-classifier, `9553d583` renamed it; the
     # prefixes also cover the `.lazy.ts` shims. The `responseId` half of
-    # `bff71c70` (System One, OpenRouter cost) ports.
+    # `bff71c70` (System One, OpenRouter cost) ports. The renamed test,
+    # `pi-decision.test.ts`, is in TEST_HOMES: some of its cases specify
+    # `postClassifierRequest`, which is ported.
     ("packages/ai/src/api/pi-classifier", _PI_DECISION_REASON),
     ("packages/ai/src/api/pi-decision", _PI_DECISION_REASON),
     ("packages/ai/test/pi-classifier.test.ts", _PI_DECISION_REASON),
-    ("packages/ai/test/pi-decision.test.ts", _PI_DECISION_REASON),
     # `f8149d1a` deleted the theme step, the only one pidrei had. The
     # startup-ui.ts, main.ts and program-status hunks that only serve the
     # dialog are per-hunk skips. The test prefix covers the fork test too.
@@ -2089,6 +2090,12 @@ TEST_HOMES = {
     "packages/coding-agent/test/export-html-cost.test.ts": (
         "PARITY GAP: pi runs the viewer's computeStats in node:vm; the tests have no JS runtime "
         "(template.js is a byte copy of pi's)"
+    ),
+    # 1.6.1 (`8a57d42a`): not in DROPPED_PREFIXES with the adapter, so a change to these cases shows up.
+    "packages/ai/test/pi-decision.test.ts": (
+        "pi-decision adapter not ported; its postClassifierRequest cases (classifier-shared.ts, e.g. onResponse "
+        "for a body that fails to arrive) are mirrored in packages/ai/tests/test_openai_decisions.py: port "
+        "deltas to those there, drop the adapter's own"
     ),
 }
 

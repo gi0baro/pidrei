@@ -375,7 +375,9 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
             if signal_name != "SIGTERM":
                 await drain_output()
             # dispose() kills a running `bash` command. After the last await, so it also catches a
-            # shell spawned after the abort.
+            # shell spawned after the abort, once its pid is tracked. Known limit: a shell created
+            # inside `open_process` whose pid is not tracked yet (`LocalShellOperations.exec`) is
+            # missed; only a `bash` command sent together with the end of input can get there.
             kill_tracked_detached_children()
             hard_exit(exit_code)
         finally:

@@ -151,14 +151,15 @@ def _text(result) -> str:
 
 
 @pytest.mark.tonio
-async def test_reports_an_open_failure_from_close_instead_of_crashing(fail_output_files):
+async def test_reports_an_open_failure_from_close_instead_of_crashing(fail_output_files, temp_root):
     code = fail_output_files("open")
-    file, path = _open_output_file()
+    # Not through `_open_output_file`: the writer coroutine may have failed the open already.
+    file = create_output_file_stream("pidrei-test", ".log")
     file.write(b"data")
     result = await file.close()
     assert isinstance(result, FailedOutputFile)
     assert code in result.error
-    assert not await _exists(path)
+    assert not await _exists(str(temp_root / "missing"))
 
 
 @pytest.mark.tonio

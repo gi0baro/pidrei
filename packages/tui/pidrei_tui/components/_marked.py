@@ -130,7 +130,7 @@ _FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})")
 
 _PENDING_DOLLAR_MATH_RE = re.compile(r"\\[A-Za-z]+|[_^=+*/<>()\[\]|±≤≥≠≈∈→⇒∞∫∑√-]")
 _TRAILING_SPACE_RE = re.compile(r"\s$")
-_LEADING_DIGIT_RE = re.compile(r"^\d")
+_LEADING_DIGIT_RE = re.compile(r"^[0-9]")  # pi's `\d` is ASCII only
 _SHELL_VARIABLE_RE = re.compile(r"^[A-Z_][A-Z0-9_]*(?:[^A-Za-z0-9_\s])?$")
 _LEADING_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*")
 _DOLLAR_THEN_SPACE_RE = re.compile(r"^\$\s")

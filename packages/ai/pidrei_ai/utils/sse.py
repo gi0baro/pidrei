@@ -40,7 +40,8 @@ class SseDecoder:
     decoder."""
 
     def __init__(self) -> None:
-        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        # `utf-8-sig` drops a leading BOM, as pi's `TextDecoder` does.
+        self._decoder = codecs.getincrementaldecoder("utf-8-sig")(errors="replace")
         # The incomplete last line, in pieces.
         self._pending_line: list[str] = []
         # The last text ended with CR, so a leading LF of the next text completes that CRLF.

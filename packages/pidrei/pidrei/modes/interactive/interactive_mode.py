@@ -4556,7 +4556,8 @@ class InteractiveMode:
         # `hard_exit` skips everything still queued.
         await drain_output()
         # dispose() kills a running `!` command. After the last await, so it also catches a shell
-        # spawned after the abort.
+        # spawned after the abort, once its pid is tracked. Known limit: a shell created inside
+        # `open_process` whose pid is not tracked yet (`LocalShellOperations.exec`) is missed.
         kill_tracked_detached_children()
         hard_exit(0)
 

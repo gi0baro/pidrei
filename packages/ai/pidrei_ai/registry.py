@@ -234,10 +234,13 @@ class Provider:
         return self._fetch_models is not None
 
     def get_all_models(self) -> list[AnyModel]:
+        """Every model of the catalog. The list is shared by all callers (pi's `readonly` array):
+        it must not be mutated."""
         return self._catalog[0]
 
     def get_models(self) -> list[Model]:
-        """The chat models of the catalog (read independently of `get_all_models`)."""
+        """The chat models of the catalog (read independently of `get_all_models`). The list is
+        shared by all callers, as `get_all_models`'s: it must not be mutated."""
         return self._catalog[1]
 
     def _set_dynamic_models(self, dynamic_models: list[AnyModel]) -> None:

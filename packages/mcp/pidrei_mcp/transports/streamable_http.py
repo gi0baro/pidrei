@@ -95,7 +95,8 @@ async def consume_sse_stream(
     """Decode an SSE body. `on_id` sees every `id` field, including events
     without data (resumption priming events); `on_retry` every valid `retry`
     field, in milliseconds. The owner of `chunks` closes it."""
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    # `utf-8-sig` drops a leading BOM, as `TextDecoder` does.
+    decoder = codecs.getincrementaldecoder("utf-8-sig")(errors="replace")
     limit = DEFAULT_MAX_MESSAGE_BYTES if max_event_bytes is None else max_event_bytes
     # The incomplete last line, in pieces, and its size in bytes. Only new text
     # is scanned and the line is joined once when it ends, so a large line
