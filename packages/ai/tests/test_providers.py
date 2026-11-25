@@ -217,8 +217,8 @@ def test_enables_mid_conversation_system_messages_only_for_verified_models():
         ("opencode", "claude-opus-5"),
         ("opencode", "kimi-k3"),
         ("opencode-go", "kimi-k3"),
-        ("github-copilot", "gpt-5.6-terra"),
-        ("github-copilot", "claude-opus-5"),
+        ("github-copilot", "gpt-6.1-terra"),
+        ("github-copilot", "claude-opus-5.5"),
         ("github-copilot", "claude-opus-4.8"),
         ("github-copilot", "kimi-k3"),
         ("deepseek", "deepseek-v4-pro"),
@@ -245,13 +245,13 @@ def test_enables_mid_conversation_system_messages_only_for_verified_models():
 
 
 def test_routes_proxied_tool_changes_through_verified_transports_only():
-    for provider, model_id in (("opencode", "gpt-5.6-terra"), ("github-copilot", "gpt-5.6-terra")):
+    for provider, model_id in (("opencode", "gpt-5.6-terra"), ("github-copilot", "gpt-6.1-terra")):
         # Proxies pass `additional_tools` through to OpenAI but are not verified for tool search.
         assert _compat_flag(provider, model_id, "supports_additional_tools") is True, f"{provider}/{model_id}"
         assert _compat_flag(provider, model_id, "supports_tool_search") is None, f"{provider}/{model_id}"
     # Proxied Anthropic endpoints reject `tool_addition`/`tool_removal` blocks.
-    for provider in ("opencode", "github-copilot"):
-        assert _compat_flag(provider, "claude-opus-5", "supports_mid_convo_tool_changes") is None, provider
+    for provider, model_id in (("opencode", "claude-opus-5"), ("github-copilot", "claude-opus-5.5")):
+        assert _compat_flag(provider, model_id, "supports_mid_convo_tool_changes") is None, f"{provider}/{model_id}"
     assert _compat_flag("anthropic", "claude-opus-5", "supports_mid_convo_tool_changes") is True
     # Kimi-style tool-bearing system messages survive Moonshot and OpenCode but not Copilot.
     for provider in ("moonshotai", "moonshotai-cn", "opencode", "opencode-go"):

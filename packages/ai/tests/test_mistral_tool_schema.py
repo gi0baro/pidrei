@@ -35,8 +35,6 @@ async def _capturing_on_payload(payload, _model):
 @pytest.mark.tonio
 async def test_tool_schemas_reach_the_payload_intact_and_strict():
     captured.clear()
-    # pi picks `devstral-medium-latest`; models.dev retired every devstral model
-    # before this catalog regen, so any live mistral-conversations model stands in.
     model = replace(
         get_builtin_model("mistral", "mistral-medium-latest"),
         compat=MistralConversationsCompat(supports_strict_mode=True),

@@ -15,8 +15,6 @@ from pidrei_ai.utils.retry import is_retryable_assistant_error
 from tests.mistral_helpers import FakeMistralClient, sse_body
 
 
-# pi picks `devstral-medium-latest`; models.dev retired every devstral model
-# before this catalog regen, so any live mistral-conversations model stands in.
 MODEL = get_builtin_model("mistral", "mistral-medium-latest")
 
 
@@ -51,7 +49,7 @@ async def test_preserves_raw_mistral_finish_reasons_for_provider_error_stops():
 
     assert message.stop_reason == "error"
     assert message.raw_stop_reason == "error"
-    assert message.error_message == "Provider stopped with: error (server error)"
+    assert message.error_message == "Provider stopped with: error"
     # pi #10487
     assert is_retryable_assistant_error(message) is True
 

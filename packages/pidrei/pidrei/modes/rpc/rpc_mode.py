@@ -374,6 +374,9 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
             await runtime_host.dispose()
             if signal_name != "SIGTERM":
                 await drain_output()
+            # dispose() kills a running `bash` command. After the last await, so it also catches a
+            # shell spawned after the abort.
+            kill_tracked_detached_children()
             hard_exit(exit_code)
         finally:
             shutdown_ended.set()
@@ -690,6 +693,7 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
                         cancelled=bool(extension_result.get("cancelled")),
                         truncated=bool(extension_result.get("truncated")),
                         full_output_path=extension_result.get("fullOutputPath"),
+                        full_output_error=extension_result.get("fullOutputError"),
                     )
                     await session.record_bash_result(
                         command.get("command"),

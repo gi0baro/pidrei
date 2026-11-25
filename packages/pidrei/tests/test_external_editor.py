@@ -90,6 +90,20 @@ async def test_returns_empty_content_when_the_editor_clears_the_prompt(tmp_path)
     assert result == {"status": "complete", "content": ""}
 
 
+# #10585: the editor starts from a key handler, so a full or unwritable temp dir must fail, not raise.
+# pi points TMPDIR at a missing path; `tempfile` caches its directory, so the cache is swapped instead.
+# The reason is Python's error text (`[Errno 2]`), where pi's is Node's (`ENOENT`).
+@pytest.mark.tonio
+async def test_reports_a_temp_dir_it_cannot_write_to(tmp_path, monkeypatch):
+    import re
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "missing" / "tmp"))
+    result = await edit_in_external_editor({"command": "true", "content": "original"})
+
+    assert result["status"] == "failed"
+    assert re.match(r"^External editor failed: \[Errno 2\] .*; prompt unchanged$", result["message"])
+
+
 # #11592: launch failures must be reported, not silently ignored.
 @pytest.mark.tonio
 async def test_reports_an_editor_that_cannot_be_launched():

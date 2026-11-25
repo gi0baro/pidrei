@@ -110,6 +110,8 @@ class _RpcHarness:
         self.dispose_started = tonio.Event()
         self.dispose_release: tonio.Event | None = None
         self.dispose_calls = 0
+        # `kill_tracked_detached_children` calls.
+        self.kill_calls = 0
         self._spawned: list = []
 
     def _hard_exit(self, code: int) -> None:
@@ -118,6 +120,9 @@ class _RpcHarness:
         self.exits.append((code, self.dispose_release.is_set() if self.dispose_release is not None else None))
         self._write(json.dumps({"type": "exit", "code": code}) + "\n")
         self._exited.set()
+
+    def _kill_tracked_detached_children(self) -> None:
+        self.kill_calls += 1
 
     def slow_dispose(self) -> None:
         """Make the runtime's dispose wait for `dispose_release` (pi's mocked dispose)."""
@@ -219,7 +224,7 @@ class _RpcHarness:
                 drain_output=_noop_async,
                 _pump_stdin_commands=fake_pump,
                 hard_exit=self._hard_exit,
-                kill_tracked_detached_children=lambda: None,
+                kill_tracked_detached_children=self._kill_tracked_detached_children,
             )
         )
         # The fake pump stands in for the only reader of stdin.
@@ -633,6 +638,25 @@ class TestRpcShutdownTriggers:
             await self._returned(end)
             assert harness.exits == [(143, True)]
             assert harness.dispose_calls == 1
+        finally:
+            await harness.stop()
+
+    # On Windows, dispose() kills a running `bash` command with an asynchronous taskkill, which lost the
+    # race with process.exit and left the command's processes running.
+    @pytest.mark.tonio
+    async def test_kills_tracked_shell_trees_after_dispose_on_stdin_eof(self, tmp_path):
+        harness = await self._start_with_slow_dispose(tmp_path)
+        try:
+            end = harness.run(harness.end_handler())
+            await harness.dispose_started.wait(5)
+            assert harness.dispose_started.is_set()
+            assert harness.dispose_calls == 1
+            assert harness.kill_calls == 0
+
+            harness.dispose_release.set()
+            await self._returned(end)
+            assert harness.exits == [(0, True)]
+            assert harness.kill_calls == 1
         finally:
             await harness.stop()
 

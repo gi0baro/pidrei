@@ -600,6 +600,22 @@ MISTRAL_CONVERSATIONS_COMPAT_SCHEMA: dict[str, Any] = {
     "additionalProperties": True,
 }
 
+GOOGLE_COMPAT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "supportsStrictMode": _boolean(
+            description=(
+                "Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode. Default: "
+                "true for model IDs containing gemini-3 or a later version, such as gemini-3-pro or "
+                "vendor-gemini-4-argon, false otherwise. Set true for Gemini 3+ models served under IDs without the "
+                "version."
+            )
+        ),
+    },
+    "description": "Compatibility settings for the Google Generative AI and Vertex APIs.",
+    "additionalProperties": True,
+}
+
 SYSTEM_ONE_COMPAT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -708,6 +724,8 @@ COMPAT_SCHEMAS_BY_API: dict[str, dict[str, Any]] = {
     "anthropic-messages": ANTHROPIC_MESSAGES_COMPAT_SCHEMA,
     "bedrock-converse-stream": BEDROCK_COMPAT_SCHEMA,
     "mistral-conversations": MISTRAL_CONVERSATIONS_COMPAT_SCHEMA,
+    "google-generative-ai": GOOGLE_COMPAT_SCHEMA,
+    "google-vertex": GOOGLE_COMPAT_SCHEMA,
     "typesafe-system-one": SYSTEM_ONE_COMPAT_SCHEMA,
     "cloudflare-workers-ai-system-one": SYSTEM_ONE_COMPAT_SCHEMA,
 }

@@ -60,7 +60,7 @@ async def _setup(tmp_path, *, choice: str | None, switch_cancelled: bool):
             )
         return {"cancelled": switch_cancelled}
 
-    async def show_extension_selector(_title, labels, _opts=None, _blocked=None):
+    async def show_extension_selector(_title, labels, _opts=None):
         return labels[["continue", "fork", None].index(choice)]
 
     async def handle_fatal_runtime_error(_prefix, _error):

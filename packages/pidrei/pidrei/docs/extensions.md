@@ -445,8 +445,9 @@ The model request runs its hooks in the order the diagram shows: `context`
 (can modify the conversation messages), `context_with_system` (can modify the
 full transcript), `before_provider_headers` (can mutate headers),
 `before_provider_request` (can inspect or replace the payload),
-`after_provider_response` (status and headers, before the stream is consumed),
-then `provider_stream_event` (raw parsed stream events) alongside
+`after_provider_response` (status and headers of each HTTP response, including
+errors and retried attempts; successful responses fire before their stream is
+consumed), then `provider_stream_event` (raw parsed stream events) alongside
 `message_start` / `message_update` / `message_end` for the assistant message.
 Provider hooks run only when the transport exposes the matching stage.
 
@@ -553,7 +554,7 @@ Other operations change the current session without replacing the runtime:
 | `context_with_system` | Before each request, after every `context` handler | The full transcript, sent as returned |
 | `before_provider_headers` | Before each request | Request headers |
 | `before_provider_request` | Before each request | The payload |
-| `after_provider_response` | After each response arrives | — (inspect status/headers) |
+| `after_provider_response` | After each response arrives, including error responses and retried attempts | — (inspect status/headers) |
 | `provider_stream_event` | Each parsed provider stream event, before pidrei normalizes it (`provider`, `api`, `model`, `data`) | — (notification-only, not persisted) |
 | `cache_warming_decision` | Before each prompt-cache refresh, with pidrei's decision (`warmCost`, `missCost`, `continuationProbability`, `action`) | Return `{"action": "warm"}` or `{"action": "stop"}`; the last handler that returns an action wins; `"stop"` ends warming until the next real request |
 | `message_start` / `message_update` / `message_end` | Each user, assistant, tool-result and custom message; `message_update` streams the assistant's | `message_end` may replace the message |
@@ -1233,8 +1234,10 @@ the part that is new since the previous request.
 
 #### after_provider_response
 
-Fired after an HTTP response is received and before its stream body is
-consumed. Handlers run in extension load order.
+Fired for each HTTP response the provider receives, including error responses
+(4xx/5xx) and responses to retried attempts, so one request can fire it more
+than once. Successful responses fire before their stream body is consumed.
+Handlers run in extension load order.
 
 ```python
 async def on_provider_response(event, ctx):
@@ -1244,8 +1247,10 @@ async def on_provider_response(event, ctx):
         ctx.ui.notify(f"rate limited, retry-after: {event['headers'].get('retry-after')}", "warning")
 ```
 
-Header availability depends on the provider and transport. Providers that
-abstract HTTP responses may not expose headers.
+Coverage depends on the provider and transport. Some providers report empty
+headers or only some responses. It does not fire for errors that arrive inside
+an already started SSE stream, or for WebSocket transports, including a
+WebSocket connection that fails to open.
 
 #### provider_stream_event
 
@@ -1417,7 +1422,7 @@ async def extension(pi):
         if event["toolName"] != "bash" or event["isError"]:
             return None
         # For the built-in bash tool, event["details"] is a BashToolDetails
-        # (pidrei.core.tools): truncation, full_output_path.
+        # (pidrei.core.tools): truncation, full_output_path, full_output_error.
         text = "".join(block.text for block in event["content"] if block.type == "text")
         summary = await pi.exec("summarize", [text], cancel=ctx.signal)
 
@@ -1466,7 +1471,8 @@ async def on_user_bash(event, ctx):
 cancel=None)` method that streams output as bytes to the synchronous
 `on_data` callback and returns a result with `exit_code`. A `result` needs
 `output` (str), `exitCode` (a number or `None`), `cancelled` and `truncated`
-(bools), and optionally `fullOutputPath`.
+(bools), and optionally `fullOutputPath`, or `fullOutputError` (str) when
+the truncated output could not be saved to a file.
 
 Returning `None` continues to the next handler, then to local execution if
 none handles the event. A valid result stops propagation: `operations` runs
@@ -1718,8 +1724,8 @@ options to stop the call with the agent run.
 
 For non-chat models, `find_of_type()`, `get_models_of_type()`,
 `await get_available_of_type()` and `get_model_of_type()` look up image and
-classifier models, and `classify()` and `generate_images()` call them; see
-[Classifier models](models.md#classifier-models).
+decision (`"classifier"`) models, and `classify()` and `generate_images()` call
+them; see [Decision models](models.md#decision-models).
 
 ### ctx.signal
 
@@ -3292,8 +3298,8 @@ passed to scripts as their text content. To report a failure that still
 carries data, return the result with `is_error=True` instead of raising: the
 model sees an error, and scripts still receive `structured_content`. The
 built-in `bash` tool returns `{"output", "truncated", "full_output_path"?,
-"exit_code", "wall_time_seconds"}`, also for non-zero exit codes, with up to
-1 MiB of output. `tool_result` handlers that redact `content` should also
+"full_output_error"?, "exit_code", "wall_time_seconds"}`, also for non-zero
+exit codes, with up to 1 MiB of output. `tool_result` handlers that redact `content` should also
 replace `structuredContent`; replacing only `content` drops it.
 
 **Execution mode:** tool calls from one assistant message run in parallel by
@@ -4202,7 +4208,8 @@ them; `confirm` resolves to `False`. The `editor` dialog opens the external
 editor (`$VISUAL`, `$EDITOR`, or the configured command) on Ctrl+G. While a
 dialog is open, terminals that support
 [program status](environment-variables.md#program-status) show pidrei as
-blocked: `confirm` as a permission request, the others as a question.
+blocked, with the first line of the title as the message: `confirm` as a
+permission request, the others as a question.
 
 Dialogs stack: opening one from inside another (a confirm from a custom
 component, say) hides the visible one, and closing it shows the previous one
@@ -4277,6 +4284,23 @@ async def run_timed_signal(_args, ctx):
 ```
 
 See `examples/extensions/timed_confirm.py` for both approaches.
+
+#### Program status kind
+
+While a dialog waits, terminals that support
+[program status](environment-variables.md#program-status) show pidrei as
+blocked, with the first line of the title as the message. `confirm()` reports
+`"permission"`, `select()` and `input()` report `"question"`. Pass
+`blockedKind` in the options dict when the dialog asks for something else,
+for example a select that approves an action:
+
+```python
+choice = await ctx.ui.select(
+    "Deploy to production?",
+    ["Deploy", "Deploy and tag", "Cancel"],
+    {"blockedKind": "permission"},  # "permission" | "question" | "auth"
+)
+```
 
 ### Widgets, status and footer
 

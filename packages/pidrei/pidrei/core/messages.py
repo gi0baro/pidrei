@@ -29,6 +29,8 @@ class BashExecutionMessage:
     truncated: bool
     timestamp: int
     full_output_path: str | None = None
+    # Why the full output could not be saved, when it was truncated.
+    full_output_error: str | None = None
     exclude_from_context: bool | None = None
     role: Literal["bashExecution"] = "bashExecution"
 
@@ -76,9 +78,19 @@ def bash_execution_to_text(msg: BashExecutionMessage) -> str:
         text += "\n\n(command cancelled)"
     elif msg.exit_code is not None and msg.exit_code != 0:
         text += f"\n\nCommand exited with code {msg.exit_code}"
-    if msg.truncated and msg.full_output_path:
-        text += f"\n\n[Output truncated. Full output: {msg.full_output_path}]"
+    if msg.truncated:
+        note = bash_truncation_note(full_output_path=msg.full_output_path, full_output_error=msg.full_output_error)
+        text += f"\n\n[{note}]"
     return text
+
+
+def bash_truncation_note(*, full_output_path: str | None, full_output_error: str | None) -> str:
+    """What a truncated bash execution says about its full output: where it is, or why it could not be saved."""
+    if full_output_path:
+        return f"Output truncated. Full output: {full_output_path}"
+    if full_output_error:
+        return f"Output truncated. Could not save the full output: {full_output_error}"
+    return "Output truncated"
 
 
 def create_branch_summary_message(summary: str, from_id: str | None, timestamp: str | int) -> BranchSummaryMessage:

@@ -30,6 +30,7 @@ from pidrei_ai.types import (
     SystemOneImageInput,
 )
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
+from pidrei_ai.utils.openrouter_cost import apply_openrouter_reported_cost, is_openrouter_model
 from pidrei_utils import clock
 
 
@@ -69,7 +70,7 @@ class SystemOneTransport:
     url: Callable[[ClassifierModel], str]
     # Wraps the System One request (`{state, questions}`) in the service's request envelope.
     payload: Callable[[ClassifierModel, dict[str, Any]], Any]
-    # Extracts the System One output (`{answers, usage}`) from the service's response envelope.
+    # Extracts the System One output (`{answers, usage}`, and `id` when reported) from the service's response envelope.
     output: Callable[[Any], dict[str, Any]]
 
 
@@ -217,10 +218,15 @@ async def classify_system_one(
             request_options,
         )
         result = transport.output(body)
+        response_id = result.get("id")
+        if isinstance(response_id, str) and response_id:
+            output.response_id = response_id
         # Set before parsing answers: a request with malformed answers was still billed.
         usage = parse_classifier_usage(result.get("usage"), model)
         if usage is not None:
-            output.usage = usage
+            if is_openrouter_model(model):
+                apply_openrouter_reported_cost(usage, result["usage"])
+            output.usage = usage.freeze()
         output.answers = _parse_answers(transport.label, result.get("answers"), context)
         return output
     except Exception as error:

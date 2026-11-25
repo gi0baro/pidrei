@@ -54,7 +54,8 @@ INDIVIDUAL_TEXT_MODELS = [
     "qwen3.7-plus",
     "qwen3.8-flash",
     "qwen3.8-max",
-    "qwen4-max-preview",
+    # pi: "qwen4-max-preview"; models.dev renamed it (see the generator's allowlist).
+    "qwen4-max",
 ]
 
 IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-image-pro"]

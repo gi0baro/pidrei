@@ -4,7 +4,7 @@ No pi spec covers any of this — pi's Google tests stub the SDK away, so its UR
 joining, params→body mapping and auth headers are only ever exercised against
 the live API. Here that code is ours (`api/google_client.py`), and a wrong URL or
 a dropped body field is a silently broken provider, so each rule read out of
-`@google/genai` 2.32.0 gets pinned here.
+`@google/genai` 3.6.1 gets pinned here.
 """
 
 import contextlib
@@ -41,7 +41,7 @@ def test_gemini_api_url_uses_the_model_base_url_verbatim():
 
 def test_gemini_api_url_falls_back_to_the_sdk_default_endpoint_and_version():
     assert _url({"apiKey": "k"}) == (
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:streamGenerateContent?alt=sse"
+        "https://generativelanguage.googleapis.com/v1/models/gemini-3-pro-preview:streamGenerateContent?alt=sse"
     )
 
 

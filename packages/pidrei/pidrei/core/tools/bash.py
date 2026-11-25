@@ -60,6 +60,10 @@ BASH_OUTPUT_SCHEMA = {
         "output": {"type": "string", "description": "Combined stdout and stderr, possibly truncated"},
         "truncated": {"type": "boolean"},
         "full_output_path": {"type": "string", "description": "Full output, when truncated"},
+        "full_output_error": {
+            "type": "string",
+            "description": "Why the full output could not be saved, when truncated and saving failed",
+        },
         "exit_code": {"type": "number"},
         "wall_time_seconds": {"type": "number"},
     },
@@ -88,6 +92,8 @@ def _resolve_timeout_ms(timeout: float | None) -> float | None:
 class BashToolDetails:
     truncation: TruncationResult | None = None
     full_output_path: str | None = None
+    # Why the full output could not be saved to a temp file, when it could not.
+    full_output_error: str | None = None
 
 
 @dataclass(slots=True)
@@ -407,7 +413,7 @@ def create_shell_tool_definition(
                     content=[TextContent(text=snapshot.content or "")],
                     details=BashToolDetails(
                         truncation=snapshot.truncation if snapshot.truncation.truncated else None,
-                        full_output_path=snapshot.full_output_path,
+                        **_output_file_details(snapshot),
                     ),
                 )
             )
@@ -453,33 +459,36 @@ def create_shell_tool_definition(
             output.finish()
             clear_update_timer()
             emit_output_update()
-            snapshot = output.snapshot(persist_if_truncated=True)
+            # The file path is only final after closing: a write can still fail while the file flushes.
             await output.close_temp_file()
-            return snapshot
+            return output.snapshot(persist_if_truncated=True)
 
         def format_output(snapshot, empty_text: str = "(no output)"):
             truncation = snapshot.truncation
             text = snapshot.content or empty_text
             details: BashToolDetails | None = None
             if truncation.truncated:
-                details = BashToolDetails(truncation=truncation, full_output_path=snapshot.full_output_path)
+                details = BashToolDetails(truncation=truncation, **_output_file_details(snapshot))
+                file = snapshot.full_output_file
+                full_output = (
+                    f"Could not save the full output: {file.error}"
+                    if file is not None and file.kind == "failed"
+                    else f"Full output: {file.path if file is not None else None}"
+                )
                 start_line = truncation.total_lines - truncation.output_lines + 1
                 end_line = truncation.total_lines
                 if truncation.last_line_partial:
                     last_line_size = format_size(output.get_last_line_bytes())
                     text += (
-                        f"\n\n[Showing last {format_size(truncation.output_bytes)} of line {end_line} "
-                        f"(line is {last_line_size}). Full output: {snapshot.full_output_path}]"
+                        f"\n\n[Showing last {format_size(truncation.output_bytes)} of line {start_line} "
+                        f"(line is {last_line_size}). {full_output}]"
                     )
                 elif truncation.truncated_by == "lines":
-                    text += (
-                        f"\n\n[Showing lines {start_line}-{end_line} of {truncation.total_lines}. "
-                        f"Full output: {snapshot.full_output_path}]"
-                    )
+                    text += f"\n\n[Showing lines {start_line}-{end_line} of {truncation.total_lines}. {full_output}]"
                 else:
                     text += (
                         f"\n\n[Showing lines {start_line}-{end_line} of {truncation.total_lines} "
-                        f"({format_size(DEFAULT_MAX_BYTES)} limit). Full output: {snapshot.full_output_path}]"
+                        f"({format_size(DEFAULT_MAX_BYTES)} limit). {full_output}]"
                     )
             return text, details
 
@@ -526,8 +535,11 @@ def create_shell_tool_definition(
             wall_time_seconds = _round_tenths(clock.monotonic() - started_at)
             full_output = await output.read_full_output(STRUCTURED_OUTPUT_MAX_BYTES)
             structured_content: dict[str, Any] = {"output": full_output.content, "truncated": full_output.truncated}
-            if full_output.truncated and snapshot.full_output_path:
-                structured_content["full_output_path"] = snapshot.full_output_path
+            full_output_file = snapshot.full_output_file
+            if full_output.truncated and full_output_file is not None and full_output_file.kind == "saved":
+                structured_content["full_output_path"] = full_output_file.path
+            if full_output.truncated and full_output_file is not None and full_output_file.kind == "failed":
+                structured_content["full_output_error"] = full_output_file.error
             structured_content["exit_code"] = exit_code
             structured_content["wall_time_seconds"] = wall_time_seconds
             if exit_code != 0:
@@ -567,6 +579,14 @@ def create_shell_tool_definition(
         render_call=renderers.render_call,
         render_result=renderers.render_result,
     )
+
+
+def _output_file_details(snapshot) -> dict[str, str]:
+    """Where a snapshot's full output went: its file, or why it could not be saved."""
+    file = snapshot.full_output_file
+    if file is None:
+        return {}
+    return {"full_output_path": file.path} if file.kind == "saved" else {"full_output_error": file.error}
 
 
 BASH_TOOL_CONFIG = ShellToolConfig(

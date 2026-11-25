@@ -23,16 +23,16 @@ def copilot_context() -> Context:
 
 
 def test_applies_copilot_specific_adaptive_thinking_effort_overrides():
-    opus5 = get_builtin_model("github-copilot", "claude-opus-5")
-    assert opus5 is not None
-    assert opus5.api == "anthropic-messages"
-    assert opus5.context_window == 1000000
-    assert opus5.thinking_level_map is not None
-    assert opus5.thinking_level_map["minimal"] == "low"
-    assert opus5.thinking_level_map["xhigh"] == "xhigh"
-    assert opus5.thinking_level_map["max"] == "max"
-    assert "xhigh" in get_supported_thinking_levels(opus5)
-    assert "max" in get_supported_thinking_levels(opus5)
+    opus48 = get_builtin_model("github-copilot", "claude-opus-4.8")
+    assert opus48 is not None
+    assert opus48.api == "anthropic-messages"
+    assert opus48.context_window == 1000000
+    assert opus48.thinking_level_map is not None
+    assert opus48.thinking_level_map["minimal"] == "low"
+    assert opus48.thinking_level_map["xhigh"] == "xhigh"
+    assert opus48.thinking_level_map["max"] == "max"
+    assert "xhigh" in get_supported_thinking_levels(opus48)
+    assert "max" in get_supported_thinking_levels(opus48)
 
     opus55 = get_builtin_model("github-copilot", "claude-opus-5.5")
     assert opus55 is not None
@@ -47,6 +47,13 @@ def test_applies_copilot_specific_adaptive_thinking_effort_overrides():
     assert sonnet46.thinking_level_map["max"] == "max"
     assert "max" in get_supported_thinking_levels(sonnet46)
     assert "xhigh" not in get_supported_thinking_levels(sonnet46)
+
+
+# Copilot rejects `thinking: {type: "disabled"}` on Sonnet 5.5 (#12429).
+def test_does_not_offer_thinking_off_on_claude_sonnet_5_5():
+    sonnet55 = get_builtin_model("github-copilot", "claude-sonnet-5.5")
+    assert sonnet55 is not None
+    assert "off" not in get_supported_thinking_levels(sonnet55)
 
 
 @pytest.mark.tonio

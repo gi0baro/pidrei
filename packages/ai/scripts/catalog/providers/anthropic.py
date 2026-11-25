@@ -13,7 +13,7 @@ from catalog.define import (
     with_input_limits,
 )
 from catalog.families.anthropic import (
-    claude_55_thinking_levels,
+    CLAUDE_55_THINKING_LEVELS,
     enable_claude_mid_convo_effort,
     supports_claude_mid_convo_effort,
     supports_claude_mid_convo_system_messages,
@@ -44,12 +44,14 @@ _CLAUDE_FABLE_5_2: ChatModel = {
     "cost": {"input": 8, "output": 40, "cacheRead": 0.2, "cacheWrite": 10},
     "contextWindow": 1000000,
     "maxTokens": 128000,
+    # Without a models.dev entry the shared rule cannot tell; Fable rejects `thinking: {type: "disabled"}`.
+    "thinkingLevelMap": {"off": None},
 }
 
 
 def _map(model: ChatModel, _source: ModelsDevModel) -> ChatModel:
     if model["id"] in _MODELS_55:
-        merge_thinking(model, claude_55_thinking_levels(model["id"]))
+        merge_thinking(model, CLAUDE_55_THINKING_LEVELS)
     if model["id"] in _MODELS_WITH_1M_CONTEXT:
         model["contextWindow"] = 1000000
     return model

@@ -30,10 +30,7 @@ LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = frozenset(
         "opencode:deepseek-v4-flash",
         "opencode:deepseek-v4.1-flash",
         "opencode:deepseek-v4-pro",
-        "opencode:kimi-k2.5",
-        "opencode:kimi-k2.6",
         "opencode:minimax-m2.7",
-        "opencode-go:kimi-k2.6",
     }
 )
 
@@ -101,10 +98,6 @@ def opencode_models(ctx: ProviderContext) -> list[ChatModel]:
         compat = served.get("compat")
         if provider == "opencode" and model["id"] == "grok-build-0.1":
             compat = {**(compat or {}), "supportsReasoningEffort": False}
-        if model["id"] == "kimi-k2.6":
-            # OpenCode Kimi K2.6 accepts Anthropic-style thinking objects
-            # and rejects string thinking values or combined reasoning_effort.
-            compat = {**(compat or {}), "thinkingFormat": "deepseek", "supportsReasoningEffort": False}
         # models.dev reports these as @ai-sdk/anthropic, but OpenCode Go serves
         # them through the OpenAI-compatible /openai/v1/chat/completions path.
         if (
@@ -175,9 +168,6 @@ def finalize_opencode_model(model: ChatModel, _ctx: ProviderContext) -> None:
     """Behavior shared by OpenCode Zen and Go."""
     if model["provider"] == "opencode-go" and model["id"] == "glm-5.2":
         merge_thinking(model, {"off": None, "minimal": None, "low": None, "medium": None, "high": "high", "max": "max"})
-    if model["provider"] == "opencode-go" and model["id"] == "kimi-k2.6":
-        # OpenCode Go exposes Kimi K2.6 thinking as on/off, not distinct effort tiers.
-        merge_thinking(model, {"minimal": None, "low": None, "medium": None})
     if model["provider"] == "opencode" and model["id"] == "grok-build-0.1":
         # OpenCode Zen Grok Build reasons by default but rejects explicit reasoningEffort.
         merge_thinking(model, {"off": None, "minimal": None, "low": None, "medium": None})

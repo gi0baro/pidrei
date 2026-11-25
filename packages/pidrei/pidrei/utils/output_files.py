@@ -13,7 +13,23 @@ import secrets
 import tonio.colored as tonio
 
 from ..config import TEMP_DIR
-from .temp_file_writer import TempFileWriter, create_private_file_blocking
+from .temp_file_writer import (
+    FailedOutputFile,
+    OutputFileResult,
+    SavedOutputFile,
+    TempFileWriter,
+    create_private_file_blocking,
+)
+
+
+__all__ = [
+    "FailedOutputFile",
+    "OutputFileResult",
+    "SavedOutputFile",
+    "TempFileWriter",
+    "create_output_file_stream",
+    "write_output_file",
+]
 
 
 def _create_output_file_path(prefix: str, extension: str) -> str:
@@ -33,7 +49,7 @@ async def write_output_file(prefix: str, extension: str, data: str | bytes) -> s
     return path
 
 
-def create_output_file_stream(prefix: str, extension: str) -> tuple[str, TempFileWriter]:
-    """Open a new output file for streamed output."""
-    path = _create_output_file_path(prefix, extension)
-    return path, TempFileWriter(path)
+def create_output_file_stream(prefix: str, extension: str) -> TempFileWriter:
+    """Open a new output file for streamed output. Its failures never raise:
+    the writer's `result` and `close()` report them (pi's `OutputFileStream`)."""
+    return TempFileWriter(_create_output_file_path(prefix, extension))

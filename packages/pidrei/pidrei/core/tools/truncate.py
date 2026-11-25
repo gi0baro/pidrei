@@ -38,7 +38,8 @@ class TruncationResult:
     output_lines: int
     # Number of bytes in the truncated output.
     output_bytes: int
-    # Whether the last line was partially truncated (only for tail truncation edge case).
+    # Whether the first output line was partially truncated: an over-long line at the end, possibly
+    # followed by blank lines (only for tail truncation).
     last_line_partial: bool
     # Whether the first line exceeded the byte limit (for head truncation).
     first_line_exceeds_limit: bool
@@ -93,6 +94,10 @@ def _split_lines_for_counting(content: str) -> list[str]:
     if content.endswith("\n"):
         lines.pop()
     return lines
+
+
+def _is_blank_line(line: str) -> bool:
+    return len(line.strip()) == 0
 
 
 def _replace_unpaired_surrogates(content: str) -> str:
@@ -245,12 +250,15 @@ def truncate_tail(
         line_bytes = utf8_byte_length(line) + (1 if output_lines else 0)  # +1 for newline
         if output_bytes_count + line_bytes > max_bytes:
             truncated_by = "bytes"
-            # Edge case: if we haven't added ANY lines yet and this line exceeds
-            # max_bytes, take the end of the line (partial).
-            if not output_lines:
-                truncated_line = _truncate_string_to_bytes_from_end(line, max_bytes)
+            # Edge case: if this line exceeds the limit and nothing or only blank lines come after it,
+            # take the end of the line (partial) so the output is not just the blank lines.
+            remaining_bytes = max_bytes - output_bytes_count - (1 if output_lines else 0)
+            if not output_lines or (
+                not _is_blank_line(line) and all(_is_blank_line(kept) for kept in output_lines) and remaining_bytes > 0
+            ):
+                truncated_line = _truncate_string_to_bytes_from_end(line, remaining_bytes)
                 output_lines.insert(0, truncated_line)
-                output_bytes_count = utf8_byte_length(truncated_line)
+                output_bytes_count += line_bytes - utf8_byte_length(line) + utf8_byte_length(truncated_line)
                 last_line_partial = True
             break
         output_lines.insert(0, line)

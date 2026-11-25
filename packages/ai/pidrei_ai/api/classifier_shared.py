@@ -10,7 +10,7 @@ as pi's "Request timed out after Nms" while a caller cancel stays an abort.
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import tonio.colored as tonio
@@ -24,7 +24,6 @@ from pidrei_ai.types import (
     ProviderEnv,
     ProviderHeaders,
     ProviderResponse,
-    Usage,
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -97,25 +96,29 @@ class _ClassifierClient:
         self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def post(
-        self, url: str, payload: Any, headers: dict[str, str], cancel: CancelToken | None
+        self,
+        url: str,
+        payload: Any,
+        headers: dict[str, str],
+        cancel: CancelToken | None,
+        on_response: Callable[[ProviderResponse], Awaitable[Any]],
     ) -> tuple[int, dict[str, str], str]:
-        async def _send() -> tuple[Any, bytes]:
+        async def _head() -> Any:
             # The whole-request bound is the caller's per-attempt timer token.
             request = http.build_request("POST", url, json=payload, headers=headers, timeout=http.oneshot_timeout(None))
-            response = await self._fetch(request, env=self._env)
-            try:
-                body = await response.read()
-            except BaseException:
-                http.abandon_response(response)
-                raise
-            return response, body
+            return await self._fetch(request, env=self._env)
 
-        response, body = await run_cancellable(_send(), cancel)
-        return (
-            response.status_code,
-            {name.lower(): value for name, value in response.headers.items()},
-            body.decode("utf-8", "replace"),
-        )
+        response = await run_cancellable(_head(), cancel)
+        response_headers = {name.lower(): value for name, value in response.headers.items()}
+        try:
+            # Reported before the body is read, so a body that fails to arrive still reports its status.
+            # Outside the cancellable waits, as pi's callback is not interrupted by the attempt's signal.
+            await on_response(ProviderResponse(status=response.status_code, headers=response_headers))
+            body = await run_cancellable(response.read(), cancel)
+        except BaseException:
+            http.abandon_response(response)
+            raise
+        return response.status_code, response_headers, body.decode("utf-8", "replace")
 
 
 async def post_classifier_request(
@@ -141,7 +144,10 @@ async def post_classifier_request(
     client = _ClassifierClient(options.env, options.fetch)
     headers = _request_headers(model, options.api_key, options.headers, options.identity)
 
-    async def attempt() -> tuple[ProviderResponse, Any]:
+    def report(response: ProviderResponse) -> Awaitable[Any]:
+        return maybe_call(options.on_response, response, model)
+
+    async def attempt() -> Any:
         # A fresh timeout for every attempt (pi: `AbortSignal.timeout` per request).
         timeout = CancelToken() if timeout_ms is not None else None
         timer = CancelToken()
@@ -157,10 +163,10 @@ async def post_classifier_request(
             tonio.spawn.without_tracking(_expire())
         combined = combine_cancel_tokens(caller_cancel, timeout)
         try:
-            status, response_headers, text = await client.post(url, payload, headers, combined.token)
+            status, response_headers, text = await client.post(url, payload, headers, combined.token, report)
             if not 200 <= status < 300:
                 raise _http_error(label, status, response_headers, text)
-            return ProviderResponse(status=status, headers=response_headers), json.loads(text)
+            return json.loads(text)
         except Exception:
             if timeout is not None and timeout.cancelled and not (caller_cancel and caller_cancel.cancelled):
                 raise _timeout_error(timeout_ms) from None
@@ -169,29 +175,43 @@ async def post_classifier_request(
             combined.cleanup()
             timer.cancel()
 
-    response, parsed = await retry_provider_request(
+    return await retry_provider_request(
         attempt,
         max_retries=options.max_retries if options.max_retries is not None else 2,
         max_retry_delay_ms=options.max_retry_delay_ms,
         cancel=caller_cancel,
         no_retry_statuses=no_retry_statuses,
     )
-    await maybe_call(options.on_response, response, model)
-    return parsed
 
 
 def _token_count(value: Any) -> float:
     return value if _is_number(value) and value > 0 else 0
 
 
-def parse_classifier_usage(value: Any, model: ClassifierModel) -> Usage | None:
+def parse_classifier_usage(value: Any, model: ClassifierModel) -> UsageBuilder | None:
     """Usage from a `{input_tokens, output_tokens}` object, priced from the model
     catalog like chat usage. A missing or malformed usage object leaves the
-    result without usage instead of failing it."""
+    result without usage instead of failing it.
+    `input_tokens_details.cached_tokens` and `cache_write_tokens` are included
+    in `input_tokens`, as in the Responses API, so they are split out of
+    `input`.
+
+    Returns the builder, which the caller freezes once it has applied any
+    provider-reported cost (recipe `freeze-at-seam`)."""
     if not is_record(value) or ("input_tokens" not in value and "output_tokens" not in value):
         return None
-    input = _token_count(value.get("input_tokens"))
+    total_input = _token_count(value.get("input_tokens"))
     output = _token_count(value.get("output_tokens"))
-    usage = UsageBuilder(input=input, output=output, total_tokens=input + output)
+    raw_details = value.get("input_tokens_details")
+    details = raw_details if is_record(raw_details) else {}
+    cache_read = min(_token_count(details.get("cached_tokens")), total_input)
+    cache_write = min(_token_count(details.get("cache_write_tokens")), total_input - cache_read)
+    usage = UsageBuilder(
+        input=total_input - cache_read - cache_write,
+        output=output,
+        cache_read=cache_read,
+        cache_write=cache_write,
+        total_tokens=total_input + output,
+    )
     calculate_cost(model, usage)
-    return usage.freeze()
+    return usage

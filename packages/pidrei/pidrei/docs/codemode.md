@@ -1,6 +1,6 @@
 # Codemode
 
-The `codemode` tool lets the model write a Python script that calls pidrei's other tools and runs non-LLM models, such as classifiers and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
+The `codemode` tool lets the model write a Python script that calls pidrei's other tools and runs non-LLM models, such as decision models and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
 
 Scripts run on [Monty](https://github.com/pydantic/monty), a sandboxed Python interpreter.
 
@@ -8,9 +8,9 @@ Scripts run on [Monty](https://github.com/pydantic/monty), a sandboxed Python in
 
 The tool input is raw Python source, not JSON and not a markdown code fence. It runs in a sandboxed interpreter: top-level `await` works, and if the last line is an expression, its value is added to the output. Scripts have no third-party packages, file system, network, environment, subprocesses, or sleep; they reach the outside world only through tools and `models`.
 
-The interpreter supports a subset of Python. Not supported: `yield`, `del`, class inheritance (so no custom exception classes), method decorators, `async with` and `async for`, `asyncio.create_task`, and `asyncio.gather(return_exceptions=True)` (use `all_settled()`).
+The interpreter supports a subset of Python. Not supported: `yield`, `del`, class inheritance (so no custom exception classes), method decorators, `async with` and `async for`, `asyncio.create_task`, and `asyncio.gather(return_exceptions=True)` (use `all_settled()`). Inheritance is partial: a class can subclass another class the script defines, but without `super()`; a `@dataclass` subclass does not get its parent's fields. `asyncio.create_task` runs only with the type check off.
 
-Standard library modules that can be imported, each in part: `annotationlib`, `asyncio`, `base64`, `binascii`, `bisect`, `collections`, `copy`, `csv`, `dataclasses`, `datetime`, `decimal`, `fnmatch`, `functools`, `hashlib`, `itertools`, `json`, `math`, `os` (with `os.path`), `pathlib`, `random`, `re`, `sys`, `time`, `tomllib`, `typing`, and `unicodedata`. No other module is available.
+Standard library modules that can be imported, each in part: `annotationlib`, `asyncio`, `base64`, `binascii`, `bisect`, `collections`, `colorsys`, `copy`, `csv`, `dataclasses`, `datetime`, `decimal`, `fnmatch`, `functools`, `hashlib`, `itertools`, `json`, `keyword`, `math`, `os` (with `os.path`), `pathlib`, `random`, `re`, `stat`, `statistics`, `sys`, `time`, `tomllib`, `typing`, and `unicodedata`. No other module is available.
 
 Operations that would reach the system, such as reading a file, the environment, or `time.sleep()`, raise an error.
 
@@ -66,7 +66,7 @@ A tool with a parameter whose name is not a valid identifier takes its arguments
 
 What a call returns depends on the tool:
 
-- Tools with an output schema return a structured value, usually a `dict`. `bash` returns `{'output', 'truncated', 'full_output_path'?, 'exit_code', 'wall_time_seconds'}`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
+- Tools with an output schema return a structured value, usually a `dict`. `bash` returns `{'output', 'truncated', 'full_output_path'?, 'full_output_error'?, 'exit_code', 'wall_time_seconds'}`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`. When the full output could not be saved (for example a full temp directory), `full_output_error` says why and `output` holds only the retained tail.
 - MCP tools return their `CallToolResult`, including `isError` and `structuredContent`.
 - `read` returns the file's text, or for an image an image block `{'type': 'image', 'data': ..., 'mimeType': ..., 'note': ...}` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
 - Other tools, such as `edit` and `write`, return their text output.
@@ -94,7 +94,7 @@ The store is for small state such as IDs, cursors, or summaries. One value may h
 
 ## Models
 
-`models` reaches the model catalog and runs non-LLM models with the session's credentials: classifiers, which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which classifier and image models exist is described in [Classifier models](models.md#classifier-models).
+`models` reaches the model catalog and runs non-LLM models with the session's credentials: decision models (type `"classifier"`), which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which decision and image models exist is described in [Decision models](models.md#decision-models).
 
 ```python
 type ModelType = Literal["chat", "image", "classifier"]
@@ -178,6 +178,8 @@ class ClassifierResult(TypedDict):
     # Answers by question ID.
     answers: dict[str, ChoiceAnswer | ScoreAnswer | BoolAnswer]
     usage: NotRequired[ModelUsage]
+    # Provider-specific response ID when reported, such as OpenRouter's generation ID.
+    responseId: NotRequired[str]
     stopReason: Literal["stop", "error", "aborted"]
     errorMessage: NotRequired[str]
 
@@ -260,7 +262,7 @@ for message, result in zip(messages, results):
 rows
 ```
 
-Classifiers whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other classifiers return an error result when `images` is not empty.
+Decision models whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other decision models return an error result when `images` is not empty.
 
 ```python
 luna = await models.get_model_of_type("classifier", "openai", "gpt-6-luna")

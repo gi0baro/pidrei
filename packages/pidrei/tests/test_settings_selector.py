@@ -50,8 +50,8 @@ BASE_CONFIG = {
     "imageWidthCells": 40,
     "modelThinkingLevels": {},
     "outputPad": 1,
+    "notices": {},
     "quietStartup": False,
-    "showCacheMissNotices": True,
     "showHardwareCursor": False,
     "showImages": True,
     "showTerminalProgress": False,
@@ -118,6 +118,32 @@ def _noop_cancel() -> None:
 
 def _noop_preview(_theme) -> None:
     pass
+
+
+@pytest.mark.tonio
+async def test_toggles_individual_notices_in_the_notices_submenu():
+    notice_changes: list[tuple[str, bool]] = []
+    config = {
+        **BASE_CONFIG,
+        "notices": {"cacheMisses": True, "cacheWarming": True, "compactionCosts": True, "reasoningDrops": True},
+    }
+    callbacks = {
+        "onNoticeChange": lambda key, shown: notice_changes.append((key, shown)),
+        "onCancel": _noop_cancel,
+    }
+    settings_list = SettingsSelectorComponent(config, callbacks).get_settings_list()
+
+    settings_list.select_item("notices")
+    settings_list.handle_input("\r")
+    output = _render(settings_list)
+    assert "Cache misses" in output
+    assert "Reasoning drops" in output
+
+    for _ in range(3):
+        settings_list.handle_input(DOWN)
+    settings_list.handle_input("\r")
+
+    assert notice_changes == [("reasoningDrops", False)]
 
 
 @pytest.mark.tonio

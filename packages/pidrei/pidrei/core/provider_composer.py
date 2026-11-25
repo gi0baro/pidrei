@@ -118,6 +118,8 @@ class OAuthLoginCallbacks:
 
 @dataclass(slots=True)
 class AuthStatus:
+    """Whether and how a provider has auth. `configured: False` with `source: "stored"` is a stored credential that does not resolve."""
+
     configured: bool
     source: str | None = None
     label: str | None = None

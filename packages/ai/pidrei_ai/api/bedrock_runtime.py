@@ -31,6 +31,7 @@ from urllib.parse import quote, urlparse
 import tonio.colored as tonio
 
 from pidrei_http import http
+from pidrei_http.http_proxy import resolve_http_proxy_url_for_target
 from pidrei_utils.cancel import CancelToken
 
 
@@ -188,9 +189,17 @@ class BedrockRuntimeClient:
     """`new BedrockRuntimeClient(config)` for the one command pi sends.
 
     The config keys are the SDK's own (`region`, `endpoint`, `credentials`,
-    `profile`, `token`, `authSchemePreference`, `requestHandler`,
-    `customUserAgent`), because that
+    `profile`, `token`, `authSchemePreference`, `customUserAgent`), because that
     record is the surface pi's endpoint-resolution spec asserts on.
+
+    One key is PiDrei's: `env`, the provider-scoped env (pi's `options.env`),
+    which stands in for the SDK's proxy-aware `requestHandler`. The Bedrock
+    request goes through `http.client_for(url, env)`, and when the scoped env
+    gives the Bedrock endpoint a proxy that the process environment alone does
+    not, botocore's credential session is configured with that proxy too, so
+    SSO and STS requests follow the Bedrock decision as in pi. A proxy that
+    comes from the process environment alone is left to punkreq and botocore,
+    which both read it per host.
     """
 
     def __init__(self, config: Mapping[str, Any] | None = None):
@@ -220,6 +229,22 @@ class BedrockRuntimeClient:
         if isinstance(token, Mapping):
             return token.get("token")
         return None
+
+    def _scoped_proxy(self) -> str | None:
+        """The proxy the provider-scoped env gives the Bedrock endpoint, when it differs from
+        the process environment's decision (the comparison `http.client_for` makes too).
+
+        pi's credential chain follows the Bedrock proxy decision. botocore already reads a proxy
+        in the process environment itself, per host, so only a scoped one is handed over.
+        """
+        env = self.config.get("env")
+        if not env:
+            return None
+        endpoint = self._endpoint()
+        proxy = resolve_http_proxy_url_for_target(endpoint, env)
+        if proxy is None or proxy == resolve_http_proxy_url_for_target(endpoint):
+            return None
+        return proxy
 
     async def _resolve_credentials(self) -> Any:
         """botocore's credential chain, off the event loop.
@@ -262,6 +287,13 @@ class BedrockRuntimeClient:
         import botocore.session
 
         session = botocore.session.Session(profile=self.config.get("profile") or None)
+        scoped_proxy = self._scoped_proxy()
+        if scoped_proxy:
+            from botocore.config import Config
+
+            # pi's `credentialDefaultProvider` (#12353): the chain's SSO, SSO OIDC and STS
+            # clients are created through the session, which merges this default config.
+            session.set_default_client_config(Config(proxies={"http": scoped_proxy, "https": scoped_proxy}))
         credentials = session.get_credentials()
         if credentials is None:
             raise BedrockRuntimeServiceException(
@@ -324,7 +356,7 @@ class BedrockRuntimeClient:
 
         async def send_request(final_args: MiddlewareArgs) -> DeserializeOutput:
             final_request = final_args.request
-            client = http.client_for(final_request.url)
+            client = http.client_for(final_request.url, self.config.get("env"))
             response = await client.post(
                 final_request.url,
                 content=final_request.body,

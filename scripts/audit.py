@@ -554,6 +554,8 @@ ALLOWED_OFF_RUNTIME_BLOCKING = {
     # is no runtime at all.
     "pidrei/pidrei/utils/open_browser.py:open_browser",
     "pidrei/pidrei/utils/temp_file_writer.py:TempFileWriter.__init__",
+    # Called only on that same inline path, when its write or close failed.
+    "pidrei/pidrei/utils/temp_file_writer.py:TempFileWriter._fail_off_runtime",
 }
 
 

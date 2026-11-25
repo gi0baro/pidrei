@@ -860,6 +860,29 @@ DROPPED_PREFIXES += (
         "llama.cpp extension not ported (see pidrei/extensions/__init__.py)",
     ),
 )
+# 1.6.1 additions (1.6.1 delta port).
+_PI_DECISION_REASON = (
+    "pi-decision adapter not ported: its only consumer is the unported radius provider "
+    "(1.6.1 delta port; types.py keeps the api literal only)"
+)
+_FIRST_TIME_SETUP_REASON = (
+    "first-time setup not ported: since pi 1.6.1 the dialog only asks the analytics opt-in, and pidrei has no "
+    "telemetry (1.6.1 delta port)"
+)
+DROPPED_PREFIXES += (
+    # `c2f3a5ce` added it as pi-classifier, `9553d583` renamed it; the
+    # prefixes also cover the `.lazy.ts` shims. The `responseId` half of
+    # `bff71c70` (System One, OpenRouter cost) ports.
+    ("packages/ai/src/api/pi-classifier", _PI_DECISION_REASON),
+    ("packages/ai/src/api/pi-decision", _PI_DECISION_REASON),
+    ("packages/ai/test/pi-classifier.test.ts", _PI_DECISION_REASON),
+    ("packages/ai/test/pi-decision.test.ts", _PI_DECISION_REASON),
+    # `f8149d1a` deleted the theme step, the only one pidrei had. The
+    # startup-ui.ts, main.ts and program-status hunks that only serve the
+    # dialog are per-hunk skips. The test prefix covers the fork test too.
+    ("packages/coding-agent/src/modes/interactive/components/first-time-setup.ts", _FIRST_TIME_SETUP_REASON),
+    ("packages/coding-agent/test/first-time-setup", _FIRST_TIME_SETUP_REASON),
+)
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
 DROPPED_BASENAME_RE = re.compile(r"radius")
@@ -1100,6 +1123,30 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    "packages/coding-agent/src/core/resolve-config-value.ts": (
+        (
+            "command-result-cache",
+            (
+                "!command results sit in a module dict under a thread lock; runs are serialised by "
+                "_command_execution_lock (pi: spawnSync), and clear_config_value_cache_entry waits on it"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/utils/output-files.ts": (
+        (
+            "temp-file-writer",
+            (
+                "OutputFileStream is TempFileWriter: channel sends, one writer coroutine on the blocking pool, the "
+                "outcome one immutable value; close() never raises; the reason is str(error)"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/bash-executor.ts": (
+        (
+            "temp-file-writer",
+            "the output file is a TempFileWriter; acceptingOutput is read and cleared under data_lock (on_data runs on reader threads)",
+        ),
+    ),
     "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
         (
             "nested-calls-channel",
@@ -1171,6 +1218,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "(a builder before freeze(), a frozen message replaced)"
             ),
         ),
+    ),
+    "packages/ai/src/utils/sse.ts": (
+        ("line-pieces", "SseDecoder's pendingLine is a list of pieces, joined once when the line ends"),
     ),
     "packages/ai/src/api/anthropic-messages.ts": (
         ("freeze-at-seam", _FREEZE_ADAPTER_NOTE),
@@ -1253,6 +1303,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "tui-island",
             "a synchronous parser: the flush setTimeout is a deadline (deadline/expire) the reader expires",
         ),
+        ("line-pieces", "pasteBuffer is _paste_chunks plus _paste_length, joined once at the end marker"),
     ),
     "packages/tui/src/tui-main-screen.ts": (
         (
@@ -1420,7 +1471,8 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "the provider map swaps on write (readers lock-free); "
                 "_apply_auth takes the caller-pinned provider and "
                 "get_auth_for_provider is the pidrei-only pinned variant of "
-                "get_auth"
+                "get_auth; createProvider's merged catalog is one published "
+                "(all, chat) pair, the lists never mutated after publication"
             ),
         ),
     ),
@@ -1443,13 +1495,6 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "fields"
             ),
         ),
-    ),
-    # No telemetry (2026-09-25): pidrei never asks for an analytics opt-in.
-    "packages/coding-agent/src/modes/interactive/components/first-time-setup.ts": (
-        ("no-telemetry", "theme-only dialog; the analytics opt-in step is not ported"),
-    ),
-    "packages/coding-agent/test/first-time-setup.test.ts": (
-        ("no-telemetry", "analytics-settings cases are not mirrored"),
     ),
     # Client identity (1.4.0.0): the mechanism ports, the identity values are PiDrei's.
     "packages/ai/src/utils/identity.ts": (
@@ -1482,6 +1527,12 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "renders docs/models-configuration.md from PiDrei's schema dicts; SCHEMA_BASE_URL is PiDrei's; "
             "regenerate with make references",
         ),
+    ),
+    "packages/ai/src/providers/compat-schema.ts": (
+        ("config-schemas", "generator input: after a change run make config-schemas and make references"),
+    ),
+    "packages/coding-agent/docs/models-configuration.md": (
+        ("config-schemas", "generated by make references from the schema modules; never hand-edited"),
     ),
     # Codemode scripts are Python on Monty (1.0.0.0): behaviour ports, the
     # JavaScript-shaped text and machinery are translated or dropped.
@@ -1587,6 +1638,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "close fires (a head-pending request is cancelled), close spawns the session DELETE (1 s) and the "
             "closing of held responses and joins both; the DELETE reuses the last request's token",
         ),
+        ("line-pieces", "consumeSseStream's pendingLine is a list of pieces with a running byte count"),
     ),
     "packages/mcp/src/client.ts": (
         (
@@ -1762,6 +1814,13 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         ("no-extension-changelog", "the extension changelog cases are not mirrored"),
     ),
     "packages/coding-agent/docs/packages.md": (("no-extension-changelog", 'no "Show a changelog" section'),),
+    # Unterminated lines kept as pieces (1.6.1.0); the readers otherwise port normally.
+    "packages/coding-agent/src/modes/rpc/jsonl.ts": (
+        ("line-pieces", "JsonlLineDecoder keeps the pending line as a list of pieces, joined at its newline"),
+    ),
+    "packages/coding-agent/src/core/session-manager.ts": (
+        ("line-pieces", "the session loader keeps the pending line as pieces, like the header reader"),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -1804,7 +1863,8 @@ TEST_HOMES = {
     "packages/ai/test/constrained-sampling.test.ts": (
         "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases, "
         "the 1.0.0 foreign-item-id replay case, the 1.5.0 grammar-input-JSON and custom-input streaming cases "
-        "and the 1.6.0 untyped-node and enum-only strict cases; "
+        "and the 1.6.0 untyped-node and enum-only strict cases; the 1.6.1 replay status is in "
+        "test_openai_responses_tool_call_replay.py; "
         "the other grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": (
@@ -1867,9 +1927,9 @@ TEST_HOMES = {
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
     "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": (
         "partial mirror: test_rpc_mode.py holds the preflight failure and success, queued-during-streaming and "
-        "queue-clearing cases (TestRpcPromptResponseSemantics) and the 1.5.1 shutdown cases "
-        "(TestRpcExtensionShutdownRequests, TestRpcShutdownTriggers); the extension-command and "
-        "intercepted-input case is a PARITY GAP"
+        "queue-clearing cases (TestRpcPromptResponseSemantics), the 1.5.1 shutdown cases "
+        "(TestRpcExtensionShutdownRequests, TestRpcShutdownTriggers) and the 1.6.1 kill-after-dispose case "
+        "(TestRpcShutdownTriggers); the extension-command and intercepted-input case is a PARITY GAP"
     ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": (
@@ -1896,6 +1956,10 @@ TEST_HOMES = {
         "pidrei has no provider SDKs (native punkreq transports)"
     ),
     # 0.84.3 additions (0.84.3 delta port).
+    "packages/coding-agent/test/session-manager/build-context.test.ts": (
+        "covered by packages/pidrei/tests/test_session_manager.py (the TestBuildSessionContext* classes); the "
+        "1.6.1 call-stack case is not mirrored (a JavaScript argument limit)"
+    ),
     "packages/coding-agent/test/session-manager/tree-traversal.test.ts": (
         "covered by packages/pidrei/tests/test_session_manager.py (tree-traversal cases "
         "live with the rest of the session-manager mirror)"

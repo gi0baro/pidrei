@@ -20,7 +20,6 @@ from .earendil_announcement import EarendilAnnouncementComponent, load_earendil_
 from .extension_editor import ExtensionEditorComponent
 from .extension_input import ExtensionInputComponent
 from .extension_selector import ExtensionSelectorComponent
-from .first_time_setup import FirstTimeSetupComponent
 from .footer import FooterComponent, format_cwd_for_footer, format_tokens
 from .keybinding_hints import format_key_text, key_display_text, key_hint, key_text, raw_key_hint
 from .login_dialog import LoginDialogComponent
@@ -68,7 +67,6 @@ __all__ = [
     "ExtensionEditorComponent",
     "ExtensionInputComponent",
     "ExtensionSelectorComponent",
-    "FirstTimeSetupComponent",
     "FooterComponent",
     "IdleStatus",
     "LoginDialogComponent",

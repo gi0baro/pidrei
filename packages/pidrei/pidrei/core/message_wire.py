@@ -273,6 +273,7 @@ def serialize_message(message: Any) -> Any:
         data["cancelled"] = message.cancelled
         data["truncated"] = message.truncated
         _put(data, "fullOutputPath", message.full_output_path)
+        _put(data, "fullOutputError", message.full_output_error)
         data["timestamp"] = message.timestamp
         _put(data, "excludeFromContext", message.exclude_from_context)
         return data
@@ -365,6 +366,7 @@ def parse_message(data: Any) -> Any:
             cancelled=bool(data.get("cancelled", False)),
             truncated=bool(data.get("truncated", False)),
             full_output_path=data.get("fullOutputPath"),
+            full_output_error=data.get("fullOutputError"),
             timestamp=data.get("timestamp", 0),
             exclude_from_context=data.get("excludeFromContext"),
         )

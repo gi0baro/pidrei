@@ -57,6 +57,7 @@ from ..protocol.jsonrpc import (
     McpConnectionClosedError,
     is_json_rpc_request,
     is_json_rpc_response,
+    normalize_own_request_id,
     parse_json,
     parse_json_rpc_message,
     stringify,
@@ -96,7 +97,12 @@ async def consume_sse_stream(
     field, in milliseconds. The owner of `chunks` closes it."""
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     limit = DEFAULT_MAX_MESSAGE_BYTES if max_event_bytes is None else max_event_bytes
-    buffered = ""
+    # The incomplete last line, in pieces, and its size in bytes. Only new text
+    # is scanned and the line is joined once when it ends, so a large line
+    # arriving in many chunks costs time linear in its size (pi appends to a
+    # string, which copies here).
+    pending_line: list[str] = []
+    pending_line_bytes = 0
     event_name: str | None = None
     event_id: str | None = None
     data_lines: list[str] = []
@@ -147,16 +153,25 @@ async def consume_sse_stream(
     # SSE lines end with CRLF, LF, or a lone CR.
     skip_leading_lf = False
 
-    async def consume_lines() -> None:
-        nonlocal buffered, skip_leading_lf
+    async def consume_lines(text: str) -> None:
+        nonlocal pending_line_bytes, skip_leading_lf
         start = 0
-        for ending in _SSE_LINE_ENDING.finditer(buffered):
-            await process_line(buffered[start : ending.start()])
+        for ending in _SSE_LINE_ENDING.finditer(text):
+            line = text[start : ending.start()]
+            if pending_line:
+                pending_line.append(line)
+                line = "".join(pending_line)
+                pending_line.clear()
+            pending_line_bytes = 0
+            await process_line(line)
             # A CR at the end of what has arrived ends the line now; an LF opening the next chunk is its CRLF.
-            if ending.end() == len(buffered) and ending.group() == "\r":
+            if ending.end() == len(text) and ending.group() == "\r":
                 skip_leading_lf = True
             start = ending.end()
-        buffered = buffered[start:]
+        if start < len(text):
+            rest = text[start:]
+            pending_line.append(rest)
+            pending_line_bytes += len(rest.encode("utf-8"))
 
     async for chunk in chunks:
         text = decoder.decode(chunk)
@@ -164,17 +179,15 @@ async def consume_sse_stream(
         if skip_leading_lf and text:
             text = text.removeprefix("\n")
             skip_leading_lf = False
-        buffered += text
-        await consume_lines()
-        if len(buffered.encode("utf-8")) > limit:
+        await consume_lines(text)
+        if pending_line_bytes > limit:
             raise RuntimeError(f"MCP SSE event exceeds {limit} bytes")
     tail = decoder.decode(b"", final=True)
     if skip_leading_lf:
         tail = tail.removeprefix("\n")
-    buffered += tail
-    await consume_lines()
-    if buffered:
-        await process_line(buffered)
+    await consume_lines(tail)
+    if pending_line:
+        await process_line("".join(pending_line))
     await dispatch()
 
 
@@ -562,7 +575,7 @@ class StreamableHttpTransport(TransportEvents):
 
         def on_message(message: JsonRpcMessage) -> None:
             nonlocal answered
-            if is_json_rpc_response(message) and message["id"] == request_id:
+            if is_json_rpc_response(message) and normalize_own_request_id(message["id"]) == request_id:
                 answered = True
 
         stream: McpResponse | None = response

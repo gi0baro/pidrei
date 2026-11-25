@@ -1,6 +1,6 @@
 """Mistral (pi: catalog/providers/mistral.ts)."""
 
-from catalog.define import ChatModel, ProviderContext, ProviderDefinition, add_missing, models_dev_models
+from catalog.define import ChatModel, ProviderContext, ProviderDefinition, models_dev_models
 from catalog.reasoning import get_effort_thinking_level_map
 from catalog.sources.models_dev import ModelsDevModel, round_cost
 
@@ -26,31 +26,16 @@ def _map_model(model: ChatModel, source: ModelsDevModel) -> ChatModel:
     }
 
 
+# No skip_deprecated: models.dev marks Mistral models deprecated as soon as Mistral announces their
+# retirement, while they keep working, e.g. devstral-2512: marked 2026-06-02, retired 2026-07-31.
 def _models(ctx: ProviderContext) -> list[ChatModel]:
-    return add_missing(
-        models_dev_models(
-            ctx,
-            "mistral",
-            api="mistral-conversations",
-            base_url="https://api.mistral.ai",
-            record_reasoning=False,
-            map_model=_map_model,
-        ),
-        [
-            {
-                "id": "mistral-medium-3.5",
-                "name": "Mistral Medium 3.5",
-                "api": "mistral-conversations",
-                "provider": "mistral",
-                "baseUrl": "https://api.mistral.ai",
-                "reasoning": True,
-                "thinkingLevelMap": get_effort_thinking_level_map([{"type": "effort", "values": ["none", "high"]}]),
-                "input": ["text", "image"],
-                "cost": {"input": 1.5, "output": 7.5, "cacheRead": 0, "cacheWrite": 0},
-                "contextWindow": 262144,
-                "maxTokens": 262144,
-            },
-        ],
+    return models_dev_models(
+        ctx,
+        "mistral",
+        api="mistral-conversations",
+        base_url="https://api.mistral.ai",
+        record_reasoning=False,
+        map_model=_map_model,
     )
 
 

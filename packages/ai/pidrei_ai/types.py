@@ -45,7 +45,7 @@ type KnownImageApi = Literal["openrouter-images"]
 type ImageApi = str  # KnownImageApi or any custom string
 
 type KnownClassifierApi = Literal[
-    "typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify", "openai-decisions"
+    "typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify", "openai-decisions", "pi-decision"
 ]
 type ClassifierApi = str  # KnownClassifierApi or any custom string
 
@@ -639,6 +639,15 @@ class MistralConversationsCompat:
     supports_strict_mode: bool | None = None
 
 
+@dataclass(slots=True)
+class GoogleCompat:
+    """Compatibility settings for the Google Generative AI and Vertex APIs."""
+
+    # Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode.
+    # Default: True for model ids containing gemini-3 or a later version, False otherwise.
+    supports_strict_mode: bool | None = None
+
+
 # How a System One service takes classifier images (see `api/system_one_shared.py`).
 type SystemOneImageInput = Literal["assets", "images", "state-image-urls"]
 
@@ -661,6 +670,7 @@ type ModelCompat = (
     | AnthropicMessagesCompat
     | BedrockCompat
     | MistralConversationsCompat
+    | GoogleCompat
 )
 
 
@@ -811,7 +821,9 @@ class ProviderRequestOptions:
     env: ProviderEnv | None = None
     # Inspect or replace the provider payload before sending (return None to keep unchanged).
     on_payload: OnPayload | None = None
-    # Invoked after an HTTP response is received.
+    # Invoked after each HTTP response is received, including error responses and
+    # responses to retried attempts. Coverage depends on provider and transport: some
+    # report empty headers or only some responses.
     on_response: OnResponse | None = None
     # Merged with provider defaults; caller values override; None suppresses a default header.
     headers: ProviderHeaders | None = None
@@ -1208,7 +1220,11 @@ class ClassifierResult:
     answers: dict[str, ClassifierAnswer]
     stop_reason: ClassifierStopReason
     timestamp: int  # Unix timestamp in milliseconds
-    # Token usage and its cost at the model's catalog price, when the service reports token counts.
+    # Provider-specific response identifier when the service reports one, such as OpenRouter's generation ID.
+    # Declared before `usage`: pi sets it first, and the wire key order follows field order.
+    response_id: str | None = None
+    # Token usage and its cost, when the service reports token counts. The cost is the model's catalog price,
+    # or the billed amount (`cost.total_from_provider`) when the service reports one, such as OpenRouter.
     usage: Usage | None = None
     error_message: str | None = None
 

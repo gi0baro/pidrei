@@ -176,6 +176,22 @@ async def test_consume_sse_stream_recognizes_cr_lf_and_crlf_line_endings_includi
     assert await parse(["id: 1\rdata: a\r\ndata: b\n\r", "\ndata: c\r\r"]) == expected
 
 
+# Regression test for pi #12224. pi also counts the characters `Buffer.byteLength` measures (at most
+# twice the event); there is no counterpart to observe here, so the case keeps the event itself.
+@pytest.mark.tonio
+async def test_consume_sse_stream_reads_a_large_event_split_across_many_chunks_in_linear_time():
+    text = f"data: {'x' * (1024 * 1024)}\n\n"
+    events: list[SseEvent] = []
+
+    async def on_event(event: SseEvent) -> None:
+        events.append(event)
+
+    await consume_sse_stream(
+        _chunks(*(text[index : index + 4096] for index in range(0, len(text), 4096))), on_event=on_event
+    )
+    assert events == [SseEvent(data="x" * (1024 * 1024))]
+
+
 @pytest.mark.tonio
 async def test_consume_sse_stream_dispatches_cr_terminated_events_while_the_stream_stays_open():
     received = tonio.Event()
@@ -209,6 +225,27 @@ async def test_consume_sse_stream_rejects_events_whose_data_lines_exceed_the_lim
         while sent <= 1000:
             sent += 1
             yield b"data: xxxxxxxxxxxxxxxx\n"
+
+    async def on_event(_event: SseEvent) -> None:
+        pass
+
+    chunks = endless()
+    with pytest.raises(RuntimeError, match="MCP SSE event exceeds 256 bytes"):
+        await consume_sse_stream(chunks, on_event=on_event, max_event_bytes=256)
+    await chunks.aclose()
+    assert sent < 100
+
+
+@pytest.mark.tonio
+async def test_consume_sse_stream_rejects_a_line_that_exceeds_the_limit_before_its_line_ending_arrives():
+    sent = 0
+
+    async def endless():
+        nonlocal sent
+        # One data line that never ends.
+        while sent <= 1000:
+            sent += 1
+            yield b"data: " if sent == 1 else b"xxxxxxxxxxxxxxxx"
 
     async def on_event(_event: SseEvent) -> None:
         pass
@@ -448,6 +485,58 @@ async def test_resumes_a_response_stream_the_server_closed_before_answering(monk
         assert await client.call_tool("echo") == {"content": [{"type": "text", "text": "resumed"}]}
         assert resume_headers == ["1"]
         assert errors == []
+        await client.close()
+
+
+@pytest.mark.tonio
+async def test_matches_a_streamed_response_that_echoes_the_request_id_as_a_string(monkeypatch):
+    async with loopback_servers(monkeypatch) as http_servers:
+
+        async def handler(request, log):
+            if request.method != "POST":
+                await protocol_handler(request, log)
+                return
+            message = await read_json(request)
+            if message.get("method") != "tools/call":
+                await protocol_handler(request, log, message)
+                return
+            result = {
+                "jsonrpc": "2.0",
+                "id": str(message["id"]),
+                "result": {"content": [{"type": "text", "text": "hello"}]},
+            }
+            await request.respond(
+                200,
+                headers={"content-type": "text/event-stream"},
+                body=f"id: e1\nretry: 5\ndata: {json.dumps(result)}\n\n".encode(),
+            )
+
+        url, log = await start_server(http_servers, handler)
+        client = McpClient(name="http-test", version="1.0.0")
+        errors = []
+
+        async def on_error(error):
+            errors.append(error)
+
+        client.on_error(on_error)
+        transport = StreamableHttpTransport(url, open_get_stream=False)
+        # pi waits 50 ms for a resume GET; here the wait is for the response stream's reader to end.
+        consumed = tonio.Event()
+        consume_response_stream = transport._consume_response_stream
+
+        async def consume_and_signal(*args):
+            try:
+                await consume_response_stream(*args)
+            finally:
+                consumed.set()
+
+        transport._consume_response_stream = consume_and_signal
+        await client.connect(transport)
+        assert await client.call_tool("echo", {}, timeout_ms=2_000) == {"content": [{"type": "text", "text": "hello"}]}
+        await consumed.wait(_WAIT_S)
+        assert consumed.is_set()
+        assert errors == []
+        assert not any(entry["method"] == "GET" for entry in log.snapshot())
         await client.close()
 
 

@@ -18,22 +18,27 @@ from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
     AssistantMessage,
+    GoogleCompat,
     ImageContent,
     Model,
     StopReason,
     StreamOptions,
     TextContent,
+    ThinkingBudgets,
     ThinkingLevel,
     Tool,
     TranscriptContext,
 )
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.transcript import collapse_system_messages, without_initial_system_message
 
 
-type GoogleApiThinkingLevel = Literal["THINKING_LEVEL_UNSPECIFIED", "MINIMAL", "LOW", "MEDIUM", "HIGH"]
-type ResolvedGoogleThinkingLevel = Literal["minimal", "low", "medium", "high"]
+# Thinking level for Gemini models that use `thinkingLevel` instead of `thinkingBudget`.
+# Mirrors Google's ThinkingLevel enum values.
+type GoogleApiThinkingLevel = Literal["THINKING_LEVEL_UNSPECIFIED", "MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"]
+type ResolvedGoogleThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
 
 
 def resolve_google_thinking_level(model: Model, level: ThinkingLevel) -> ResolvedGoogleThinkingLevel:
@@ -41,7 +46,7 @@ def resolve_google_thinking_level(model: Model, level: ThinkingLevel) -> Resolve
     level_map = model.thinking_level_map or {}
     mapped = level_map.get(level)
     resolved_level = mapped.lower() if isinstance(mapped, str) else level
-    if resolved_level in ("minimal", "low", "medium", "high"):
+    if resolved_level in ("minimal", "low", "medium", "high", "xhigh"):
         return resolved_level  # type: ignore[return-value]
     # pi reports the offending mapping through JS `String()`, which spells an
     # absent key "undefined" and an explicit null "null".
@@ -52,7 +57,6 @@ def resolve_google_thinking_level(model: Model, level: ThinkingLevel) -> Resolve
 
 
 _GEMINI_3_THINKING_LEVEL = re.compile(r"gemini-3(?:\.\d+)?-(?:pro|flash)")
-_GEMINI_4_AND_LATER = re.compile(r"gemini-(?:[4-9]|[1-9]\d)")
 _GEMMA_4 = re.compile(r"gemma-?4")
 
 
@@ -66,7 +70,7 @@ def uses_google_thinking_level(model: Model) -> bool:
         # gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
         _GEMINI_3_THINKING_LEVEL.search(id) is not None
         # Match Gemini 4 and later, such as gemini-4-argon (#10890).
-        or _GEMINI_4_AND_LATER.search(id) is not None
+        or (_get_gemini_major_version(id) or 0) >= 4
         or id == "gemini-flash-latest"
         or id == "gemini-flash-lite-latest"
         # Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
@@ -77,7 +81,30 @@ def uses_google_thinking_level(model: Model) -> bool:
 def to_google_thinking_level(level: ResolvedGoogleThinkingLevel) -> GoogleApiThinkingLevel:
     # pi's `toGoogleSdkThinkingLevel` maps these onto the SDK enum, whose values
     # are the same wire strings; the plain-dict request body uses them directly.
-    return {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}[level]  # type: ignore[return-value]
+    return {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH", "xhigh": "XHIGH"}[level]  # type: ignore[return-value]
+
+
+def get_google_budget(
+    model: Model, resolved_level: ResolvedGoogleThinkingLevel, custom_budgets: ThinkingBudgets | None = None
+) -> int:
+    """Token budget for Gemini models that use `thinkingBudget`: custom budgets first, then per-model defaults,
+    else -1 (dynamic)."""
+    # Budgets stop at high, so xhigh uses the high budget.
+    level = "high" if resolved_level == "xhigh" else resolved_level
+    custom_budget = getattr(custom_budgets, level) if custom_budgets is not None else None
+    if custom_budget is not None:
+        return custom_budget
+
+    if "2.5-pro" in model.id:
+        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 32768}[level]
+
+    if "2.5-flash-lite" in model.id:
+        return {"minimal": 512, "low": 2048, "medium": 8192, "high": 24576}[level]
+
+    if "2.5-flash" in model.id:
+        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 24576}[level]
+
+    return -1
 
 
 def get_disabled_google_thinking_config(model: Model) -> dict[str, Any]:
@@ -155,11 +182,12 @@ def requires_tool_call_id(model_id: str) -> bool:
     )
 
 
-_GEMINI_MAJOR_VERSION = re.compile(r"^gemini(?:-live)?-(\d+)")
+# Unanchored like uses_google_thinking_level: some hosts prefix the ID, e.g. randomprefix-gemini-4-argon (#12321).
+_GEMINI_MAJOR_VERSION = re.compile(r"gemini(?:-live)?-(\d+)")
 
 
 def _get_gemini_major_version(model_id: str) -> int | None:
-    match = _GEMINI_MAJOR_VERSION.match(model_id.lower())
+    match = _GEMINI_MAJOR_VERSION.search(model_id.lower())
     if not match:
         return None
     return int(match.group(1), 10)
@@ -425,9 +453,14 @@ def convert_tools(
     return [{"functionDeclarations": [declaration(tool) for tool in tools]}]
 
 
-def supports_google_strict_tool_sampling(model_id: str) -> bool:
-    """Gemini 3+ enforces required function parameters in validated tool-calling modes."""
-    major_version = _get_gemini_major_version(model_id)
+def supports_google_strict_tool_sampling(model: Model) -> bool:
+    """Gemini 3+ enforces required function parameters in validated tool-calling modes.
+    `compat.supports_strict_mode` overrides the model ID detection, e.g. for Gemini models served under IDs without
+    the version."""
+    major_version = _get_gemini_major_version(model.id)
+    compat = model.compat if isinstance(model.compat, GoogleCompat) else None
+    if compat is not None and compat.supports_strict_mode is not None:
+        return compat.supports_strict_mode
     return major_version is not None and major_version >= 3
 
 
@@ -457,6 +490,27 @@ def resolve_google_function_calling_mode(
     return map_tool_choice(tool_choice) if tool_choice else None
 
 
+def format_google_prompt_block_error(provider_name: str, feedback: dict[str, Any]) -> str:
+    """Format prompt-block metadata returned instead of response candidates.
+
+    `feedback` is the wire `promptFeedback` object (the SDK's
+    `GenerateContentResponsePromptFeedback`)."""
+    block_reason = feedback.get("blockReason")
+    details = [f"{provider_name} prompt blocked: {block_reason if block_reason is not None else 'unknown reason'}"]
+    if feedback.get("blockReasonMessage"):
+        details.append(feedback["blockReasonMessage"])
+    safety_ratings = feedback.get("safetyRatings")
+    if safety_ratings:
+        ratings = [
+            f"{rating['category']}{f' ({rating["probability"]})' if rating.get('probability') else ''}"
+            for rating in safety_ratings
+            if rating.get("category")
+        ]
+        if ratings:
+            details.append(f"Safety rating{'' if len(ratings) == 1 else 's'}: {', '.join(ratings)}")
+    return ". ".join(details)
+
+
 # `FinishReason` in the SDK. pi's `mapStopReason` switch is exhaustive over the enum and its
 # `never` default throws, so an unknown value is a hard error rather than a silent "error" stop —
 # the same is true here, and the adapters' error handling turns it into an error event.
@@ -478,6 +532,11 @@ _STOP_REASON_ERROR = frozenset(
         "UNEXPECTED_TOOL_CALL",
         "TOO_MANY_TOOL_CALLS",
         "NO_IMAGE",
+        "MISSING_THOUGHT_SIGNATURE",
+        "MALFORMED_RESPONSE",
+        "ESCALATION",
+        "PUP_LIMITED_DISABLED",
+        "MODEL_ARMOR",
     }
 )
 
@@ -494,14 +553,17 @@ def map_stop_reason(reason: str) -> StopReason:
     raise ValueError(f"Unhandled stop reason: {reason}")
 
 
-async def retry_google_request[T](request: Callable[[], Awaitable[T]], options: StreamOptions | None = None) -> T:
+async def retry_google_request[T](
+    request: Callable[[], Awaitable[T]], model: Model, options: StreamOptions | None = None
+) -> T:
     """Run a Google GenAI request with the shared provider retry policy
     (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
     Anthropic and OpenAI adapters wrap their initial request in
     `retry_provider_request`. `GoogleApiError` has a `status` attribute but no
     `headers` attribute, and `retry_provider_request` only retries errors that
     carry both, so normalize the error by adding the missing `headers` before
-    re-raising.
+    re-raising. Failed attempts reach `on_response` with their status and no
+    headers.
     """
 
     async def _request() -> T:
@@ -521,4 +583,7 @@ async def retry_google_request[T](request: Callable[[], Awaitable[T]], options: 
         max_retries=max_retries,
         max_retry_delay_ms=options.max_retry_delay_ms if options is not None else None,
         cancel=options.cancel if options is not None else None,
+        on_error_response=lambda error_response: maybe_call(
+            options.on_response if options is not None else None, error_response, model
+        ),
     )

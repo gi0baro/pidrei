@@ -21,10 +21,11 @@ from urllib.parse import urlparse
 from pidrei_ai.api.google_client import RESOURCE_SCOPE_COLLECTION, GoogleGenAI
 from pidrei_ai.api.google_shared import (
     GoogleApiThinkingLevel,
-    ResolvedGoogleThinkingLevel,
     convert_messages,
     convert_tools,
+    format_google_prompt_block_error,
     get_disabled_google_thinking_config,
+    get_google_budget,
     is_thinking_part,
     map_stop_reason,
     resolve_google_function_calling_mode,
@@ -57,7 +58,6 @@ from pidrei_ai.types import (
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
-    ThinkingBudgets,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingStartEvent,
@@ -164,6 +164,7 @@ def stream(
                 lambda: client.generate_content_stream(
                     params, env=opts.env, cancel=opts.cancel, timeout_ms=opts.timeout_ms
                 ),
+                model,
                 opts,
             )
 
@@ -171,11 +172,18 @@ def stream(
             current_block: TextContentBuilder | ThinkingContentBuilder | None = None
             blocks = output.content
 
+            received_chunk_count = 0
+            prompt_block_error: str | None = None
+
             def block_index() -> int:
                 return len(blocks) - 1
 
             async for chunk in google_stream:
                 await maybe_call(opts.on_provider_stream_event, chunk, model)
+                received_chunk_count += 1
+                prompt_feedback = chunk.get("promptFeedback")
+                if prompt_feedback and prompt_feedback.get("blockReason") and prompt_block_error is None:
+                    prompt_block_error = format_google_prompt_block_error("Google Vertex", prompt_feedback)
                 # Vertex uses the same GenerateContentResponse shape as Gemini;
                 # responseId is an output-only identifier for each response.
                 if not output.response_id:
@@ -310,7 +318,13 @@ def stream(
                 raise RuntimeError("Request was aborted")
 
             if output.stop_reason == "pending":
-                raise RuntimeError("Google Vertex stream ended without a finish reason")
+                if prompt_block_error:
+                    raise RuntimeError(prompt_block_error)
+                chunk_label = "chunk" if received_chunk_count == 1 else "chunks"
+                raise RuntimeError(
+                    f"Google Vertex stream ended without a finish reason after receiving {received_chunk_count} "
+                    f"{chunk_label}"
+                )
             if output.stop_reason in ("aborted", "error"):
                 raise RuntimeError(
                     f"Provider stopped with: {output.raw_stop_reason}"
@@ -378,7 +392,7 @@ def stream_simple(
         _with_thinking(
             base,
             GoogleVertexThinking(
-                enabled=True, budget_tokens=_get_google_budget(model, resolved_level, options.thinking_budgets)
+                enabled=True, budget_tokens=get_google_budget(model, resolved_level, options.thinking_budgets)
             ),
             tool_choice,
         ),
@@ -527,7 +541,7 @@ def build_params(
     if options.max_tokens is not None:
         generation_config["maxOutputTokens"] = options.max_tokens
 
-    supports_strict_mode = supports_google_strict_tool_sampling(model.id)
+    supports_strict_mode = supports_google_strict_tool_sampling(model)
     function_calling_mode = (
         resolve_google_function_calling_mode(current_tools, options.tool_choice, supports_strict_mode)
         if current_tools
@@ -562,18 +576,3 @@ def build_params(
         raise RuntimeError("Request aborted")
 
     return {"model": model.id, "contents": contents, "config": config}
-
-
-def _get_google_budget(
-    model: Model, level: ResolvedGoogleThinkingLevel, custom_budgets: ThinkingBudgets | None = None
-) -> int:
-    if custom_budgets is not None and getattr(custom_budgets, level, None) is not None:
-        return getattr(custom_budgets, level)
-
-    if "2.5-pro" in model.id:
-        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 32768}[level]
-
-    if "2.5-flash" in model.id:
-        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 24576}[level]
-
-    return -1

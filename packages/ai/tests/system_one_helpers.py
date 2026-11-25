@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pidrei_ai.api import classifier_shared
+from pidrei_ai.types import ProviderResponse
 from pidrei_utils.cancel import CancelToken
 
 
@@ -50,10 +51,13 @@ def stub_system_one(handler: Handler) -> Iterator[list[SystemOneRequest]]:
         def __init__(self, env=None, fetch=None):
             pass
 
-        async def post(self, url, payload, headers, cancel):
+        async def post(self, url, payload, headers, cancel, on_response):
             request = SystemOneRequest(url=url, payload=json.loads(json.dumps(payload)), headers=headers, cancel=cancel)
             requests.append(request)
-            return await handler(request)
+            status, response_headers, body = await handler(request)
+            # The real client reports the head before it reads the body.
+            await on_response(ProviderResponse(status=status, headers=response_headers))
+            return status, response_headers, body
 
     original = classifier_shared._ClassifierClient
     classifier_shared._ClassifierClient = _StubClient

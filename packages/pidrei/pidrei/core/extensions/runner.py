@@ -163,6 +163,7 @@ def _is_user_bash_event_result(value: Any) -> bool:
         and isinstance(result.get("cancelled"), bool)
         and isinstance(result.get("truncated"), bool)
         and (result.get("fullOutputPath") is None or isinstance(result["fullOutputPath"], str))
+        and (result.get("fullOutputError") is None or isinstance(result["fullOutputError"], str))
     )
 
 

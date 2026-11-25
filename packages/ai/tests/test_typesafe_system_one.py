@@ -96,10 +96,21 @@ async def test_maps_public_bool_questions_and_answers_to_typesafe_noul_values():
 async def test_posts_openrouter_system_one_requests_to_its_typesafe_compatible_endpoint():
     # Response shape observed from the live OpenRouter endpoint.
     response = {
-        "id": "gen-dec-1",
-        "provider": "TypeSafe",
+        "model": "typesafe/jev-1.14-20261014",
         "answers": WIRE_ANSWERS,
-        "usage": {"input_tokens": 308, "output_tokens": 23, "cost": 0.000012936},
+        "usage": {
+            "input_tokens": 304,
+            "output_tokens": 20,
+            "cost": 0.000012768,
+            "is_byok": False,
+            "cost_details": {
+                "upstream_inference_cost": 0.000012768,
+                "upstream_inference_prompt_cost": 0.000012768,
+                "upstream_inference_completions_cost": 0,
+            },
+        },
+        "id": "gen-dec-1795523851-QIfD0w71U1hnQQndirYC",
+        "provider": "TypeSafe",
     }
     open_router_model = replace(
         MODEL,
@@ -117,8 +128,57 @@ async def test_posts_openrouter_system_one_requests_to_its_typesafe_compatible_e
     assert requests[0].url == "https://openrouter.ai/api/v1/systemone"
     assert result.stop_reason == "stop"
     assert result.answers["approved"] == ClassifierBoolAnswer(probability=0.95)
-    # Priced from the catalog like chat usage; matches OpenRouter's reported cost.
-    assert result.usage.cost.total == pytest.approx(0.000012936, abs=1e-12)
+    assert result.response_id == "gen-dec-1795523851-QIfD0w71U1hnQQndirYC"
+    assert (result.usage.input, result.usage.output, result.usage.total_tokens) == (304, 20, 324)
+    assert (result.usage.cost.total, result.usage.cost.total_from_provider) == (0.000012768, True)
+
+
+@pytest.mark.tonio
+async def test_trusts_openrouters_system_one_cost_only_with_its_byok_accounting_like_chat_usage():
+    open_router_model = replace(
+        MODEL,
+        id="typesafe/jev-1.13",
+        provider="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        cost=replace(MODEL.cost, input=0.042),
+    )
+
+    def respond(usage: dict):
+        return respond_json({"id": "gen-dec-2", "provider": "TypeSafe", "answers": WIRE_ANSWERS, "usage": usage})
+
+    with stub_system_one(respond({"input_tokens": 308, "output_tokens": 23, "cost": 0.00002, "is_byok": False})):
+        billed = await classify(open_router_model, CONTEXT, ClassifierOptions(api_key="secret"))
+    # Synthetic: without `is_byok`, the cost could be OpenRouter's fee alone.
+    with stub_system_one(respond({"input_tokens": 308, "output_tokens": 23, "cost": 0.00002})):
+        bare_cost = await classify(open_router_model, CONTEXT, ClassifierOptions(api_key="secret"))
+    with stub_system_one(
+        respond(
+            {
+                "input_tokens": 308,
+                "output_tokens": 23,
+                "cost": 0.000001,
+                "is_byok": True,
+                "cost_details": {
+                    "upstream_inference_cost": 0.00002,
+                    "upstream_inference_prompt_cost": 0.00002,
+                    "upstream_inference_completions_cost": 0,
+                },
+            }
+        )
+    ):
+        byok = await classify(open_router_model, CONTEXT, ClassifierOptions(api_key="secret"))
+    with stub_system_one(respond({"input_tokens": 308, "output_tokens": 23, "cost": 0.00002, "is_byok": False})):
+        native = await classify(MODEL, CONTEXT, ClassifierOptions(api_key="secret"))
+
+    assert (billed.usage.cost.total, billed.usage.cost.total_from_provider) == (0.00002, True)
+    assert billed.usage.cost.input == pytest.approx(0.000012936, abs=1e-12)
+    assert bare_cost.usage.cost.total == pytest.approx(0.000012936, abs=1e-12)
+    assert bare_cost.usage.cost.total_from_provider is False
+    assert byok.usage.cost.total == pytest.approx(0.000021, abs=1e-12)
+    assert byok.usage.cost.total_from_provider is True
+    # Only OpenRouter's accounting fields are trusted as a bill.
+    assert native.usage.cost.total_from_provider is False
+    assert native.response_id == "gen-dec-2"
 
 
 @pytest.mark.tonio

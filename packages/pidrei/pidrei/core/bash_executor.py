@@ -26,8 +26,10 @@ class BashResult:
     cancelled: bool
     # Whether the output was truncated
     truncated: bool
-    # Path to temp file containing full output (if output exceeded truncation threshold)
+    # Path to temp file containing full output (if output exceeded truncation threshold and the file could be saved)
     full_output_path: str | None = None
+    # Why the full output could not be saved to a temp file (if output exceeded truncation threshold)
+    full_output_error: str | None = None
 
 
 async def execute_bash_with_operations(
@@ -44,17 +46,19 @@ async def execute_bash_with_operations(
     discarded_output = False
     max_output_bytes = DEFAULT_MAX_BYTES * 2
 
-    temp_file_path: str | None = None
     temp_file: TempFileWriter | None = None
     total_bytes = 0
+    # Output after the command ended (from processes it left running) is not part of its result.
+    # Read and cleared under `data_lock`: `on_data` runs on the readers' threads.
+    accepting_output = True
 
     def ensure_temp_file() -> None:
-        nonlocal temp_file_path, temp_file
-        if temp_file_path is not None:
+        nonlocal temp_file
+        if temp_file is not None:
             return
         # Channel-backed, so `write` below stays non-blocking on the
         # streaming path — pi uses createWriteStream here for the same reason.
-        temp_file_path, temp_file = create_output_file_stream("pidrei-bash", ".log")
+        temp_file = create_output_file_stream("pidrei-bash", ".log")
         for chunk in output_chunks:
             temp_file.write(chunk.encode("utf-8", "replace"))
 
@@ -68,9 +72,17 @@ async def execute_bash_with_operations(
     def on_data(data: bytes) -> None:
         nonlocal total_bytes, pending_ansi
         with data_lock:
+            if not accepting_output:
+                return
             total_bytes += len(data)
             complete, pending_ansi = split_incomplete_ansi_suffix(pending_ansi + decoder.decode(data))
             _append_text(complete)
+
+    def stop_accepting_output() -> None:
+        nonlocal accepting_output
+        # Under the lock: a reader inside `on_data` finishes its chunk first.
+        with data_lock:
+            accepting_output = False
 
     def flush_output() -> None:
         nonlocal pending_ansi
@@ -105,35 +117,37 @@ async def execute_bash_with_operations(
         if on_chunk is not None:
             on_chunk(text)
 
-    async def settle_output() -> tuple[str, Any]:
-        full_output = "".join(output_chunks)
-        truncation_result = truncate_tail(full_output)
-        if truncation_result.truncated:
-            ensure_temp_file()
-        if temp_file is not None:
-            # Drains before returning: `full_output_path` is handed back to
-            # the caller to read. pi does not wait here; see TempFileWriter.
-            await temp_file.close()
-        return full_output, truncation_result
-
     exit_code: int | None = None
     try:
         exit_code = (await operations.exec(command, cwd, on_data=on_data, cancel=cancel)).exit_code
     except Exception:
         # An aborted command still returns the output it produced so far
         if cancel is None or not cancel.cancelled:
+            stop_accepting_output()
             if temp_file is not None:
                 await temp_file.close()
             raise
+    # The result is decided when the command ends: closing the file below takes time, and an abort or
+    # output during it must not change the result.
+    stop_accepting_output()
+    cancelled = cancel.cancelled if cancel is not None else False
 
     flush_output()
-    full_output, truncation_result = await settle_output()
-    cancelled = cancel.cancelled if cancel is not None else False
+    full_output = "".join(output_chunks)
+    truncation_result = truncate_tail(full_output)
+    if truncation_result.truncated:
+        ensure_temp_file()
+    # A failed file is dropped: the result keeps the in-memory tail without a path.
+    saved = await temp_file.close() if temp_file is not None else None
+    truncated = discarded_output or truncation_result.truncated
 
     return BashResult(
         output=truncation_result.content if truncation_result.truncated else full_output,
         exit_code=None if cancelled else exit_code,
         cancelled=cancelled,
-        truncated=discarded_output or truncation_result.truncated,
-        full_output_path=temp_file_path,
+        truncated=truncated,
+        full_output_path=saved.path if saved is not None and saved.kind == "saved" else None,
+        # The file opens on raw bytes, before ANSI codes and carriage returns are stripped, so it can fail
+        # for output that turns out not to be truncated; nothing is missing then.
+        full_output_error=saved.error if truncated and saved is not None and saved.kind == "failed" else None,
     )

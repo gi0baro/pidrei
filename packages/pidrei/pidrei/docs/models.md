@@ -156,6 +156,26 @@ the tier a request used is never warmed. The built-in catalog fills this in
 for direct Anthropic only; a `promptCache` override opts in a proxy whose
 backing cache you know (merged per tier).
 
+## Mapping thinking levels
+
+Use `thinkingLevelMap` to choose which thinking levels `/thinking` offers and
+which provider value pidrei sends for each:
+
+```jsonc
+{
+  "id": "reasoning-model",
+  "reasoning": true,
+  "thinkingLevelMap": { "minimal": null, "xhigh": "xhigh", "max": "max" }
+}
+```
+
+A string is sent to the provider as the effort value, and `null` hides the
+level. Levels left out use the provider's default value for `off` through
+`high`. `xhigh` and `max` are opt-in: pidrei offers them only when the map
+gives them a string, which must be a value the provider accepts. Set the map
+in `models.json`, on a custom model or in a `modelOverrides` entry for a
+built-in model, not in `settings.json`.
+
 ## Sampling by thinking level
 
 OpenAI-compatible APIs support free-form `samplingParams` model defaults and
@@ -224,15 +244,18 @@ models and authentication stay unchanged:
 }
 ```
 
-## Classifier models
+<a id="classifier-models"></a>
 
-Classifier models do not chat. They answer typed questions about JSON state:
-pick one of several choices, answer yes or no, or give a score, each with
-probabilities. pidrei includes TypeSafe's Jev model from these providers,
-Cloudflare's Clef, Clef Flash, and Clef Omni models from Workers AI and
-OpenRouter, OpenAI's GPT-6 Luna through the
+## Decision models
+
+Decision models (listed in pidrei's API under the `classifier` model type) do
+not chat. They answer typed questions about JSON state: pick one of several
+choices, answer yes or no, or give a score, each with probabilities. pidrei
+includes TypeSafe's Jev model from these providers, Cloudflare's Clef, Clef
+Flash, and Clef Omni models from Workers AI and OpenRouter, OpenAI's GPT-6
+Luna through the
 [Decisions API](https://developers.openai.com/api/docs/guides/decisions), and
-Microsoft-Decision-1 through GitHub Copilot:
+GPT-6 Luna Decisions and Microsoft-Decision-1 through GitHub Copilot:
 
 | Provider | Model IDs | Authentication |
 |---|---|---|
@@ -242,7 +265,7 @@ Microsoft-Decision-1 through GitHub Copilot:
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
-| `github-copilot` | `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or `/login` |
+| `github-copilot` | `gpt-6-luna-decisions`, `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or `/login` |
 
 OpenAI's Decisions API needs an API key. Sign in with ChatGPT credentials do
 not work with it, so `gpt-6-luna` is not listed as available while `openai` is
@@ -251,11 +274,17 @@ logged in through `/login`, even when `OPENAI_API_KEY` is set; log out of
 that run longer than about five seconds, currently above roughly 600K input
 tokens, fail with a gateway timeout.
 
-Classifier models do not appear in `/model`. The model reaches them through
+Which GitHub Copilot decision models an account can use depends on its plan:
+Microsoft-Decision-1 is limited to Business and Enterprise, and organizations
+can turn models off. With `/login`, pidrei lists only the decision models in
+the account's Copilot model catalog. With `COPILOT_GITHUB_TOKEN` it lists
+both.
+
+Decision models do not appear in `/model`. The model reaches them through
 the [`codemode`](cli.md#enable-codemode) tool, which is off unless an MCP server turned it on. Enable
 it with `"defaultTools": ["+codemode"]` in
 [settings](configuration.md#agent-directory).
-Scripts then list classifier models with
+Scripts then list decision models with
 `models.get_available_of_type("classifier")` and call
 `models.classify(model, {"state": ..., "questions": ...})`:
 
@@ -280,8 +309,8 @@ result["answers"]
 
 [Codemode](codemode.md#classify) describes the question and answer types.
 
-Classifier models whose `input` includes `"image"` also judge images passed in
-`images`; other classifier models return an error for them. Image input works
+Decision models whose `input` includes `"image"` also judge images passed in
+`images`; other decision models return an error for them. Image input works
 with GPT-6 Luna, with Jev from `typesafe` and `cloudflare-workers-ai`, with Clef
 from `cloudflare-workers-ai`, and with the OpenRouter models whose catalog lists
 image input. Jev takes PNG and JPEG images, and image input is experimental on
@@ -291,14 +320,14 @@ request. Jev from `vercel-ai-gateway` and `opencode` takes text only.
 Each System One service takes images in its own request format, set by the
 model's `compat.imageInput`. Built-in models set it, so overriding a provider's
 `baseUrl` keeps it. A custom provider that proxies another service's
-classifiers sets it in its provider-level `compat` in `models.json` (see
+decision models sets it in its provider-level `compat` in `models.json` (see
 [System One compatibility](models-configuration.md#typesafe-system-one)).
 OpenRouter in particular answers requests in TypeSafe's format without an error
 but drops the images.
 
 When the service reports token counts, as all System One services do,
 `result["usage"]` carries them with their cost. pidrei adds the usage of a
-script's classifier calls to the `codemode` tool result, so it counts toward
+script's `classify()` calls to the `codemode` tool result, so it counts toward
 the session cost in the footer and `/session`. The cost uses the model's
 catalog price; models without one, such as TypeSafe's direct `jev-latest`,
 report tokens at no cost.
@@ -307,14 +336,14 @@ From the SDK, list classifier models with
 `model_runtime.get_available_of_type("classifier")` and call
 `model_runtime.classify(model, ClassifierContext(state=..., questions=...))`.
 
-Extensions call classifiers through `ctx.model_registry.classify()`, without
+Extensions call decision models through `ctx.model_registry.classify()`, without
 codemode, and find them with
 `ctx.model_registry.find_of_type("classifier", provider, id)`.
 [Virtual models](virtual-models.md#route-requests) can use them to route
 requests; see the `jev_router.py` example.
 
 Image models, such as OpenRouter's `google/gemini-2.5-flash-image`, generate
-images from a prompt and optional input images. Like classifier models, they
+images from a prompt and optional input images. Like decision models, they
 do not appear in `/model`; the model reaches them through the
 [`codemode`](cli.md#enable-codemode) tool. Scripts list them with
 `models.get_available_of_type("image")` and call

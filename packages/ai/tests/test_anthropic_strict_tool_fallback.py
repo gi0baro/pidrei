@@ -175,7 +175,8 @@ async def test_retries_with_original_non_strict_schemas_and_preserves_required_t
     assert events == ["start", "done"]
     assert len(harness.payloads) == 2
     assert len(payload_calls) == 2
-    assert len(response_calls) == 1
+    # The rejected request and the fallback each report their response (#12376).
+    assert [response.status for response in response_calls] == [400, 200]
     first = harness.payloads[0]["tools"]
     second = harness.payloads[1]["tools"]
     _assert_matches(

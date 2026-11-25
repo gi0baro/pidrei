@@ -132,7 +132,7 @@ async def copy_to_clipboard(text: str, write_terminal: Callable[[str], None]) ->
         commands.append(("pbcopy", []))
     else:
         if env.get("WAYLAND_DISPLAY"):
-            commands.append(("wl-copy", []))
+            commands.append(("wl-copy", ["-t", "text/plain"]))
         if env.get("DISPLAY"):
             commands += [("xclip", ["-selection", "clipboard"]), ("xsel", ["--clipboard", "--input"])]
     for command, args in commands:

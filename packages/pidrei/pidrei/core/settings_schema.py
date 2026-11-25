@@ -184,6 +184,32 @@ _WARNING_SETTINGS_SCHEMA = {
     },
 }
 
+_NOTICE_SETTINGS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "cacheMisses": {
+            "type": "boolean",
+            "description": "Show a notice when a response re-bills a significant part of the prompt cache.",
+            "default": SETTINGS_DEFAULTS["notices"]["cacheMisses"],
+        },
+        "cacheWarming": {
+            "type": "boolean",
+            "description": "Show the cost of cache warming requests.",
+            "default": SETTINGS_DEFAULTS["notices"]["cacheWarming"],
+        },
+        "compactionCosts": {
+            "type": "boolean",
+            "description": "Show the cost of compactions and branch summaries.",
+            "default": SETTINGS_DEFAULTS["notices"]["compactionCosts"],
+        },
+        "reasoningDrops": {
+            "type": "boolean",
+            "description": "Show a notice when a provider drops reasoning items from a request.",
+            "default": SETTINGS_DEFAULTS["notices"]["reasoningDrops"],
+        },
+    },
+}
+
 _CODEMODE_SETTINGS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -268,11 +294,6 @@ SETTINGS_SCHEMA: dict[str, Any] = {
         "branchSummary": _BRANCH_SUMMARY_SETTINGS_SCHEMA,
         "retry": _RETRY_SETTINGS_SCHEMA,
         "hideThinkingBlock": {"type": "boolean", "default": SETTINGS_DEFAULTS["hideThinkingBlock"]},
-        "showCacheMissNotices": {
-            "type": "boolean",
-            "description": "Show cache cost and provider recovery notices.",
-            "default": SETTINGS_DEFAULTS["showCacheMissNotices"],
-        },
         "externalEditor": {
             "type": "string",
             "description": "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR.",
@@ -374,6 +395,7 @@ SETTINGS_SCHEMA: dict[str, Any] = {
         },
         "markdown": _MARKDOWN_SETTINGS_SCHEMA,
         "warnings": _WARNING_SETTINGS_SCHEMA,
+        "notices": _NOTICE_SETTINGS_SCHEMA,
         "codemode": _CODEMODE_SETTINGS_SCHEMA,
         "sessionDir": {
             "type": "string",
@@ -427,6 +449,11 @@ SETTINGS_SCHEMA: dict[str, Any] = {
             "all", "one-at-a-time", description="Legacy setting migrated to steeringMode.", deprecated=True
         ),
         "websockets": {"type": "boolean", "description": "Legacy setting migrated to transport.", "deprecated": True},
+        "showCacheMissNotices": {
+            "type": "boolean",
+            "description": "Legacy setting migrated to notices.",
+            "deprecated": True,
+        },
         "enableInstallTelemetry": {
             "type": "boolean",
             "description": "Legacy setting migrated to enableProviderAttribution.",

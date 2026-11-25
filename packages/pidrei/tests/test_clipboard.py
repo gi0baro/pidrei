@@ -177,6 +177,16 @@ async def test_pidrei_clipboard_osc52_emits_osc52_after_a_successful_linux_copy(
 
 @LINUX_ONLY
 @pytest.mark.tonio
+async def test_wl_copy_copies_as_text_plain():
+    # Regression test for #12374: an inferred type such as application/x-ruby is dropped by Klipper.
+    with _clipboard(WAYLAND_DISPLAY="wayland-0") as (calls, stdout):
+        await clipboard.copy_to_clipboard("def foo", stdout.write)
+
+    assert calls == [("wl-copy", ["-t", "text/plain"], {"input": "def foo", "timeout_ms": 5000})]
+
+
+@LINUX_ONLY
+@pytest.mark.tonio
 async def test_tries_xclip_and_xsel_after_wl_copy_fails():
     async def result(name, _args):
         return b"" if name == "xsel" else None

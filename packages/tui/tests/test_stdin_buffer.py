@@ -687,6 +687,18 @@ async def test_handles_paste_arriving_in_chunks():
 
 
 @pytest.mark.tonio
+async def test_should_find_an_end_marker_split_across_chunks_at_any_position():
+    text = "\x1b[200~ab\x1b[201~c"
+    for chunk_size in range(1, len(text) + 1):
+        buffer, emitted, emitted_paste = _make_paste_buffer()
+        for index in range(0, len(text), chunk_size):
+            buffer.process(text[index : index + chunk_size])
+        assert emitted_paste == ["ab"], f"chunk size {chunk_size}"
+        assert emitted == ["c"], f"chunk size {chunk_size}"
+        buffer.destroy()
+
+
+@pytest.mark.tonio
 async def test_handles_paste_with_input_before_and_after():
     buffer, emitted, emitted_paste = _make_paste_buffer()
     buffer.process("a")

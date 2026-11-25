@@ -8,6 +8,7 @@ identical.
 import pytest
 import tonio.colored as tonio
 
+from pidrei_ai.types import ProviderResponse
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_utils.cancel import AbortError, CancelToken
 
@@ -153,3 +154,95 @@ async def test_does_not_retry_non_provider_errors():
     with pytest.raises(ValueError, match="plain error"):
         await retry_provider_request(request, max_retries=3)
     assert calls == 1
+
+
+# --- provider request error responses (#12376) ---------------------------------
+
+
+@pytest.mark.tonio
+async def test_reports_each_failed_attempts_status_and_headers_before_retrying():
+    responses: list[ProviderResponse] = []
+    errors = [ProviderError(429, {"retry-after-ms": "0"}), ProviderError(503, {"retry-after-ms": "0"})]
+
+    async def request():
+        if errors:
+            raise errors.pop(0)
+        return "ok"
+
+    async def on_error_response(response):
+        responses.append(response)
+
+    result = await retry_provider_request(request, max_retries=2, on_error_response=on_error_response)
+
+    assert result == "ok"
+    assert responses == [
+        ProviderResponse(status=429, headers={"retry-after-ms": "0"}),
+        ProviderResponse(status=503, headers={"retry-after-ms": "0"}),
+    ]
+
+
+@pytest.mark.tonio
+async def test_reports_the_final_non_retryable_failure():
+    responses: list[ProviderResponse] = []
+    error = ProviderError(400, {"x-request-id": "req-1"})
+
+    async def request():
+        raise error
+
+    async def on_error_response(response):
+        responses.append(response)
+
+    with pytest.raises(ProviderError) as excinfo:
+        await retry_provider_request(request, max_retries=2, on_error_response=on_error_response)
+
+    assert excinfo.value is error
+    assert responses == [ProviderResponse(status=400, headers={"x-request-id": "req-1"})]
+
+
+@pytest.mark.tonio
+async def test_does_not_report_failures_without_an_http_status():
+    responses: list[ProviderResponse] = []
+
+    async def request():
+        raise RuntimeError("Connection error.")
+
+    async def on_error_response(response):
+        responses.append(response)
+
+    with pytest.raises(RuntimeError, match=r"Connection error\."):
+        await retry_provider_request(request, on_error_response=on_error_response)
+    assert responses == []
+
+
+@pytest.mark.tonio
+async def test_fails_the_request_with_the_callbacks_error_when_the_callback_throws():
+    calls = 0
+
+    async def request():
+        nonlocal calls
+        calls += 1
+        raise ProviderError(429, {"retry-after-ms": "0"})
+
+    async def on_error_response(_response):
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        await retry_provider_request(request, max_retries=2, on_error_response=on_error_response)
+    assert calls == 1
+
+
+@pytest.mark.tonio
+async def test_does_not_report_a_failure_after_the_request_was_aborted():
+    cancel = CancelToken()
+    responses: list[ProviderResponse] = []
+
+    async def request():
+        cancel.cancel()
+        raise ProviderError(429)
+
+    async def on_error_response(response):
+        responses.append(response)
+
+    with pytest.raises(AbortError):
+        await retry_provider_request(request, cancel=cancel, on_error_response=on_error_response)
+    assert responses == []

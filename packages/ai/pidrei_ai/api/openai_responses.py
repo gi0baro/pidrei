@@ -8,12 +8,7 @@ from typing import Any, Protocol
 from pidrei_ai.api.constrained_sampling import create_grammar_tool_input_properties
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
-from pidrei_ai.api.openai_responses_shared import (
-    convert_responses_messages,
-    convert_responses_tools,
-    get_responses_tool_support,
-    process_responses_stream,
-)
+from pidrei_ai.api.openai_responses_shared import prepare_responses_prompt, process_responses_stream
 from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
 from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
@@ -39,7 +34,7 @@ from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sse import iterate_sse_messages
-from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
+from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -345,15 +340,7 @@ def build_params(
     grammar_tool_input_properties: dict[str, str],
     configuration_update_effort: str | None,
 ) -> dict:
-    transcript_tools = resolve_transcript_tools(
-        context.messages,
-        get_responses_tool_support(
-            supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
-            supports_additional_tools=compat.supports_additional_tools,
-            supports_tool_search=compat.supports_tool_search,
-        ),
-    )
-    messages = convert_responses_messages(
+    prompt = prepare_responses_prompt(
         model,
         context,
         set(OPENAI_TOOL_CALL_PROVIDERS),
@@ -370,7 +357,7 @@ def build_params(
 
     cache_retention = _resolve_cache_retention(options.cache_retention, options.env)
     send_prompt_cache_key = cache_retention != "none" and compat.prompt_cache_key_mode != "disabled"
-    params: dict[str, Any] = {"model": model.id, "input": messages, "stream": True, "store": False}
+    params: dict[str, Any] = {"model": model.id, "input": prompt.input, "stream": True, "store": False}
     if send_prompt_cache_key:
         cache_key = clamp_openai_prompt_cache_key(options.session_id)
         if cache_key is not None:
@@ -393,12 +380,8 @@ def build_params(
     if options.service_tier is not None:
         params["service_tier"] = options.service_tier
 
-    if transcript_tools.request_tools:
-        params["tools"] = convert_responses_tools(
-            transcript_tools.request_tools,
-            supports_strict_mode=compat.supports_strict_mode,
-            supports_openai_grammar_tools=compat.supports_openai_grammar_tools,
-        )
+    if prompt.request_tools:
+        params["tools"] = prompt.request_tools
 
     if options.tool_choice is not None:
         params["tool_choice"] = options.tool_choice
@@ -526,6 +509,7 @@ def stream(
                 max_retries=opts.max_retries if opts.max_retries is not None else 0,
                 max_retry_delay_ms=opts.max_retry_delay_ms,
                 cancel=opts.cancel,
+                on_error_response=lambda error_response: maybe_call(opts.on_response, error_response, model),
             )
             await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model

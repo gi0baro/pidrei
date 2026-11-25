@@ -109,6 +109,29 @@ async def test_writes_the_crash_dump_to_the_os_temp_directory_instead_of_a_home_
         tui_main_screen._DEFAULT_LOG_DIRECTORY = previous_log_directory
 
 
+# #10585: a full or unwritable temp dir must not replace the width error. pi also asserts that the
+# terminal is stopped once before the error propagates; pidrei's renderer never stops the terminal
+# itself (the crash handler does), so that assertion has no counterpart. pi starts the TUI first;
+# like the case above, the frame is rendered directly here.
+@pytest.mark.tonio
+async def test_reports_the_width_error_when_the_crash_dump_cannot_be_written(tmp_path):
+    # A regular file where the log directory should be makes the dump fail to write.
+    log_directory = tmp_path / "not-a-directory"
+    await fs.Path(log_directory).write_text("")
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal, False, str(log_directory))
+    component = TestComponent()
+    tui.add_child(component)
+    component.lines = ["ok"]
+    await tui.render_now()
+
+    component.lines = ["ok", "x" * 60]
+    with pytest.raises(Exception) as raised:
+        await tui.render_now()
+    assert re.search(r"exceeds terminal width", str(raised.value))
+    assert re.search(r"Could not write debug log to ", str(raised.value))
+
+
 # TUI Kitty image cleanup (encode_kitty-based cases)
 
 

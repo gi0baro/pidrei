@@ -99,6 +99,15 @@ def test_nests_image_tool_results_for_gemini_3_google_api_models():
     assert image_response["parts"][0]["inlineData"]
 
 
+# https://github.com/earendil-works/pi/issues/12321
+def test_nests_image_tool_results_for_prefixed_gemini_3_ids():
+    model = make_model("google-generative-ai", "google", "randomprefix-gemini-4-argon")
+    contents = convert_messages(model, make_context(model))
+
+    assert len(contents) == 3
+    assert contents[2]["parts"][1]["functionResponse"]["parts"][0]["inlineData"]
+
+
 # https://github.com/earendil-works/pi/issues/8720
 def test_treats_whitespace_only_tool_result_text_as_no_text():
     model = make_model("google-generative-ai", "google", "gemini-3-pro-preview")

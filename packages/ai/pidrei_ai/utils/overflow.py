@@ -17,7 +17,7 @@ _OVERFLOW_PATTERNS = [
     for pattern in (
         r"prompt (?:is )?too long",  # Anthropic and z.ai token overflow
         r"prompt exceeds max length",  # z.ai CN endpoint token overflow
-        r"request_too_large",  # Anthropic request byte-size overflow (HTTP 413)
+        r"(?<![a-z0-9_])request_too_large(?![a-z0-9_])",  # Anthropic request byte-size error code, not a longer identifier
         r"input is too long for requested model",  # Amazon Bedrock
         r"exceeds the context window",  # OpenAI (Completions & Responses API)
         # OpenAI-compatible proxies (LiteLLM)

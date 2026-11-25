@@ -93,6 +93,27 @@ async def test_prefers_explicit_and_scoped_profiles_over_ambient_aws_access_keys
     assert config.get("credentials") is None
 
 
+# #12353: the proxy-aware credential chain must not replace explicit keys.
+@pytest.mark.tonio
+async def test_keeps_ambient_aws_access_keys_when_a_proxy_is_set():
+    # pi sets the proxy in the process environment and checks the SDK's
+    # `credentialDefaultProvider` hook. A proxy there changes nothing in this
+    # client's config (punkreq and botocore read it themselves), so the proxy is
+    # provider-scoped here, and the client gets the scoped env instead of the hook.
+    os.environ["AWS_ACCESS_KEY_ID"] = "AKIAEXAMPLE"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "secretexample"
+    model = get_builtin_model("amazon-bedrock", "us.anthropic.claude-opus-4-8")
+    env = {"HTTPS_PROXY": "http://127.0.0.1:9"}
+
+    config = await capture_client_config(model, BedrockOptions(env=env))
+
+    assert config["credentials"] == {
+        "accessKeyId": "AKIAEXAMPLE",
+        "secretAccessKey": "secretexample",
+    }
+    assert config["env"] == env
+
+
 @pytest.mark.tonio
 async def test_uses_ambient_aws_access_keys_when_no_profile_is_configured():
     os.environ["AWS_ACCESS_KEY_ID"] = "AKIAEXAMPLE"

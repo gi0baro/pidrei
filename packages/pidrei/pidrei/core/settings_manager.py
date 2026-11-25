@@ -440,6 +440,19 @@ class SettingsManager:
             settings["transport"] = "websocket" if settings["websockets"] else "sse"
             del settings["websockets"]
 
+        # Migrate showCacheMissNotices -> notices.*; keys already set in notices win
+        if isinstance(settings.get("showCacheMissNotices"), bool):
+            shown = settings["showCacheMissNotices"]
+            notices = settings["notices"] if isinstance(settings.get("notices"), dict) else {}
+            settings["notices"] = {
+                "cacheMisses": shown,
+                "cacheWarming": shown,
+                "compactionCosts": shown,
+                "reasoningDrops": shown,
+                **notices,
+            }
+        settings.pop("showCacheMissNotices", None)
+
         # Migrate old skills object format to new array format
         if "skills" in settings and isinstance(settings["skills"], dict):
             skills_settings = settings["skills"]
@@ -972,10 +985,6 @@ class SettingsManager:
         hide = self._settings.get("hideThinkingBlock")
         return hide if hide is not None else SETTINGS_DEFAULTS["hideThinkingBlock"]
 
-    def get_show_cache_miss_notices(self) -> bool:
-        show = self._settings.get("showCacheMissNotices")
-        return show if show is not None else SETTINGS_DEFAULTS["showCacheMissNotices"]
-
     def get_external_editor_command(self) -> str:
         configured_editor = self._settings.get("externalEditor")
         if isinstance(configured_editor, str) and configured_editor.strip() != "":
@@ -987,9 +996,6 @@ class SettingsManager:
 
     def set_hide_thinking_block(self, hide: bool) -> None:
         self._set_global("hideThinkingBlock", hide)
-
-    def set_show_cache_miss_notices(self, show: bool) -> None:
-        self._set_global("showCacheMissNotices", show)
 
     def get_shell_path(self) -> str | None:
         shell_path = self._settings.get("shellPath")
@@ -1287,3 +1293,14 @@ class SettingsManager:
 
     def set_warnings(self, warnings: dict[str, Any]) -> None:
         self._set_global("warnings", dict(warnings))
+
+    def get_notices(self) -> dict[str, Any]:
+        """Which transcript notices to show, with defaults filled in."""
+        notices = self._settings.get("notices")
+        # pi spreads `this.settings.notices`: a value that is not an object adds no notice key.
+        return {**SETTINGS_DEFAULTS["notices"], **(notices if isinstance(notices, dict) else {})}
+
+    def set_notice(self, key: str, shown: bool) -> None:
+        """Show or hide one transcript notice. Writes only that key, so the other notices keep following their
+        defaults."""
+        self._set_global_nested("notices", key, shown)

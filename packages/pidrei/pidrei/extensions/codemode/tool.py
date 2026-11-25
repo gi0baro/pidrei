@@ -276,6 +276,7 @@ class ClassifierResult(TypedDict):
     model: str
     answers: dict[str, ChoiceAnswer | ScoreAnswer | BoolAnswer]
     usage: NotRequired[ModelUsage]
+    responseId: NotRequired[str]
     stopReason: Literal['stop', 'error', 'aborted']
     errorMessage: NotRequired[str]
 

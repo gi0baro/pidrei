@@ -26,6 +26,15 @@ class TestRpcJsonlFraming:
         assert len(lines) == 1
         assert json.loads(lines[0]) == {"text": "a b c"}
 
+    # Regression test for pi #12224. The decoder returns the lines and calls no handler, so pi's
+    # throwing handler has no counterpart: the case pins that a returned line is not joined with the next.
+    def test_does_not_join_a_line_whose_handler_threw_with_the_next_line(self):
+        decoder = JsonlLineDecoder()
+
+        assert decoder.feed("pre") == []
+        assert decoder.feed("fix\n") == ["prefix"]
+        assert decoder.feed("next\n") == ["next"]
+
     def test_handles_crlf_delimited_input(self):
         decoder = JsonlLineDecoder()
 

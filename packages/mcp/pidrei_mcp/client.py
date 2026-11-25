@@ -51,6 +51,7 @@ from .protocol.jsonrpc import (
     is_number,
     is_object,
     js_string,
+    normalize_own_request_id,
 )
 from .protocol.types import (
     LATEST_PROTOCOL_VERSION,
@@ -658,13 +659,15 @@ class McpClient:
         await self._emit_error(McpError(JSON_RPC_ERROR_CODES.invalid_request, "Received invalid JSON-RPC message"))
 
     async def _handle_response(self, message: Any) -> None:
-        request_id = message["id"]
+        request_id = normalize_own_request_id(message["id"])
         with self._lock:
             entry = self._pending.get(request_id)
             if entry is not None:
                 self._remove_pending_locked(request_id, entry)
         if entry is None:
-            await self._emit_error(RuntimeError(f"Received response for unknown MCP request {js_string(request_id)}"))
+            await self._emit_error(
+                RuntimeError(f"Received response for unknown MCP request {js_string(message['id'])}")
+            )
             return
         if "error" in message:
             error = message["error"]
@@ -749,7 +752,7 @@ class McpClient:
         ):
             return
         with self._lock:
-            request_id = self._progress_requests.get(params["progressToken"])
+            request_id = self._progress_requests.get(normalize_own_request_id(params["progressToken"]))
             entry = self._pending.get(request_id) if request_id is not None else None
             if request_id is None or entry is None:
                 return

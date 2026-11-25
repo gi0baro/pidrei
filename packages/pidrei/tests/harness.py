@@ -7,10 +7,14 @@ an explicit `Provider`, so the harness registers it on the model runtime
 instead — the same result without the global.
 """
 
+import json
+import os
 import shutil
 import tempfile
 from types import SimpleNamespace
 from typing import Any
+
+from tonio.colored import fs
 
 from pidrei.core.agent_session import AgentSession, AgentSessionConfig, ExtensionBindings
 from pidrei.core.auth_storage import AuthStorage
@@ -73,6 +77,7 @@ async def create_harness(
     resource_loader: Any = None,
     extension_factories: list | None = None,
     with_configured_auth: bool = True,
+    models_json: dict | None = None,
     provider: str | None = None,
     models: list[dict] | None = None,
     session_manager: SessionManager | None = None,
@@ -103,7 +108,10 @@ async def create_harness(
 
         await auth_storage.modify(model.provider, set_key)
 
-    model_runtime = await ModelRuntime(credentials=auth_storage, models_path=None, allow_model_network=False)
+    models_path = None if models_json is None else os.path.join(temp_dir, "models.json")
+    if models_path is not None:
+        await fs.Path(models_path).write_text(json.dumps(models_json))
+    model_runtime = await ModelRuntime(credentials=auth_storage, models_path=models_path, allow_model_network=False)
     if with_configured_auth:
         model_runtime.register_native_provider(faux.provider)
         # pi registers the faux provider before runtime creation, so the

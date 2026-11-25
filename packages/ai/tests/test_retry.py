@@ -152,9 +152,43 @@ class TestProviderRetryClassification:
         text = "Claude Code's stream from Anthropic was cut short after the reply had begun"
         assert is_retryable_assistant_error(error_message(text)) is True
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Regression for #12227: gateway mid-stream `event: error` frames without a status code.
+            "The provider is temporarily unavailable. Retry shortly.",
+            "The upstream provider is temporarily unavailable. Try again shortly.",
+            "The provider ended the response before it was complete.",
+            "The connection to the provider was reset. Retry shortly.",
+            "The provider reported a failure while generating the response.",
+        ],
+    )
+    def test_matches_gateway_provider_failure_wording(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    @pytest.mark.parametrize(
+        "text", ["Provider unavailable for this model", "The provider is unavailable in your region"]
+    )
+    def test_does_not_match_lasting_provider_unavailable_wording(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is False
+
     def test_matches_gateway_wording_for_a_closed_connection(self):
         # Regression for #12064.
         text = '{"type":"error","error":{"type":"api_error","message":"Connection closed."}}'
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Your request rate increased too quickly",
+            (
+                "Request rate increased too quickly. To ensure system stability, please adjust your client logic "
+                "to scale requests more smoothly over time."
+            ),
+        ],
+    )
+    def test_matches_request_rate_throttle_wording(self, text):
+        # Regression for #12240 and #2952.
         assert is_retryable_assistant_error(error_message(text)) is True
 
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):
@@ -193,6 +227,10 @@ class TestProviderRetryClassification:
         # Regression for #9627.
         assert is_retryable_assistant_error(error_message("520 status code (no body)")) is True
         assert is_retryable_assistant_error(error_message("524 status code (no body)")) is True
+        assert (
+            is_retryable_assistant_error(error_message("525 <!DOCTYPE html><title>SSL handshake failed</title>"))
+            is True
+        )
         assert is_retryable_assistant_error(faux_assistant_message("not an error")) is False
 
     @pytest.mark.parametrize(
@@ -207,6 +245,42 @@ class TestProviderRetryClassification:
         ],
     )
     def test_does_not_match_status_codes_inside_ids_or_longer_numbers(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Unable to process request. Repeat the request later.",
+            "waited 73.4s in queue, reaching this model's admission ceiling of 60s; retry after the hinted delay",
+            (
+                '{"type":"error","error":{"details":null,"type":"api_error","message":"Unable to complete this '
+                'request right now. Please try again."},"request_id":"req_011CgfE1bTgPTDsor4TsApFv"}'
+            ),
+            "Provider finish_reason: error",
+            "Provider returned an empty response",
+            "Upstream error from Relace: The model stopped before completing the response.",
+        ],
+    )
+    def test_retries_temporary_provider_failures(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A cancellation, usually the user's.
+            "The operation was aborted",
+            # Only Anthropic's internal error is retried, not other error types.
+            (
+                '{"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one '
+                'message is required"}}'
+            ),
+            # A refusal ends the stream with a finish reason other than `error`.
+            "Provider finish_reason: content_filter",
+            # The quota exclusions are checked before the retryable patterns.
+            '{"type":"error","error":{"type":"api_error","message":"Monthly quota exceeded"}}',
+        ],
+    )
+    def test_does_not_retry(self, text):
         assert is_retryable_assistant_error(error_message(text)) is False
 
 
@@ -327,22 +401,26 @@ async def test_reports_capped_retry_delays():
     assert [call[2] for call in recorder.scheduled] == [10, 15, 15, 15]
 
 
+# Regression for #10506.
 @pytest.mark.tonio
-async def test_stops_retrying_once_a_call_succeeds():
+async def test_stops_retrying_once_a_call_succeeds_and_removes_backoff_abort_listeners():
+    # pi also asserts no abort listener is left on the signal; the backoff here
+    # waits on the token and registers nothing on it, so there is nothing to count.
+    cancel = CancelToken()
     calls = 0
     recorder = Recorder()
 
     async def produce():
         nonlocal calls
         calls += 1
-        if calls < 3:
+        if calls < 4:
             return error_message("terminated")
         return faux_assistant_message("recovered")
 
-    result = await retry_assistant_call(produce, ENABLED, None, recorder.callbacks())
+    result = await retry_assistant_call(produce, ENABLED, cancel, recorder.callbacks())
     assert result.content == [TextContent(text="recovered")]
-    assert calls == 3
-    assert recorder.finished == [(True, 2)]
+    assert calls == 4
+    assert recorder.finished == [(True, 3)]
 
 
 @pytest.mark.tonio

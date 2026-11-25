@@ -11,6 +11,7 @@ import re
 import pytest
 
 from pidrei.core.http_config import DEFAULT_HTTP_IDLE_TIMEOUT_MS
+from pidrei.core.settings_defaults import SETTINGS_DEFAULTS
 from pidrei.core.settings_manager import SettingsManager
 
 
@@ -147,6 +148,67 @@ class TestPackagesMigration:
             "source": "npm:shitty-extensions",
             "extensions": ["extensions/oracle.py"],
             "skills": [],
+        }
+
+
+class TestNotices:
+    @pytest.mark.tonio
+    async def test_fills_in_defaults_for_unset_notices(self):
+        manager = SettingsManager.in_memory({"notices": {"cacheMisses": True}})
+
+        assert manager.get_notices() == {**SETTINGS_DEFAULTS["notices"], "cacheMisses": True}
+
+    @pytest.mark.tonio
+    async def test_migrates_show_cache_miss_notices_to_every_notice_and_drops_it_on_save(self, dirs):
+        agent_dir, project_dir = dirs
+        settings_path = agent_dir / "settings.json"
+        write_json(settings_path, {"showCacheMissNotices": False})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_notices() == {
+            "cacheMisses": False,
+            "cacheWarming": False,
+            "compactionCosts": False,
+            "reasoningDrops": False,
+        }
+
+        manager.set_notice("reasoningDrops", True)
+        await manager.flush()
+
+        assert read_json(settings_path) == {
+            "notices": {"cacheMisses": False, "cacheWarming": False, "compactionCosts": False, "reasoningDrops": True},
+        }
+
+    @pytest.mark.tonio
+    async def test_writes_only_the_toggled_notice_to_global_settings(self, dirs):
+        agent_dir, project_dir = dirs
+        settings_path = agent_dir / "settings.json"
+        write_json(project_dir / ".pidrei" / "settings.json", {"notices": {"cacheMisses": False}})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        manager.set_notice("cacheWarming", False)
+        await manager.flush()
+
+        # Neither the project value nor the defaults of the other notices end up in global settings.
+        assert read_json(settings_path) == {"notices": {"cacheWarming": False}}
+        assert manager.get_notices() == {
+            **SETTINGS_DEFAULTS["notices"],
+            "cacheMisses": False,
+            "cacheWarming": False,
+        }
+
+    @pytest.mark.tonio
+    async def test_keeps_notices_already_set_over_the_legacy_setting(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"showCacheMissNotices": True, "notices": {"cacheWarming": False}})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+
+        assert manager.get_notices() == {
+            "cacheMisses": True,
+            "cacheWarming": False,
+            "compactionCosts": True,
+            "reasoningDrops": True,
         }
 
 

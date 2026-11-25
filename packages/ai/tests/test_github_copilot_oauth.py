@@ -117,6 +117,48 @@ async def test_filters_models_to_the_authenticated_account_picker_catalog():
     assert [model.id for model in available] == [picker_model_id]
 
 
+# #12395
+@pytest.mark.tonio
+async def test_filters_classifier_models_to_the_decision_models_in_the_account_catalog():
+    provider = github_copilot_provider()
+    picker_model_id = _require_model_id(provider.get_models(), 0)
+    credential = await refresh_github_copilot_models_for_test(
+        [
+            {
+                "id": picker_model_id,
+                "model_picker_enabled": True,
+                "capabilities": {"type": "chat", "supports": {"tool_calls": True}},
+            },
+            {
+                "id": "gpt-6-luna-decisions",
+                "model_picker_enabled": False,
+                "capabilities": {"type": "decisions", "supports": {}},
+            },
+            {
+                "id": "disabled-decisions",
+                "model_picker_enabled": False,
+                "policy": {"state": "disabled"},
+                "capabilities": {"type": "decisions", "supports": {}},
+            },
+        ],
+        "proxy.business.githubcopilot.com",
+    )
+    assert credential.extra["availableModelIds"] == [picker_model_id]
+    assert credential.extra["availableClassifierModelIds"] == ["gpt-6-luna-decisions"]
+
+    store = InMemoryCredentialStore()
+    await store.modify("github-copilot", lambda _current: _store(credential))
+    models = create_models(credentials=store)
+    models.set_provider(provider)
+    assert [model.id for model in await models.get_available_of_type("classifier", "github-copilot")] == [
+        "gpt-6-luna-decisions"
+    ]
+    assert [model.id for model in await models.get_all_available("github-copilot")] == [
+        picker_model_id,
+        "gpt-6-luna-decisions",
+    ]
+
+
 @pytest.mark.tonio
 async def test_falls_back_to_explicitly_enabled_policy_models_when_the_picker_catalog_is_empty():
     provider = github_copilot_provider()

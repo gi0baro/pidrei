@@ -266,10 +266,13 @@ async def _iterate_completion_events(response: Any, cancel: CancelToken | None):
     ended = False
     try:
         async for message in iterate_sse_messages(body):
-            if message.data == "[DONE]":
+            data = message.data.strip()
+            if not data:
+                continue
+            if data == "[DONE]":
                 ended = True
                 return
-            chunk = json.loads(message.data)
+            chunk = json.loads(data)
             if not isinstance(chunk, dict) or not isinstance(chunk.get("choices"), list):
                 raise RuntimeError("Invalid Mistral streaming event")  # noqa: TRY004 (mirrors pi's plain Error)
             yield chunk
@@ -791,8 +794,5 @@ def map_chat_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:
             return "length", None
         case "tool_calls":
             return "toolUse", None
-        case "error":
-            # Mistral reports transient server failures this way; "server error" makes the message retryable.
-            return "error", "Provider stopped with: error (server error)"
         case _:
             return "error", f"Provider stopped with: {reason}"

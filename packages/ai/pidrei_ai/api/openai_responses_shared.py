@@ -10,7 +10,7 @@ import json
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pidrei_ai.api.constrained_sampling import (
     GrammarToolInputJsonBuffer,
@@ -54,6 +54,7 @@ from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.schema.checks import json_stringify
 from pidrei_ai.utils.streaming_json import ToolCallArgumentsStream
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import TranscriptToolSupport, resolve_transcript, resolve_transcript_tools
@@ -167,7 +168,10 @@ def convert_responses_messages(
     tool_options: dict | None = None,
     configuration_update_effort: str | None = None,
 ) -> list[dict]:
-    """`supports_mid_convo_system_messages`: whether later system messages are sent in
+    """Render input items for replay, as used by Codex WebSocket continuation. Use
+    `prepare_responses_prompt` to build a request.
+
+    `supports_mid_convo_system_messages`: whether later system messages are sent in
     place; otherwise they are folded into the leading prompt.
 
     `configuration_update_effort`: effort for the reply being generated. When set, the
@@ -178,6 +182,81 @@ def convert_responses_messages(
     therefore never changes. OpenAI documents the item before user messages only. After
     tool results it was verified on gpt-6-luna (October 2026) to be accepted and to apply
     to the next reply."""
+    input, _request_tools, _request_effort_baseline = _render_responses_transcript(
+        model,
+        context,
+        allowed_tool_call_providers,
+        grammar_tool_input_properties=grammar_tool_input_properties,
+        supports_mid_convo_system_messages=supports_mid_convo_system_messages,
+        supports_additional_tools=supports_additional_tools,
+        supports_tool_search=supports_tool_search,
+        tool_options=tool_options,
+        configuration_update_effort=configuration_update_effort,
+    )
+    return input
+
+
+@dataclass(slots=True, frozen=True)
+class ResponsesPrompt:
+    """What `prepare_responses_prompt` returns: the input items, the converted
+    top-level tools, and the request-level effort the input's configuration_update
+    items start from (only with `effort_baseline="initial"`)."""
+
+    input: list[dict]
+    request_tools: list[dict]
+    request_effort_baseline: str | None
+
+
+def prepare_responses_prompt(
+    model: Model,
+    context: TranscriptContext,
+    allowed_tool_call_providers: set[str],
+    *,
+    grammar_tool_input_properties: dict[str, str] | None = None,
+    supports_mid_convo_system_messages: bool | None = None,
+    supports_additional_tools: bool = False,
+    supports_tool_search: bool = False,
+    tool_options: dict | None = None,
+    configuration_update_effort: str | None = None,
+    effort_baseline: Literal["initial"] | None = None,
+) -> ResponsesPrompt:
+    """Place transcript-derived declarations and effort changes consistently in input and top-level request fields.
+
+    `effort_baseline="initial"`: the first effort the input would set becomes the
+    request-level effort (`request_effort_baseline`) instead of an item, and items are
+    emitted only where the effort changes. Options otherwise as `convert_responses_messages`."""
+    input, request_tools, request_effort_baseline = _render_responses_transcript(
+        model,
+        context,
+        allowed_tool_call_providers,
+        grammar_tool_input_properties=grammar_tool_input_properties,
+        supports_mid_convo_system_messages=supports_mid_convo_system_messages,
+        supports_additional_tools=supports_additional_tools,
+        supports_tool_search=supports_tool_search,
+        tool_options=tool_options,
+        configuration_update_effort=configuration_update_effort,
+        effort_baseline=effort_baseline,
+    )
+    return ResponsesPrompt(
+        input=input,
+        request_tools=convert_responses_tools(request_tools, **(tool_options or {})),
+        request_effort_baseline=request_effort_baseline,
+    )
+
+
+def _render_responses_transcript(
+    model: Model,
+    context: TranscriptContext,
+    allowed_tool_call_providers: set[str],
+    *,
+    grammar_tool_input_properties: dict[str, str] | None = None,
+    supports_mid_convo_system_messages: bool | None = None,
+    supports_additional_tools: bool = False,
+    supports_tool_search: bool = False,
+    tool_options: dict | None = None,
+    configuration_update_effort: str | None = None,
+    effort_baseline: Literal["initial"] | None = None,
+) -> tuple[list[dict], list[Tool], str | None]:
     grammar_tool_input_properties = grammar_tool_input_properties or {}
     normalized_context = resolve_transcript(context, supports_mid_convo_system_messages)
     messages: list[dict] = []
@@ -262,7 +341,18 @@ def convert_responses_messages(
             }
         )
 
+    request_effort_baseline: str | None = None
+    previous_effort: str | None = None
+
     def push_configuration_update(effort: str) -> None:
+        nonlocal request_effort_baseline, previous_effort
+        if effort_baseline == "initial":
+            if previous_effort == effort:
+                return
+            previous_effort = effort
+            if request_effort_baseline is None:
+                request_effort_baseline = effort
+                return
         messages.append({"type": "configuration_update", "reasoning": {"effort": effort}})
 
     supports_developer_role = getattr(model.compat, "supports_developer_role", None)
@@ -365,32 +455,41 @@ def convert_responses_messages(
                     if is_different_model or not (item_id or "").startswith(item_id_prefix):
                         item_id = None
 
+                    # OpenAI returns tool calls with status "completed", so replay them the same way. Over the Codex
+                    # WebSocket, OpenAI keeps the previous response's items itself, and later reasoning is generated
+                    # after calls that have the status. After 5 idle minutes the connection closes and pi sends the
+                    # whole history again. If a call lacks the status there, the history no longer matches, and from
+                    # GPT-6.2 on OpenAI drops the reasoning that follows it (`prefix_mismatch`, #12367).
+                    # Always "completed": a stream that ends with an unfinished tool call fails, and failed messages
+                    # are not replayed.
+                    replayed_call: dict[str, Any] = {}
+                    if item_id is not None:
+                        replayed_call["id"] = item_id
+                    replayed_call["call_id"] = call_id
+                    replayed_call["name"] = block.name
+                    replayed_call["status"] = "completed"
+                    if is_same_model and block.namespace is not None:
+                        replayed_call["namespace"] = block.namespace
                     if custom_input_property is not None:
-                        entry = {
-                            "type": "custom_tool_call",
-                            "call_id": call_id,
-                            "name": block.name,
-                            "input": sanitize_surrogates(
-                                get_grammar_tool_input(block.name, block.arguments, custom_input_property)
-                            ),
-                        }
-                        if item_id is not None:
-                            entry["id"] = item_id
-                        if is_same_model and block.namespace is not None:
-                            entry["namespace"] = block.namespace
-                        output.append(entry)
+                        output.append(
+                            {
+                                "type": "custom_tool_call",
+                                **replayed_call,
+                                "input": sanitize_surrogates(
+                                    get_grammar_tool_input(block.name, block.arguments, custom_input_property)
+                                ),
+                            }
+                        )
                     else:
-                        entry = {
-                            "type": "function_call",
-                            "call_id": call_id,
-                            "name": block.name,
-                            "arguments": json.dumps(block.arguments),
-                        }
-                        if item_id is not None:
-                            entry["id"] = item_id
-                        if is_same_model and block.namespace is not None:
-                            entry["namespace"] = block.namespace
-                        output.append(entry)
+                        output.append(
+                            {
+                                "type": "function_call",
+                                **replayed_call,
+                                # pi's `JSON.stringify`, not `json.dumps`: OpenAI compares the replayed call
+                                # with its own copy (see above), and Python's default spacing made it differ.
+                                "arguments": json_stringify(block.arguments),
+                            }
+                        )
             if not output:
                 continue
             if configuration_update_effort is not None and is_same_model and msg.provider_thinking_level is not None:
@@ -409,7 +508,7 @@ def convert_responses_messages(
     if configuration_update_effort is not None:
         push_configuration_update(configuration_update_effort)
 
-    return messages
+    return messages, transcript_tools.request_tools, request_effort_baseline
 
 
 # =============================================================================

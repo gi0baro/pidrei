@@ -211,7 +211,12 @@ In order:
 
 1. **Catalog regen**: `make models-data`, then rerun `packages/ai/tests`.
    The regen-dependent failures noted during the port must clear. One run
-   covers chat, image and classifier models.
+   covers chat, image and classifier models. models.dev can have moved past
+   the catalog Pi's release was built from (a default model or an
+   allowlisted id that is gone or renamed): check Pi's default branch for a
+   fix first; if there is none, follow models.dev with a `Deviation:`
+   comment at the id, adapt the mirrored test with a note, and add a
+   CHANGELOG line. The comment goes when Pi catches up.
 2. **Versions**: the published packages (`packages/{utils,http,ai,agent,tui,codemode,mcp,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
@@ -266,8 +271,8 @@ report the capture. Don't chase it mid-port.
 
 ## 5. Dependency bumps
 
-TonIO, httpunk and punkreq releases are ported as their own small change,
-usually a `.N` PiDrei release:
+TonIO, httpunk, punkreq and pydantic-monty releases are ported as their own
+small change, usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
    (TonIO: all eight packages; httpunk and punkreq: `pidrei-http` only),
@@ -288,9 +293,17 @@ usually a `.N` PiDrei release:
    `uv sync --all-packages`).
 3. For TonIO, recheck the TonIO contract section of `AGENTS.md` against the
    release.
-4. The full suite in slices, `make lint`, `make audit`, the blocking-fs
+4. For pydantic-monty (pinned in `pidrei-codemode` only), run the codemode
+   suites, then recheck what PiDrei tells the model about the interpreter
+   against the new release: run one script per unsupported construct and
+   per importable module, with and without the type check. The list of
+   modules and the details go into `docs/codemode.md`. The `codemode` tool
+   description (`extensions/codemode/tool.py`) is a short list of what to
+   avoid and stays broad: an entry leaves it only when the construct works
+   in full under the default type check, never to describe partial support.
+5. The full suite in slices, `make lint`, `make audit`, the blocking-fs
    detector (same sites as before), `make release-check`.
-5. A one-line CHANGELOG entry in the current untagged section, or a new
+6. A one-line CHANGELOG entry in the current untagged section, or a new
    `.N` section.
 
 ## 6. What is not ported
@@ -325,7 +338,11 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Self-update** machinery, installer-managed updates, and Node/Bun
   packaging, including what only exists because Pi updates itself (the
   restart hint when the install changed on disk while a session runs).
-- **Telemetry** of any kind (the `no-telemetry` recipe).
+- **Telemetry** of any kind (the `no-telemetry` recipe), and with it Pi's
+  first-time setup: since Pi 1.6.1 the dialog only asks the analytics
+  opt-in, so PiDrei has none. Upstream hunks to it, to
+  `shouldRunFirstTimeSetup`/`showFirstTimeSetup` and to their wiring are
+  skipped.
 - **Radius**: provider, presence and session sharing.
 - **The llama.cpp extension**, and its consumers (llama.cpp classify).
 - **The 3D easter eggs** (`armin-3d`/`easter-egg-3d`: the 3D Armin of
@@ -387,6 +404,28 @@ Pi-visible *surface*; scopes are the mechanism.
 - `None` tokens flow through `NEVER_CANCELLED` and cost nothing; don't
   special-case them.
 - Mirrored signatures keep the token parameter where Pi has the signal.
+
+### `line-pieces` (pattern-shaped)
+
+Pi's stream readers (since 1.6.1) scan only the new text and append the
+unterminated rest to a pending string, which V8 does without copying. In
+CPython `x += rest` on an attribute or a closure variable copies the whole
+string, so a side-by-side port stays quadratic in the line's length.
+
+- A reader keeps its unterminated line as a list of pieces and joins it once,
+  when its terminator arrives; never `+=` onto an attribute or closure string.
+  Where a size is checked, a running count goes with the pieces (never a
+  re-measure of the joined line).
+- Readers on it: the provider SSE decoder (`pidrei_ai/utils/sse.py`,
+  `SseDecoder`), the MCP Streamable HTTP event reader
+  (`transports/streamable_http.py`, `consume_sse_stream`) and stdio framing
+  (`transports/lines.py`), the TUI bracketed paste (`stdin_buffer.py`, with
+  Pi's `pasteTail`), the RPC line decoder (`modes/rpc/jsonl.py`), and the
+  session loader and header reader (`core/session_manager.py`).
+- A Pi hunk to one of these readers ports its behaviour onto the pieces; a
+  new Pi reader of the same shape lands on the pattern. Unlike `cancel-token`,
+  the Pi files of the readers 1.6.1 rewrote (all of the above but stdio
+  framing) are flagged in `DIVERGED`, so a hunk there surfaces the recipe.
 
 ### `dispatch-observe` (`agent/src/agent.ts`)
 
@@ -548,6 +587,8 @@ under the service's writer lock. Public APIs are unchanged.
   lock-free. `_apply_auth` takes the caller-pinned provider;
   `get_auth_for_provider` is the PiDrei-only pinned variant that `get_auth`
   delegates to, so an upstream diff to `getAuth` lands in its body.
+  createProvider's merged catalog is one published `(all, chat)` pair; the
+  lists are never mutated after publication.
 - **`model-runtime.ts`**: the composition inputs (config, extension
   providers, native providers, virtual models, composition errors) publish
   as one `_CompositionEpoch` via `_publish_composition()` under
@@ -742,6 +783,11 @@ untouched: component diffs port 1:1. What diverges:
     half.
   - Diffs to *when* a frame is scheduled land in
     `request_render`/`_render_loop`.
+  - A frame's file I/O is queued with `_defer_frame_io` and runs after the
+    state lock is released, also before a frame's error propagates. Where Pi
+    writes synchronously and then builds text from the outcome (the width
+    crash log, 1.6.1), the error is built first and the queued write amends
+    it on failure; a failed write never replaces the error.
   - Pi's `contentChanged` (1.6.0) rides in the render request like `force`:
     `request_render()` sets `content` before its send, scroll-only paths
     call `_request_view_render()`, which sets nothing, and the loop hands
@@ -809,6 +855,12 @@ untouched: component diffs port 1:1. What diverges:
   - The blocked status follows the dialog stack: showing the top dialog sets
     its blocked status (none when the editor is back), in the same hold, so
     removing a dialog that is not visible leaves the status alone.
+  - Startup dialogs (`cli/startup_ui.py`, Pi 1.6.1) run before any reporter
+    exists: `_show_startup_dialog` calls the startup terminal's
+    `set_program_status` before `start()`, the terminal holds the status
+    until support is confirmed, and `stop()` clears it. Their "answered
+    once" claim is made in the key callback (the prefix of Pi's
+    `void finish()`), which then spawns the teardown.
 - **Exit**: Pi 1.4.0's restore of terminal modes when the process exits
   without `stop()` (`9df819de`, a `process.on("exit")` handler in
   `terminal.ts`, `tui.ts`, `tui-alt-screen.ts`) is not ported. Every PiDrei
@@ -912,14 +964,16 @@ params and rendering port side by side.
 
 ### `no-telemetry` (`first-time-setup.ts`, settings-manager analytics accessors, `settings-schema.ts`, `settings-defaults.ts`)
 
-PiDrei sends no telemetry, so it doesn't ask about it either: the first-time
-setup is theme-only, and `SettingsManager` has no
-`enableAnalytics`/`trackingId` accessors. Upstream hunks in the analytics
-step of `first-time-setup.ts`, those accessors, the startup wiring that
-shares analytics, and their test cases are skipped; theme-step and
-`shouldRunFirstTimeSetup` hunks port 1:1. A new upstream consumer of those
-settings (a privacy command, an analytics sink) is a telemetry feature:
-drop it the same way.
+PiDrei sends no telemetry, so it doesn't ask about it either: it has no
+first-time setup, and `SettingsManager` has no
+`enableAnalytics`/`trackingId` accessors. Since Pi 1.6.1 Pi's first-time
+setup only asks the analytics opt-in (`f8149d1a` deleted its theme step), so
+nothing of it is left to port. Upstream hunks to `first-time-setup.ts`, to
+`shouldRunFirstTimeSetup`/`showFirstTimeSetup` and to their wiring
+(`main.ts`, the dialog's blocked status in `startup-ui.ts`), to those
+accessors, to the startup wiring that shares analytics, and their test cases
+are skipped. A new upstream consumer of those settings (a privacy command, an
+analytics sink) is a telemetry feature: drop it the same way.
 
 The settings schema and defaults (`core/settings_schema.py`,
 `settings_defaults.py`) have no `enableAnalytics` or `trackingId`. Pi's
@@ -1587,6 +1641,34 @@ the User-Agent.
   parameter. It must survive later syncs: a hunk that rewrites
   `requestCatalog`'s URL or query keeps it, and
   `test_remote_catalog_provider.py` asserts it.
+
+### `command-result-cache` (`coding-agent/src/core/resolve-config-value.ts`)
+
+Pi runs `!command` config values with `spawnSync`, so a run and any change
+to its result cache never overlap. In PiDrei (`core/resolve_config_value.py`)
+the results live in a module dict under a thread lock
+(`_command_result_cache_lock`), and runs are serialised by a TonIO lock,
+`_command_execution_lock`, which a run holds until it has stored its result.
+Forgetting an entry (`clear_config_value_cache_entry`, Pi 1.6.1) waits on
+that same lock, so it is ordered after a run in flight, which would otherwise
+store its result after the forget. A Pi hunk to the cache ports inside that
+structure.
+
+### `temp-file-writer` (`coding-agent/src/utils/output-files.ts`, `core/bash-executor.ts`)
+
+Pi's `OutputFileStream` (a Node write stream with error handling) is
+`TempFileWriter` (`utils/temp_file_writer.py`): `write()` is a send on an
+unbounded channel, and one detached writer coroutine creates, writes, closes
+and (on failure) removes the file on the blocking pool. The outcome is one
+immutable value (`SavedOutputFile` or `FailedOutputFile`), rebound once by
+that coroutine and read from other threads; writes are ignored once it is
+`failed` or `close()` was called; `close()` runs Pi's `end()` when called and
+returns an awaitable of the result, never raising. The reason text is
+`str(error)` (Python's OS wording where Pi has Node's; mirrored tests match
+the errno). In the `!` executor, `on_data` runs on the readers' threads, so
+Pi's `acceptingOutput` flag is read and cleared under `data_lock`. Hunks to
+the stream's events land in the writer coroutine; hunks to the executor's
+ordering keep the flag under that lock.
 
 ### `session-list-apply-order` (`coding-agent/src/modes/interactive/components/session-selector.ts`)
 

@@ -54,15 +54,18 @@ def _rebuild_bash_result_render_component(
     details = _result_details(result)
     truncation = detail_truncation(details)
     full_output_path = detail_field(details, "full_output_path")
+    full_output_error = detail_field(details, "full_output_error")
+    # The model's footer names the file or why it could not be saved; the warning below says the same.
+    footer_marker = full_output_path if full_output_path is not None else full_output_error
     if (
         not options.get("isPartial")
         and truncation is not None
         and truncation.truncated
-        and full_output_path
+        and footer_marker
         and output.endswith("]")
     ):
         footer_start = output.rfind("\n\n[")
-        if footer_start != -1 and full_output_path in output[footer_start:]:
+        if footer_start != -1 and footer_marker in output[footer_start:]:
             output = output[:footer_start].rstrip()
 
     if output:
@@ -85,10 +88,12 @@ def _rebuild_bash_result_render_component(
                 )
             )
 
-    if (truncation is not None and truncation.truncated) or full_output_path:
+    if (truncation is not None and truncation.truncated) or full_output_path or full_output_error:
         warnings: list = []
         if full_output_path:
             warnings.append(f"Full output: {full_output_path}")
+        elif full_output_error:
+            warnings.append(f"Could not save the full output: {full_output_error}")
         if truncation is not None and truncation.truncated:
             if truncation.truncated_by == "lines":
                 warnings.append(f"Truncated: showing {truncation.output_lines} of {truncation.total_lines} lines")

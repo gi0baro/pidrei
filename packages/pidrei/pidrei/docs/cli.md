@@ -181,9 +181,9 @@ pidrei --tools +codemode
 ```
 
 Scripts can run several tool calls in parallel, filter large output before it
-reaches the model, call classifier models such as TypeSafe's Jev through
+reaches the model, call decision models such as TypeSafe's Jev through
 `models.classify()`, and generate images through `models.generate_images()`
-(see [Classifier models](models.md#classifier-models)).
+(see [Decision models](models.md#decision-models)).
 
 ### How codemode works
 

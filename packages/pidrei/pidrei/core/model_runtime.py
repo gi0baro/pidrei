@@ -964,8 +964,11 @@ class ModelRuntime:
         composition = self._composition
         if self._credentials.has_runtime_api_key(provider_id):
             return AuthStatus(configured=True, source="runtime")
+        # A stored credential owns the provider, so it is configured only when it resolves. A failing
+        # `!command` key leaves it unresolved, and requests fail with it (#12164). The source still says
+        # that a stored credential exists, so the UI can tell this apart from no credential at all.
         if provider_id in snapshot.stored_providers:
-            return AuthStatus(configured=True, source="stored")
+            return AuthStatus(configured=provider_id in snapshot.configured_providers, source="stored")
         configured = configured_request_auth_status(
             composition.config.get_provider(provider_id),
             composition.extension_providers.get(provider_id),

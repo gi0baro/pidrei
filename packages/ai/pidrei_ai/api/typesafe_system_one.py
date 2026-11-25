@@ -17,6 +17,7 @@ from typing import Any
 from pidrei_ai.api.classifier_shared import is_record
 from pidrei_ai.api.system_one_shared import ResolvedSystemOneCompat, SystemOneTransport, classify_system_one
 from pidrei_ai.types import ClassifierContext, ClassifierModel, ClassifierOptions, ClassifierResult
+from pidrei_ai.utils.openrouter_cost import is_openrouter_model
 
 
 def _output(body: Any) -> dict[str, Any]:
@@ -26,8 +27,7 @@ def _output(body: Any) -> dict[str, Any]:
 
 
 def _detect_compat(model: ClassifierModel) -> ResolvedSystemOneCompat:
-    # OpenRouter by provider id, which survives base URL overrides, or by host, which covers regional endpoints.
-    if model.provider == "openrouter" or "openrouter.ai" in model.base_url:
+    if is_openrouter_model(model):
         return ResolvedSystemOneCompat(image_input="state-image-urls", send_image_opt_in_header=False)
     return ResolvedSystemOneCompat(image_input="assets", send_image_opt_in_header=True)
 

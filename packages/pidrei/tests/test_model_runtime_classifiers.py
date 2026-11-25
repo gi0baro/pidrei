@@ -14,7 +14,13 @@ from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.model_runtime import ModelRuntime
 from pidrei_ai.api import classifier_shared
 from pidrei_ai.models_store import InMemoryModelsStore
-from pidrei_ai.types import ClassifierBoolAnswer, ClassifierBoolQuestion, ClassifierContext, ImageContent
+from pidrei_ai.types import (
+    ClassifierBoolAnswer,
+    ClassifierBoolQuestion,
+    ClassifierContext,
+    ImageContent,
+    ProviderResponse,
+)
 
 
 CONTEXT = ClassifierContext(
@@ -45,7 +51,7 @@ def _stub_system_one(body):
         def __init__(self, env=None, fetch=None):
             pass
 
-        async def post(self, url, payload, headers, _cancel):
+        async def post(self, url, payload, headers, _cancel, on_response):
             requests.append(
                 _Request(
                     url=url,
@@ -53,6 +59,8 @@ def _stub_system_one(body):
                     headers={name.lower(): value for name, value in headers.items()},
                 )
             )
+            # The real client reports the head before it reads the body.
+            await on_response(ProviderResponse(status=200, headers={}))
             return 200, {}, json.dumps(body)
 
     original = classifier_shared._ClassifierClient

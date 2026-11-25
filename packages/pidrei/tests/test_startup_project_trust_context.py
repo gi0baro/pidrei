@@ -25,12 +25,12 @@ def _recording_startup_ui(selector_result=None, input_result=None):
     """Swap the startup TUI helpers for recorders (hand-rolled; predates tonio 0.9.14 yield-fixture support)."""
     calls: list[tuple] = []
 
-    async def fake_selector(settings_manager, title, options):
-        calls.append(("select", settings_manager, title, options))
+    async def fake_selector(settings_manager, title, options, blocked_kind="question"):
+        calls.append(("select", settings_manager, title, options, blocked_kind))
         return selector_result
 
-    async def fake_input(settings_manager, title, placeholder=None):
-        calls.append(("input", settings_manager, title, placeholder))
+    async def fake_input(settings_manager, title, placeholder=None, blocked_kind="question"):
+        calls.append(("input", settings_manager, title, placeholder, blocked_kind))
         return input_result
 
     original_selector = project_trust_cli.show_startup_selector
@@ -73,6 +73,7 @@ class TestStartupProjectTrustContext:
                 "settings-manager-sentinel",
                 "Trust project folder?",
                 [{"label": "Trust", "value": "Trust"}, {"label": "Do not trust", "value": "Do not trust"}],
+                "question",
             )
         ]
 
@@ -89,6 +90,7 @@ class TestStartupProjectTrustContext:
         assert confirmed is True
         assert calls[0][2] == "Title\nMessage"
         assert calls[0][3] == [{"label": "Yes", "value": True}, {"label": "No", "value": False}]
+        assert calls[0][4] == "permission"
 
     @pytest.mark.tonio
     async def test_confirm_keeps_an_explicit_no(self):
@@ -107,7 +109,7 @@ class TestStartupProjectTrustContext:
             value = await _context().ui.input("Title", "placeholder")
 
         assert value == "typed"
-        assert calls == [("input", "settings-manager-sentinel", "Title", "placeholder")]
+        assert calls == [("input", "settings-manager-sentinel", "Title", "placeholder", "question")]
 
     @pytest.mark.tonio
     async def test_no_ui_resolves_to_no_answer(self):

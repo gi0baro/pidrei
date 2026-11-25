@@ -35,7 +35,7 @@ from ..utils import lockfile
 from ..utils.abort import race_with_cancel
 from ..utils.paths import canonicalize_path_blocking, get_file_revision_blocking, normalize_path
 from ..utils.text import strip_bom
-from .resolve_config_value import is_command_config_value, resolve_config_value
+from .resolve_config_value import clear_config_value_cache_entry, is_command_config_value, resolve_config_value
 
 
 # The mode applies only on creation so administrator-managed modes and ACLs remain intact.
@@ -556,6 +556,7 @@ class AuthStorage(CredentialStore):
     ) -> Credential | None:
         latest: list[dict[str, Credential]] = [self._read_state.snapshot.data]
         revision_box: list[str | None] = [None]
+        written: list[Credential | None] = [None]
 
         async def under_lock(content: str | None) -> tuple[Credential | None, str | None]:
             current_data = self._parse_storage_data(content)
@@ -571,10 +572,15 @@ class AuthStorage(CredentialStore):
 
             merged = {**current_data, provider: next_credential}
             latest[0] = merged
+            written[0] = next_credential
             return next_credential, _serialize_data(merged)
 
         result = await self._storage.with_lock_async(under_lock, options)
         self._update_read_state(latest[0], revision_box[0])
+        # Command results are cached for the process. Saving a `!command` key, even the same one, runs it
+        # again, so signing in to a secrets manager and saving the key again recovers from a failure.
+        if isinstance(written[0], ApiKeyCredential) and written[0].key:
+            await clear_config_value_cache_entry(written[0].key)
         return result
 
     async def delete(self, provider: str, options: AuthOperationOptions | None = None) -> None:

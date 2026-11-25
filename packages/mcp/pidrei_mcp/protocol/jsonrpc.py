@@ -7,12 +7,25 @@ ported literally: a JSON number is an `int` or a `float`, never a `bool`.
 
 import json
 import math
+import re
 from typing import Any, NotRequired, TypedDict
 
 from pidrei_utils.cancel import AbortError
 
 
 type JsonRpcId = str | int | float
+
+# pi's `/^(0|[1-9]\d*)$/`: ASCII digits only (Python's `\d` matches any
+# Unicode digit) and the whole string (Python's `$` also matches before a
+# trailing newline).
+_CANONICAL_INTEGER = re.compile(r"0|[1-9][0-9]*")
+
+
+def normalize_own_request_id(id: JsonRpcId) -> JsonRpcId:
+    """The client's request IDs and progress tokens are integers. Some servers
+    echo them back as strings ("1" for 1); map those to the integer so they
+    match, like other MCP clients do."""
+    return int(id) if isinstance(id, str) and _CANONICAL_INTEGER.fullmatch(id) else id
 
 
 class JsonRpcRequest(TypedDict):

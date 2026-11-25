@@ -1406,6 +1406,17 @@ def test_should_preserve_english_punctuation_trimming_before_chinese_punctuation
     assert "\x1b]8;;\x1b\\.，后面的中文" in strip_ansi(output)
 
 
+def test_should_not_hyperlink_a_bare_url_that_runs_into_a_very_long_line(capabilities_reset):
+    # A bare URL ends only at whitespace, so it can swallow a long base64 line. Wrapping re-opens
+    # a hyperlink on every line with the full URL, which made the output quadratic in its length.
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    url = f"https://example.com/path,data:{'x' * 20_000}"
+    output = "".join(Markdown(url, 0, 0, default_markdown_theme).render(80))
+    assert "\x1b]8;" not in output
+    assert len(output) < 3 * len(url)
+    assert re.sub(r"\s", "", strip_ansi(output)) == url
+
+
 def test_should_not_duplicate_url_for_autolinked_emails(capabilities_reset):
     # Hyperlinks capability does not affect the mailto: display check.
     set_capabilities({"images": None, "trueColor": False, "hyperlinks": False})
@@ -1703,6 +1714,18 @@ def test_does_not_treat_currency_shell_variables_or_code_spans_as_math():
         strip_ansi(line).rstrip() for line in Markdown(shell_variables, 0, 0, default_markdown_theme).render(80)
     ]
     assert shell_lines == [shell_variables]
+
+
+def test_keeps_markdown_after_an_unclosed_currency_dollar_sign():
+    cases = [
+        ("Costs +$50 for **this** option.", ["Costs +$50 for this option."]),
+        ("**A:** costs +$50 (once).\n**B:** next.", ["A: costs +$50 (once).", "B: next."]),
+        ("**A:** costs $x + y\n**B:** next.", ["A: costs $x + y", "B: next."]),
+    ]
+
+    for source, expected in cases:
+        lines = [strip_ansi(line).rstrip() for line in Markdown(source, 0, 0, default_markdown_theme).render(80)]
+        assert lines == expected
 
 
 @pytest.mark.parametrize("source", [r"Unknown $x + \unknown{y}$ after", r"Streaming $\mathbb{C}^3"])

@@ -23,17 +23,19 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_mcp import (
     ListResourcesResult,
     ListResourceTemplatesResult,
+    McpModelContentOptions,
     ReadResourceResult,
     Resource,
     ResourceTemplate,
     limit_mcp_content,
+    to_mcp_model_content,
 )
 from pidrei_utils.cancel import CancelToken
 
 from ...core.extensions.types import ToolAnnotations, ToolDefinition
 from ...core.mcp_servers import LIST_MCP_RESOURCE_TEMPLATES_TOOL, LIST_MCP_RESOURCES_TOOL, READ_MCP_RESOURCE_TOOL
 from .config import McpExposure, locale_order
-from .tools import McpToolDetails, from_llm_content, save_to_temp_file, to_model_content, to_tool_exposure
+from .tools import McpToolDetails, from_llm_content, save_to_temp_file, to_tool_exposure
 
 
 __all__ = [
@@ -337,7 +339,9 @@ def create_mcp_resource_tool_definitions(
             if len(contents_list) > 1:
                 blocks.append({"type": "text", "text": f"{contents['uri']}:"})
             blocks.append({"type": "resource", "resource": contents})
-        converted = await to_model_content(server.name, blocks)
+        converted = await to_mcp_model_content(
+            server.name, {"content": blocks}, McpModelContentOptions(save_output=save_to_temp_file)
+        )
         limited, full_output_path = await limit_mcp_content(
             converted if converted else [{"type": "text", "text": f"Resource {uri} is empty."}], save_to_temp_file
         )

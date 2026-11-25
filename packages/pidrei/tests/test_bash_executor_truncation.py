@@ -1,8 +1,7 @@
 """Mirror of pi coding-agent test/bash-executor-truncation.test.ts.
 
-pi waits for the log file with `vi.waitFor` because its executor closes the
-file stream without awaiting it; `execute_bash_with_operations` drains the
-temp file before it returns, so the file is read directly.
+The executor returns after the file is flushed (in pi too since 1.6.1), so the
+file is read directly.
 """
 
 import os

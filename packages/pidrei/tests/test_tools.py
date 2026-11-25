@@ -806,6 +806,30 @@ class TestBashTool:
         assert "yyyyEND" in output
         assert re.search(r"\[Showing last 50\.0KB of line 2 ", output)
 
+    # #12350: an over-long line followed by a blank line returned "(no output)".
+    @pytest.mark.tonio
+    @pytest.mark.parametrize(("length", "eol"), [(60_000, "\n"), (219_000, "\n"), (219_000, "\r\n")])
+    async def test_shows_the_end_of_an_over_long_line_followed_by_a_blank_line(self, tmp_path, length, eol):
+        import re
+
+        long_line = f"{'y' * length}END"
+
+        class LongLineBlankLineOperations:
+            async def exec(self, _command, _cwd, *, on_data, cancel=None, timeout=None, env=None):
+                data = f"first line{eol}{long_line}{eol}{eol}".encode()
+                for i in range(0, len(data), 8192):
+                    on_data(data[i : i + 8192])
+                return BashExecResult(exit_code=0)
+
+        bash = create_bash_tool(str(tmp_path), operations=LongLineBlankLineOperations())
+
+        result = await bash.execute("test-call-long-line-blank-line", {"command": "long-line"})
+        output = get_text_output(result)
+
+        assert result.details.truncation.last_line_partial is True
+        assert re.search(r"^y+END\r?\n", output)
+        assert re.search(r"\[Showing last 50\.0KB of line 2 ", output)
+
     @pytest.mark.tonio
     async def test_decodes_utf8_characters_split_across_output_chunks(self, tmp_path):
         euro = "€\n".encode()

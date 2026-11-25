@@ -13,6 +13,7 @@ from dataclasses import replace
 import pytest
 
 from pidrei_ai.api.openai_decisions import classify
+from pidrei_ai.providers.all import get_builtin_classifier_model
 from pidrei_ai.types import (
     ClassifierBoolAnswer,
     ClassifierBoolQuestion,
@@ -152,6 +153,33 @@ async def test_prices_long_context_requests_at_the_long_context_input_rate():
 
 
 @pytest.mark.tonio
+async def test_reports_cached_and_cache_write_input_tokens_separately_at_the_catalog_price():
+    luna = get_builtin_classifier_model("openai", "gpt-6-luna")
+    assert luna is not None, "missing OpenAI Decisions model"
+    response = {
+        "answers": WIRE_ANSWERS,
+        "usage": {
+            "input_tokens": 2000,
+            "input_tokens_details": {"cached_tokens": 1600, "cache_write_tokens": 100},
+            "output_tokens": 0,
+            "total_tokens": 2000,
+        },
+    }
+    with stub_system_one(respond_json(response)):
+        result = await classify(luna, CONTEXT, ClassifierOptions(api_key="secret"))
+
+    usage = result.usage
+    assert (usage.input, usage.output, usage.cache_read, usage.cache_write, usage.total_tokens) == (
+        300,
+        0,
+        1600,
+        100,
+        2000,
+    )
+    assert usage.cost.total == pytest.approx(0.0002, abs=1e-12)
+
+
+@pytest.mark.tonio
 async def test_sends_images_after_the_state_in_one_user_message():
     context = replace(CONTEXT, images=[IMAGE, replace(IMAGE, mime_type="image/jpeg")])
     with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:
@@ -255,6 +283,41 @@ async def test_includes_the_api_error_body_for_other_http_failures():
     assert result.stop_reason == "error"
     assert "OpenAI Decisions error (400)" in result.error_message
     assert "Decision input exceeds the token limit." in result.error_message
+
+
+class _FailingBodyResponse:
+    """A 503 head whose body fails to arrive (pi: a `ReadableStream` that errors on start)."""
+
+    def __init__(self):
+        self.status_code = 503
+        self.headers = {"retry-after": "7"}
+
+    async def read(self) -> bytes:
+        raise RuntimeError("body stream failed")
+
+
+# #12376. pi's case is in pi-classifier.test.ts (the pi-decision adapter, not ported); it specifies
+# `post_classifier_request`, shared with this adapter. Driven through the `fetch` option, so the real
+# `_ClassifierClient` runs.
+@pytest.mark.tonio
+async def test_reports_an_error_response_to_on_response_even_when_its_body_fails():
+    responses = []
+
+    async def fetch(_request, *, env=None):
+        return _FailingBodyResponse()
+
+    async def on_response(response, _model):
+        responses.append(response)
+
+    result = await classify(
+        MODEL, CONTEXT, ClassifierOptions(api_key="secret", max_retries=0, fetch=fetch, on_response=on_response)
+    )
+
+    assert result.stop_reason == "error"
+    assert len(responses) == 1
+    # pi's `toMatchObject`: a subset check.
+    assert responses[0].status == 503
+    assert responses[0].headers["retry-after"] == "7"
 
 
 @pytest.mark.tonio
