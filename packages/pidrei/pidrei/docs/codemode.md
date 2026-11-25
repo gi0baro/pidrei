@@ -66,7 +66,7 @@ A tool with a parameter whose name is not a valid identifier takes its arguments
 
 What a call returns depends on the tool:
 
-- Tools with an output schema return a structured value, usually a `dict`. `bash` returns `{'output', 'truncated', 'full_output_path'?, 'exit_code', 'wall_time_seconds'}`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
+- Tools with an output schema return a structured value, usually a `dict`. `bash` returns `{'output', 'truncated', 'full_output_path'?, 'full_output_error'?, 'exit_code', 'wall_time_seconds'}`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`. When the full output could not be saved (for example a full temp directory), `full_output_error` says why and `output` holds only the retained tail.
 - MCP tools return their `CallToolResult`, including `isError` and `structuredContent`.
 - `read` returns the file's text, or for an image an image block `{'type': 'image', 'data': ..., 'mimeType': ..., 'note': ...}` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
 - Other tools, such as `edit` and `write`, return their text output.

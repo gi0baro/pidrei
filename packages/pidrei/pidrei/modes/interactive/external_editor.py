@@ -26,9 +26,10 @@ async def edit_in_external_editor(options: dict) -> dict:
     Returns ``{"status": "complete", "content": ...}`` or
     ``{"status": "failed", "message": ...}``.
     """
-    directory = await tonio.spawn_blocking(tempfile.mkdtemp, prefix="pidrei-editor-")
-    file_path = os.path.join(directory, "prompt.md")
+    directory: str | None = None
     try:
+        directory = await tonio.spawn_blocking(tempfile.mkdtemp, prefix="pidrei-editor-")
+        file_path = os.path.join(directory, "prompt.md")
         # pi does these synchronously around the editor process; here they go
         # through `fs` like every other read/write. `tempfile` and
         # `shutil.rmtree` have no `fs` equivalent, so those use the pool
@@ -55,6 +56,11 @@ async def edit_in_external_editor(options: dict) -> dict:
 
         content = strip_bom(await fs.Path(file_path).read_text(encoding="utf-8"))
         return {"status": "complete", "content": re.sub(r"\n$", "", content)}
+    except Exception as error:
+        # Callers start the editor from key handlers, where a raised error would crash pidrei. A full or
+        # unwritable temp dir lands here.
+        return {"status": "failed", "message": f"External editor failed: {error}; prompt unchanged"}
     finally:
         # Cleanup is best effort.
-        await tonio.spawn_blocking(shutil.rmtree, directory, ignore_errors=True)
+        if directory is not None:
+            await tonio.spawn_blocking(shutil.rmtree, directory, ignore_errors=True)

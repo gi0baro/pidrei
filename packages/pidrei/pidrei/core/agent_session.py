@@ -4504,6 +4504,7 @@ class AgentSession:
             cancelled=result.cancelled,
             truncated=result.truncated,
             full_output_path=result.full_output_path,
+            full_output_error=result.full_output_error,
             timestamp=clock.now_ms(),
             exclude_from_context=options.get("exclude_from_context", options.get("excludeFromContext")),
         )

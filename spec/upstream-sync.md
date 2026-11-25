@@ -766,6 +766,11 @@ untouched: component diffs port 1:1. What diverges:
     half.
   - Diffs to *when* a frame is scheduled land in
     `request_render`/`_render_loop`.
+  - A frame's file I/O is queued with `_defer_frame_io` and runs after the
+    state lock is released, also before a frame's error propagates. Where Pi
+    writes synchronously and then builds text from the outcome (the width
+    crash log, 1.6.1), the error is built first and the queued write amends
+    it on failure; a failed write never replaces the error.
   - Pi's `contentChanged` (1.6.0) rides in the render request like `force`:
     `request_render()` sets `content` before its send, scroll-only paths
     call `_request_view_render()`, which sets nothing, and the loop hands
@@ -1611,6 +1616,34 @@ the User-Agent.
   parameter. It must survive later syncs: a hunk that rewrites
   `requestCatalog`'s URL or query keeps it, and
   `test_remote_catalog_provider.py` asserts it.
+
+### `command-result-cache` (`coding-agent/src/core/resolve-config-value.ts`)
+
+Pi runs `!command` config values with `spawnSync`, so a run and any change
+to its result cache never overlap. In PiDrei (`core/resolve_config_value.py`)
+the results live in a module dict under a thread lock
+(`_command_result_cache_lock`), and runs are serialised by a TonIO lock,
+`_command_execution_lock`, which a run holds until it has stored its result.
+Forgetting an entry (`clear_config_value_cache_entry`, Pi 1.6.1) waits on
+that same lock, so it is ordered after a run in flight, which would otherwise
+store its result after the forget. A Pi hunk to the cache ports inside that
+structure.
+
+### `temp-file-writer` (`coding-agent/src/utils/output-files.ts`, `core/bash-executor.ts`)
+
+Pi's `OutputFileStream` (a Node write stream with error handling) is
+`TempFileWriter` (`utils/temp_file_writer.py`): `write()` is a send on an
+unbounded channel, and one detached writer coroutine creates, writes, closes
+and (on failure) removes the file on the blocking pool. The outcome is one
+immutable value (`SavedOutputFile` or `FailedOutputFile`), rebound once by
+that coroutine and read from other threads; writes are ignored once it is
+`failed` or `close()` was called; `close()` runs Pi's `end()` when called and
+returns an awaitable of the result, never raising. The reason text is
+`str(error)` (Python's OS wording where Pi has Node's; mirrored tests match
+the errno). In the `!` executor, `on_data` runs on the readers' threads, so
+Pi's `acceptingOutput` flag is read and cleared under `data_lock`. Hunks to
+the stream's events land in the writer coroutine; hunks to the executor's
+ordering keep the flag under that lock.
 
 ### `session-list-apply-order` (`coding-agent/src/modes/interactive/components/session-selector.ts`)
 

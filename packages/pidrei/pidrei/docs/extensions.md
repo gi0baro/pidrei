@@ -1422,7 +1422,7 @@ async def extension(pi):
         if event["toolName"] != "bash" or event["isError"]:
             return None
         # For the built-in bash tool, event["details"] is a BashToolDetails
-        # (pidrei.core.tools): truncation, full_output_path.
+        # (pidrei.core.tools): truncation, full_output_path, full_output_error.
         text = "".join(block.text for block in event["content"] if block.type == "text")
         summary = await pi.exec("summarize", [text], cancel=ctx.signal)
 
@@ -1471,7 +1471,8 @@ async def on_user_bash(event, ctx):
 cancel=None)` method that streams output as bytes to the synchronous
 `on_data` callback and returns a result with `exit_code`. A `result` needs
 `output` (str), `exitCode` (a number or `None`), `cancelled` and `truncated`
-(bools), and optionally `fullOutputPath`.
+(bools), and optionally `fullOutputPath`, or `fullOutputError` (str) when
+the truncated output could not be saved to a file.
 
 Returning `None` continues to the next handler, then to local execution if
 none handles the event. A valid result stops propagation: `operations` runs
@@ -3297,8 +3298,8 @@ passed to scripts as their text content. To report a failure that still
 carries data, return the result with `is_error=True` instead of raising: the
 model sees an error, and scripts still receive `structured_content`. The
 built-in `bash` tool returns `{"output", "truncated", "full_output_path"?,
-"exit_code", "wall_time_seconds"}`, also for non-zero exit codes, with up to
-1 MiB of output. `tool_result` handlers that redact `content` should also
+"full_output_error"?, "exit_code", "wall_time_seconds"}`, also for non-zero
+exit codes, with up to 1 MiB of output. `tool_result` handlers that redact `content` should also
 replace `structuredContent`; replacing only `content` drops it.
 
 **Execution mode:** tool calls from one assistant message run in parallel by

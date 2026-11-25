@@ -1,10 +1,12 @@
 """Mirror of pi coding-agent src/modes/interactive/components/oauth-selector.ts.
 
 Provider records are ``{"id", "name", "authType", "method"?, "status"?,
-"subscription"?}``; ``status`` may be an ``AuthCheck`` dataclass (live code) or
-a camelCase dict (mirrored tests pass plain records, like pi's object
-literals). ``subscription`` says whether the provider's OAuth sign-in is backed
-by a subscription: ``False`` labels it as an account, unset keeps the
+"subscription"?}``. ``status`` is pi's ``AuthSelectorStatus``, the auth state
+of a login option: auth that works, ``{"kind": "configured", "type",
+"source"?}``, or a stored credential that does not resolve to a key (for
+example a failing ``!command``), ``{"kind": "unresolved"}``; unset when nothing
+is configured. ``subscription`` says whether the provider's OAuth sign-in is
+backed by a subscription: ``False`` labels it as an account, unset keeps the
 "subscription" label.
 """
 
@@ -33,19 +35,15 @@ def format_auth_selector_provider_type(auth_type: str, subscription: bool | None
     return "account" if subscription is False else "subscription"
 
 
-def _status_get(status, key: str):
-    if isinstance(status, dict):
-        return status.get(key)
-    return getattr(status, key, None)
-
-
 def format_auth_selector_provider_status(provider: dict) -> str:
     """Themed suffix describing whether and how a login option is configured, for example " ✓ configured"."""
     status = provider.get("status")
     if not status:
         return theme.fg("muted", " • not configured")
-    status_type = _status_get(status, "type")
-    source = _status_get(status, "source")
+    if status["kind"] == "unresolved":
+        return theme.fg("muted", " • ") + theme.fg("error", "stored key did not resolve")
+    status_type = status["type"]
+    source = status.get("source")
     if status_type != provider["authType"]:
         label = f"{format_auth_selector_provider_type(status_type, provider.get('subscription'))} configured"
         return theme.fg("muted", " • ") + theme.fg("warning", label)

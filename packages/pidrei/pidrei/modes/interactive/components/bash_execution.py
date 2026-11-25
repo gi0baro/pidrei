@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from pidrei_tui import Container, Loader, Spacer, Text
 
+from ....core.messages import bash_truncation_note
 from ....core.tools.truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncate_tail
 from ....utils.ansi import strip_ansi
 from ..theme import theme
@@ -49,6 +50,7 @@ class BashExecutionComponent(Container):
         self._exit_code: int | None = None
         self._truncation_result = None
         self._full_output_path: str | None = None
+        self._full_output_error: str | None = None
         self._expanded = False
         # `dim` marks `!!` commands, whose output is excluded from the model context.
         self._color_key = "dim" if exclude_from_context else "bashMode"
@@ -115,6 +117,7 @@ class BashExecutionComponent(Container):
         cancelled: bool,
         truncation_result=None,
         full_output_path: str | None = None,
+        full_output_error: str | None = None,
     ) -> None:
         self._exit_code = exit_code
         if cancelled:
@@ -125,6 +128,7 @@ class BashExecutionComponent(Container):
             self._status = "complete"
         self._truncation_result = truncation_result
         self._full_output_path = full_output_path
+        self._full_output_error = full_output_error
 
         # Stop loader
         self._loader.stop()
@@ -189,8 +193,15 @@ class BashExecutionComponent(Container):
             was_truncated = (
                 self._truncation_result is not None and self._truncation_result.truncated
             ) or context_truncation.truncated
-            if was_truncated and self._full_output_path:
-                status_parts.append(theme.fg("warning", f"Output truncated. Full output: {self._full_output_path}"))
+            if was_truncated:
+                status_parts.append(
+                    theme.fg(
+                        "warning",
+                        bash_truncation_note(
+                            full_output_path=self._full_output_path, full_output_error=self._full_output_error
+                        ),
+                    )
+                )
 
             if status_parts:
                 self._content_container.add_child(Text("\n" + "\n".join(status_parts), self._output_pad, 0))

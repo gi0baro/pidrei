@@ -9,7 +9,7 @@ to the blocking-fs detector, since writes through an already-open handle raise n
 audit event.
 
 This restores pi's shape: `write()` is a channel send with no I/O, and a writer
-task performs the actual writes on the blocking pool.
+coroutine performs the actual writes on the blocking pool.
 
 Deferring here is faithful rather than a divergence — pi defers too, which is
 what the "a queue is correct only where pi itself defers" rule asks for. Two
@@ -17,19 +17,22 @@ details follow from matching `createWriteStream`:
 
 * the queue is **unbounded**, because Node's `write()` never blocks the producer
   (it returns a backpressure hint that pi ignores);
-* a write error is captured and re-raised from `close()`, mirroring pi's `error`
-  event on the stream, so failures cannot vanish into a detached task.
+* the writer is pi's `OutputFileStream` (1.6.1): open, write and close failures
+  (full disk, quota, unwritable temp dir) never raise. The first one becomes the
+  writer's `result`, one immutable value (`SavedOutputFile` while nothing
+  failed, else `FailedOutputFile` with `str(error)`) that the writer coroutine
+  rebinds once and other threads read; later writes are ignored, and a file the
+  writer created is removed, a file that already sat at the path is not.
 
-`close()` drains before returning. pi awaits the `finish` event in the
-accumulator but not in bash-executor; pidrei drains in both, deliberately —
-Node gets away with the un-awaited `end()` because its flush lands within
-microseconds, whereas a pool-backed writer can lag, and the path this produces
-exists precisely to be read afterwards.
+`close()` drains, closes the file and returns the result; it never raises. Both
+pi callers wait for it (since 1.6.1 also bash-executor), and so does pidrei.
 """
 
 import contextlib
 import os
-from typing import BinaryIO
+from collections.abc import Awaitable
+from dataclasses import dataclass
+from typing import BinaryIO, Literal
 
 import tonio.colored as tonio
 from tonio.colored import fs
@@ -57,68 +60,141 @@ def create_private_file_blocking(path: str) -> BinaryIO:
     return os.fdopen(fd, "wb")
 
 
+@dataclass(frozen=True, slots=True)
+class SavedOutputFile:
+    """A complete output file. While output streams in, the file is still being written."""
+
+    path: str
+    kind: Literal["saved"] = "saved"
+
+
+@dataclass(frozen=True, slots=True)
+class FailedOutputFile:
+    """An output file that could not be saved, and why (`str` of the error)."""
+
+    error: str
+    kind: Literal["failed"] = "failed"
+
+
+#: Where streamed output ended up: a complete file, or why it could not be saved.
+OutputFileResult = SavedOutputFile | FailedOutputFile
+
+
+def _discard_partial_file_blocking(handle: BinaryIO, path: str) -> None:
+    with contextlib.suppress(OSError):
+        handle.close()
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+
+
 class TempFileWriter:
     """Owns a temp file; `write()` never touches the filesystem."""
 
     def __init__(self, path: str) -> None:
         self._path = path
         self._sender, self._receiver = channel.unbounded()
-        self._error: BaseException | None = None
+        # Rebound once, by the writer coroutine, on the first failure.
+        self._result: OutputFileResult = SavedOutputFile(path)
         self._finished = tonio.Event()
         self._closed = False
-        self._sync_handle = None
+        self._sync = False
+        self._sync_handle: BinaryIO | None = None
 
         try:
             tonio.spawn.without_tracking(self._run())
         except RuntimeNotInitializedError:
             # No runtime, so no worker to protect — same boundary condition as
             # import-time code. Write straight through.
-            self._sync_handle = create_private_file_blocking(path)
+            self._sync = True
+            try:
+                self._sync_handle = create_private_file_blocking(path)
+            except Exception as error:
+                self._fail(error)
             self._finished.set()
 
+    @property
+    def result(self) -> OutputFileResult:
+        """`saved` while writing has not failed; the file is complete only once `close()` returns."""
+        return self._result
+
     def write(self, data: bytes) -> None:
-        """Buffer `data`. Non-blocking, like `WriteStream.write`."""
-        if self._closed:
+        """Buffer `data`. Non-blocking, like `WriteStream.write`. Ignored after a
+        failure and after `close()`: nothing would write it."""
+        if self._closed or self._result.kind == "failed":
             return
-        if self._sync_handle is not None:
-            self._sync_handle.write(data)
+        if self._sync:
+            handle = self._sync_handle
+            if handle is None:
+                return
+            try:
+                handle.write(data)
+            except Exception as error:
+                self._sync_handle = None
+                self._fail_off_runtime(handle, error)
             return
         self._sender.send(data)
 
-    async def close(self) -> None:
-        """Flush everything already written, then close. Re-raises a write error."""
-        if self._sync_handle is not None:
-            if not self._closed:
-                self._closed = True
-                self._sync_handle.close()
-            return
-
+    def close(self) -> Awaitable[OutputFileResult]:
+        """Flush everything already written, then close. Never raises: a failure
+        is the returned `FailedOutputFile`, and the partial file is gone by then.
+        Writes are ignored from the call on, before the result is awaited (pi's
+        `end()` runs when `close()` is called)."""
         if not self._closed:
             self._closed = True
-            self._sender.close()
+            if self._sync:
+                handle = self._sync_handle
+                self._sync_handle = None
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except Exception as error:
+                        self._fail_off_runtime(handle, error)
+            else:
+                self._sender.close()
+        return self._closed_result()
+
+    async def _closed_result(self) -> OutputFileResult:
         await self._finished.wait()
-        if self._error is not None:
-            raise self._error
+        return self._result
+
+    def _fail(self, error: Exception) -> None:
+        # The first failure is the reason; later ones (a close after a failed
+        # write) follow from it.
+        if self._result.kind == "saved":
+            self._result = FailedOutputFile(str(error))
+
+    def _fail_off_runtime(self, handle: BinaryIO, error: Exception) -> None:
+        # The no-runtime path (see `__init__`): fail and drop the partial file in place.
+        self._fail(error)
+        _discard_partial_file_blocking(handle, self._path)
 
     async def _run(self) -> None:
         handle = None
         try:
-            # Eagerly, so the file exists as soon as the path is handed out —
-            # `createWriteStream` creates it on construction.
-            handle = await tonio.spawn_blocking(create_private_file_blocking, self._path)
-            while True:
-                try:
-                    chunk = await self._receiver.receive()
-                except BrokenPipeError:
-                    break  # sender closed: everything buffered has been drained
-                await tonio.spawn_blocking(handle.write, chunk)
-        except Exception as error:
-            self._error = error
-        finally:
+            try:
+                # Eagerly, so the file exists as soon as the path is handed out —
+                # `createWriteStream` creates it on construction.
+                handle = await tonio.spawn_blocking(create_private_file_blocking, self._path)
+                while True:
+                    try:
+                        chunk = await self._receiver.receive()
+                    except BrokenPipeError:
+                        break  # sender closed: everything buffered has been drained
+                    await tonio.spawn_blocking(handle.write, chunk)
+            except Exception as error:
+                self._fail(error)
             if handle is not None:
                 try:
+                    # Closing can still fail (a delayed ENOSPC or EDQUOT on
+                    # quota, NFS or FUSE file systems): the file is not saved then.
                     await tonio.spawn_blocking(handle.close)
                 except Exception as error:
-                    if self._error is None:
-                        self._error = error
+                    self._fail(error)
+                if self._result.kind == "failed":
+                    # A partial file would pass for the full output. A failed
+                    # exclusive create leaves the path alone: whatever is
+                    # there is not ours.
+                    await tonio.spawn_blocking(_discard_partial_file_blocking, handle, self._path)
+        finally:
+            # Set last, so `close()` returns after the removal.
             self._finished.set()

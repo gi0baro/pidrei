@@ -58,9 +58,18 @@ class StalledCredentialList:
         self._gate.set()
 
 
+# Providers without an API key of their own, so only their stored credentials configure them.
+PROVIDERS_WITHOUT_KEYS = {
+    "providers": {
+        provider: {"baseUrl": "https://example.test/v1", "api": "openai-completions", "models": [{"id": "model"}]}
+        for provider in ["stale-provider", "current-provider"]
+    }
+}
+
+
 @pytest.mark.tonio
 async def test_recovers_without_letting_the_stalled_refresh_overwrite_the_newer_snapshot(harnesses):
-    harness = await create_harness(with_configured_auth=False)
+    harness = await create_harness(with_configured_auth=False, models_json=PROVIDERS_WITHOUT_KEYS)
     harnesses.append(harness)
     runtime = harness.session.model_runtime
 

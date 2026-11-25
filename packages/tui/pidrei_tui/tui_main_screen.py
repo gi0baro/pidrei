@@ -45,6 +45,16 @@ async def _write_log(path: fs.Path, data: str) -> None:
     await path.write_text(data, encoding="utf-8")
 
 
+async def _write_crash_log(error: Exception, head: list[str], path: fs.Path, data: str) -> None:
+    """Write the width crash log; on failure, amend `error`, which `_render_frame`
+    re-raises only after this ran, to say so. A failed write (full or unwritable temp dir) must not hide the
+    width error."""
+    try:
+        await _write_log(path, data)
+    except Exception as write_error:
+        error.args = ("\n".join([*head, f"Could not write debug log to {path}: {write_error}"]),)
+
+
 def _parse_kitty_image_header(line: str) -> dict | None:
     """Parse ids/rows from a Kitty graphics sequence: {"ids": [int], "rows": int}."""
     sequence_start = line.find(KITTY_SEQUENCE_PREFIX)
@@ -518,23 +528,23 @@ class TuiMainScreen(TuiBase):
                         "",
                     ]
                 )
-                self._defer_frame_io(functools.partial(_write_log, crash_log_path, crash_data))
+                head = [
+                    f"Rendered line {i} exceeds terminal width ({visible_width(line)} > {width}).",
+                    "",
+                    "This is likely caused by a custom TUI component not truncating its output.",
+                    "Use visible_width() to measure and truncate_to_width() to truncate lines.",
+                    "",
+                ]
+                # The log is written after this frame raises (`_defer_frame_io`), before the error
+                # propagates: the queued write amends the error's last line when it fails.
+                error = Exception("\n".join([*head, f"Debug log written to: {crash_log_path}"]))
+
+                self._defer_frame_io(functools.partial(_write_crash_log, error, head, crash_log_path, crash_data))
 
                 # Terminal cleanup happens in the caller's shutdown path; pi
                 # calls the sync stop() here, but stop() is async in the port
                 # and this runs inside the render loop's frame.
-                raise Exception(
-                    "\n".join(
-                        [
-                            f"Rendered line {i} exceeds terminal width ({visible_width(line)} > {width}).",
-                            "",
-                            "This is likely caused by a custom TUI component not truncating its output.",
-                            "Use visible_width() to measure and truncate_to_width() to truncate lines.",
-                            "",
-                            f"Debug log written to: {crash_log_path}",
-                        ]
-                    )
-                )
+                raise error
             buffer += line
             i += 1
 

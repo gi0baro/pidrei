@@ -1123,6 +1123,30 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    "packages/coding-agent/src/core/resolve-config-value.ts": (
+        (
+            "command-result-cache",
+            (
+                "!command results sit in a module dict under a thread lock; runs are serialised by "
+                "_command_execution_lock (pi: spawnSync), and clear_config_value_cache_entry waits on it"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/utils/output-files.ts": (
+        (
+            "temp-file-writer",
+            (
+                "OutputFileStream is TempFileWriter: channel sends, one writer coroutine on the blocking pool, the "
+                "outcome one immutable value; close() never raises; the reason is str(error)"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/bash-executor.ts": (
+        (
+            "temp-file-writer",
+            "the output file is a TempFileWriter; acceptingOutput is read and cleared under data_lock (on_data runs on reader threads)",
+        ),
+    ),
     "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
         (
             "nested-calls-channel",

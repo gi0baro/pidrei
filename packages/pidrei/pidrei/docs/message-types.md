@@ -225,6 +225,7 @@ class BashExecutionMessage:
     truncated: bool
     timestamp: int
     full_output_path: str | None = None
+    full_output_error: str | None = None  # why the full output could not be saved, when truncated
     exclude_from_context: bool | None = None
     role: Literal["bashExecution"] = "bashExecution"
 ```

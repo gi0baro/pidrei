@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
+from pidrei.core.provider_composer import AuthStatus
 from pidrei.modes.interactive.components import OAuthSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import init_theme
@@ -75,6 +76,34 @@ class TestOAuthSelectorComponent:
         assert "not configured" in output
         assert "✓ configured" not in output
 
+    # Regression test for #12164.
+    def test_shows_a_stored_credential_that_does_not_resolve(self):
+        fake = SimpleNamespace(
+            session=SimpleNamespace(
+                model_runtime=SimpleNamespace(
+                    get_providers=lambda: [
+                        SimpleNamespace(
+                            id="deepseek",
+                            name="DeepSeek",
+                            auth=SimpleNamespace(oauth=None, api_key=SimpleNamespace(name="API key")),
+                        )
+                    ],
+                    get_provider_auth_status=lambda provider_id: AuthStatus(configured=False, source="stored"),
+                    is_using_oauth=lambda provider_id: False,
+                )
+            )
+        )
+        selector = OAuthSelectorComponent(
+            "login",
+            InteractiveMode.get_login_provider_options(fake),
+            lambda provider_id, auth_type: None,
+            lambda: None,
+        )
+
+        output = strip_ansi("\n".join(selector.render(120)))
+        assert "DeepSeek • stored key did not resolve" in output
+        assert "not configured" not in output
+
     def test_shows_oauth_auth_distinctly_in_the_api_key_selector(self):
         selector = OAuthSelectorComponent(
             "login",
@@ -83,7 +112,7 @@ class TestOAuthSelectorComponent:
                     "id": "anthropic",
                     "name": "Anthropic",
                     "authType": "api_key",
-                    "status": {"type": "oauth", "source": "OAuth"},
+                    "status": {"kind": "configured", "type": "oauth", "source": "OAuth"},
                 }
             ],
             lambda provider_id, auth_type: None,
@@ -101,7 +130,7 @@ class TestOAuthSelectorComponent:
                     "id": "openai",
                     "name": "OpenAI",
                     "authType": "api_key",
-                    "status": {"type": "api_key", "source": "OPENAI_API_KEY"},
+                    "status": {"kind": "configured", "type": "api_key", "source": "OPENAI_API_KEY"},
                 }
             ],
             lambda provider_id, auth_type: None,
@@ -120,7 +149,7 @@ class TestOAuthSelectorComponent:
                     "id": "local-proxy",
                     "name": "local-proxy",
                     "authType": "api_key",
-                    "status": {"type": "api_key", "source": "key in models.json"},
+                    "status": {"kind": "configured", "type": "api_key", "source": "key in models.json"},
                 }
             ],
             lambda provider_id, auth_type: None,
@@ -137,7 +166,7 @@ class TestOAuthSelectorComponent:
                     "id": "op-proxy",
                     "name": "op-proxy",
                     "authType": "api_key",
-                    "status": {"type": "api_key", "source": "command in models.json"},
+                    "status": {"kind": "configured", "type": "api_key", "source": "command in models.json"},
                 }
             ],
             lambda provider_id, auth_type: None,

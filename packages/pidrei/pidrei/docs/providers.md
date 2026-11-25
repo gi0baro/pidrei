@@ -255,8 +255,10 @@ manager's output never lands on disk:
 
 The command runs when the key is first needed and its stdout is cached for the
 process lifetime. Empty output, a nonzero exit or the 10-second timeout leaves
-the key unresolved until pidrei restarts. `$NAME` interpolation and escapes
-work as in [models.json](models.md).
+the key unresolved: `/login` shows the provider as `stored key did not
+resolve`. To retry, for example after signing in to the secret manager, enter
+the same `!command` again in `/login`, or restart pidrei. `$NAME`
+interpolation and escapes work as in [models.json](models.md).
 
 An API-key entry can also carry an `env` object. Its values override the
 process environment for that provider only — account IDs, Azure or Vertex

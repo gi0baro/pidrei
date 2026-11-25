@@ -4047,6 +4047,7 @@ class InteractiveMode:
                 message.cancelled,
                 SimpleNamespace(truncated=True) if message.truncated else None,
                 message.full_output_path,
+                message.full_output_error,
             )
             self._chat_container.add_child(component)
         elif role == "custom":
@@ -6149,14 +6150,16 @@ class InteractiveMode:
         options: list = []
         for provider in self.session.model_runtime.get_providers():
             auth_status = self.session.model_runtime.get_provider_auth_status(provider.id)
-            status = (
-                {
-                    "type": ("oauth" if self.session.model_runtime.is_using_oauth(provider.id) else "api_key"),
+            status: dict | None = None
+            if auth_status.configured:
+                status_type = "oauth" if self.session.model_runtime.is_using_oauth(provider.id) else "api_key"
+                status = {
+                    "kind": "configured",
+                    "type": status_type,
                     "source": auth_status.label if auth_status.label is not None else auth_status.source,
                 }
-                if auth_status.configured
-                else None
-            )
+            elif auth_status.source == "stored":
+                status = {"kind": "unresolved"}
             subscription = provider.auth.oauth is not None and provider.auth.oauth.is_subscription is True
             if (not auth_type or auth_type == "oauth") and provider.auth.oauth:
                 options.append(
@@ -6193,7 +6196,7 @@ class InteractiveMode:
                     "id": credential.provider_id,
                     "name": provider.name if provider is not None else credential.provider_id,
                     "authType": credential.type,
-                    "status": {"type": credential.type, "source": "stored credential"},
+                    "status": {"kind": "configured", "type": credential.type, "source": "stored credential"},
                     "subscription": (
                         provider is not None
                         and provider.auth.oauth is not None
@@ -7498,6 +7501,7 @@ class InteractiveMode:
                     bool(result.get("cancelled")),
                     _partial_truncation_result(result.get("output") or "") if result.get("truncated") else None,
                     result.get("fullOutputPath"),
+                    result.get("fullOutputError"),
                 )
 
             # Record the result in session
@@ -7509,6 +7513,7 @@ class InteractiveMode:
                     cancelled=bool(result.get("cancelled")),
                     truncated=bool(result.get("truncated")),
                     full_output_path=result.get("fullOutputPath"),
+                    full_output_error=result.get("fullOutputError"),
                 ),
                 {"excludeFromContext": exclude_from_context},
             )
@@ -7544,6 +7549,7 @@ class InteractiveMode:
                     result.cancelled,
                     _partial_truncation_result(result.output) if result.truncated else None,
                     result.full_output_path,
+                    result.full_output_error,
                 )
         except Exception as error:
             with self.ui.state_lock:

@@ -7,8 +7,7 @@ from dataclasses import dataclass, replace
 
 import tonio.colored as tonio
 
-from ...utils.output_files import create_output_file_stream
-from ...utils.temp_file_writer import TempFileWriter
+from ...utils.output_files import OutputFileResult, TempFileWriter, create_output_file_stream
 from .truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, truncate_tail
 
 
@@ -45,15 +44,10 @@ class OutputAccumulator:
         self._has_open_line = False
         self._finished = False
 
-        self._temp_file_path: str | None = None
         self._temp_file: TempFileWriter | None = None
         # stdout and stderr readers append concurrently (pi's single thread
         # serialized them); the lock never suspends, so it is safe on workers.
         self._lock = threading.Lock()
-
-    @property
-    def full_output_path(self) -> str | None:
-        return self._temp_file_path
 
     def append(self, data: bytes) -> None:
         with self._lock:
@@ -64,9 +58,7 @@ class OutputAccumulator:
             self._append_decoded_text(self._decoder.decode(data))
 
             if self._temp_file is not None or self._should_use_temp_file():
-                self._ensure_temp_file()
-                if self._temp_file is not None:
-                    self._temp_file.write(data)
+                self._ensure_temp_file().write(data)
             elif data:
                 self._raw_chunks.append(data)
 
@@ -84,10 +76,7 @@ class OutputAccumulator:
             return self._snapshot_locked(persist_if_truncated=persist_if_truncated)
 
     def _snapshot_locked(self, *, persist_if_truncated: bool):
-        # Clipping drops the partial first line of the retained tail. When the tail is only the end of
-        # one over-long line, that is everything, so show the end of that line instead.
-        snapshot_text = self._get_snapshot_text() or self._tail_text
-        tail_truncation = truncate_tail(snapshot_text, max_lines=self._max_lines, max_bytes=self._max_bytes)
+        tail_truncation = truncate_tail(self._get_retained_text(), max_lines=self._max_lines, max_bytes=self._max_bytes)
         truncated = self._total_lines > self._max_lines or self._total_decoded_bytes > self._max_bytes
         truncated_by = (
             (tail_truncation.truncated_by or ("bytes" if self._total_decoded_bytes > self._max_bytes else "lines"))
@@ -107,28 +96,37 @@ class OutputAccumulator:
         if persist_if_truncated and truncation.truncated:
             self._ensure_temp_file()
 
-        return _OutputSnapshot(content=truncation.content, truncation=truncation, full_output_path=self._temp_file_path)
+        temp_file = self._temp_file
+        return _OutputSnapshot(
+            content=truncation.content,
+            truncation=truncation,
+            full_output_file=temp_file.result if temp_file is not None else None,
+        )
 
     async def close_temp_file(self) -> None:
-        """Drains before returning, matching pi's awaited `finish` event."""
+        """Flush and close the temp file. Never raises: a failed file shows up as
+        `failed` in later snapshots."""
         with self._lock:
             temp_file = self._temp_file
-            self._temp_file = None
-        if temp_file is None:
-            return
-        await temp_file.close()
+        if temp_file is not None:
+            await temp_file.close()
 
     async def read_full_output(self, max_bytes: int) -> FullOutput:
         """The complete output, for callers that can take more than the display
         snapshot. Call after `finish()` and `close_temp_file()`. Output longer
         than `max_bytes` raw bytes keeps its first and last `max_bytes // 2`
-        bytes around an omission marker."""
+        bytes around an omission marker. When the temp file could not be saved,
+        only the retained tail is left: up to its last `max_bytes` bytes, behind
+        the same marker when output is missing."""
         with self._lock:
-            temp_file_path = self._temp_file_path
-            raw = b"".join(self._raw_chunks)
-        if temp_file_path is None:
+            full_output_file = self._temp_file.result if self._temp_file is not None else None
+            if full_output_file is None:
+                raw = b"".join(self._raw_chunks)
+            elif full_output_file.kind == "failed":
+                return self._read_retained_output(max_bytes)
+        if full_output_file is None:
             return FullOutput(content=raw.decode("utf-8", "replace"), truncated=False)
-        return await tonio.spawn_blocking(_read_full_output_blocking, temp_file_path, max_bytes)
+        return await tonio.spawn_blocking(_read_full_output_blocking, full_output_file.path, max_bytes)
 
     def get_last_line_bytes(self) -> int:
         with self._lock:
@@ -172,6 +170,28 @@ class OutputAccumulator:
         self._tail_text = buffer[start:].decode("utf-8", "replace")
         self._tail_bytes = _byte_length(self._tail_text)
 
+    def _get_retained_text(self) -> str:
+        """The retained tail, for display and as the fallback of `read_full_output()`.
+        Clipping drops the partial first line of the tail. When the tail is only the
+        end of one over-long line (plus blank lines), nothing is left, so it keeps
+        the end of that line instead."""
+        clipped_text = self._get_snapshot_text()
+        return self._tail_text if len(clipped_text.strip()) == 0 else clipped_text
+
+    def _read_retained_output(self, max_bytes: int) -> FullOutput:
+        """The retained tail within `max_bytes`, marked as truncated only when output is missing."""
+        data = self._get_retained_text().encode("utf-8", "surrogatepass")
+        if len(data) > max_bytes:
+            start = len(data) - max_bytes
+            while start < len(data) and (data[start] & 0xC0) == 0x80:
+                start += 1
+            data = data[start:]
+        tail = data.decode("utf-8", "replace")
+        omitted = self._total_decoded_bytes - len(data)
+        if omitted == 0:
+            return FullOutput(content=tail, truncated=False)
+        return FullOutput(content=f"[... {omitted} bytes omitted ...]\n\n{tail}", truncated=True)
+
     def _get_snapshot_text(self) -> str:
         if self._tail_starts_at_line_boundary:
             return self._tail_text
@@ -186,17 +206,17 @@ class OutputAccumulator:
             or self._total_lines > self._max_lines
         )
 
-    def _ensure_temp_file(self) -> None:
-        if self._temp_file_path is not None:
-            return
+    def _ensure_temp_file(self) -> TempFileWriter:
+        if self._temp_file is not None:
+            return self._temp_file
         # `TempFileWriter.write` is a channel send, so this stays callable from
         # the sync streaming path — pi's `createWriteStream` behaves the same.
-        path, stream = create_output_file_stream(self._temp_file_prefix, ".log")
-        self._temp_file_path = path
-        self._temp_file = stream
+        temp_file = create_output_file_stream(self._temp_file_prefix, ".log")
+        self._temp_file = temp_file
         for chunk in self._raw_chunks:
-            self._temp_file.write(chunk)
+            temp_file.write(chunk)
         self._raw_chunks = []
+        return temp_file
 
 
 @dataclass(slots=True, frozen=True)
@@ -228,9 +248,10 @@ def _read_full_output_blocking(path: str, max_bytes: int) -> FullOutput:
 
 
 class _OutputSnapshot:
-    __slots__ = ("content", "full_output_path", "truncation")
+    __slots__ = ("content", "full_output_file", "truncation")
 
-    def __init__(self, *, content: str, truncation: TruncationResult, full_output_path: str | None):
+    def __init__(self, *, content: str, truncation: TruncationResult, full_output_file: OutputFileResult | None):
         self.content = content
         self.truncation = truncation
-        self.full_output_path = full_output_path
+        # Set once the full output goes to a file. While output streams in, `saved` means the file is being written.
+        self.full_output_file = full_output_file

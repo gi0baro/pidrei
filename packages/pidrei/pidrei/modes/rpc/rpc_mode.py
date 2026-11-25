@@ -690,6 +690,7 @@ async def run_rpc_mode(runtime_host, *, stdin: StdinReader, signal_dispatcher: S
                         cancelled=bool(extension_result.get("cancelled")),
                         truncated=bool(extension_result.get("truncated")),
                         full_output_path=extension_result.get("fullOutputPath"),
+                        full_output_error=extension_result.get("fullOutputError"),
                     )
                     await session.record_bash_result(
                         command.get("command"),

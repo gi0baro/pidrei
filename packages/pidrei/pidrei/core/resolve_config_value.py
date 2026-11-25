@@ -254,6 +254,15 @@ async def resolve_headers_or_throw(
     return resolved if resolved else None
 
 
+async def clear_config_value_cache_entry(config: str) -> None:
+    """Forget the cached result of one config value, so its next resolution runs the command again."""
+    # Behind any run in flight: that run stores its result when it ends, and
+    # a forget before that would be undone by it.
+    async with _command_execution_lock:
+        with _command_result_cache_lock:
+            _command_result_cache.pop(config, None)
+
+
 def clear_config_value_cache() -> None:
     """Clear the config value command cache. Exported for testing."""
     with _command_result_cache_lock:

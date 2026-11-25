@@ -16,6 +16,7 @@ import tonio.colored as tonio
 
 import pidrei.core.auth_storage as auth_storage_module
 from pidrei.core.auth_storage import AuthStorage, FileAuthStorageBackend
+from pidrei.core.resolve_config_value import clear_config_value_cache
 from pidrei.utils import lockfile
 from pidrei_ai.auth.resolve import ModelsError
 from pidrei_ai.auth.types import (
@@ -70,6 +71,32 @@ async def test_resolves_command_backed_api_key_credentials(tmp_path):
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "!printf 'command-key'"}})
     storage = await AuthStorage(str(auth_path))
     assert await storage.read("anthropic") == ApiKeyCredential(key="command-key")
+
+
+# Regression test for #12164: a failed command stays cached until the key is saved again.
+@pytest.mark.tonio
+async def test_runs_a_command_backed_key_again_after_it_is_saved(tmp_path):
+    import os
+
+    name = f"PIDREI_TEST_AUTH_STORAGE_COMMAND_{time.time_ns()}"
+    credential = ApiKeyCredential(key=f"!printenv {name}")
+    auth_path = tmp_path / "auth.json"
+    write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": credential.key}})
+    storage = await AuthStorage(str(auth_path))
+
+    async def save(_current):
+        return credential
+
+    try:
+        assert await storage.read("anthropic") == ApiKeyCredential(key=None)
+        os.environ[name] = "command-key"
+        assert await storage.read("anthropic") == ApiKeyCredential(key=None)
+
+        await storage.modify("anthropic", save)
+        assert await storage.read("anthropic") == ApiKeyCredential(key="command-key")
+    finally:
+        os.environ.pop(name, None)
+        clear_config_value_cache()
 
 
 @pytest.mark.tonio
@@ -176,17 +203,18 @@ async def test_a_reader_whose_stat_outlives_the_coalesced_reload_does_not_reload
     auth_storage_module._acquire_lock_async = counting_acquire
     auth_storage_module._get_file_revision_blocking = gated_revision
     try:
-        write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "new"}})
+        # Change the file size so the revision changes even with coarse file timestamps (#12190).
+        write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "newer"}})
 
         slow_reader = tonio.spawn(second.read("anthropic"))
         await tonio.spawn_blocking(slow_stat_entered.wait, 5.0)
         assert slow_stat_entered.is_set()
 
-        assert await first.read("anthropic") == ApiKeyCredential(key="new")
+        assert await first.read("anthropic") == ApiKeyCredential(key="newer")
         assert calls["count"] == 1
 
         slow_stat_release.set()
-        assert await slow_reader == ApiKeyCredential(key="new")
+        assert await slow_reader == ApiKeyCredential(key="newer")
         assert calls["count"] == 1
     finally:
         slow_stat_release.set()
