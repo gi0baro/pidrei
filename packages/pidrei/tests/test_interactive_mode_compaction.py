@@ -42,13 +42,13 @@ def _compaction_entry(entry_id: str, parent_id: str | None, summary: str, tokens
 
 
 @pytest.mark.tonio
-async def test_uses_the_cache_miss_notice_setting_for_compaction_and_branch_summary_costs():
+async def test_uses_the_compaction_cost_notice_setting_for_compaction_and_branch_summary_costs():
     usage = _usage(0.125)
     await init_theme("dark")
 
     enabled = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"compactionCosts": True}),
     )
     InteractiveMode._add_compaction_cost_notice(
         enabled, {"type": "compaction_cost", "kind": "compaction", "usage": usage}
@@ -65,7 +65,7 @@ async def test_uses_the_cache_miss_notice_setting_for_compaction_and_branch_summ
 
     disabled = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: False),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"compactionCosts": False}),
     )
     InteractiveMode._add_compaction_cost_notice(
         disabled, {"type": "compaction_cost", "kind": "compaction", "usage": usage}

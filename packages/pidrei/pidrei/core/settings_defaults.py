@@ -40,7 +40,6 @@ SETTINGS_DEFAULTS = _frozen(
             },
         },
         "hideThinkingBlock": False,
-        "showCacheMissNotices": False,
         "quietStartup": False,
         "defaultProjectTrust": "ask",
         "collapseChangelog": False,
@@ -66,6 +65,12 @@ SETTINGS_DEFAULTS = _frozen(
         },
         "warnings": {
             "anthropicExtraUsage": True,
+        },
+        "notices": {
+            "cacheMisses": False,
+            "cacheWarming": False,
+            "compactionCosts": False,
+            "reasoningDrops": False,
         },
         "codemode": {
             "mode": "on",

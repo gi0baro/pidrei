@@ -37,41 +37,64 @@ DEFAULT_PROJECT_TRUST_LABELS = {
 DEFAULT_PROJECT_TRUST_BY_LABEL = {label: value for value, label in DEFAULT_PROJECT_TRUST_LABELS.items()}
 
 
-class WarningSettingsSubmenu(Container):
-    """A submenu component for the individual warning toggles."""
+# Toggle settings: `{"key", "label", "description"}` records.
+WARNING_TOGGLES = (
+    {
+        "key": "anthropicExtraUsage",
+        "label": "Anthropic extra usage",
+        "description": "Warn when Anthropic subscription auth may use paid extra usage",
+    },
+)
 
-    def __init__(self, warnings: dict, on_change, on_cancel) -> None:
+NOTICE_TOGGLES = (
+    {
+        "key": "cacheMisses",
+        "label": "Cache misses",
+        "description": "Show a notice when a response re-bills a significant part of the prompt cache",
+    },
+    {
+        "key": "cacheWarming",
+        "label": "Cache warming",
+        "description": "Show the cost of cache warming requests",
+    },
+    {
+        "key": "compactionCosts",
+        "label": "Compaction costs",
+        "description": "Show the cost of compactions and branch summaries",
+    },
+    {
+        "key": "reasoningDrops",
+        "label": "Reasoning drops",
+        "description": "Show a notice when a provider drops reasoning items from a request",
+    },
+)
+
+
+class ToggleSettingsSubmenu(Container):
+    """A submenu of true/false settings that are stored together in one settings object, such as `warnings`."""
+
+    def __init__(self, toggles, values: dict, defaults: dict, on_change, on_cancel) -> None:
         super().__init__()
 
-        self._state = dict(warnings)
-
-        anthropic_extra_usage = self._state.get("anthropicExtraUsage")
-        items = [
-            {
-                "id": "anthropic-extra-usage",
-                "label": "Anthropic extra usage",
-                "description": "Warn when Anthropic subscription auth may use paid extra usage",
-                "currentValue": "true"
-                if (
-                    anthropic_extra_usage
-                    if anthropic_extra_usage is not None
-                    else SETTINGS_DEFAULTS["warnings"]["anthropicExtraUsage"]
-                )
-                else "false",
-                "values": ["true", "false"],
-            },
-        ]
-
-        def handle_change(item_id: str, new_value: str) -> None:
-            if item_id == "anthropic-extra-usage":
-                self._state = {**self._state, "anthropicExtraUsage": new_value == "true"}
-                on_change(dict(self._state))
+        items = []
+        for toggle in toggles:
+            value = values.get(toggle["key"])
+            items.append(
+                {
+                    "id": toggle["key"],
+                    "label": toggle["label"],
+                    "description": toggle["description"],
+                    "currentValue": "true" if (value if value is not None else defaults[toggle["key"]]) else "false",
+                    "values": ["true", "false"],
+                }
+            )
 
         self._settings_list = SettingsList(
             items,
             min(len(items), 10),
             get_settings_list_theme(),
-            handle_change,
+            # Item ids are the toggle keys.
+            lambda item_id, new_value: on_change(item_id, new_value == "true"),
             on_cancel,
         )
 
@@ -464,16 +487,29 @@ class SettingsSelectorComponent(Container):
         follow_up_key = key_display_text("app.message.followUp")
         cycle_thinking_key = key_display_text("app.thinking.cycle")
         current_warnings = dict(config["warnings"])
+        current_notices = dict(config["notices"])
         current_model_thinking_levels = dict(config["modelThinkingLevels"])
         model_thinking_submenu = _make_model_thinking_submenu(config, callbacks, current_model_thinking_levels)
 
         def warnings_submenu(_current_value, done):
-            def on_change(warnings: dict) -> None:
+            def on_change(key: str, value: bool) -> None:
                 nonlocal current_warnings
-                current_warnings = warnings
-                callbacks["onWarningsChange"](warnings)
+                current_warnings = {**current_warnings, key: value}
+                callbacks["onWarningsChange"](current_warnings)
 
-            return WarningSettingsSubmenu(current_warnings, on_change, lambda: done())
+            return ToggleSettingsSubmenu(
+                WARNING_TOGGLES, current_warnings, SETTINGS_DEFAULTS["warnings"], on_change, lambda: done()
+            )
+
+        def notices_submenu(_current_value, done):
+            def on_change(key: str, shown: bool) -> None:
+                nonlocal current_notices
+                current_notices = {**current_notices, key: shown}
+                callbacks["onNoticeChange"](key, shown)
+
+            return ToggleSettingsSubmenu(
+                NOTICE_TOGGLES, current_notices, SETTINGS_DEFAULTS["notices"], on_change, lambda: done()
+            )
 
         def theme_submenu(current_value, done):
             return ThemeSubmenu(current_value, config["terminalTheme"], config["availableThemes"], callbacks, done)
@@ -540,13 +576,6 @@ class SettingsSelectorComponent(Container):
                 "values": ["true", "false"],
             },
             {
-                "id": "cache-miss-notices",
-                "label": "Cache miss notices",
-                "description": "Show transcript notices for cache costs and provider recovery diagnostics",
-                "currentValue": "true" if config["showCacheMissNotices"] else "false",
-                "values": ["true", "false"],
-            },
-            {
                 "id": "collapse-changelog",
                 "label": "Collapse changelog",
                 "description": "Show condensed changelog after updates",
@@ -596,6 +625,13 @@ class SettingsSelectorComponent(Container):
                 "description": "Enable or disable individual warnings",
                 "currentValue": "configure",
                 "submenu": warnings_submenu,
+            },
+            {
+                "id": "notices",
+                "label": "Notices",
+                "description": "Notices about cache misses, cache warming, compaction costs and dropped reasoning",
+                "currentValue": "configure",
+                "submenu": notices_submenu,
             },
             {
                 "id": "model-thinking",
@@ -828,8 +864,6 @@ class SettingsSelectorComponent(Container):
                 callbacks["onCacheWarmingModeChange"](new_value)
             elif item_id == "hide-thinking":
                 callbacks["onHideThinkingBlockChange"](new_value == "true")
-            elif item_id == "cache-miss-notices":
-                callbacks["onShowCacheMissNoticesChange"](new_value == "true")
             elif item_id == "collapse-changelog":
                 callbacks["onCollapseChangelogChange"](new_value == "true")
             elif item_id == "quiet-startup":

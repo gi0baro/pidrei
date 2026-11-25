@@ -26,6 +26,11 @@ class BlockedStatus:
     message: str
 
 
+def dialog_blocked_status(kind: str, title: str) -> BlockedStatus:
+    """Blocked status for a dialog. Its message is the first line of the title; later lines hold details such as paths."""
+    return BlockedStatus(kind, re.split(r"\r?\n", title, maxsplit=1)[0])
+
+
 def _first_line(text: str | None) -> str:
     line = re.split(r"\r?\n", text, maxsplit=1)[0].strip() if text is not None else ""
     return line or "Error"

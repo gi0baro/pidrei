@@ -264,12 +264,12 @@ async def test_does_not_add_consecutive_duplicates_to_history():
 
 
 @pytest.mark.tonio
-async def test_allows_non_consecutive_duplicates_in_history():
+async def test_moves_a_non_consecutive_duplicate_to_the_most_recent_position():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.add_to_history("first")
     editor.add_to_history("second")
-    editor.add_to_history("first")  # Not consecutive, should be added
+    editor.add_to_history("first")
 
     editor.handle_input("\x1b[A")  # "first"
     assert editor.get_text() == "first"
@@ -277,8 +277,29 @@ async def test_allows_non_consecutive_duplicates_in_history():
     editor.handle_input("\x1b[A")  # "second"
     assert editor.get_text() == "second"
 
-    editor.handle_input("\x1b[A")  # "first" (older one)
-    assert editor.get_text() == "first"
+    editor.handle_input("\x1b[A")  # stays at "second" (no older entry)
+    assert editor.get_text() == "second"
+
+
+# #12279: re-rendering a session branch re-adds its prompts on every tree navigation.
+@pytest.mark.tonio
+async def test_does_not_grow_when_the_same_prompts_are_re_added():
+    editor = Editor(create_test_tui(), default_editor_theme)
+
+    def browse(count: int) -> list[str]:
+        texts = []
+        for _ in range(count):
+            editor.handle_input("\x1b[A")
+            texts.append(editor.get_text())
+        return texts
+
+    for prompt in ["p1", "p2", "p3", "p4", "p5"]:
+        editor.add_to_history(prompt)
+    # Navigating back to p4 re-renders the branch p1..p3.
+    for prompt in ["p1", "p2", "p3"]:
+        editor.add_to_history(prompt)
+
+    assert browse(6) == ["p3", "p2", "p1", "p5", "p4", "p4"]
 
 
 @pytest.mark.tonio

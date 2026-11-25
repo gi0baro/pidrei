@@ -41,11 +41,11 @@ MESSAGE = AssistantMessage(
 
 
 @pytest.mark.tonio
-async def test_shows_anthropic_thinking_drops_when_cache_miss_notices_are_enabled():
+async def test_shows_anthropic_thinking_drops_when_reasoning_drop_notices_are_enabled():
     await init_theme("dark")
     enabled = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"reasoningDrops": True}),
         session_manager=SimpleNamespace(get_branch=list),
     )
     InteractiveMode._maybe_show_thinking_drop_notice(enabled, MESSAGE)
@@ -54,7 +54,7 @@ async def test_shows_anthropic_thinking_drops_when_cache_miss_notices_are_enable
 
     disabled = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: False),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"reasoningDrops": False}),
         session_manager=SimpleNamespace(get_branch=list),
     )
     InteractiveMode._maybe_show_thinking_drop_notice(disabled, MESSAGE)
@@ -66,7 +66,7 @@ async def test_does_not_repeat_unchanged_anthropic_thinking_drops():
     await init_theme("dark")
     context = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"reasoningDrops": True}),
         session_manager=SimpleNamespace(get_branch=lambda: [{"type": "message", "message": MESSAGE}]),
     )
 
@@ -85,7 +85,7 @@ async def test_ignores_the_current_message_when_it_is_already_persisted():
     await init_theme("dark")
     context = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"reasoningDrops": True}),
         session_manager=SimpleNamespace(get_branch=lambda: [{"type": "message", "message": MESSAGE}]),
     )
 
@@ -127,7 +127,7 @@ async def test_shows_openai_reasoning_removals_with_their_reasons():
     await init_theme("dark")
     context = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"reasoningDrops": True}),
         session_manager=SimpleNamespace(get_branch=lambda: [{"type": "message", "message": MESSAGE}]),
     )
 
@@ -147,7 +147,7 @@ async def test_shows_openai_reasoning_removals_only_when_new_items_are_removed()
     previous = openai_message(["rs_1", "rs_2"], ["prefix_mismatch"])
     context = SimpleNamespace(
         _chat_container=Container(),
-        settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
+        settings_manager=SimpleNamespace(get_notices=lambda: {"reasoningDrops": True}),
         session_manager=SimpleNamespace(get_branch=lambda: [{"type": "message", "message": previous}]),
     )
 

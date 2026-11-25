@@ -397,14 +397,14 @@ class Editor:
     def add_to_history(self, text: str) -> None:
         """Add a prompt to history for up/down arrow navigation.
 
-        Called after successful submission.
+        A prompt already in history moves to the most recent position instead of being added twice.
         """
         trimmed = text.strip()
         if not trimmed:
             return
-        # Don't add consecutive duplicates
-        if self._history and self._history[0] == trimmed:
-            return
+        # Callers re-add prompts when re-rendering a session (tree navigation, fork, resume).
+        if trimmed in self._history:
+            self._history.remove(trimmed)
         self._history.insert(0, trimmed)
         # Limit history size
         if len(self._history) > 100:

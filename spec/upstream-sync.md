@@ -325,7 +325,11 @@ Each has entries in the classifier's dropped tables, with the reason.
 - **Self-update** machinery, installer-managed updates, and Node/Bun
   packaging, including what only exists because Pi updates itself (the
   restart hint when the install changed on disk while a session runs).
-- **Telemetry** of any kind (the `no-telemetry` recipe).
+- **Telemetry** of any kind (the `no-telemetry` recipe), and with it Pi's
+  first-time setup: since Pi 1.6.1 the dialog only asks the analytics
+  opt-in, so PiDrei has none. Upstream hunks to it, to
+  `shouldRunFirstTimeSetup`/`showFirstTimeSetup` and to their wiring are
+  skipped.
 - **Radius**: provider, presence and session sharing.
 - **The llama.cpp extension**, and its consumers (llama.cpp classify).
 - **The 3D easter eggs** (`armin-3d`/`easter-egg-3d`: the 3D Armin of
@@ -838,6 +842,12 @@ untouched: component diffs port 1:1. What diverges:
   - The blocked status follows the dialog stack: showing the top dialog sets
     its blocked status (none when the editor is back), in the same hold, so
     removing a dialog that is not visible leaves the status alone.
+  - Startup dialogs (`cli/startup_ui.py`, Pi 1.6.1) run before any reporter
+    exists: `_show_startup_dialog` calls the startup terminal's
+    `set_program_status` before `start()`, the terminal holds the status
+    until support is confirmed, and `stop()` clears it. Their "answered
+    once" claim is made in the key callback (the prefix of Pi's
+    `void finish()`), which then spawns the teardown.
 - **Exit**: Pi 1.4.0's restore of terminal modes when the process exits
   without `stop()` (`9df819de`, a `process.on("exit")` handler in
   `terminal.ts`, `tui.ts`, `tui-alt-screen.ts`) is not ported. Every PiDrei
@@ -941,14 +951,16 @@ params and rendering port side by side.
 
 ### `no-telemetry` (`first-time-setup.ts`, settings-manager analytics accessors, `settings-schema.ts`, `settings-defaults.ts`)
 
-PiDrei sends no telemetry, so it doesn't ask about it either: the first-time
-setup is theme-only, and `SettingsManager` has no
-`enableAnalytics`/`trackingId` accessors. Upstream hunks in the analytics
-step of `first-time-setup.ts`, those accessors, the startup wiring that
-shares analytics, and their test cases are skipped; theme-step and
-`shouldRunFirstTimeSetup` hunks port 1:1. A new upstream consumer of those
-settings (a privacy command, an analytics sink) is a telemetry feature:
-drop it the same way.
+PiDrei sends no telemetry, so it doesn't ask about it either: it has no
+first-time setup, and `SettingsManager` has no
+`enableAnalytics`/`trackingId` accessors. Since Pi 1.6.1 Pi's first-time
+setup only asks the analytics opt-in (`f8149d1a` deleted its theme step), so
+nothing of it is left to port. Upstream hunks to `first-time-setup.ts`, to
+`shouldRunFirstTimeSetup`/`showFirstTimeSetup` and to their wiring
+(`main.ts`, the dialog's blocked status in `startup-ui.ts`), to those
+accessors, to the startup wiring that shares analytics, and their test cases
+are skipped. A new upstream consumer of those settings (a privacy command, an
+analytics sink) is a telemetry feature: drop it the same way.
 
 The settings schema and defaults (`core/settings_schema.py`,
 `settings_defaults.py`) have no `enableAnalytics` or `trackingId`. Pi's

@@ -19,6 +19,7 @@ import tonio.colored as tonio
 
 from pidrei.core.agent_session import AgentSettledEvent
 from pidrei.core.keybindings import KeybindingsManager
+from pidrei.core.messages import BashExecutionMessage
 from pidrei.core.source_info import SourceInfo
 from pidrei.modes.interactive.components.custom_editor import CustomEditor
 from pidrei.modes.interactive.components.status_indicator import (
@@ -260,6 +261,31 @@ class TestPendingUserBashOutput:
         assert component not in fake._pending_messages_container.children
         assert fake._chat_container.children == [component]
         assert fake._pending_bash_components == []
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/12426
+class TestRebuiltUserBashOutput:
+    @pytest.mark.parametrize("expanded", [True, False])
+    def test_follows_ctrl_o_state_when_rebuilt_from_the_session(self, expanded):
+        fake = SimpleNamespace(
+            _tool_output_expanded=expanded,
+            _chat_container=Container(),
+            ui=SimpleNamespace(request_render=lambda force=False: None, state_lock=threading.RLock()),
+            _output_pad=1,
+        )
+        output = "\n".join(f"line-{i + 1}" for i in range(40))
+
+        InteractiveMode._add_message_to_chat(
+            fake,
+            BashExecutionMessage(
+                command="seq 1 40", output=output, exit_code=0, cancelled=False, truncated=False, timestamp=0
+            ),
+        )
+
+        rendered = normalize_rendered_output(fake._chat_container)
+        assert "line-40" in rendered
+        assert ("line-1\n" in rendered) is expanded
+        assert ("to expand" in rendered) is (not expanded)
 
 
 class TestCreateExtensionUIContextSetTheme:

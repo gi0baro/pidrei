@@ -52,7 +52,7 @@ from .cli.list_models import list_models
 from .cli.package_commands import handle_config_command, handle_package_command
 from .cli.project_trust import CreateProjectTrustContextOptions, create_project_trust_context
 from .cli.session_picker import select_session
-from .cli.startup_ui import should_run_first_time_setup, show_first_time_setup, show_startup_selector
+from .cli.startup_ui import show_startup_selector
 from .config import APP_NAME, ENV_SESSION_DIR, VERSION, expand_tilde_path, get_agent_dir
 from .core.agent_session_runtime import CreateAgentSessionRuntimeResult, create_agent_session_runtime
 from .core.agent_session_services import (
@@ -699,17 +699,8 @@ async def _main(
     startup_settings_manager = await SettingsManager(cwd, agent_dir)
     startup_settings_diagnostics = collect_settings_diagnostics(startup_settings_manager)
 
-    # Experimental first-time setup: theme choice (pi's analytics opt-in is not ported).
-    # Runs before any runtime services are created so the chosen settings
-    # apply everywhere.
-    if (
-        app_mode == "interactive"
-        and not parsed.help
-        and parsed.list_models is None
-        and await should_run_first_time_setup()
-    ):
-        await show_first_time_setup(startup_settings_manager)
-        time("firstTimeSetup")
+    # pi's experimental first-time setup is not ported: since pi 1.6.1 it only asks the
+    # analytics opt-in, and pidrei has no telemetry.
 
     if app_mode == "interactive" and parsed.use_theme is not None:
         startup_settings_manager.apply_overrides({"theme": parsed.use_theme})

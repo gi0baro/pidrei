@@ -41,7 +41,11 @@ def format_project_trust_prompt(cwd: str) -> str:
 async def _select_project_trust_option(cwd: str, ctx: ProjectTrustContext) -> ProjectTrustOption | None:
     # The options carry the canonical (realpath) cwd: pool-side.
     options = await tonio.spawn_blocking(get_project_trust_options_blocking, cwd, include_session_only=True)
-    selected = await ctx.ui.select(format_project_trust_prompt(cwd), [option.label for option in options])
+    selected = await ctx.ui.select(
+        format_project_trust_prompt(cwd),
+        [option.label for option in options],
+        {"blockedKind": "permission"},
+    )
     return next((option for option in options if option.label == selected), None)
 
 

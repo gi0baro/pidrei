@@ -811,6 +811,10 @@ def render_image(
     return None
 
 
+# Longest URL that `hyperlink` wraps in an OSC 8 sequence. Real links are far shorter.
+MAX_HYPERLINK_URL_LENGTH = 8192
+
+
 def hyperlink(text: str, url: str) -> str:
     """Wrap text in an OSC 8 hyperlink sequence.
 
@@ -818,7 +822,13 @@ def hyperlink(text: str, url: str) -> str:
     OSC 8 (Ghostty, Kitty, WezTerm, iTerm2, VSCode, and others). In terminals
     that do not support OSC 8, the escape sequences are ignored and only the
     plain text is displayed.
+
+    URLs longer than `MAX_HYPERLINK_URL_LENGTH` are not linked: wrapping
+    re-opens the link on every line with the full URL, so a multi-megabyte
+    URL would grow memory quadratically.
     """
+    if len(url) > MAX_HYPERLINK_URL_LENGTH:
+        return text
     return f"\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\"
 
 

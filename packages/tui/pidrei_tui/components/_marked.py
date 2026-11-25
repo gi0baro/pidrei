@@ -188,7 +188,13 @@ def _tokenize_inline_latex(source: str) -> dict | None:
 
     if closing_index < 0:
         pending_source = source[len(opening) :]
-        if opening.startswith("\\") or _looks_like_pending_dollar_math(pending_source):
+        # A closed dollar formula cannot span lines, and "$" before a digit is usually currency: neither can
+        # be a formula still streaming, so leave the rest of the paragraph to Markdown.
+        if opening.startswith("\\") or (
+            not _LEADING_DIGIT_RE.match(pending_source)
+            and "\n" not in pending_source
+            and _looks_like_pending_dollar_math(pending_source)
+        ):
             return {"raw": source, "text": pending_source, "pending": True}
         return None
 

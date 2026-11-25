@@ -186,7 +186,7 @@ from .extension_tui import ExtensionTui, guard_overlay_handle
 from .external_editor import edit_in_external_editor
 from .model_catalog_refresh import refresh_model_catalogs
 from .model_search import get_model_search_text
-from .program_status_reporter import BlockedStatus, ProgramStatusReporter
+from .program_status_reporter import BlockedStatus, ProgramStatusReporter, dialog_blocked_status
 from .theme import (
     SYSTEM_THEME_NAME,
     InteractiveThemeController,
@@ -583,9 +583,11 @@ class ExtensionUIContext:
         data = f"\x1b[200~{text}\x1b[201~"
         with self._mode.ui.state_lock:
             self._mode.editor.handle_input(data)
+        self._mode.ui.request_render()
 
     def set_editor_text(self, text: str) -> None:
         self._mode._set_editor_text(text)
+        self._mode.ui.request_render()
 
     def get_editor_text(self) -> str:
         with self._mode.ui.state_lock:
@@ -2828,16 +2830,16 @@ class InteractiveMode:
             self._program_status.set_blocked("extension-dialog", blocked)
             self.ui.request_render()
 
-    def _show_extension_selector(
-        self, title: str, options: list, opts: dict | None = None, blocked: BlockedStatus | None = None
-    ):
+    def _show_extension_selector(self, title: str, options: list, opts: dict | None = None):
         """Show a selector for extensions: mounted before this returns (pi's
         synchronous mount, so a key that opens it sends the next key to it);
         returns the spawn handle of the wait for the pick, which the caller
-        may await or drop (spec/ui-island.md, `ctx.ui`). `blocked` is the
-        program status while it is open (default: a question with the title)."""
+        may await or drop (spec/ui-island.md, `ctx.ui`). While it is open the
+        program status is blocked on the first line of the title, with the
+        option `blockedKind` (default: a question)."""
         opts = opts or {}
-        blocked_status = blocked if blocked is not None else BlockedStatus("question", title)
+        blocked_kind = opts.get("blockedKind")
+        blocked_status = dialog_blocked_status(blocked_kind if blocked_kind is not None else "question", title)
         done = tonio.Event()
         # Settled by a pick, the countdown or an abort callback on any task:
         # the first settle claims under the guard.
@@ -2890,10 +2892,14 @@ class InteractiveMode:
 
     def _show_extension_confirm(self, title: str, message: str, opts: dict | None = None) -> Awaitable[bool]:
         """Show a confirmation dialog for extensions (see `_show_extension_selector`)."""
+        opts = opts or {}
+        blocked_kind = opts.get("blockedKind")
         return tonio.spawn(
             _is_yes(
                 self._show_extension_selector(
-                    f"{title}\n{message}", ["Yes", "No"], opts, BlockedStatus("permission", title)
+                    f"{title}\n{message}",
+                    ["Yes", "No"],
+                    {**opts, "blockedKind": blocked_kind if blocked_kind is not None else "permission"},
                 )
             )
         )
@@ -2942,9 +2948,11 @@ class InteractiveMode:
             remove_abort = signal.on_cancel(lambda _reason: settle(None))
 
         # Check and push in one hold: see `_show_extension_selector`.
+        blocked_kind = opts.get("blockedKind")
+        blocked_status = dialog_blocked_status(blocked_kind if blocked_kind is not None else "question", title)
         with self.ui.state_lock:
             if not outcome["settled"]:  # else aborted before it was shown
-                self._push_extension_dialog(component, BlockedStatus("question", title))
+                self._push_extension_dialog(component, blocked_status)
 
         return tonio.spawn(_wait_for_answer(done, outcome))
 
@@ -2975,7 +2983,7 @@ class InteractiveMode:
             self.settings_manager.get_external_editor_command(),
         )
 
-        self._push_extension_dialog(component, BlockedStatus("question", title))
+        self._push_extension_dialog(component, dialog_blocked_status("question", title))
 
         return tonio.spawn(_wait_for_answer(done, outcome))
 
@@ -4049,6 +4057,7 @@ class InteractiveMode:
                 message.full_output_path,
                 message.full_output_error,
             )
+            component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
         elif role == "custom":
             if message.display:
@@ -4164,7 +4173,7 @@ class InteractiveMode:
         # that paid for them.
         cache_misses = (
             collect_cache_misses(self.session_manager.get_entries(), self.session.model_runtime)
-            if self.settings_manager.get_show_cache_miss_notices()
+            if self.settings_manager.get_notices()["cacheMisses"]
             else {}
         )
 
@@ -4301,7 +4310,7 @@ class InteractiveMode:
         self._render_session_items(items, message_meta, options)
 
     def _add_cache_warming_usage(self, entry: dict) -> None:
-        if not self.settings_manager.get_show_cache_miss_notices():
+        if not self.settings_manager.get_notices()["cacheWarming"]:
             return
         # Back-to-back warms collapse into one line with the cumulative cost.
         previous = self._cache_warming_notice
@@ -4327,7 +4336,7 @@ class InteractiveMode:
     def _add_compaction_cost_notice(self, notice: dict) -> None:
         """Render billing usage for a compaction or branch summary. The notice is derived
         from persisted summary usage and is not stored as a separate session entry."""
-        if not self.settings_manager.get_show_cache_miss_notices():
+        if not self.settings_manager.get_notices()["compactionCosts"]:
             return
 
         usage = notice["usage"]
@@ -4340,7 +4349,7 @@ class InteractiveMode:
         )
 
     def _maybe_show_thinking_drop_notice(self, message) -> None:
-        if not self.settings_manager.get_show_cache_miss_notices():
+        if not self.settings_manager.get_notices()["reasoningDrops"]:
             return
 
         dropped = _get_dropped_reasoning(message)
@@ -4375,7 +4384,7 @@ class InteractiveMode:
         Only states observable facts: the miss itself, a model switch, or an
         idle gap past the cache TTL.
         """
-        if not self.settings_manager.get_show_cache_miss_notices():
+        if not self.settings_manager.get_notices()["cacheMisses"]:
             return
 
         # Entries don't contain `message` yet: message_end fires before
@@ -4520,6 +4529,7 @@ class InteractiveMode:
                 raise
             # `hard_exit` skips everything still queued.
             await drain_output()
+            kill_tracked_detached_children()
             hard_exit(0)
 
         # Interactive quit (Ctrl+D, Ctrl+C, /quit, extension shutdown()).
@@ -4545,6 +4555,9 @@ class InteractiveMode:
 
         # `hard_exit` skips everything still queued.
         await drain_output()
+        # dispose() kills a running `!` command. After the last await, so it also catches a shell
+        # spawned after the abort.
+        kill_tracked_detached_children()
         hard_exit(0)
 
     def _emergency_terminal_exit(self) -> None:
@@ -5267,10 +5280,6 @@ class InteractiveMode:
                 self.settings_manager.set_hide_thinking_block(hidden)
                 self._update_thinking_block_visibility()
 
-            def on_show_cache_miss_notices_change(shown: bool) -> None:
-                self.settings_manager.set_show_cache_miss_notices(shown)
-                self._rebuild_chat_from_messages()
-
             def on_show_hardware_cursor_change(enabled: bool) -> None:
                 self.settings_manager.set_show_hardware_cursor(enabled)
                 self.ui.set_show_hardware_cursor(enabled)
@@ -5320,6 +5329,11 @@ class InteractiveMode:
                 if isinstance(self._renderer, TuiAltScreen):
                     self._renderer.set_wheel_scroll_lines(lines)
 
+            def on_notice_change(key: str, shown: bool) -> None:
+                self.settings_manager.set_notice(key, shown)
+                # Cache miss, cache warming and compaction notices are derived when the transcript renders.
+                self._rebuild_chat_from_messages()
+
             def on_cancel() -> None:
                 done()
                 self.ui.request_render()
@@ -5352,7 +5366,6 @@ class InteractiveMode:
                     "doubleEscapeAction": self.settings_manager.get_double_escape_action(),
                     "treeFilterMode": self.settings_manager.get_tree_filter_mode(),
                     "showHardwareCursor": self.settings_manager.get_show_hardware_cursor(),
-                    "showCacheMissNotices": self.settings_manager.get_show_cache_miss_notices(),
                     "defaultProjectTrust": self.settings_manager.get_default_project_trust(),
                     "editorPaddingX": self.settings_manager.get_editor_padding_x(),
                     "outputPad": self.settings_manager.get_output_pad(),
@@ -5366,6 +5379,7 @@ class InteractiveMode:
                     "fullscreenCopyOnSelect": self.settings_manager.get_fullscreen_copy_on_select(),
                     "fullscreenWheelScrollLines": self.settings_manager.get_fullscreen_wheel_scroll_lines(),
                     "warnings": self.settings_manager.get_warnings(),
+                    "notices": self.settings_manager.get_notices(),
                 },
                 {
                     "onAutoCompactChange": on_auto_compact_change,
@@ -5386,7 +5400,6 @@ class InteractiveMode:
                         self._theme_controller.preview(theme_name)
                     ),
                     "onHideThinkingBlockChange": on_hide_thinking_block_change,
-                    "onShowCacheMissNoticesChange": on_show_cache_miss_notices_change,
                     "onCollapseChangelogChange": lambda collapsed: self.settings_manager.set_collapse_changelog(
                         collapsed
                     ),
@@ -5415,6 +5428,7 @@ class InteractiveMode:
                     "onFullscreenCopyOnSelectChange": on_fullscreen_copy_on_select_change,
                     "onFullscreenWheelScrollLinesChange": on_fullscreen_wheel_scroll_lines_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
+                    "onNoticeChange": on_notice_change,
                     "onCancel": on_cancel,
                 },
             )

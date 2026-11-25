@@ -4208,7 +4208,8 @@ them; `confirm` resolves to `False`. The `editor` dialog opens the external
 editor (`$VISUAL`, `$EDITOR`, or the configured command) on Ctrl+G. While a
 dialog is open, terminals that support
 [program status](environment-variables.md#program-status) show pidrei as
-blocked: `confirm` as a permission request, the others as a question.
+blocked, with the first line of the title as the message: `confirm` as a
+permission request, the others as a question.
 
 Dialogs stack: opening one from inside another (a confirm from a custom
 component, say) hides the visible one, and closing it shows the previous one
@@ -4283,6 +4284,23 @@ async def run_timed_signal(_args, ctx):
 ```
 
 See `examples/extensions/timed_confirm.py` for both approaches.
+
+#### Program status kind
+
+While a dialog waits, terminals that support
+[program status](environment-variables.md#program-status) show pidrei as
+blocked, with the first line of the title as the message. `confirm()` reports
+`"permission"`, `select()` and `input()` report `"question"`. Pass
+`blockedKind` in the options dict when the dialog asks for something else,
+for example a select that approves an action:
+
+```python
+choice = await ctx.ui.select(
+    "Deploy to production?",
+    ["Deploy", "Deploy and tag", "Cancel"],
+    {"blockedKind": "permission"},  # "permission" | "question" | "auth"
+)
+```
 
 ### Widgets, status and footer
 

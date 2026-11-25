@@ -73,3 +73,17 @@ def test_keeps_linux_group_termination_unchanged(signals):
     recorder = signals(platform="linux")
     shell.kill_process_tree(1234)
     assert recorder.calls == [(-1234, signal.SIGKILL)]
+
+
+# pi's "killTrackedDetachedChildren" describe. Shutdown paths exit right after killing the tracked
+# shells. Its Windows case (one waited taskkill of all tracked trees) is not mirrored.
+def test_kills_each_tracked_process_group_on_posix(signals):
+    recorder = signals(platform="linux")
+    shell.track_detached_child_pid(1234)
+    try:
+        shell.kill_tracked_detached_children()
+    finally:
+        # The tracked set is process-global.
+        shell.untrack_detached_child_pid(1234)
+
+    assert recorder.calls == [(-1234, signal.SIGKILL)]

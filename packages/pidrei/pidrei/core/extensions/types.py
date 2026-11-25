@@ -289,6 +289,9 @@ class ExtensionUIDialogOptions:
 
     cancel: Any = None
     timeout: float | None = None
+    # What the dialog waits for, reported as blocked program status (OSC 7501) with the first line of the title.
+    # Defaults to `"permission"` for `confirm()` and `"question"` for `select()` and `input()`.
+    blocked_kind: str | None = None  # "permission" | "question" | "auth"
 
 
 @dataclass(slots=True)

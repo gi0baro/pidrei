@@ -113,6 +113,29 @@ async def test_shows_the_earlier_confirm_again_after_the_later_one_is_answered(d
     assert context.blocked_calls[-1] == ("extension-dialog", None)
 
 
+# Regression for #12439: the project trust prompt reported its folder and explanation lines as the message.
+@pytest.mark.tonio
+async def test_reports_the_first_line_of_a_multi_line_selector_title_as_the_blocked_message(dialog_setup):
+    context = _create_context()
+    choice = context._show_extension_selector("Trust project folder?\n/work/project\n\nDetails", ["Trust"])
+    assert context.blocked_calls[-1] == ("extension-dialog", BlockedStatus("question", "Trust project folder?"))
+
+    context.focused.handle_input("\r")
+    assert await choice == "Trust"
+
+
+@pytest.mark.tonio
+async def test_reports_the_kind_passed_with_blocked_kind(dialog_setup):
+    context = _create_context()
+    choice = context._show_extension_selector(
+        "Deploy to production?", ["Deploy", "Cancel"], {"blockedKind": "permission"}
+    )
+    assert context.blocked_calls[-1] == ("extension-dialog", BlockedStatus("permission", "Deploy to production?"))
+
+    context.focused.handle_input("\r")
+    assert await choice == "Deploy"
+
+
 @pytest.mark.tonio
 async def test_removes_a_hidden_dialog_when_its_signal_aborts(dialog_setup):
     context = _create_context()
