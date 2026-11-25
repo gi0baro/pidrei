@@ -266,10 +266,13 @@ async def _iterate_completion_events(response: Any, cancel: CancelToken | None):
     ended = False
     try:
         async for message in iterate_sse_messages(body):
-            if message.data == "[DONE]":
+            data = message.data.strip()
+            if not data:
+                continue
+            if data == "[DONE]":
                 ended = True
                 return
-            chunk = json.loads(message.data)
+            chunk = json.loads(data)
             if not isinstance(chunk, dict) or not isinstance(chunk.get("choices"), list):
                 raise RuntimeError("Invalid Mistral streaming event")  # noqa: TRY004 (mirrors pi's plain Error)
             yield chunk

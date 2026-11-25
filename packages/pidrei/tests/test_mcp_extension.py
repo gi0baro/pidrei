@@ -40,7 +40,7 @@ from pidrei.extensions.mcp.runtime import (
     McpServerLog,
     create_default_transport,
 )
-from pidrei.extensions.mcp.tools import ConvertMcpResultOptions, convert_mcp_result, create_mcp_result_schema
+from pidrei.extensions.mcp.tools import ConvertMcpResultOptions, convert_mcp_result
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
 from pidrei_codemode.declarations import schema_to_type
@@ -50,6 +50,7 @@ from pidrei_mcp import (
     McpHttpError,
     McpSessionExpiredError,
     SendResult,
+    create_mcp_result_schema,
     create_mcp_tool_name,
 )
 from pidrei_mcp.oauth import McpOAuthAuthorizationRequiredError

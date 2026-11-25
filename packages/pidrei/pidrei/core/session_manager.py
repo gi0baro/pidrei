@@ -630,24 +630,29 @@ def _load_wire_entries_from_file_blocking(file_path: str) -> list[dict[str, Any]
     # a 1 MiB buffer for the same reason).
     entries: list[dict[str, Any]] = []
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    pending = ""
+    # The unterminated line, in pieces, joined once when its newline arrives.
+    line_chunks: list[str] = []
     with open(resolved_file_path, "rb") as handle:
         while True:
             data = handle.read(_SESSION_READ_BUFFER_SIZE)
             if not data:
                 break
-            pending += decoder.decode(data)
+            chunk = decoder.decode(data)
+            # Only the new text is scanned, so a line longer than the read buffer is not rescanned per read.
             line_start = 0
-            newline_index = pending.find("\n", line_start)
+            newline_index = chunk.find("\n", line_start)
             while newline_index != -1:
-                entry = _parse_session_entry_line(pending[line_start:newline_index])
+                line_chunks.append(chunk[line_start:newline_index])
+                entry = _parse_session_entry_line("".join(line_chunks))
                 if entry is not None:
                     entries.append(entry)
+                line_chunks.clear()
                 line_start = newline_index + 1
-                newline_index = pending.find("\n", line_start)
-            pending = pending[line_start:]
+                newline_index = chunk.find("\n", line_start)
+            line_chunks.append(chunk[line_start:])
 
-    pending += decoder.decode(b"", True)
+    line_chunks.append(decoder.decode(b"", True))
+    pending = "".join(line_chunks)
     final_entry = _parse_session_entry_line(pending)
     if final_entry is not None:
         entries.append(final_entry)

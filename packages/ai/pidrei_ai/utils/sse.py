@@ -1,102 +1,124 @@
-"""Port of pi's SSE decoder (packages/ai/src/api/anthropic-messages.ts:296-441).
+"""Mirror of pi ai src/utils/sse.ts: a server-sent events decoder.
 
-pi parses server-sent events by hand instead of relying on provider SDKs; this
-module is the behavioral mirror of that decoder, including its exact line
-splitting (bare CR, bare LF, and CRLF all break lines) and its trailing-buffer
-flush at end of stream. Adapters build provider-specific event handling on top
-of `iterate_sse_messages`.
+pi parses server-sent events by hand instead of relying on provider SDKs.
+Every PiDrei adapter that reads SSE (Anthropic, Mistral, OpenAI Codex, and
+the Completions, Responses and Google clients pi reads through SDKs) builds
+its event handling on `iterate_sse_messages`, pi's generator of that name in
+`anthropic-messages.ts`, over `SseDecoder`.
+
+The incomplete last line is kept in pieces and joined once when it ends: pi
+appends it to a string, which is free in JavaScript but a copy in Python.
 """
 
 import codecs
 import re
 from collections.abc import AsyncGenerator, AsyncIterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pidrei_utils.cancel import AbortError, CancelToken
 
 
 @dataclass(slots=True)
 class ServerSentEvent:
+    """One server-sent event: its `event` field, its `data` lines joined by
+    "\\n", and its raw lines for diagnostics."""
+
     event: str | None
     data: str
     raw: list[str]
 
 
-@dataclass(slots=True)
-class _SseDecoderState:
-    event: str | None = None
-    data: list[str] = field(default_factory=list)
-    raw: list[str] = field(default_factory=list)
-
-
-def _flush_sse_event(state: _SseDecoderState) -> ServerSentEvent | None:
-    if not state.event and not state.data:
-        return None
-
-    event = ServerSentEvent(event=state.event, data="\n".join(state.data), raw=list(state.raw))
-    state.event = None
-    state.data = []
-    state.raw = []
-    return event
-
-
-def _decode_sse_line(line: str, state: _SseDecoderState) -> ServerSentEvent | None:
-    if line == "":
-        return _flush_sse_event(state)
-
-    state.raw.append(line)
-    if line.startswith(":"):
-        return None
-
-    delimiter_index = line.find(":")
-    field_name = line if delimiter_index == -1 else line[:delimiter_index]
-    value = "" if delimiter_index == -1 else line[delimiter_index + 1 :]
-    value = value.removeprefix(" ")
-
-    if field_name == "event":
-        state.event = value
-    elif field_name == "data":
-        state.data.append(value)
-
-    return None
-
-
-# A bare CR, a bare LF or a CRLF ends a line. A CR that ends the text so far ends
-# its line alone, so a CRLF split across chunks reads as two breaks, as in pi.
+# A bare CR, a bare LF or a CRLF ends a line.
 _LINE_BREAK = re.compile(r"\r\n?|\n")
 
 
-def _consume_lines(text: str, pending: list[str]) -> list[str]:
-    """The lines `text` completes, the first one continuing `pending`; the
-    unterminated rest goes to `pending`.
+class SseDecoder:
+    """Decodes server-sent events from a UTF-8 byte stream. Lines end with
+    LF, CRLF or CR, and a blank line ends an event. Only new text is scanned,
+    and an incomplete line is joined once when it ends, so a large event
+    arriving in many chunks costs time linear in its size. One reader owns a
+    decoder."""
 
-    Lines are cut by searching from an offset and the unterminated line is
-    kept in pieces, so a chunk costs its own length: pi's decoder slices the
-    buffer per line, which is cheap in JavaScript but copies in Python.
-    """
-    lines: list[str] = []
-    position = 0
-    while (match := _LINE_BREAK.search(text, position)) is not None:
-        line = text[position : match.start()]
-        if pending:
-            pending.append(line)
-            line = "".join(pending)
-            pending.clear()
-        lines.append(line)
-        position = match.end()
-    if position < len(text):
-        pending.append(text[position:])
-    return lines
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        # The incomplete last line, in pieces.
+        self._pending_line: list[str] = []
+        # The last text ended with CR, so a leading LF of the next text completes that CRLF.
+        self._skip_leading_lf = False
+        self._event: str | None = None
+        self._data: list[str] = []
+        self._raw: list[str] = []
+
+    def push(self, data: bytes) -> list[ServerSentEvent]:
+        """Takes the next bytes and returns the events they complete."""
+        return self._decode_text(self._decoder.decode(data))
+
+    def end(self) -> list[ServerSentEvent]:
+        """Ends the stream and returns the remaining events, including a last
+        one the stream ended without a blank line."""
+        events = self._decode_text(self._decoder.decode(b"", final=True))
+        if self._pending_line:
+            self._decode_line("".join(self._pending_line))
+        self._pending_line.clear()
+        self._skip_leading_lf = False
+        if (last := self._flush()) is not None:
+            events.append(last)
+        return events
+
+    def _decode_text(self, text: str) -> list[ServerSentEvent]:
+        events: list[ServerSentEvent] = []
+        start = 1 if self._skip_leading_lf and text.startswith("\n") else 0
+        # A chunk holding only part of a UTF-8 sequence decodes to nothing and keeps the flag.
+        if text:
+            self._skip_leading_lf = False
+        while (match := _LINE_BREAK.search(text, start)) is not None:
+            line = text[start : match.start()]
+            if self._pending_line:
+                self._pending_line.append(line)
+                line = "".join(self._pending_line)
+                self._pending_line.clear()
+            if (event := self._decode_line(line)) is not None:
+                events.append(event)
+            if match.group() == "\r" and match.end() == len(text):
+                self._skip_leading_lf = True
+            start = match.end()
+        if start < len(text):
+            self._pending_line.append(text[start:])
+        return events
+
+    def _decode_line(self, line: str) -> ServerSentEvent | None:
+        if line == "":
+            return self._flush()
+        self._raw.append(line)
+        if line.startswith(":"):
+            return None
+        colon = line.find(":")
+        field = line if colon == -1 else line[:colon]
+        value = "" if colon == -1 else line[colon + 1 :]
+        value = value.removeprefix(" ")
+        if field == "event":
+            self._event = value
+        elif field == "data":
+            self._data.append(value)
+        return None
+
+    def _flush(self) -> ServerSentEvent | None:
+        if not self._event and not self._data:
+            self._event = None
+            self._raw = []
+            return None
+        event = ServerSentEvent(event=self._event, data="\n".join(self._data), raw=self._raw)
+        self._event = None
+        self._data = []
+        self._raw = []
+        return event
 
 
 async def iterate_sse_messages(
     body: AsyncIterable[bytes],
     cancel: CancelToken | None = None,
 ) -> AsyncGenerator[ServerSentEvent]:
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    state = _SseDecoderState()
-    # The unterminated line, in pieces.
-    pending: list[str] = []
+    sse = SseDecoder()
     iterator = aiter(body)
 
     while True:
@@ -108,16 +130,8 @@ async def iterate_sse_messages(
         except StopAsyncIteration:
             break
 
-        for line in _consume_lines(decoder.decode(chunk), pending):
-            if (event := _decode_sse_line(line, state)) is not None:
-                yield event
-
-    for line in _consume_lines(decoder.decode(b"", final=True), pending):
-        if (event := _decode_sse_line(line, state)) is not None:
+        for event in sse.push(chunk):
             yield event
 
-    if pending and (event := _decode_sse_line("".join(pending), state)) is not None:
+    for event in sse.end():
         yield event
-
-    if (trailing := _flush_sse_event(state)) is not None:
-        yield trailing

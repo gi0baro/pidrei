@@ -31,30 +31,36 @@ class JsonlLineDecoder:
 
     def __init__(self) -> None:
         self._decoder = codecs.getincrementaldecoder("utf-8")()
-        self._buffer = ""
+        # The unterminated line, in pieces, joined once when its newline
+        # arrives (pi appends to a string, which copies here).
+        self._pending: list[str] = []
 
     @staticmethod
     def _emit(line: str) -> str:
         return line.removesuffix("\r")
 
     def feed(self, chunk: bytes | str) -> list[str]:
-        self._buffer += chunk if isinstance(chunk, str) else self._decoder.decode(chunk)
-
+        text = chunk if isinstance(chunk, str) else self._decoder.decode(chunk)
+        # Only the new text is scanned, so a long line arriving in many chunks is not rescanned per chunk.
         lines: list[str] = []
-        while True:
-            newline_index = self._buffer.find("\n")
-            if newline_index == -1:
-                return lines
-            lines.append(self._emit(self._buffer[:newline_index]))
-            self._buffer = self._buffer[newline_index + 1 :]
+        start = 0
+        while (newline_index := text.find("\n", start)) != -1:
+            line = text[start:newline_index]
+            if self._pending:
+                self._pending.append(line)
+                line = "".join(self._pending)
+                self._pending.clear()
+            start = newline_index + 1
+            lines.append(self._emit(line))
+        if start < len(text):
+            self._pending.append(text[start:])
+        return lines
 
     def end(self) -> list[str]:
-        self._buffer += self._decoder.decode(b"", final=True)
-        if self._buffer:
-            line = self._emit(self._buffer)
-            self._buffer = ""
-            return [line]
-        return []
+        self._pending.append(self._decoder.decode(b"", final=True))
+        line = "".join(self._pending)
+        self._pending.clear()
+        return [self._emit(line)] if line else []
 
 
 async def pump_jsonl_lines(stream, on_line: Callable[[str], None]) -> None:

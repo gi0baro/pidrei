@@ -20,6 +20,7 @@ from .config import (
 )
 from .fetch import McpFetch, McpResponse, McpResponseHeaders, default_fetch
 from .input_schema import normalize_mcp_input_schema
+from .model_content import McpModelContentOptions, to_mcp_model_content
 from .naming import create_mcp_tool_name, mcp_namespace, mcp_server_summary
 from .output_limit import MCP_OUTPUT_MAX_BYTES, LimitedMcpContent, McpOutputSaver, limit_mcp_content
 from .protocol.content import (
@@ -77,6 +78,7 @@ from .protocol.types import (
     ToolAnnotations,
     ToolExecution,
 )
+from .result_schema import create_mcp_result_schema
 from .transports.stdio import StdioTransport, StdioTransportOptions
 from .transports.streamable_http import (
     McpAuthRequiredError,
@@ -135,6 +137,7 @@ __all__ = [
     "McpFetch",
     "McpHttpError",
     "McpHttpServerConfig",
+    "McpModelContentOptions",
     "McpOAuthConfig",
     "McpOutputSaver",
     "McpResponse",
@@ -171,6 +174,7 @@ __all__ = [
     "ToolAnnotations",
     "ToolExecution",
     "UnauthorizedContext",
+    "create_mcp_result_schema",
     "create_mcp_tool_name",
     "default_fetch",
     "is_json_rpc_notification",
@@ -183,5 +187,6 @@ __all__ = [
     "normalize_mcp_input_schema",
     "parse_json_rpc_message",
     "to_llm_content",
+    "to_mcp_model_content",
     "validate_mcp_server_config",
 ]

@@ -388,6 +388,28 @@ Pi-visible *surface*; scopes are the mechanism.
   special-case them.
 - Mirrored signatures keep the token parameter where Pi has the signal.
 
+### `line-pieces` (pattern-shaped)
+
+Pi's stream readers (since 1.6.1) scan only the new text and append the
+unterminated rest to a pending string, which V8 does without copying. In
+CPython `x += rest` on an attribute or a closure variable copies the whole
+string, so a side-by-side port stays quadratic in the line's length.
+
+- A reader keeps its unterminated line as a list of pieces and joins it once,
+  when its terminator arrives; never `+=` onto an attribute or closure string.
+  Where a size is checked, a running count goes with the pieces (never a
+  re-measure of the joined line).
+- Readers on it: the provider SSE decoder (`pidrei_ai/utils/sse.py`,
+  `SseDecoder`), the MCP Streamable HTTP event reader
+  (`transports/streamable_http.py`, `consume_sse_stream`) and stdio framing
+  (`transports/lines.py`), the TUI bracketed paste (`stdin_buffer.py`, with
+  Pi's `pasteTail`), the RPC line decoder (`modes/rpc/jsonl.py`), and the
+  session loader and header reader (`core/session_manager.py`).
+- A Pi hunk to one of these readers ports its behaviour onto the pieces; a
+  new Pi reader of the same shape lands on the pattern. Unlike `cancel-token`,
+  the Pi files of the readers 1.6.1 rewrote (all of the above but stdio
+  framing) are flagged in `DIVERGED`, so a hunk there surfaces the recipe.
+
 ### `dispatch-observe` (`agent/src/agent.ts`)
 
 Pi emits agent events by iterating listeners inline on its single thread.

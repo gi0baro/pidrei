@@ -1195,6 +1195,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    "packages/ai/src/utils/sse.ts": (
+        ("line-pieces", "SseDecoder's pendingLine is a list of pieces, joined once when the line ends"),
+    ),
     "packages/ai/src/api/anthropic-messages.ts": (
         ("freeze-at-seam", _FREEZE_ADAPTER_NOTE),
         (
@@ -1276,6 +1279,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "tui-island",
             "a synchronous parser: the flush setTimeout is a deadline (deadline/expire) the reader expires",
         ),
+        ("line-pieces", "pasteBuffer is _paste_chunks plus _paste_length, joined once at the end marker"),
     ),
     "packages/tui/src/tui-main-screen.ts": (
         (
@@ -1610,6 +1614,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "close fires (a head-pending request is cancelled), close spawns the session DELETE (1 s) and the "
             "closing of held responses and joins both; the DELETE reuses the last request's token",
         ),
+        ("line-pieces", "consumeSseStream's pendingLine is a list of pieces with a running byte count"),
     ),
     "packages/mcp/src/client.ts": (
         (
@@ -1785,6 +1790,13 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         ("no-extension-changelog", "the extension changelog cases are not mirrored"),
     ),
     "packages/coding-agent/docs/packages.md": (("no-extension-changelog", 'no "Show a changelog" section'),),
+    # Unterminated lines kept as pieces (1.6.1.0); the readers otherwise port normally.
+    "packages/coding-agent/src/modes/rpc/jsonl.ts": (
+        ("line-pieces", "JsonlLineDecoder keeps the pending line as a list of pieces, joined at its newline"),
+    ),
+    "packages/coding-agent/src/core/session-manager.ts": (
+        ("line-pieces", "the session loader keeps the pending line as pieces, like the header reader"),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests

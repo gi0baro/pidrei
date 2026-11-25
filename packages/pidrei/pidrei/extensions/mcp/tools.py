@@ -19,25 +19,22 @@ model-facing content up to the output limit (pidrei-mcp's
 objects on.
 """
 
-import base64
-import re
-import urllib.parse
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NotRequired, Protocol, TypedDict
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
-from pidrei_ai.utils.tasks import gather
 from pidrei_mcp import (
     CallToolResult,
-    ContentBlock,
     LlmContent,
+    McpModelContentOptions,
     McpOutputSaver,
     Tool,
+    create_mcp_result_schema,
     limit_mcp_content,
     normalize_mcp_input_schema,
-    to_llm_content,
+    to_mcp_model_content,
 )
 from pidrei_tui import Container, Spacer, Text
 from pidrei_utils.cancel import CancelToken
@@ -45,7 +42,6 @@ from pidrei_utils.cancel import CancelToken
 from ...core.extensions.types import ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace, ToolRenderers
 from ...core.mcp_servers import READ_MCP_RESOURCE_TOOL
 from ...core.tools.render_utils import format_tool_call_with_args, get_text_output, replace_tabs
-from ...core.tools.truncate import format_size
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.components.visual_truncate import VisualLinePreview
 from ...utils.output_files import write_output_file
@@ -93,72 +89,6 @@ def _text_of(content: Sequence[LlmContent]) -> str:
     return "\n".join(block["text"] for block in content if block["type"] == "text")
 
 
-# MCP content blocks as one compact type with the fields of text and image blocks, which scripts
-# read most (`image(block)` takes an image block as is). Rendered into every MCP tool's declaration.
-_CONTENT_BLOCK_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "type": {"enum": ["text", "image", "audio", "resource_link", "resource"]},
-        "text": {"type": "string"},
-        "data": {"type": "string"},
-        "mimeType": {"type": "string"},
-    },
-    "required": ["type"],
-    "additionalProperties": True,
-}
-
-# Keywords whose values are data, so a `$ref` key in them is not a reference.
-_SCHEMA_DATA_KEYWORDS = frozenset(("const", "enum", "default", "examples"))
-# Keywords whose values map names to schemas, so their keys are names, not keywords.
-_SCHEMA_MAP_KEYWORDS = frozenset(
-    ("properties", "patternProperties", "dependentSchemas", "dependencies", "$defs", "definitions")
-)
-
-
-def _relocate_schema(schema: Any, pointer: str) -> Any:
-    """`schema` as a subschema at the JSON pointer `pointer`
-    (`#/properties/structuredContent`) of another schema: its local references
-    (`#`, `#/$defs/Item`) are rewritten to point below `pointer`, so they
-    resolve to the same subschemas as before."""
-    if isinstance(schema, list):
-        return [_relocate_schema(item, pointer) for item in schema]
-    if not isinstance(schema, dict):
-        return schema
-    relocated: dict[str, Any] = {}
-    for key, value in schema.items():
-        if key == "$ref" and isinstance(value, str) and (value == "#" or value.startswith("#/")):
-            relocated[key] = f"{pointer}{value[1:]}"
-        elif key in _SCHEMA_DATA_KEYWORDS:
-            relocated[key] = value
-        elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-            relocated[key] = {name: _relocate_schema(subschema, pointer) for name, subschema in value.items()}
-        else:
-            relocated[key] = _relocate_schema(value, pointer)
-    return relocated
-
-
-def create_mcp_result_schema(structured_content_schema: dict[str, Any] | None) -> dict[str, Any]:
-    """Output schema of every MCP tool: the `CallToolResult` scripts receive
-    (without `_meta`, which `convert_mcp_result` drops), with the tool's own
-    output schema as `structuredContent`."""
-    return {
-        "type": "object",
-        "properties": {
-            "content": {"type": "array", "items": _CONTENT_BLOCK_SCHEMA},
-            # Servers may send structured content without declaring a schema for it, and it may be any JSON value.
-            "structuredContent": (
-                _relocate_schema(structured_content_schema, "#/properties/structuredContent")
-                if structured_content_schema
-                else {}
-            ),
-            "isError": {"type": "boolean"},
-        },
-        "required": ["content"],
-        # Fields newer protocol versions add.
-        "additionalProperties": True,
-    }
-
-
 @dataclass(frozen=True, slots=True)
 class ConvertMcpResultOptions:
     # Saves truncated text and binary resources. Default: a temp file.
@@ -166,25 +96,6 @@ class ConvertMcpResultOptions:
     # Whether the server's resources can be read with `read_mcp_resource`,
     # which resource links then name.
     readable_resources: bool = False
-
-
-def _extension_of(uri: str) -> str:
-    """File extension for a saved binary resource: the one its URI ends in, else `.bin`."""
-    try:
-        parts = urllib.parse.urlsplit(uri)
-    except ValueError:
-        parts = None
-    path = parts.path if parts is not None and parts.scheme else uri
-    match = re.search(r"\.[A-Za-z0-9]{1,8}$", path)
-    return match.group(0) if match else ".bin"
-
-
-def _is_text_mime_type(mime_type: str | None) -> bool:
-    """Blobs of these types are shown as text."""
-    if not mime_type:
-        return False
-    kind = mime_type.split(";", 1)[0].strip().lower()
-    return kind.startswith("text/") or kind == "application/json" or kind.endswith(("+json", "+xml"))
 
 
 def from_llm_content(blocks: Sequence[LlmContent]) -> list[ModelContent]:
@@ -197,62 +108,23 @@ def from_llm_content(blocks: Sequence[LlmContent]) -> list[ModelContent]:
     ]
 
 
-def _text(text: str) -> LlmContent:
-    return {"type": "text", "text": text}
-
-
-async def _block_to_content(server: str, block: ContentBlock, options: ConvertMcpResultOptions) -> list[LlmContent]:
-    """Model-facing content of one block of `server`'s result."""
-    if block.get("type") == "resource_link":
-        size = block.get("size")
-        details = [detail for detail in (block.get("mimeType"), None if size is None else format_size(size)) if detail]
-        read = f'. Read it with {READ_MCP_RESOURCE_TOOL} (server "{server}")' if options.readable_resources else ""
-        description = f": {block['description']}" if block.get("description") else ""
-        title = block.get("title")
-        label = title if title is not None else block["name"]
-        listed = f" ({', '.join(details)})" if details else ""
-        return [_text(f'[Resource {block["uri"]} "{label}"{listed}{description}{read}]')]
-    resource = block.get("resource")
-    if (
-        block.get("type") == "resource"
-        and isinstance(resource, dict)
-        and "blob" in resource
-        and not (resource.get("mimeType") or "").startswith("image/")
-    ):
-        uri, mime_type = resource["uri"], resource.get("mimeType")
-        data = base64.b64decode(resource["blob"])
-        if _is_text_mime_type(mime_type):
-            return [_text(data.decode("utf-8", errors="replace"))]
-        kind = f"{mime_type or 'unknown type'}, {format_size(len(data))}"
-        try:
-            path = await (options.save_output or save_to_temp_file)(data, _extension_of(uri))
-        except Exception as error:
-            return [_text(f"[Binary resource {uri} ({kind}) could not be saved: {error}]")]
-        return [_text(f"[Binary resource {uri} ({kind}) saved to {path}]")]
-    return to_llm_content({"content": [block]})
-
-
-async def to_model_content(
-    server: str, blocks: Sequence[ContentBlock], options: ConvertMcpResultOptions | None = None
-) -> list[LlmContent]:
-    """Model-facing content of `server`'s content blocks, before the output limit."""
-    options = options or ConvertMcpResultOptions()
-    converted = await gather(*(_block_to_content(server, block, options) for block in blocks))
-    return [item for content in converted for item in content]
-
-
 async def convert_mcp_result(
     server: str, tool: str, result: CallToolResult, options: ConvertMcpResultOptions | None = None
 ) -> AgentToolResult[McpToolDetails]:
     """Convert an MCP result. `isError` results become error results that keep the structured result."""
     options = options or ConvertMcpResultOptions()
-    # Without content blocks, to_llm_content falls back to the structured content as JSON.
-    converted = (
-        await to_model_content(server, result["content"], options) if result["content"] else to_llm_content(result)
+    save_output = options.save_output or save_to_temp_file
+    converted = await to_mcp_model_content(
+        server,
+        result,
+        McpModelContentOptions(
+            save_output=save_output,
+            read_resource_tool=READ_MCP_RESOURCE_TOOL if options.readable_resources else None,
+        ),
     )
     if result.get("isError") and _text_of(converted) == "":
-        converted.append(_text(f"MCP tool {server}/{tool} returned an error"))
-    limited, full_output_path = await limit_mcp_content(converted, options.save_output or save_to_temp_file)
+        converted.append({"type": "text", "text": f"MCP tool {server}/{tool} returned an error"})
+    limited, full_output_path = await limit_mcp_content(converted, save_output)
     content = from_llm_content(limited)
     script_result = {key: value for key, value in result.items() if key != "_meta"}
     details: McpToolDetails = {"server": server, "tool": tool}

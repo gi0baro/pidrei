@@ -283,7 +283,12 @@ class StdinBuffer:
         # pi's pending flush `setTimeout`, as the time it would fire.
         self._deadline: float | None = None
         self._paste_mode = False
-        self._paste_buffer = ""
+        # pi's `pasteBuffer`, in pieces with their total length, joined once
+        # when the end marker arrives (pi appends to a string, which copies here).
+        self._paste_chunks: list[str] = []
+        self._paste_length = 0
+        # The last characters of the paste so far, which may start an end marker split across chunks.
+        self._paste_tail = ""
         self._pending_kitty_printable_codepoint: int | None = None
         self._data_listeners: list = []
         self._paste_listeners: list = []
@@ -368,16 +373,24 @@ class StdinBuffer:
         self._buffer += string
 
         if self._paste_mode:
-            self._paste_buffer += self._buffer
+            # Only the new text is searched, so a large paste arriving in many chunks is not rescanned per chunk.
+            searched = self._paste_tail + self._buffer
+            found = searched.find(BRACKETED_PASTE_END)
+            end_index = -1 if found == -1 else self._paste_length - len(self._paste_tail) + found
+            self._paste_chunks.append(self._buffer)
+            self._paste_length += len(self._buffer)
+            self._paste_tail = searched[1 - len(BRACKETED_PASTE_END) :]
             self._buffer = ""
 
-            end_index = self._paste_buffer.find(BRACKETED_PASTE_END)
             if end_index != -1:
-                pasted_content = self._paste_buffer[:end_index]
-                remaining = self._paste_buffer[end_index + len(BRACKETED_PASTE_END) :]
+                paste_buffer = "".join(self._paste_chunks)
+                pasted_content = paste_buffer[:end_index]
+                remaining = paste_buffer[end_index + len(BRACKETED_PASTE_END) :]
 
                 self._paste_mode = False
-                self._paste_buffer = ""
+                self._paste_chunks = []
+                self._paste_length = 0
+                self._paste_tail = ""
                 self._pending_kitty_printable_codepoint = None
 
                 out.append(("paste", pasted_content))
@@ -398,16 +411,21 @@ class StdinBuffer:
             self._pending_kitty_printable_codepoint = None
             self._buffer = self._buffer[start_index + len(BRACKETED_PASTE_START) :]
             self._paste_mode = True
-            self._paste_buffer = self._buffer
+            paste_buffer = self._buffer
+            self._paste_chunks = [paste_buffer]
+            self._paste_length = len(paste_buffer)
+            self._paste_tail = paste_buffer[1 - len(BRACKETED_PASTE_END) :]
             self._buffer = ""
 
-            end_index = self._paste_buffer.find(BRACKETED_PASTE_END)
+            end_index = paste_buffer.find(BRACKETED_PASTE_END)
             if end_index != -1:
-                pasted_content = self._paste_buffer[:end_index]
-                remaining = self._paste_buffer[end_index + len(BRACKETED_PASTE_END) :]
+                pasted_content = paste_buffer[:end_index]
+                remaining = paste_buffer[end_index + len(BRACKETED_PASTE_END) :]
 
                 self._paste_mode = False
-                self._paste_buffer = ""
+                self._paste_chunks = []
+                self._paste_length = 0
+                self._paste_tail = ""
                 self._pending_kitty_printable_codepoint = None
 
                 out.append(("paste", pasted_content))
@@ -464,7 +482,9 @@ class StdinBuffer:
         self._deadline = None
         self._buffer = ""
         self._paste_mode = False
-        self._paste_buffer = ""
+        self._paste_chunks = []
+        self._paste_length = 0
+        self._paste_tail = ""
         self._pending_kitty_printable_codepoint = None
 
     def get_buffer(self) -> str:

@@ -1,9 +1,12 @@
+"""Mirror of pi ai test/sse.test.ts (the `SseDecoder` cases), with PiDrei's
+own cases for `iterate_sse_messages` around them."""
+
 import math
 import time
 
 import pytest
 
-from pidrei_ai.utils.sse import ServerSentEvent, iterate_sse_messages
+from pidrei_ai.utils.sse import ServerSentEvent, SseDecoder, iterate_sse_messages
 from pidrei_utils.cancel import AbortError, CancelToken
 
 
@@ -63,22 +66,50 @@ async def test_line_breaks_cr_lf_crlf_equivalent():
 
 @pytest.mark.tonio
 async def test_chunk_boundaries_do_not_change_events():
-    # Splits that keep CRLF pairs intact are invariant.
     whole = await _collect(b"event: e\r\ndata: hello\r\n\r\ndata: tail\r\n\r\n")
-    split = await _collect(b"event: e\r\ndata: hel", b"lo\r\n", b"\r\ndata: tail\r\n\r\n")
+    split = await _collect(b"event: e\r", b"\ndata: hel", b"lo\r\n", b"\r\ndata: tail\r\n\r\n")
 
     assert whole == split
 
 
-@pytest.mark.tonio
-async def test_crlf_split_across_chunks_flushes_early():
-    # Mirror of a pi decoder quirk: a chunk-final CR is consumed as a complete
-    # line break (the decoder cannot see the LF still in flight), so the LF
-    # arriving in the next chunk reads as an empty line and flushes the
-    # pending event early.
-    events = await _collect(b"event: e\r", b"\ndata: x\r\n\r\n")
+def _decode(data: bytes, chunk_size: int) -> list[ServerSentEvent]:
+    decoder = SseDecoder()
+    events: list[ServerSentEvent] = []
+    for index in range(0, len(data), chunk_size):
+        events.extend(decoder.push(data[index : index + chunk_size]))
+    events.extend(decoder.end())
+    return events
 
-    assert [(event.event, event.data) for event in events] == [("e", ""), (None, "x")]
+
+def test_gives_the_same_events_for_every_chunking_and_line_ending():
+    for separator in ("\n", "\r\n", "\r"):
+        text = separator.join([": keepalive", "event: delta", 'data: {"a":', 'data:  "é"}', "", "data: tail"])
+        data = text.encode()
+        for chunk_size in range(1, len(data) + 1):
+            assert _decode(data, chunk_size) == [
+                ServerSentEvent(
+                    event="delta",
+                    data='{"a":\n "é"}',
+                    raw=[": keepalive", "event: delta", 'data: {"a":', 'data:  "é"}'],
+                ),
+                ServerSentEvent(event=None, data="tail", raw=["data: tail"]),
+            ], (separator, chunk_size)
+
+
+def test_does_not_end_an_event_at_a_crlf_split_across_chunks():
+    decoder = SseDecoder()
+    assert decoder.push(b"data: a\r") == []
+    assert decoder.push(b"\ndata: b\r\n\r\n") == [ServerSentEvent(event=None, data="a\nb", raw=["data: a", "data: b"])]
+
+
+def test_does_not_carry_an_empty_event_name_into_the_next_event():
+    decoder = SseDecoder()
+    assert decoder.push(b"event:\n\ndata: x\n\n") == [ServerSentEvent(event=None, data="x", raw=["data: x"])]
+
+
+def test_drops_comment_lines_of_events_without_data():
+    decoder = SseDecoder()
+    assert decoder.push(b": ping\n\ndata: x\n\n") == [ServerSentEvent(event=None, data="x", raw=["data: x"])]
 
 
 @pytest.mark.tonio
