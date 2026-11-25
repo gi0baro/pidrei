@@ -548,6 +548,8 @@ under the service's writer lock. Public APIs are unchanged.
   lock-free. `_apply_auth` takes the caller-pinned provider;
   `get_auth_for_provider` is the PiDrei-only pinned variant that `get_auth`
   delegates to, so an upstream diff to `getAuth` lands in its body.
+  createProvider's merged catalog is one published `(all, chat)` pair; the
+  lists are never mutated after publication.
 - **`model-runtime.ts`**: the composition inputs (config, extension
   providers, native providers, virtual models, composition errors) publish
   as one `_CompositionEpoch` via `_publish_composition()` under

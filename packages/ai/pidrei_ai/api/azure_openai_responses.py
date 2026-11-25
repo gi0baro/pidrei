@@ -28,12 +28,7 @@ from pidrei_ai.api.openai_responses import (
     _parse_error_body,
     _PunkreqResponse,
 )
-from pidrei_ai.api.openai_responses_shared import (
-    convert_responses_messages,
-    convert_responses_tools,
-    get_responses_tool_support,
-    process_responses_stream,
-)
+from pidrei_ai.api.openai_responses_shared import prepare_responses_prompt, process_responses_stream
 from pidrei_ai.api.simple_options import build_base_options, resolve_sampling_params
 from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
@@ -52,7 +47,7 @@ from pidrei_ai.utils.error_body import format_provider_error, normalize_provider
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.provider_retry import retry_provider_request
-from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
+from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript
 from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
@@ -282,15 +277,7 @@ def build_params(
     supports_additional_tools = bool(getattr(compat, "supports_additional_tools", None))
     supports_tool_search = bool(getattr(compat, "supports_tool_search", None))
     supports_mid_convo_system_messages = bool(getattr(compat, "supports_mid_convo_system_messages", None))
-    transcript_tools = resolve_transcript_tools(
-        context.messages,
-        get_responses_tool_support(
-            supports_mid_convo_system_messages=supports_mid_convo_system_messages,
-            supports_additional_tools=supports_additional_tools,
-            supports_tool_search=supports_tool_search,
-        ),
-    )
-    messages = convert_responses_messages(
+    prompt = prepare_responses_prompt(
         model,
         context,
         AZURE_TOOL_CALL_PROVIDERS,
@@ -304,7 +291,7 @@ def build_params(
         },
     )
 
-    params: dict[str, Any] = {"model": deployment_name, "input": messages, "stream": True}
+    params: dict[str, Any] = {"model": deployment_name, "input": prompt.input, "stream": True}
     # pi's `undefined` (the mode is "disabled", or there is no session id) drops the field from the
     # body; a None here would be sent as null.
     if getattr(compat, "prompt_cache_key_mode", None) != "disabled":
@@ -319,12 +306,8 @@ def build_params(
     if options is not None and options.temperature is not None:
         params["temperature"] = options.temperature
 
-    if transcript_tools.request_tools:
-        params["tools"] = convert_responses_tools(
-            transcript_tools.request_tools,
-            supports_strict_mode=True if supports_strict is None else supports_strict,
-            supports_openai_grammar_tools=supports_grammar_tools,
-        )
+    if prompt.request_tools:
+        params["tools"] = prompt.request_tools
     if options is not None and options.tool_choice is not None:
         params["tool_choice"] = options.tool_choice
 

@@ -720,39 +720,63 @@ async def test_sends_the_system_prompt_as_a_leading_developer_item_instead_of_in
     assert second["input"] == [user_item]
 
 
-# Regression test for https://github.com/earendil-works/pi/issues/12269
+# Regressions for #12269 (cache preservation) and #12361 (request-level starting effort).
 @pytest.mark.tonio
-async def test_sends_thinking_level_changes_as_configuration_update_items_with_a_fixed_request_effort():
+async def test_reconstructs_the_initial_request_effort_and_emits_only_level_changes():
     client = sse_client()
     model = build_codex_model("gpt-6.2-sol", OpenAIResponsesCompat(supports_mid_convo_effort=True))
-    first_messages = [UserMessage(content="Say hello", timestamp=1)]
-
-    first = await stream_codex(
-        model,
-        normalize_context(Context(messages=first_messages)),
-        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", reasoning_effort="low", client=client),
-    ).result()
-    second = await stream_codex(
-        model,
-        normalize_context(Context(messages=[*first_messages, first, UserMessage(content="Again", timestamp=2)])),
-        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", reasoning_effort="high", client=client),
-    ).result()
+    messages: list = []
+    for reasoning_effort in ("high", "high", "low", "low"):
+        messages.append(UserMessage(content="Again", timestamp=1))
+        reply = await stream_codex(
+            model,
+            normalize_context(Context(messages=list(messages))),
+            OpenAICodexResponsesOptions(
+                api_key=mock_token(), transport="sse", reasoning_effort=reasoning_effort, client=client
+            ),
+        ).result()
+        assert reply.provider_thinking_level == reasoning_effort
+        messages.append(reply)
 
     bodies = [request.payload() for request in client.requests]
-    assert first.provider_thinking_level == "low"
-    assert second.provider_thinking_level == "high"
-    assert [body.get("reasoning") for body in bodies] == [
-        {"effort": "medium", "summary": "auto"},
-        {"effort": "medium", "summary": "auto"},
-    ]
+    assert [body.get("reasoning") for body in bodies] == [{"effort": "high", "summary": "auto"}] * 4
     assert [summarize_input(body) for body in bodies] == [
-        ["user", "configuration_update:low"],
-        ["user", "configuration_update:low", "assistant", "user", "configuration_update:high"],
+        ["user"],
+        ["user", "assistant", "user"],
+        ["user", "assistant", "user", "assistant", "user", "configuration_update:low"],
+        ["user", "assistant", "user", "assistant", "user", "configuration_update:low", "assistant", "user"],
     ]
 
 
 @pytest.mark.tonio
-async def test_sends_the_off_level_an_omitted_reasoning_option_as_a_configuration_update_item(monkeypatch):
+async def test_uses_only_retained_replies_from_the_requested_model_to_establish_the_baseline():
+    # pi resumes the third request from a JSON round trip of the history; pidrei_ai
+    # has no JSON form of a message, so the same frozen messages are sent again.
+    client = sse_client()
+    model = build_codex_model("gpt-6-sol", OpenAIResponsesCompat(supports_mid_convo_effort=True))
+    other = build_codex_model("gpt-6-luna", OpenAIResponsesCompat(supports_mid_convo_effort=True))
+    user = UserMessage(content="Again", timestamp=1)
+
+    def options(reasoning_effort: str) -> OpenAICodexResponsesOptions:
+        return OpenAICodexResponsesOptions(
+            api_key=mock_token(), transport="sse", reasoning_effort=reasoning_effort, client=client
+        )
+
+    first = await stream_codex(other, normalize_context(Context(messages=[user])), options("low")).result()
+    history = [user, first, user]
+    second = await stream_codex(model, normalize_context(Context(messages=history)), options("high")).result()
+    # Resume the history, then simulate compaction dropping both replies.
+    for messages in ([*history, second, user], [user]):
+        await stream_codex(model, normalize_context(Context(messages=messages)), options("low")).result()
+
+    bodies = [request.payload() for request in client.requests]
+    assert [body.get("reasoning") for body in bodies] == [
+        {"effort": effort, "summary": "auto"} for effort in ("low", "high", "high", "low")
+    ]
+
+
+@pytest.mark.tonio
+async def test_sends_the_off_level_an_omitted_reasoning_option_as_the_request_baseline(monkeypatch):
     from pidrei_ai.types import SimpleStreamOptions
 
     client = sse_client()
@@ -768,8 +792,8 @@ async def test_sends_the_off_level_an_omitted_reasoning_option_as_a_configuratio
 
     body = client.requests[0].payload()
     assert result.provider_thinking_level == "none"
-    assert body["reasoning"] == {"effort": "medium", "summary": "auto"}
-    assert summarize_input(body) == ["user", "configuration_update:none"]
+    assert body["reasoning"] == {"effort": "none", "summary": "auto"}
+    assert summarize_input(body) == ["user"]
 
 
 @pytest.mark.tonio
@@ -1459,15 +1483,15 @@ async def test_keeps_sending_input_deltas_in_websocket_cached_mode_when_the_thin
             messages.append(reply)
 
     assert [body.get("reasoning") for body in sent_bodies] == [
-        {"effort": "medium", "summary": "auto"},
-        {"effort": "medium", "summary": "auto"},
-        {"effort": "medium", "summary": "auto"},
+        {"effort": "low", "summary": "auto"},
+        {"effort": "low", "summary": "auto"},
+        {"effort": "low", "summary": "auto"},
     ]
     assert [body.get("previous_response_id") for body in sent_bodies] == [None, "resp_1", "resp_2"]
     assert [summarize_input(body) for body in sent_bodies] == [
-        ["user", "configuration_update:low"],
+        ["user"],
         ["user", "configuration_update:high"],
-        ["user", "configuration_update:high"],
+        ["user"],
     ]
     stats = get_openai_codex_websocket_debug_stats(session_id)
     assert stats.full_context_requests == 1

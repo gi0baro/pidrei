@@ -20,6 +20,7 @@ from pidrei_ai.types import (
     AnyModel,
     BedrockCompat,
     ClassifierModel,
+    GoogleCompat,
     ImageModel,
     MistralConversationsCompat,
     Model,
@@ -53,6 +54,8 @@ _COMPAT_CLASSES: dict[str, type] = {
     "anthropic-messages": AnthropicMessagesCompat,
     "bedrock-converse-stream": BedrockCompat,
     "mistral-conversations": MistralConversationsCompat,
+    "google-generative-ai": GoogleCompat,
+    "google-vertex": GoogleCompat,
     "typesafe-system-one": SystemOneCompat,
     "cloudflare-workers-ai-system-one": SystemOneCompat,
 }

@@ -1,16 +1,71 @@
 """Mirror of pi's google-shared-convert-tools.test.ts."""
 
 import copy
+import dataclasses
 import json
 
 import pytest
 
+from pidrei_ai.api import google_generative_ai, google_vertex
 from pidrei_ai.api.google_shared import (
     convert_tools,
     resolve_google_function_calling_mode,
     supports_google_strict_tool_sampling,
 )
-from pidrei_ai.types import JsonSchemaConstrainedSampling, Tool
+from pidrei_ai.types import (
+    Context,
+    GoogleCompat,
+    JsonSchemaConstrainedSampling,
+    Model,
+    ModelCost,
+    SimpleStreamOptions,
+    Tool,
+    UserMessage,
+)
+from pidrei_ai.utils.transcript import normalize_context
+
+
+def google_model(id: str, compat: GoogleCompat | None = None) -> Model:
+    return Model(
+        id=id,
+        name=id,
+        api="google-generative-ai",
+        provider="test-google",
+        base_url="https://example.invalid/v1beta",
+        reasoning=True,
+        input=["text"],
+        cost=ModelCost(),
+        context_window=128000,
+        max_tokens=4096,
+        compat=compat,
+    )
+
+
+def vertex_model(id: str, compat: GoogleCompat | None = None) -> Model:
+    return dataclasses.replace(
+        google_model(id, compat), api="google-vertex", provider="test-vertex", base_url="https://example.invalid/v1"
+    )
+
+
+async def captured_function_calling_mode(model: Model) -> str | None:
+    """Builds the request for one strict-preferring tool and returns its function-calling mode."""
+    tool = make_tool({"type": "object", "properties": {}})
+    tool.constrained_sampling = JsonSchemaConstrainedSampling(strict="prefer")
+    context = normalize_context(Context(messages=[UserMessage(content="Hi", timestamp=0)], tools=[tool]))
+    payload: dict | None = None
+
+    async def on_payload(request, _model):
+        nonlocal payload
+        payload = request
+        raise RuntimeError("payload captured")
+
+    adapter = google_vertex if model.api == "google-vertex" else google_generative_ai
+    result = await adapter.stream_simple(
+        model, context, SimpleStreamOptions(api_key="test", on_payload=on_payload)
+    ).result()
+    assert "payload captured" in result.error_message
+    assert payload is not None
+    return payload["config"].get("toolConfig", {}).get("functionCallingConfig", {}).get("mode")
 
 
 def make_tool(parameters: dict) -> Tool:
@@ -150,11 +205,37 @@ def test_uses_validated_function_calling_for_strict_tools_on_gemini_3():
     tool = make_tool({"type": "object", "properties": {}})
     tool.constrained_sampling = JsonSchemaConstrainedSampling(strict="require")
 
-    assert supports_google_strict_tool_sampling("gemini-3.1-pro-preview") is True
-    assert supports_google_strict_tool_sampling("gemini-2.5-pro") is False
+    assert supports_google_strict_tool_sampling(google_model("gemini-3.1-pro-preview")) is True
+    assert supports_google_strict_tool_sampling(google_model("gemini-2.5-pro")) is False
     assert resolve_google_function_calling_mode([tool], None, True) == "VALIDATED"
     with pytest.raises(ValueError, match='Tool "test_tool" requires JSON-schema constrained sampling'):
         resolve_google_function_calling_mode([tool], None, False)
+
+
+# #12321
+def test_detects_prefixed_gemini_3_ids_and_lets_compat_supports_strict_mode_override_the_detection():
+    assert supports_google_strict_tool_sampling(google_model("randomprefix-gemini-4-argon")) is True
+    assert supports_google_strict_tool_sampling(google_model("vendor-gemini-2.5-pro")) is False
+    assert supports_google_strict_tool_sampling(google_model("argon-latest")) is False
+    assert supports_google_strict_tool_sampling(google_model("argon-latest", GoogleCompat(supports_strict_mode=True)))
+    assert (
+        supports_google_strict_tool_sampling(
+            google_model("gemini-3.1-pro-preview", GoogleCompat(supports_strict_mode=False))
+        )
+        is False
+    )
+
+
+# #12321
+@pytest.mark.tonio
+async def test_sends_validated_for_prefixed_gemini_3_ids_and_for_compat_supports_strict_mode():
+    for make_model in (google_model, vertex_model):
+        assert await captured_function_calling_mode(make_model("randomprefix-gemini-4-argon")) == "VALIDATED"
+        assert await captured_function_calling_mode(make_model("argon-latest")) is None
+        assert (
+            await captured_function_calling_mode(make_model("argon-latest", GoogleCompat(supports_strict_mode=True)))
+            == "VALIDATED"
+        )
 
 
 def test_returns_none_for_empty_tool_list():

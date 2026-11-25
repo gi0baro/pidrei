@@ -26,8 +26,7 @@ from pidrei_ai.api.constrained_sampling import create_grammar_tool_input_propert
 from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
-    convert_responses_tools,
-    get_responses_tool_support,
+    prepare_responses_prompt,
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options
@@ -66,7 +65,6 @@ from pidrei_ai.utils.transcript import (
     get_declared_tools,
     normalize_context,
     resolve_transcript,
-    resolve_transcript_tools,
 )
 from pidrei_ai.utils.uuid import uuidv7
 from pidrei_http import http
@@ -99,8 +97,6 @@ WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached"
 PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found"
 # The Responses API rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 MIN_OUTPUT_TOKENS = 16
-# Fixed reasoning.effort while configuration_update items carry the thinking level.
-CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium"
 
 CODEX_RESPONSE_STATUSES = frozenset(
     ("completed", "incomplete", "failed", "cancelled", "queued", "in_progress"),
@@ -795,18 +791,11 @@ def build_request_body(
 ) -> dict:
     compat = _get_compat(model)
 
-    transcript_tools = resolve_transcript_tools(
-        context.messages,
-        get_responses_tool_support(
-            supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
-            supports_additional_tools=compat.supports_additional_tools,
-            supports_tool_search=compat.supports_tool_search,
-        ),
-    )
-    # The system prompt goes into a leading developer item, not top-level `instructions`, as in Codex.
-    # From GPT-6.2 on, the backend appends `instructions` after `input`, so every new turn changed the
-    # prompt before the system prompt and it was never served from the prompt cache (#12273).
-    messages = convert_responses_messages(
+    # Keep the system prompt in a leading developer item, not top-level instructions: GPT-6.2+
+    # appends instructions after input, preventing cache reuse across turns (#12273).
+    # On the Codex backend, medium + a high update can reason less than request-level high (#12361).
+    # Pin the initial effort instead. The public OpenAI Responses API was not implicated.
+    prompt = prepare_responses_prompt(
         model,
         context,
         set(CODEX_TOOL_CALL_PROVIDERS),
@@ -820,13 +809,14 @@ def build_request_body(
             "supports_openai_grammar_tools": compat.supports_openai_grammar_tools,
         },
         configuration_update_effort=configuration_update_effort,
+        effort_baseline="initial",
     )
 
     body: dict[str, Any] = {
         "model": model.id,
         "store": False,
         "stream": True,
-        "input": messages,
+        "input": prompt.input,
         "text": {"verbosity": (options.text_verbosity if options else None) or "low"},
         "include": ["reasoning.encrypted_content"],
         "tool_choice": (options.tool_choice if options else None) or "auto",
@@ -844,20 +834,15 @@ def build_request_body(
     if options is not None and options.service_tier is not None:
         body["service_tier"] = options.service_tier
 
-    if transcript_tools.request_tools:
-        body["tools"] = convert_responses_tools(
-            transcript_tools.request_tools,
-            strict=None,
-            supports_strict_mode=compat.supports_strict_mode,
-            supports_openai_grammar_tools=compat.supports_openai_grammar_tools,
-        )
+    if prompt.request_tools:
+        body["tools"] = prompt.request_tools
 
     mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}
     if options is not None and options.reasoning_effort is not None:
         effort = (
-            _resolve_reasoning_effort(model, options.reasoning_effort)
-            if configuration_update_effort is None
-            else CONFIGURATION_UPDATE_REQUEST_EFFORT
+            prompt.request_effort_baseline
+            if prompt.request_effort_baseline is not None
+            else _resolve_reasoning_effort(model, options.reasoning_effort)
         )
         if effort is not None:
             summary = options.reasoning_summary

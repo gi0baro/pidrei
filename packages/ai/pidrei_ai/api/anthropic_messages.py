@@ -1638,9 +1638,9 @@ def _convert_tools(
             )
         )
         schema = get_json_schema_tool_parameters(tool, strict) or {}
-        # Keep shared definitions so property $refs still resolve, and additionalProperties so the
-        # model knows whether extra arguments are allowed. Other root keywords stay out:
-        # Anthropic rejects root anyOf/oneOf/allOf with a 400.
+        # Keep the declared dialect so nested keywords (such as Draft 7 tuple items) are read correctly.
+        # Keep shared definitions for property $refs and additionalProperties for extra arguments.
+        # Other root keywords stay out: Anthropic rejects root anyOf/oneOf/allOf with a 400.
         legacy_input_schema = {
             "type": "object",
             "properties": schema.get("properties") or {},
@@ -1649,6 +1649,8 @@ def _convert_tools(
         # Pi's `=== undefined`: a present key is kept, whatever its value.
         if "additionalProperties" in schema:
             legacy_input_schema["additionalProperties"] = schema["additionalProperties"]
+        if "$schema" in schema:
+            legacy_input_schema["$schema"] = schema["$schema"]
         if "$defs" in schema:
             legacy_input_schema["$defs"] = schema["$defs"]
         if "definitions" in schema:

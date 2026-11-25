@@ -108,6 +108,10 @@ def _with_known_model_types(entry: ModelsStoreEntry) -> ModelsStoreEntry:
     return replace(entry, models=[model for model in entry.models if _has_known_model_type(model)])
 
 
+def _chat_models_of(models: list[AnyModel]) -> list[Model]:
+    return [model for model in models if is_model_type(model, "chat")]
+
+
 def _provider_all_models(provider: Any) -> list[AnyModel]:
     """pi: `provider.getAllModels?.() ?? provider.getModels()`."""
     get_all_models = provider.get_all_models
@@ -212,7 +216,10 @@ class Provider:
         self.generate_images = self._generate_images if self._images else None
         self.classify = self._classify if self._classifiers else None
         self._baseline_models = models
-        self._dynamic_models: list[AnyModel] = []
+        # Merged once per publish, not per read: get_models() is on hot paths such as Models.get_model() (#12311).
+        # pi's two variables (allModels, chatModels) are one published value, (all, chat), rebound whole by
+        # `_set_dynamic_models`; the lists are never mutated after publication.
+        self._catalog: tuple[list[AnyModel], list[Model]] = (models, _chat_models_of(models))
         self._fetch_models = fetch_models
         # What the network phase of `refresh_models` needs. "credential" (the default, also None)
         # receives the effective credential, so an expired OAuth token is refreshed first.
@@ -227,23 +234,27 @@ class Provider:
         return self._fetch_models is not None
 
     def get_all_models(self) -> list[AnyModel]:
-        return self._current_models()
+        return self._catalog[0]
 
     def get_models(self) -> list[Model]:
         """The chat models of the catalog (read independently of `get_all_models`)."""
-        return [model for model in self._current_models() if is_model_type(model, "chat")]
+        return self._catalog[1]
 
-    def _current_models(self) -> list[AnyModel]:
+    def _set_dynamic_models(self, dynamic_models: list[AnyModel]) -> None:
         """Baseline catalog with the dynamic overlay merged in by model type and id."""
         merged = list(self._baseline_models)
-        for model in self._dynamic_models:
-            for index, entry in enumerate(merged):
-                if get_model_type(entry) == get_model_type(model) and entry.id == model.id:
-                    merged[index] = model
-                    break
+        index_by_key: dict[tuple[str, str], int] = {}
+        for index, model in enumerate(merged):
+            index_by_key.setdefault((get_model_type(model), model.id), index)
+        for model in dynamic_models:
+            key = (get_model_type(model), model.id)
+            index = index_by_key.get(key)
+            if index is not None:
+                merged[index] = model
             else:
+                index_by_key[key] = len(merged)
                 merged.append(model)
-        return merged
+        self._catalog = (merged, _chat_models_of(merged))
 
     async def refresh_models(self, context: RefreshModelsContext) -> None:
         """Restore `context.stored` and optionally fetch a newer list using the
@@ -256,7 +267,7 @@ class Provider:
             restored = [model for model in context.stored.models if model.provider == self.id]
 
             def _apply_restored(restored: list[AnyModel] = restored) -> None:
-                self._dynamic_models = restored
+                self._set_dynamic_models(restored)
 
             if not await context.publish(ModelsPublication(update=_apply_restored)):
                 return
@@ -268,7 +279,7 @@ class Provider:
         refreshed = [model for model in fetched if _has_known_model_type(model)]
 
         def _apply_refreshed() -> None:
-            self._dynamic_models = list(refreshed)
+            self._set_dynamic_models(refreshed)
 
         await context.publish(
             ModelsPublication(

@@ -171,6 +171,8 @@ def test_does_not_add_a_thought_signature_for_non_gemini_3_models():
     [
         (False, "gemini-2.5-flash"),
         (True, "gemini-3.6-flash"),
+        (True, "randomprefix-gemini-4-argon"),  # #12321
+        (False, "vendor-gemini-2.5-flash"),
         (True, "claude-sonnet-4-5"),
         (True, "gpt-oss-120b"),
     ],

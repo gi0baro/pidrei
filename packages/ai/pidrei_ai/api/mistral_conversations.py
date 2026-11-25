@@ -791,8 +791,5 @@ def map_chat_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:
             return "length", None
         case "tool_calls":
             return "toolUse", None
-        case "error":
-            # Mistral reports transient server failures this way; "server error" makes the message retryable.
-            return "error", "Provider stopped with: error (server error)"
         case _:
             return "error", f"Provider stopped with: {reason}"

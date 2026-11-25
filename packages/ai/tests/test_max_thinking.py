@@ -107,15 +107,10 @@ async def capture_codex_max_request(model) -> dict:
 
 
 @pytest.mark.tonio
-async def test_sends_max_as_reasoning_effort_to_the_codex_responses_api_for_gpt_5_6_sol():
-    request = await capture_codex_max_request(get_builtin_model("openai-codex", "gpt-5.6-sol"))
-    _assert_matches(request.get("reasoning"), {"effort": "max", "summary": "auto"})
-
-
-@pytest.mark.tonio
 @pytest.mark.parametrize(
     "model_id",
     [
+        "gpt-5.6-sol",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -125,6 +120,7 @@ async def test_sends_max_as_reasoning_effort_to_the_codex_responses_api_for_gpt_
         "gpt-6.2-sol",
     ],
 )
-async def test_sends_max_as_a_configuration_update_item_to_the_codex_responses_api(model_id):
+async def test_sends_max_as_the_initial_reasoning_effort_for_openai_codex(model_id):
     request = await capture_codex_max_request(get_builtin_model("openai-codex", model_id))
-    assert request["input"][-1] == {"type": "configuration_update", "reasoning": {"effort": "max"}}
+    _assert_matches(request.get("reasoning"), {"effort": "max", "summary": "auto"})
+    assert not any(item.get("type") == "configuration_update" for item in request["input"])

@@ -13,7 +13,7 @@ It deliberately keeps the SDK's own camelCase config keys (`vertexai`,
 surface pi's `google-vertex-api-key-resolution.test.ts` asserts on, so mirroring
 that spec means mirroring the keys.
 
-Every wire detail below was read out of `@google/genai` 2.32.0 — the version pi
+Every wire detail below was read out of `@google/genai` 3.6.1 — the version pi
 pins — rather than inferred from documentation, because a wrong guess here is a
 silently broken provider:
 
@@ -55,10 +55,12 @@ from pidrei_utils.cancel import CancelToken
 
 # The `@google/genai` release pi pins; the label is what identifies the wire
 # protocol this module implements.
-GENAI_SDK_VERSION = "2.32.0"
+GENAI_SDK_VERSION = "3.6.1"
 LIBRARY_LABEL = f"google-genai-sdk/{GENAI_SDK_VERSION}"
 
-GEMINI_API_DEFAULT_VERSION = "v1beta"
+# The SDK's `GOOGLE_GENAI_API_VERSION` environment fallback (3.x) is not read,
+# like its other environment fallbacks.
+GEMINI_API_DEFAULT_VERSION = "v1"
 VERTEX_API_DEFAULT_VERSION = "v1beta1"
 GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/"
 VERTEX_GLOBAL_BASE_URL = "https://aiplatform.googleapis.com/"

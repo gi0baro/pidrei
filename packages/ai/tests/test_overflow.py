@@ -57,6 +57,7 @@ def create_length_stop_message(
         'github-copilot API error (413): {"message":"failed to parse request","code":""}',  # format_provider_error prefix
         "custom-provider API error (413): Payload Too Large",  # any provider, not just Copilot
         '413 {"error":{"message":"failed to parse request","code":""}}',  # raw SDK error
+        '413: {"code":"plugin_request_too_large","message":"request too large"}',  # status alone indicates overflow
         "413",  # bare status at end of string
     ],
 )
@@ -64,6 +65,34 @@ def test_detects_provider_independent_request_size_overflow(error_message):
     # The request can exceed the byte limit even with zero usage and a large token window.
     assert is_context_overflow(create_error_message(error_message), 1_000_000) is True
     assert is_context_overflow(create_error_message(error_message)) is True
+
+
+# Regression for #12343: request_too_large must be a complete error code, not part of another identifier.
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "request_too_large",
+        '400 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
+        "Anthropic error: REQUEST_TOO_LARGE",
+    ],
+)
+def test_detects_a_complete_request_size_error_code(error_message):
+    assert is_context_overflow(create_error_message(error_message)) is True
+
+
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        '400 {"code":"plugin_request_too_large","message":"plugin input rejected"}',
+        "400 invalid_request_error: my_plugin_request_too_large_flag was set",
+        "Unknown error code xrequest_too_large",
+        "Unknown error code request_too_large2",
+        "Unknown error code request_too_large_flag",
+    ],
+)
+def test_does_not_match_request_size_error_codes_inside_longer_identifiers(error_message):
+    # Regression for #12343.
+    assert is_context_overflow(create_error_message(error_message), 200000) is False
 
 
 @pytest.mark.parametrize(

@@ -133,6 +133,7 @@ async def test_round_trips_a_function_namespace_received_only_on_output_item_don
         "name": "lookup",
         "arguments": '{"value": "hello"}',
         "namespace": "dynamic_tools",
+        "status": "completed",
     }
 
 
@@ -171,6 +172,7 @@ async def test_round_trips_a_custom_tool_namespace_received_only_on_output_item_
         "name": "query",
         "input": "hello",
         "namespace": "dynamic_tools",
+        "status": "completed",
     }
 
 

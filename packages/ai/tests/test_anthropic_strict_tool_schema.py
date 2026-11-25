@@ -118,6 +118,27 @@ async def test_keeps_root_definitions_in_non_strict_schemas_so_property_refs_res
         }
 
 
+# https://github.com/earendil-works/pi/issues/12212
+@pytest.mark.tonio
+async def test_preserves_the_declared_dialect_and_tuple_syntax_in_non_strict_schemas():
+    parameters = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "pair": {
+                "type": "array",
+                "items": [{"type": "string"}, {"type": "string"}],
+                "minItems": 2,
+                "maxItems": 2,
+            },
+        },
+        "required": ["pair"],
+    }
+    tool = await capture_first_tool(create_tool(parameters))
+    assert "strict" not in tool
+    assert tool["input_schema"] == parameters
+
+
 # https://github.com/earendil-works/pi/issues/9953
 @pytest.mark.tonio
 async def test_sends_prefer_tools_non_strict_when_they_use_keywords_anthropic_strict_mode_rejects():

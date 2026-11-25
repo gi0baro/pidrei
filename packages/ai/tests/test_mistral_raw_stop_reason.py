@@ -51,7 +51,7 @@ async def test_preserves_raw_mistral_finish_reasons_for_provider_error_stops():
 
     assert message.stop_reason == "error"
     assert message.raw_stop_reason == "error"
-    assert message.error_message == "Provider stopped with: error (server error)"
+    assert message.error_message == "Provider stopped with: error"
     # pi #10487
     assert is_retryable_assistant_error(message) is True
 

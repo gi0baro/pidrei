@@ -639,6 +639,15 @@ class MistralConversationsCompat:
     supports_strict_mode: bool | None = None
 
 
+@dataclass(slots=True)
+class GoogleCompat:
+    """Compatibility settings for the Google Generative AI and Vertex APIs."""
+
+    # Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode.
+    # Default: True for model ids containing gemini-3 or a later version, False otherwise.
+    supports_strict_mode: bool | None = None
+
+
 # How a System One service takes classifier images (see `api/system_one_shared.py`).
 type SystemOneImageInput = Literal["assets", "images", "state-image-urls"]
 
@@ -661,6 +670,7 @@ type ModelCompat = (
     | AnthropicMessagesCompat
     | BedrockCompat
     | MistralConversationsCompat
+    | GoogleCompat
 )
 
 

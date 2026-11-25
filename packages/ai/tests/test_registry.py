@@ -278,21 +278,6 @@ async def test_keeps_chat_reads_independent_from_the_all_model_catalog():
     assert models.get_all_models("test") == []
 
 
-def test_create_provider_merges_dynamic_overlay():
-    provider = create_provider(
-        id="test",
-        auth=ProviderAuth(api_key=static_auth()),
-        models=[make_model(id="a"), make_model(id="b")],
-        api=EchoApi(),
-    )
-    overlay_b = make_model(id="b", name="b-updated")
-    provider._dynamic_models = [overlay_b, make_model(id="c")]
-
-    merged = provider.get_models()
-    assert [model.id for model in merged] == ["a", "b", "c"]
-    assert merged[1].name == "b-updated"
-
-
 # -- streaming through Models --------------------------------------------------
 
 
@@ -533,6 +518,34 @@ async def test_refresh_fetches_persists_and_merges():
     entry = await store.read("test")
     assert entry is not None
     assert [model.id for model in entry.models] == ["dynamic-1"]
+
+
+# #12311: the merged catalog is built once per publish, not on every read.
+@pytest.mark.tonio
+async def test_merges_fetched_models_over_the_baseline_once_per_publish():
+    baseline = [make_model("dynamic", "a"), make_model("dynamic", "b")]
+    fetched_b = make_model("dynamic", "b", name="fetched b")
+    fetched_c = make_model("dynamic", "c")
+
+    async def fetch_models(context):
+        return [fetched_c, fetched_b]
+
+    provider = create_provider(
+        id="dynamic",
+        auth=ProviderAuth(api_key=static_auth("key")),
+        models=baseline,
+        fetch_models=fetch_models,
+        api=EchoApi(),
+    )
+    models = create_models()
+    models.set_provider(provider)
+    assert provider.get_models() is provider.get_models()
+
+    assert (await models.refresh()).errors == {}
+
+    assert provider.get_models() == [baseline[0], fetched_b, fetched_c]
+    assert provider.get_models() is provider.get_models()
+    assert provider.get_all_models() is provider.get_all_models()
 
 
 @pytest.mark.tonio

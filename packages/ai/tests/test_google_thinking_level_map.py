@@ -94,7 +94,7 @@ async def _capture_config(
 
 @pytest.mark.tonio
 async def test_exhaustively_resolves_supported_logical_levels_and_mapping_values():
-    default_expectations = {"minimal": "minimal", "low": "low", "medium": "medium", "high": "high"}
+    default_expectations = {"minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
     for level, expected in default_expectations.items():
         assert resolve_google_thinking_level(google_model("gemini-3.7-flash", {}), level) == expected
 
@@ -103,10 +103,12 @@ async def test_exhaustively_resolves_supported_logical_levels_and_mapping_values
         "low": "low",
         "medium": "medium",
         "high": "high",
+        "xhigh": "xhigh",
         "MINIMAL": "minimal",
         "LOW": "low",
         "MEDIUM": "medium",
         "HIGH": "high",
+        "XHIGH": "xhigh",
     }
     for mapped, expected in mapped_expectations.items():
         model = google_model("gemini-3.7-flash", {"high": mapped, "xhigh": mapped, "max": mapped})
@@ -176,6 +178,30 @@ async def test_uses_thinking_levels_for_gemini_4_models(adapter, make_model):
     assert config["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "MEDIUM"}
 
 
+# Regression test for https://github.com/earendil-works/pi/issues/12184
+@pytest.mark.tonio
+@pytest.mark.parametrize(("adapter", "make_model"), GOOGLE_ADAPTERS)
+async def test_sends_xhigh_as_xhigh_for_gemini_4_models_that_support_it(adapter, make_model):
+    config = await _capture_config(
+        adapter,
+        make_model(
+            "gemini-4-hydrogen",
+            {
+                "off": None,
+                "minimal": None,
+                "low": "low",
+                "medium": "medium",
+                "high": "high",
+                "xhigh": "xhigh",
+                "max": None,
+            },
+        ),
+        "xhigh",
+    )
+
+    assert config["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "XHIGH"}
+
+
 @pytest.mark.tonio
 @pytest.mark.parametrize("reasoning", ["xhigh", "max"])
 async def test_maps_google_generative_ai_extended_levels_to_a_supported_level(reasoning):
@@ -206,10 +232,36 @@ async def test_uses_mapped_google_generative_ai_levels_for_token_budgets():
 
 
 @pytest.mark.tonio
+async def test_uses_the_high_token_budget_for_xhigh_on_google_generative_ai():
+    config = await _capture_config(
+        google_generative_ai,
+        google_model("gemini-2.5-flash", {"xhigh": "xhigh"}),
+        "xhigh",
+        ThinkingBudgets(high=1234),
+    )
+
+    assert config["thinkingConfig"]["thinkingBudget"] == 1234
+
+
+@pytest.mark.tonio
 async def test_maps_google_vertex_extended_levels():
     config = await _capture_config(google_vertex, vertex_model("gemini-3.7-flash", {"xhigh": "high"}), "xhigh")
 
     assert config["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "HIGH"}
+
+
+@pytest.mark.tonio
+async def test_uses_the_high_token_budget_for_xhigh_on_google_vertex():
+    config = await _capture_config(google_vertex, vertex_model("gemini-2.5-pro", {"xhigh": "xhigh"}), "xhigh")
+
+    assert config["thinkingConfig"]["thinkingBudget"] == 32768
+
+
+@pytest.mark.tonio
+async def test_uses_gemini_2_5_flash_lite_token_budgets_on_google_vertex():
+    config = await _capture_config(google_vertex, vertex_model("gemini-2.5-flash-lite", {}), "minimal")
+
+    assert config["thinkingConfig"]["thinkingBudget"] == 512
 
 
 @pytest.mark.tonio

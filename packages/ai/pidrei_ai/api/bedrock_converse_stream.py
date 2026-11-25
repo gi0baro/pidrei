@@ -11,9 +11,13 @@ Two runtime-forced differences:
 - pi's `typeof process !== "undefined"` browser fallback is not ported (POSIX
   only, as everywhere else); the Node branch is the only branch.
 - pi hands proxy support to the SDK by swapping in a `NodeHttpHandler` with
-  proxy agents. punkreq already resolves proxies per request through
-  `http.client_for(url, env)`, so `config.requestHandler` has no analogue and
-  `options.env` is threaded to the client instead.
+  proxy agents, and gives the SDK's default credential chain the same handler
+  (`credentialDefaultProvider`). punkreq already resolves proxies per request
+  through `http.client_for(url, env)`, so `config.requestHandler` has no
+  analogue: `options.env` is threaded to the client as `config["env"]`
+  instead, which sends the Bedrock request through a provider-scoped proxy and
+  hands that proxy to botocore's credential session (see
+  `BedrockRuntimeClient`).
 """
 
 import base64
@@ -246,6 +250,14 @@ def stream(
         credentials = _get_configured_bedrock_credentials(opts.env)
         if not skip_auth and credentials and not options_profile:
             config["credentials"] = credentials
+
+        # pi resolves the proxy for the Bedrock host here and hands the SDK a proxy-aware
+        # `requestHandler`, plus a `credentialDefaultProvider` with the same handler, because the
+        # default credential chain builds its own SSO and SSO OIDC clients, which do not inherit
+        # the Bedrock client's request handler (#12353). Here the client resolves the proxy from
+        # the provider-scoped env itself, for the Bedrock request and for the credential chain.
+        if opts.env:
+            config["env"] = opts.env
 
         if use_bearer_token:
             config["token"] = {"token": bearer_token}
