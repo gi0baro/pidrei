@@ -24,7 +24,6 @@ from pidrei_ai.types import (
     ProviderEnv,
     ProviderHeaders,
     ProviderResponse,
-    Usage,
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -184,14 +183,30 @@ def _token_count(value: Any) -> float:
     return value if _is_number(value) and value > 0 else 0
 
 
-def parse_classifier_usage(value: Any, model: ClassifierModel) -> Usage | None:
+def parse_classifier_usage(value: Any, model: ClassifierModel) -> UsageBuilder | None:
     """Usage from a `{input_tokens, output_tokens}` object, priced from the model
     catalog like chat usage. A missing or malformed usage object leaves the
-    result without usage instead of failing it."""
+    result without usage instead of failing it.
+    `input_tokens_details.cached_tokens` and `cache_write_tokens` are included
+    in `input_tokens`, as in the Responses API, so they are split out of
+    `input`.
+
+    Returns the builder, which the caller freezes once it has applied any
+    provider-reported cost (recipe `freeze-at-seam`)."""
     if not is_record(value) or ("input_tokens" not in value and "output_tokens" not in value):
         return None
-    input = _token_count(value.get("input_tokens"))
+    total_input = _token_count(value.get("input_tokens"))
     output = _token_count(value.get("output_tokens"))
-    usage = UsageBuilder(input=input, output=output, total_tokens=input + output)
+    raw_details = value.get("input_tokens_details")
+    details = raw_details if is_record(raw_details) else {}
+    cache_read = min(_token_count(details.get("cached_tokens")), total_input)
+    cache_write = min(_token_count(details.get("cache_write_tokens")), total_input - cache_read)
+    usage = UsageBuilder(
+        input=total_input - cache_read - cache_write,
+        output=output,
+        cache_read=cache_read,
+        cache_write=cache_write,
+        total_tokens=total_input + output,
+    )
     calculate_cost(model, usage)
-    return usage.freeze()
+    return usage

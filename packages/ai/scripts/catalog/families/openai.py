@@ -44,6 +44,15 @@ OPENAI_STANDARD_COSTS: dict[str, dict[str, Any]] = {
 }
 
 
+# GPT-6 Luna on the Decisions API bills input tokens only, with the same long-context multiplier as
+# chat requests. Usage reports cache reads and writes within input_tokens; they are priced at the input
+# rate, so splitting them out of input does not change the cost.
+# https://developers.openai.com/api/docs/guides/decisions
+OPENAI_DECISIONS_COST: dict[str, Any] = with_openai_long_context_pricing(
+    {"input": 0.1, "output": 0, "cacheRead": 0.1, "cacheWrite": 0.1}
+)
+
+
 def openai_standard_cost(model_id: str) -> dict[str, Any]:
     """The standard price of an OpenAI model with long-context pricing."""
     return with_openai_long_context_pricing(OPENAI_STANDARD_COSTS[model_id])

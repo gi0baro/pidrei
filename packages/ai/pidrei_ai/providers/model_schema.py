@@ -25,8 +25,9 @@ THINKING_LEVEL_MAP_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": dict.fromkeys(MODEL_THINKING_LEVELS, _THINKING_LEVEL_MAP_VALUE_SCHEMA),
     "description": (
-        "Provider value sent for each thinking level. null marks a level unsupported. Levels the model does "
-        "not map use the provider's default value through high; xhigh and max are unsupported."
+        "Provider value sent for each thinking level. A string is sent to the provider; null hides the level. "
+        "Levels left out use the provider's default value for off through high; xhigh and max are opt-in and "
+        "only offered when mapped to a string."
     ),
 }
 

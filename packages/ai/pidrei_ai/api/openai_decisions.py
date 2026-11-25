@@ -199,7 +199,7 @@ async def classify(
         # Set before parsing answers: a request with malformed or refused answers was still billed.
         usage = parse_classifier_usage(body.get("usage"), model)
         if usage is not None:
-            output.usage = usage
+            output.usage = usage.freeze()
         output.answers = _parse_answers(body.get("answers"), context)
         return output
     except Exception as error:

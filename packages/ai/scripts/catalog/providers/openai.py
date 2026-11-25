@@ -7,13 +7,13 @@ from catalog.define import (
     ChatModel,
     ProviderContext,
     ProviderDefinition,
-    add_missing,
     merge_compat,
     merge_thinking,
     models_dev_models,
     with_input_limits,
 )
 from catalog.families.openai import (
+    OPENAI_DECISIONS_COST,
     OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
     OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
     OPENAI_STANDARD_COSTS,
@@ -67,23 +67,8 @@ NONE_REASONING_MODEL_IDS = frozenset(
     }
 )
 
-# Not listed by models.dev.
-GPT_5_CHAT_LATEST: ChatModel = {
-    "id": "gpt-5-chat-latest",
-    "name": "GPT-5 Chat Latest",
-    "api": "openai-responses",
-    "baseUrl": BASE_URL,
-    "provider": "openai",
-    "reasoning": False,
-    "input": ["text", "image"],
-    "cost": {"input": 1.25, "output": 10, "cacheRead": 0.125, "cacheWrite": 0},
-    "contextWindow": 128000,
-    "maxTokens": 16384,
-}
-
-# OpenAI Decisions API (public beta): gpt-6-luna is its only model. It bills input tokens only,
-# with the same long-context multiplier as chat requests. Only API keys work: Sign in with ChatGPT
-# tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
+# OpenAI Decisions API (public beta): gpt-6-luna is its only model. Only API keys work: Sign in with
+# ChatGPT tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
 # The endpoint rejects inputs above 922K tokens (the model's documented maximum input), but
 # requests running longer than about five seconds, currently above roughly 600K input tokens,
 # fail with a gateway timeout.
@@ -97,7 +82,7 @@ CLASSIFIER_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "baseUrl": BASE_URL,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing({"input": 0.1, "output": 0, "cacheRead": 0, "cacheWrite": 0}),
+        "cost": OPENAI_DECISIONS_COST,
         "contextWindow": 922000,
     },
 ]
@@ -117,19 +102,18 @@ def _correct_upstream(model: ChatModel, _source: ModelsDevModel) -> ChatModel:
     return model
 
 
+# No skip_deprecated: models.dev marks models deprecated once OpenAI announces their shutdown,
+# and they keep working until then. Shut down models leave models.dev's list.
 def _models(ctx: ProviderContext) -> list[ChatModel]:
-    return add_missing(
-        models_dev_models(
-            ctx,
-            "openai",
-            api="openai-responses",
-            base_url=BASE_URL,
-            # Audio models are only served on Chat Completions.
-            protocol="responses",
-            include=lambda source: source.id not in UNSUPPORTED_MODEL_IDS,
-            map_model=_correct_upstream,
-        ),
-        [copy.deepcopy(GPT_5_CHAT_LATEST)],
+    return models_dev_models(
+        ctx,
+        "openai",
+        api="openai-responses",
+        base_url=BASE_URL,
+        # Audio models are only served on Chat Completions.
+        protocol="responses",
+        include=lambda source: source.id not in UNSUPPORTED_MODEL_IDS,
+        map_model=_correct_upstream,
     )
 
 

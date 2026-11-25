@@ -15,8 +15,6 @@ from pidrei_ai.utils.retry import is_retryable_assistant_error
 from tests.mistral_helpers import FakeMistralClient, sse_body
 
 
-# pi picks `devstral-medium-latest`; models.dev retired every devstral model
-# before this catalog regen, so any live mistral-conversations model stands in.
 MODEL = get_builtin_model("mistral", "mistral-medium-latest")
 
 

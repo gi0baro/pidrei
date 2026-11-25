@@ -4,6 +4,7 @@ import copy
 from typing import Any
 
 from catalog.define import ChatModel, ProviderContext, ProviderDefinition, models_dev_models
+from catalog.sources.models_dev import ModelsDevModel
 from pidrei_ai.api.cloudflare import CLOUDFLARE_WORKERS_AI_BASE_URL, CLOUDFLARE_WORKERS_AI_REST_BASE_URL
 
 
@@ -40,6 +41,22 @@ _CLASSIFIER_MODELS = [
     _classifier("typesafe/jev-1.14.0", "Jev 1.14", 0.042, 32000, "assets"),
 ]
 
+# These models reject null content when an assistant message contains only tool calls.
+_NON_NULL_ASSISTANT_CONTENT_MODELS = frozenset(
+    {
+        "@cf/ibm-granite/granite-4.0-h-micro",
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "@cf/openai/gpt-oss-120b",
+        "@cf/openai/gpt-oss-20b",
+    }
+)
+
+
+def _map_model(model: ChatModel, _source: ModelsDevModel) -> ChatModel:
+    if model["id"] in _NON_NULL_ASSISTANT_CONTENT_MODELS:
+        model["compat"] = {**(model.get("compat") or {}), "requiresNonNullAssistantContent": True}
+    return model
+
 
 def _models(ctx: ProviderContext) -> list[ChatModel]:
     return models_dev_models(
@@ -48,6 +65,7 @@ def _models(ctx: ProviderContext) -> list[ChatModel]:
         api="openai-completions",
         base_url=CLOUDFLARE_WORKERS_AI_BASE_URL,
         compat={"sendSessionAffinityHeaders": True},
+        map_model=_map_model,
     )
 
 

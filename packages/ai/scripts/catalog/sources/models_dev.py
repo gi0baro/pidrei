@@ -50,6 +50,9 @@ class ModelsDevModel:
     """A models.dev model normalized for the catalog."""
 
     id: str
+    # The model's id on its lab's own models.dev provider, e.g. `anthropic/claude-sonnet-5-5`.
+    # Some of the lab's own entries omit it.
+    canonical_id: str | None
     name: str
     type: str
     status: str | None
@@ -159,6 +162,7 @@ def normalize_models_dev_model(model: dict[str, Any]) -> ModelsDevModel:
     limit = model.get("limit") or {}
     return ModelsDevModel(
         id=model["id"],
+        canonical_id=model.get("canonical_id"),
         name=model.get("name"),
         type=model.get("type"),
         status=model.get("status"),

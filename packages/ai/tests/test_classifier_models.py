@@ -269,8 +269,7 @@ async def test_routes_github_copilot_microsoft_decision_1_to_the_accounts_v1_sys
             access="tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;",
             refresh="refresh",
             expires=clock.now_ms() + 3_600_000,
-            # The login records only picker models; classifiers stay listed.
-            extra={"availableModelIds": ["gpt-6-luna"]},
+            extra={"availableModelIds": ["gpt-6-luna"], "availableClassifierModelIds": ["microsoft-decision-1"]},
         )
 
     credentials = InMemoryCredentialStore()
@@ -298,6 +297,61 @@ async def test_routes_github_copilot_microsoft_decision_1_to_the_accounts_v1_sys
     assert headers["copilot-integration-id"] == "vscode-chat"
     assert result.stop_reason == "stop"
     assert result.answers["approved"] == ClassifierBoolAnswer(probability=0.8)
+
+
+# #12395
+@pytest.mark.tonio
+async def test_routes_github_copilot_gpt_6_luna_decisions_to_the_accounts_v1_decisions_endpoint_with_images():
+    async def oauth(_current):
+        return OAuthCredential(
+            access="tid=test;exp=9999999999;proxy-ep=proxy.business.githubcopilot.com;",
+            refresh="refresh",
+            expires=clock.now_ms() + 3_600_000,
+            extra={"availableModelIds": ["gpt-6-luna"], "availableClassifierModelIds": ["gpt-6-luna-decisions"]},
+        )
+
+    credentials = InMemoryCredentialStore()
+    await credentials.modify("github-copilot", oauth)
+    models = builtin_models(credentials=credentials)
+    luna = models.get_model_of_type("classifier", "github-copilot", "gpt-6-luna-decisions")
+    assert luna is not None, "missing GitHub Copilot GPT-6 Luna Decisions model"
+    assert (luna.api, luna.input, luna.context_window) == ("openai-decisions", ["text", "image"], 872000)
+    # Microsoft-Decision-1 is not in this account's catalog.
+    assert await models.get_available_of_type("classifier", "github-copilot") == [luna]
+    assert [model.id for model in await models.get_available("github-copilot")] == ["gpt-6-luna"]
+
+    image = ImageContent(data="aW1hZ2U=", mime_type="image/png")
+    with stub_system_one(
+        respond_json({"answers": [{"type": "predicate", "name": "approved", "probability": 0.8}]})
+    ) as requests:
+        result = await models.classify(luna, replace(CONTEXT, images=[image]))
+
+    assert [request.url for request in requests] == ["https://api.business.githubcopilot.com/v1/decisions"]
+    headers = _lower_headers(requests[0].headers)
+    assert headers["authorization"] == "Bearer tid=test;exp=9999999999;proxy-ep=proxy.business.githubcopilot.com;"
+    assert headers["copilot-integration-id"] == "vscode-chat"
+    assert result.stop_reason == "stop"
+    assert result.answers["approved"] == ClassifierBoolAnswer(probability=0.8)
+
+
+@pytest.mark.tonio
+async def test_lists_every_github_copilot_classifier_for_credentials_without_a_recorded_classifier_catalog():
+    async def oauth(_current):
+        return OAuthCredential(
+            access="tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+            refresh="refresh",
+            expires=clock.now_ms() + 3_600_000,
+            extra={"availableModelIds": ["gpt-6-luna"]},
+        )
+
+    credentials = InMemoryCredentialStore()
+    await credentials.modify("github-copilot", oauth)
+    models = builtin_models(credentials=credentials)
+    assert sorted(model.id for model in await models.get_available_of_type("classifier", "github-copilot")) == [
+        "gpt-6-luna-decisions",
+        "microsoft-decision-1",
+    ]
+    assert [model.id for model in await models.get_available("github-copilot")] == ["gpt-6-luna"]
 
 
 @pytest.mark.tonio

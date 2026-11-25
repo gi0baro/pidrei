@@ -7,12 +7,15 @@ same model, with the case's flag replaced, is the equivalent here.
 import dataclasses
 import time
 
+import pytest
+
 from pidrei_ai.api.openai_completions import convert_messages, detect_compat
-from pidrei_ai.providers.all import get_builtin_model
+from pidrei_ai.providers.all import builtin_models, get_builtin_model
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
     Model,
+    StreamOptions,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -59,6 +62,44 @@ def build_context(model: Model):
             ]
         )
     )
+
+
+# Regression for #12194: these Workers AI models reject null when replaying a tool call.
+@pytest.mark.parametrize(
+    ("model_id", "content"),
+    [
+        ("@cf/ibm-granite/granite-4.0-h-micro", ""),
+        ("@cf/meta/llama-3.3-70b-instruct-fp8-fast", ""),
+        ("@cf/openai/gpt-oss-120b", ""),
+        ("@cf/openai/gpt-oss-20b", ""),
+        ("@cf/zai-org/glm-5.3", None),
+    ],
+)
+@pytest.mark.tonio
+async def test_sends_tool_call_only_assistant_content_as(model_id, content):
+    model = get_builtin_model("cloudflare-workers-ai", model_id)
+    assert model is not None
+    captured: dict = {}
+
+    async def on_payload(payload, _model):
+        captured["payload"] = payload
+        raise RuntimeError("payload captured")
+
+    await (
+        builtin_models()
+        .stream(
+            model,
+            build_context(model),
+            StreamOptions(api_key="test", env={"CLOUDFLARE_ACCOUNT_ID": "test"}, on_payload=on_payload),
+        )
+        .result()
+    )
+
+    # pi's toMatchObject: same number of messages, each a subset match.
+    messages = captured["payload"]["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "tool", "user"]
+    assert messages[1]["content"] == content
+    assert [tool_call["id"] for tool_call in messages[1]["tool_calls"]] == ["tool-1"]
 
 
 def test_sends_null_content_for_tool_call_only_assistant_messages_by_default():

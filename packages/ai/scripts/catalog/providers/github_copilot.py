@@ -13,8 +13,9 @@ from catalog.define import (
     merge_thinking,
     models_dev_models,
 )
-from catalog.families.anthropic import claude_55_thinking_levels, supports_claude_mid_convo_system_messages
+from catalog.families.anthropic import CLAUDE_55_THINKING_LEVELS, supports_claude_mid_convo_system_messages
 from catalog.families.openai import (
+    OPENAI_DECISIONS_COST,
     enable_openai_grammar_tools,
     enable_openai_mid_convo_system_messages,
     openai_standard_cost,
@@ -36,7 +37,6 @@ _EXTENDED_CONTEXT_MODEL_IDS = frozenset(
     {
         "claude-fable-5",
         "claude-opus-4.8",
-        "claude-opus-5",
         "claude-opus-5.5",
         "claude-sonnet-4.6",
         "claude-sonnet-5",
@@ -59,7 +59,6 @@ _EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_MODEL_IDS = frozenset(
 # Keep this to narrow corrections over models.dev metadata instead of snapshotting Copilot's catalog.
 _THINKING_LEVEL_OVERRIDES: dict[str, dict[str, str | None]] = {
     "claude-opus-4.8": {"minimal": "low"},
-    "claude-opus-5": {"minimal": "low"},
     "claude-sonnet-4.6": {"minimal": "low", "max": "max"},
 }
 
@@ -108,6 +107,23 @@ _MICROSOFT_DECISION_1: dict[str, Any] = {
     "headers": {**_STATIC_HEADERS},
 }
 
+# The authenticated Copilot catalog lists this decision model on /v1/decisions with an 872K prompt limit and
+# restricts it to the Pro, Pro+, Business, and Enterprise plans, among others (checked 2026-11-22), while
+# Microsoft-Decision-1 is restricted to Business and Enterprise. It answers as gpt-6-luna and accepts images.
+# GitHub's Copilot pricing page does not list it; these are OpenAI's Decisions API prices.
+_GPT_6_LUNA_DECISIONS: dict[str, Any] = {
+    "type": "classifier",
+    "id": "gpt-6-luna-decisions",
+    "name": "GPT-6 Luna Decisions",
+    "api": "openai-decisions",
+    "provider": "github-copilot",
+    "baseUrl": _BASE_URL,
+    "input": ["text", "image"],
+    "cost": OPENAI_DECISIONS_COST,
+    "contextWindow": 872000,
+    "headers": {**_STATIC_HEADERS},
+}
+
 
 def _map_model(model: ChatModel, source: ModelsDevModel) -> ChatModel:
     api = _copilot_api(model["id"])
@@ -118,7 +134,7 @@ def _map_model(model: ChatModel, source: ModelsDevModel) -> ChatModel:
             "supportsReasoningEffort": any(option.get("type") == "effort" for option in source.reasoning_options or []),
         }
     if model["id"] == "claude-opus-5.5":
-        merge_thinking(result, claude_55_thinking_levels(model["id"]))
+        merge_thinking(result, CLAUDE_55_THINKING_LEVELS)
     return result
 
 
@@ -143,7 +159,7 @@ def _models(ctx: ProviderContext) -> list[ChatModel]:
 
 
 def _classifiers(_ctx: ProviderContext) -> list[dict[str, Any]]:
-    return [copy.deepcopy(_MICROSOFT_DECISION_1)]
+    return [copy.deepcopy(_GPT_6_LUNA_DECISIONS), copy.deepcopy(_MICROSOFT_DECISION_1)]
 
 
 def _finalize(model: ChatModel, _ctx: ProviderContext) -> None:

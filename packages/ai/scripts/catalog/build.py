@@ -131,7 +131,7 @@ def build_catalog(
             apply_deepseek_compat_rules(model)
             _apply_models_dev_effort(model, ctx.models_dev_source(model))
             apply_openai_family_rules(model)
-            apply_claude_family_rules(model)
+            apply_claude_family_rules(model, ctx)
             apply_deepseek_family_rules(model)
         if definition.finalize is not None:
             for model in chat:

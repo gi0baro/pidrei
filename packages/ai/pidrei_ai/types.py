@@ -45,7 +45,7 @@ type KnownImageApi = Literal["openrouter-images"]
 type ImageApi = str  # KnownImageApi or any custom string
 
 type KnownClassifierApi = Literal[
-    "typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify", "openai-decisions"
+    "typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify", "openai-decisions", "pi-decision"
 ]
 type ClassifierApi = str  # KnownClassifierApi or any custom string
 
@@ -1218,7 +1218,11 @@ class ClassifierResult:
     answers: dict[str, ClassifierAnswer]
     stop_reason: ClassifierStopReason
     timestamp: int  # Unix timestamp in milliseconds
-    # Token usage and its cost at the model's catalog price, when the service reports token counts.
+    # Provider-specific response identifier when the service reports one, such as OpenRouter's generation ID.
+    # Declared before `usage`: pi sets it first, and the wire key order follows field order.
+    response_id: str | None = None
+    # Token usage and its cost, when the service reports token counts. The cost is the model's catalog price,
+    # or the billed amount (`cost.total_from_provider`) when the service reports one, such as OpenRouter.
     usage: Usage | None = None
     error_message: str | None = None
 

@@ -1,6 +1,6 @@
 # Codemode
 
-The `codemode` tool lets the model write a Python script that calls pidrei's other tools and runs non-LLM models, such as classifiers and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
+The `codemode` tool lets the model write a Python script that calls pidrei's other tools and runs non-LLM models, such as decision models and image models. Only the script's output reaches the model, so a script can run calls in parallel and filter large results before the model sees them. To turn it on, see [Enable codemode](cli.md#enable-codemode).
 
 Scripts run on [Monty](https://github.com/pydantic/monty), a sandboxed Python interpreter.
 
@@ -94,7 +94,7 @@ The store is for small state such as IDs, cursors, or summaries. One value may h
 
 ## Models
 
-`models` reaches the model catalog and runs non-LLM models with the session's credentials: classifiers, which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which classifier and image models exist is described in [Classifier models](models.md#classifier-models).
+`models` reaches the model catalog and runs non-LLM models with the session's credentials: decision models (type `"classifier"`), which answer typed questions about JSON state and, for some models, images, and image models, which generate images. Chat models are listed but cannot be run from scripts. Which decision and image models exist is described in [Decision models](models.md#decision-models).
 
 ```python
 type ModelType = Literal["chat", "image", "classifier"]
@@ -178,6 +178,8 @@ class ClassifierResult(TypedDict):
     # Answers by question ID.
     answers: dict[str, ChoiceAnswer | ScoreAnswer | BoolAnswer]
     usage: NotRequired[ModelUsage]
+    # Provider-specific response ID when reported, such as OpenRouter's generation ID.
+    responseId: NotRequired[str]
     stopReason: Literal["stop", "error", "aborted"]
     errorMessage: NotRequired[str]
 
@@ -260,7 +262,7 @@ for message, result in zip(messages, results):
 rows
 ```
 
-Classifiers whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other classifiers return an error result when `images` is not empty.
+Decision models whose `input` includes `"image"` also judge images. `tools.read()` returns an image file as an image block that `images` accepts. Other decision models return an error result when `images` is not empty.
 
 ```python
 luna = await models.get_model_of_type("classifier", "openai", "gpt-6-luna")

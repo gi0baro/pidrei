@@ -72,7 +72,7 @@ API-key path; `XAI_API_KEY` and `OPENROUTER_API_KEY` keep working either way.
 With a key, pidrei lists only the OpenRouter chat models that key may use, with
 the key's context size, max output, and prices. These come from OpenRouter's
 `/models/user` endpoint and reflect guardrails and provider restrictions set in
-OpenRouter. Image and classifier models are not filtered.
+OpenRouter. Image and decision models are not filtered.
 
 pidrei refreshes the list in the background at startup in interactive mode,
 when `/model` opens, after `/login`, and on `pidrei update --models`. The last
@@ -136,7 +136,7 @@ pidrei
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
-| TypeSafe ([classifier models](models.md#classifier-models)) | `TYPESAFE_API_KEY` | `typesafe` |
+| TypeSafe ([decision models](models.md#decision-models)) | `TYPESAFE_API_KEY` | `typesafe` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | ZAI Coding Plan (global) | `ZAI_API_KEY` | `zai` |

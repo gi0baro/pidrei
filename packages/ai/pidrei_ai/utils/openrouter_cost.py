@@ -15,7 +15,7 @@ import math
 from typing import Any
 
 from pidrei_ai.builders import UsageBuilder
-from pidrei_ai.types import Model
+from pidrei_ai.types import ClassifierModel, Model
 
 
 def _is_valid_cost(value: Any) -> bool:
@@ -23,7 +23,8 @@ def _is_valid_cost(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
 
 
-def is_openrouter_model(model: Model) -> bool:
+def is_openrouter_model(model: Model | ClassifierModel) -> bool:
+    """OpenRouter by provider ID, which survives baseUrl overrides, or by host, which covers regional endpoints."""
     return model.provider == "openrouter" or "openrouter.ai" in model.base_url
 
 

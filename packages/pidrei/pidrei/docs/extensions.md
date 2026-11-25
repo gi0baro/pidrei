@@ -1718,8 +1718,8 @@ options to stop the call with the agent run.
 
 For non-chat models, `find_of_type()`, `get_models_of_type()`,
 `await get_available_of_type()` and `get_model_of_type()` look up image and
-classifier models, and `classify()` and `generate_images()` call them; see
-[Classifier models](models.md#classifier-models).
+decision (`"classifier"`) models, and `classify()` and `generate_images()` call
+them; see [Decision models](models.md#decision-models).
 
 ### ctx.signal
 

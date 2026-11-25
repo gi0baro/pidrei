@@ -121,6 +121,7 @@ def _as_record(value: Any) -> dict[str, Any] | None:
 @dataclass(slots=True)
 class _AccountModel:
     id: str
+    type: Any
     picker_enabled: bool
     policy_state: Any
 
@@ -129,6 +130,8 @@ class _AccountModel:
 class _CopilotModelCatalog:
     #: Models the account may already use.
     available_model_ids: list[str]
+    #: Decision models the account may use.
+    classifier_model_ids: list[str]
     #: Known, tool-capable models still awaiting a policy decision.
     policy_model_ids: list[str]
 
@@ -152,11 +155,16 @@ def _parse_github_copilot_model_catalog(raw: Any, allow_policy_fallback: bool) -
         account_models.append(
             _AccountModel(
                 id=model_id,
+                type=capabilities.get("type") if capabilities else None,
                 picker_enabled=item.get("model_picker_enabled") is True,
                 policy_state=(_as_record(item.get("policy")) or {}).get("state"),
             )
         )
 
+    # Decision models are never picker-enabled; the catalog lists only those the account can call.
+    classifier_model_ids = [
+        model.id for model in account_models if model.type == "decisions" and model.policy_state != "disabled"
+    ]
     picker_model_ids = [
         model.id for model in account_models if model.picker_enabled and model.policy_state != "disabled"
     ]
@@ -173,7 +181,11 @@ def _parse_github_copilot_model_catalog(raw: Any, allow_policy_fallback: bool) -
         and model.id in _KNOWN_MODEL_IDS
         and (model.picker_enabled or use_policy_fallback)
     ]
-    return _CopilotModelCatalog(available_model_ids=available_model_ids, policy_model_ids=policy_model_ids)
+    return _CopilotModelCatalog(
+        available_model_ids=available_model_ids,
+        classifier_model_ids=classifier_model_ids,
+        policy_model_ids=policy_model_ids,
+    )
 
 
 def _status_text(status: int) -> str:
@@ -432,6 +444,7 @@ async def _refresh_copilot_token(
         credential.access, enterprise_domain, cancel, max_retries=0, max_elapsed_ms=0
     )
     credential.extra["availableModelIds"] = models.available_model_ids
+    credential.extra["availableClassifierModelIds"] = models.classifier_model_ids
     return credential
 
 
@@ -527,6 +540,7 @@ async def _login_github_copilot(
             credential.access, models.policy_model_ids, enterprise_domain, interaction.cancel
         )
     credential.extra["availableModelIds"] = list(dict.fromkeys([*models.available_model_ids, *enabled_model_ids]))
+    credential.extra["availableClassifierModelIds"] = models.classifier_model_ids
     return credential
 
 

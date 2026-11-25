@@ -38,9 +38,6 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "cerebras": "gpt-oss-120b",
     "zai": "glm-5.3",
     "zai-coding-cn": "glm-5.3",
-    # Deviation: pi still names `devstral-medium-latest`, which models.dev
-    # retired before the 0.84.3 catalog regen; a default that resolves to
-    # nothing is worse than a one-id drift, so mistral points at its successor.
     "mistral": "mistral-medium-latest",
     "minimax": "MiniMax-M3",
     "minimax-cn": "MiniMax-M3",

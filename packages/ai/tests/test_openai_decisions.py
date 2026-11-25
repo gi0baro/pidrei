@@ -13,6 +13,7 @@ from dataclasses import replace
 import pytest
 
 from pidrei_ai.api.openai_decisions import classify
+from pidrei_ai.providers.all import get_builtin_classifier_model
 from pidrei_ai.types import (
     ClassifierBoolAnswer,
     ClassifierBoolQuestion,
@@ -149,6 +150,33 @@ async def test_prices_long_context_requests_at_the_long_context_input_rate():
         result = await classify(MODEL, CONTEXT, ClassifierOptions(api_key="secret"))
 
     assert result.usage.cost.total == pytest.approx(0.06, abs=1e-12)
+
+
+@pytest.mark.tonio
+async def test_reports_cached_and_cache_write_input_tokens_separately_at_the_catalog_price():
+    luna = get_builtin_classifier_model("openai", "gpt-6-luna")
+    assert luna is not None, "missing OpenAI Decisions model"
+    response = {
+        "answers": WIRE_ANSWERS,
+        "usage": {
+            "input_tokens": 2000,
+            "input_tokens_details": {"cached_tokens": 1600, "cache_write_tokens": 100},
+            "output_tokens": 0,
+            "total_tokens": 2000,
+        },
+    }
+    with stub_system_one(respond_json(response)):
+        result = await classify(luna, CONTEXT, ClassifierOptions(api_key="secret"))
+
+    usage = result.usage
+    assert (usage.input, usage.output, usage.cache_read, usage.cache_write, usage.total_tokens) == (
+        300,
+        0,
+        1600,
+        100,
+        2000,
+    )
+    assert usage.cost.total == pytest.approx(0.0002, abs=1e-12)
 
 
 @pytest.mark.tonio
