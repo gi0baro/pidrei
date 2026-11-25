@@ -29,6 +29,7 @@ from pidrei_ai.types import (
     Tool,
     TranscriptContext,
 )
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.transcript import collapse_system_messages, without_initial_system_message
@@ -552,14 +553,17 @@ def map_stop_reason(reason: str) -> StopReason:
     raise ValueError(f"Unhandled stop reason: {reason}")
 
 
-async def retry_google_request[T](request: Callable[[], Awaitable[T]], options: StreamOptions | None = None) -> T:
+async def retry_google_request[T](
+    request: Callable[[], Awaitable[T]], model: Model, options: StreamOptions | None = None
+) -> T:
     """Run a Google GenAI request with the shared provider retry policy
     (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
     Anthropic and OpenAI adapters wrap their initial request in
     `retry_provider_request`. `GoogleApiError` has a `status` attribute but no
     `headers` attribute, and `retry_provider_request` only retries errors that
     carry both, so normalize the error by adding the missing `headers` before
-    re-raising.
+    re-raising. Failed attempts reach `on_response` with their status and no
+    headers.
     """
 
     async def _request() -> T:
@@ -579,4 +583,7 @@ async def retry_google_request[T](request: Callable[[], Awaitable[T]], options: 
         max_retries=max_retries,
         max_retry_delay_ms=options.max_retry_delay_ms if options is not None else None,
         cancel=options.cancel if options is not None else None,
+        on_error_response=lambda error_response: maybe_call(
+            options.on_response if options is not None else None, error_response, model
+        ),
     )

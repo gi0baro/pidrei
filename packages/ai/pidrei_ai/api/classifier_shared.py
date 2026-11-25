@@ -10,7 +10,7 @@ as pi's "Request timed out after Nms" while a caller cancel stays an abort.
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import tonio.colored as tonio
@@ -96,25 +96,29 @@ class _ClassifierClient:
         self._fetch = fetch if fetch is not None else http.default_fetch
 
     async def post(
-        self, url: str, payload: Any, headers: dict[str, str], cancel: CancelToken | None
+        self,
+        url: str,
+        payload: Any,
+        headers: dict[str, str],
+        cancel: CancelToken | None,
+        on_response: Callable[[ProviderResponse], Awaitable[Any]],
     ) -> tuple[int, dict[str, str], str]:
-        async def _send() -> tuple[Any, bytes]:
+        async def _head() -> Any:
             # The whole-request bound is the caller's per-attempt timer token.
             request = http.build_request("POST", url, json=payload, headers=headers, timeout=http.oneshot_timeout(None))
-            response = await self._fetch(request, env=self._env)
-            try:
-                body = await response.read()
-            except BaseException:
-                http.abandon_response(response)
-                raise
-            return response, body
+            return await self._fetch(request, env=self._env)
 
-        response, body = await run_cancellable(_send(), cancel)
-        return (
-            response.status_code,
-            {name.lower(): value for name, value in response.headers.items()},
-            body.decode("utf-8", "replace"),
-        )
+        response = await run_cancellable(_head(), cancel)
+        response_headers = {name.lower(): value for name, value in response.headers.items()}
+        try:
+            # Reported before the body is read, so a body that fails to arrive still reports its status.
+            # Outside the cancellable waits, as pi's callback is not interrupted by the attempt's signal.
+            await on_response(ProviderResponse(status=response.status_code, headers=response_headers))
+            body = await run_cancellable(response.read(), cancel)
+        except BaseException:
+            http.abandon_response(response)
+            raise
+        return response.status_code, response_headers, body.decode("utf-8", "replace")
 
 
 async def post_classifier_request(
@@ -140,7 +144,10 @@ async def post_classifier_request(
     client = _ClassifierClient(options.env, options.fetch)
     headers = _request_headers(model, options.api_key, options.headers, options.identity)
 
-    async def attempt() -> tuple[ProviderResponse, Any]:
+    def report(response: ProviderResponse) -> Awaitable[Any]:
+        return maybe_call(options.on_response, response, model)
+
+    async def attempt() -> Any:
         # A fresh timeout for every attempt (pi: `AbortSignal.timeout` per request).
         timeout = CancelToken() if timeout_ms is not None else None
         timer = CancelToken()
@@ -156,10 +163,10 @@ async def post_classifier_request(
             tonio.spawn.without_tracking(_expire())
         combined = combine_cancel_tokens(caller_cancel, timeout)
         try:
-            status, response_headers, text = await client.post(url, payload, headers, combined.token)
+            status, response_headers, text = await client.post(url, payload, headers, combined.token, report)
             if not 200 <= status < 300:
                 raise _http_error(label, status, response_headers, text)
-            return ProviderResponse(status=status, headers=response_headers), json.loads(text)
+            return json.loads(text)
         except Exception:
             if timeout is not None and timeout.cancelled and not (caller_cancel and caller_cancel.cancelled):
                 raise _timeout_error(timeout_ms) from None
@@ -168,15 +175,13 @@ async def post_classifier_request(
             combined.cleanup()
             timer.cancel()
 
-    response, parsed = await retry_provider_request(
+    return await retry_provider_request(
         attempt,
         max_retries=options.max_retries if options.max_retries is not None else 2,
         max_retry_delay_ms=options.max_retry_delay_ms,
         cancel=caller_cancel,
         no_retry_statuses=no_retry_statuses,
     )
-    await maybe_call(options.on_response, response, model)
-    return parsed
 
 
 def _token_count(value: Any) -> float:

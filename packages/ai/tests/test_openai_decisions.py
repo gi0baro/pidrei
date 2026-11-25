@@ -285,6 +285,41 @@ async def test_includes_the_api_error_body_for_other_http_failures():
     assert "Decision input exceeds the token limit." in result.error_message
 
 
+class _FailingBodyResponse:
+    """A 503 head whose body fails to arrive (pi: a `ReadableStream` that errors on start)."""
+
+    def __init__(self):
+        self.status_code = 503
+        self.headers = {"retry-after": "7"}
+
+    async def read(self) -> bytes:
+        raise RuntimeError("body stream failed")
+
+
+# #12376. pi's case is in pi-classifier.test.ts (the pi-decision adapter, not ported); it specifies
+# `post_classifier_request`, shared with this adapter. Driven through the `fetch` option, so the real
+# `_ClassifierClient` runs.
+@pytest.mark.tonio
+async def test_reports_an_error_response_to_on_response_even_when_its_body_fails():
+    responses = []
+
+    async def fetch(_request, *, env=None):
+        return _FailingBodyResponse()
+
+    async def on_response(response, _model):
+        responses.append(response)
+
+    result = await classify(
+        MODEL, CONTEXT, ClassifierOptions(api_key="secret", max_retries=0, fetch=fetch, on_response=on_response)
+    )
+
+    assert result.stop_reason == "error"
+    assert len(responses) == 1
+    # pi's `toMatchObject`: a subset check.
+    assert responses[0].status == 503
+    assert responses[0].headers["retry-after"] == "7"
+
+
 @pytest.mark.tonio
 async def test_rejects_models_for_other_classifier_apis_and_missing_api_keys():
     with stub_system_one(respond_json({"answers": WIRE_ANSWERS})) as requests:

@@ -821,7 +821,9 @@ class ProviderRequestOptions:
     env: ProviderEnv | None = None
     # Inspect or replace the provider payload before sending (return None to keep unchanged).
     on_payload: OnPayload | None = None
-    # Invoked after an HTTP response is received.
+    # Invoked after each HTTP response is received, including error responses and
+    # responses to retried attempts. Coverage depends on provider and transport: some
+    # report empty headers or only some responses.
     on_response: OnResponse | None = None
     # Merged with provider defaults; caller values override; None suppresses a default header.
     headers: ProviderHeaders | None = None

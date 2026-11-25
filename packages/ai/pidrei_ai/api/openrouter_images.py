@@ -38,9 +38,12 @@ _DATA_URL = re.compile(r"^data:([^;]+);base64,(.+)$", re.DOTALL)
 
 
 class OpenRouterImagesError(Exception):
-    def __init__(self, status: int, message: str, body: str | None = None):
+    """Non-2xx response; carries status/headers for the SDK-mirror retry policy, as the SDK's `APIError` does."""
+
+    def __init__(self, status: int, headers: dict[str, str], message: str, body: str | None = None):
         super().__init__(message)
         self.status = status
+        self.headers = headers
         self.body = body
 
 
@@ -74,7 +77,9 @@ class _OpenRouterImagesClient:
 
         response, body = await run_cancellable(_send(), cancel)
         if not 200 <= response.status_code < 300:
-            raise OpenRouterImagesError(response.status_code, f"{response.status_code} {body}", body=body)
+            raise OpenRouterImagesError(
+                response.status_code, dict(response.headers), f"{response.status_code} {body}", body=body
+            )
         return json.loads(body), ProviderResponse(status=response.status_code, headers=dict(response.headers))
 
 
@@ -120,6 +125,9 @@ async def generate_images(
             max_retries=(options.max_retries if options and options.max_retries is not None else 0),
             max_retry_delay_ms=options.max_retry_delay_ms if options else None,
             cancel=options.cancel if options else None,
+            on_error_response=lambda error_response: maybe_call(
+                options.on_response if options else None, error_response, model
+            ),
         )
         await maybe_call(options.on_response if options else None, raw_response, model)
 

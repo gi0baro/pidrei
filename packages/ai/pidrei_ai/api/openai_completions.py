@@ -79,6 +79,11 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.openrouter_cost import apply_openrouter_reported_cost, is_openrouter_model
+from pidrei_ai.utils.openrouter_finish_reason import (
+    apply_openrouter_native_finish_reason,
+    flag_openrouter_empty_stop,
+    read_openrouter_native_finish_reason,
+)
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
@@ -1327,6 +1332,7 @@ def stream(
                 max_retries=opts.max_retries if opts.max_retries is not None else 0,
                 max_retry_delay_ms=opts.max_retry_delay_ms,
                 cancel=opts.cancel,
+                on_error_response=lambda error_response: maybe_call(opts.on_response, error_response, model),
             )
             await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
@@ -1345,6 +1351,11 @@ def stream(
             text_block: TextContentBuilder | None = None
             thinking_block: ThinkingContentBuilder | None = None
             has_finish_reason = False
+            is_openrouter = is_openrouter_model(model)
+            # OpenRouter's native_finish_reason, only ever set for OpenRouter models, so the checks on it below
+            # are OpenRouter-only. Kept across chunks so a trailing chunk that repeats finish_reason without it
+            # does not drop it.
+            native_finish_reason: str | None = None
             tool_blocks_by_index: dict[int, ToolCallBuilder] = {}
             tool_blocks_by_id: dict[str, ToolCallBuilder] = {}
 
@@ -1467,12 +1478,18 @@ def stream(
                 if not chunk.get("usage") and choice.get("usage"):
                     output.usage = _parse_chunk_usage(choice["usage"], model)
 
+                if is_openrouter:
+                    # pi's `??`: the reader returns a non-empty string or None, so `or` is the same.
+                    native_finish_reason = read_openrouter_native_finish_reason(choice) or native_finish_reason
+
                 if choice.get("finish_reason"):
                     output.raw_stop_reason = choice["finish_reason"]
                     stop_reason, error_message = _map_stop_reason(choice["finish_reason"])
                     output.stop_reason = stop_reason
                     if error_message:
                         output.error_message = error_message
+                    if native_finish_reason:
+                        apply_openrouter_native_finish_reason(output, choice["finish_reason"], native_finish_reason)
                     has_finish_reason = True
 
                 delta = choice.get("delta")
@@ -1565,6 +1582,8 @@ def stream(
                 raise RuntimeError("Request was aborted")
             if not has_finish_reason and not compat.supports_finish_reason:
                 output.stop_reason = "toolUse" if any(block.type == "toolCall" for block in output.content) else "stop"
+            if native_finish_reason:
+                flag_openrouter_empty_stop(output, native_finish_reason)
             if output.stop_reason == "error":
                 raise RuntimeError(output.error_message or "Provider returned an error stop reason")
             if (compat.supports_finish_reason and not has_finish_reason) or output.stop_reason == "pending":

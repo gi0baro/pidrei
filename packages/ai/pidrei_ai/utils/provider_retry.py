@@ -20,6 +20,8 @@ from typing import Any
 
 from tonio.colored import time as tonio_time
 
+from pidrei_ai.types import ProviderResponse
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_utils import clock
 from pidrei_utils.cancel import AbortError, CancelToken
 
@@ -133,9 +135,14 @@ async def retry_provider_request[T](
     max_retry_delay_ms: float | None = None,
     cancel: CancelToken | None = None,
     no_retry_statuses: Sequence[int] | None = None,
+    on_error_response: Callable[[ProviderResponse], Awaitable[Any]] | None = None,
 ) -> T:
     """Run `request` with SDK-compatible, interruptible retry. `no_retry_statuses`
-    lists HTTP statuses that fail at once although the default policy would retry them."""
+    lists HTTP statuses that fail at once although the default policy would retry them.
+
+    `on_error_response` is called for each attempt that failed with an HTTP status, before
+    the retry decision. SDKs reject non-2xx responses, so this is the only place their status
+    and headers reach the caller's `on_response`."""
     retries_remaining = max_retries
 
     while True:
@@ -144,6 +151,9 @@ async def retry_provider_request[T](
         except Exception as error:
             if cancel is not None and cancel.cancelled:
                 raise _create_abort_error() from error
+            if _is_provider_error(error) and error.status is not None:
+                headers = dict(error.headers) if error.headers else {}
+                await maybe_call(on_error_response, ProviderResponse(status=error.status, headers=headers))
             if retries_remaining <= 0 or not _is_provider_error(error) or not _is_retryable_provider_error(error):
                 raise
             if error.status is not None and no_retry_statuses is not None and error.status in no_retry_statuses:

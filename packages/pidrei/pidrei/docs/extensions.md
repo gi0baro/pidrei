@@ -445,8 +445,9 @@ The model request runs its hooks in the order the diagram shows: `context`
 (can modify the conversation messages), `context_with_system` (can modify the
 full transcript), `before_provider_headers` (can mutate headers),
 `before_provider_request` (can inspect or replace the payload),
-`after_provider_response` (status and headers, before the stream is consumed),
-then `provider_stream_event` (raw parsed stream events) alongside
+`after_provider_response` (status and headers of each HTTP response, including
+errors and retried attempts; successful responses fire before their stream is
+consumed), then `provider_stream_event` (raw parsed stream events) alongside
 `message_start` / `message_update` / `message_end` for the assistant message.
 Provider hooks run only when the transport exposes the matching stage.
 
@@ -553,7 +554,7 @@ Other operations change the current session without replacing the runtime:
 | `context_with_system` | Before each request, after every `context` handler | The full transcript, sent as returned |
 | `before_provider_headers` | Before each request | Request headers |
 | `before_provider_request` | Before each request | The payload |
-| `after_provider_response` | After each response arrives | — (inspect status/headers) |
+| `after_provider_response` | After each response arrives, including error responses and retried attempts | — (inspect status/headers) |
 | `provider_stream_event` | Each parsed provider stream event, before pidrei normalizes it (`provider`, `api`, `model`, `data`) | — (notification-only, not persisted) |
 | `cache_warming_decision` | Before each prompt-cache refresh, with pidrei's decision (`warmCost`, `missCost`, `continuationProbability`, `action`) | Return `{"action": "warm"}` or `{"action": "stop"}`; the last handler that returns an action wins; `"stop"` ends warming until the next real request |
 | `message_start` / `message_update` / `message_end` | Each user, assistant, tool-result and custom message; `message_update` streams the assistant's | `message_end` may replace the message |
@@ -1233,8 +1234,10 @@ the part that is new since the previous request.
 
 #### after_provider_response
 
-Fired after an HTTP response is received and before its stream body is
-consumed. Handlers run in extension load order.
+Fired for each HTTP response the provider receives, including error responses
+(4xx/5xx) and responses to retried attempts, so one request can fire it more
+than once. Successful responses fire before their stream body is consumed.
+Handlers run in extension load order.
 
 ```python
 async def on_provider_response(event, ctx):
@@ -1244,8 +1247,10 @@ async def on_provider_response(event, ctx):
         ctx.ui.notify(f"rate limited, retry-after: {event['headers'].get('retry-after')}", "warning")
 ```
 
-Header availability depends on the provider and transport. Providers that
-abstract HTTP responses may not expose headers.
+Coverage depends on the provider and transport. Some providers report empty
+headers or only some responses. It does not fire for errors that arrive inside
+an already started SSE stream, or for WebSocket transports, including a
+WebSocket connection that fails to open.
 
 #### provider_stream_event
 

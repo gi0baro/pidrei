@@ -1021,6 +1021,7 @@ def stream(
                     max_retries=opts.max_retries if opts.max_retries is not None else 0,
                     max_retry_delay_ms=opts.max_retry_delay_ms,
                     cancel=opts.cancel,
+                    on_error_response=lambda error_response: maybe_call(opts.on_response, error_response, model),
                 )
 
             disable_preferred_strict_tools = has_exceeded_strict_tool_limits(opts.session_id)

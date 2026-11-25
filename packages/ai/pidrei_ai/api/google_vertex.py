@@ -164,6 +164,7 @@ def stream(
                 lambda: client.generate_content_stream(
                     params, env=opts.env, cancel=opts.cancel, timeout_ms=opts.timeout_ms
                 ),
+                model,
                 opts,
             )
 
