@@ -85,7 +85,8 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
+from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic, append_network_error_diagnostic
+from pidrei_ai.utils.error_body import provider_error_text
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.identity import set_default_identity_headers
 from pidrei_ai.utils.json_parse import parse_json_with_repair
@@ -1261,7 +1262,8 @@ def stream(
             out_stream.end()
         except Exception as error:
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
-            output.error_message = str(error) if str(error) else repr(error)
+            output.error_message = provider_error_text(error) or repr(error)
+            append_network_error_diagnostic(output, error)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

@@ -280,8 +280,11 @@ small change, usually a `.N` PiDrei release:
 2. For httpunk/punkreq, diff the two tags for the names PiDrei uses. PiDrei
    imports httpunk in exactly one place, `pidrei_http/http.py`
    (`Backend`, `H1Connection`, `H1Server`), and sees its exceptions only
-   through punkreq's mapper (`map_httpunk_exception`) and the messages
-   `pidrei_ai/utils/retry.py` matches. The flow tests stub the network; the
+   through punkreq's mapper (`map_httpunk_exception`). Network failures are
+   classified by punkreq's exception classes, which `describe_transport_error`
+   in the same file names (recipe `network-error-class`): check those classes
+   and what the mapper raises them for, not the message texts. The flow
+   tests stub the network; the
    real coverage is `packages/http/tests/test_callback_server.py`,
    `packages/ai/tests/test_oauth_callback_server.py`, the loopback cases
    in `test_websocket_connect.py`, and the MCP HTTP tests
@@ -1092,6 +1095,40 @@ state, so it follows the Codex adapter's session maps
   ports 1:1 inside the hold (or, for a heavy computation, between pin and
   claim). New per-session module state in any adapter lands on the same
   mechanism, with a cleanup registration and conftest guards.
+
+### `network-error-class` (the streaming adapters, `ai/src/utils/retry.ts`, `provider-retry.ts`, `error-body.ts`, `diagnostics.ts`)
+
+Pi learns that a request failed in the exchange itself from the error text:
+its SDKs report `Connection error.`, undici a cut body as `terminated`, and
+the retry patterns match those. PiDrei's transport is punkreq, whose texts are
+hyper's and the OS's; several match no pattern (a body cut on HTTP/1, an
+unreachable network), and they change between releases. PiDrei decides from
+the class, `http.TransportError`, where the exception is still in hand:
+
+- **The report.** `http.describe_transport_error` (the seam, the only module
+  that names punkreq's classes) builds the message from the class and the
+  host of the request. `provider_error_text` (`utils/error_body.py`) returns
+  it for a transport error and `str(error)` otherwise; `normalize_provider_error`,
+  the Anthropic error arm and `format_mistral_error` take their text from it.
+- **The mark.** Each streaming adapter's error arm calls
+  `append_network_error_diagnostic(output, error)` after it has set the stop
+  reason and `error_message`. For a transport error on a message that stopped
+  with `error` it appends a `network_error` diagnostic holding the transport's
+  own error. An aborted request gets none.
+- **Agent-level retry.** `is_retryable_assistant_error` accepts a message
+  carrying that diagnostic, after the non-retryable patterns. The pattern
+  lists are Pi's and port verbatim: nothing of PiDrei's goes through them.
+- **Request-level retry.** `retry_provider_request` has an arm for
+  `http.TransportError`, the SDKs' `APIConnectionError` (no status): retried
+  while retries remain, after the plain backoff.
+- **Upstream diffs**: a new streaming adapter gets the call in its error arm.
+  A hunk to an error arm ports around it. New retry patterns port as they
+  are. A hunk that makes Pi classify a network failure some other way
+  (a class check on an SDK error, a new diagnostic) is weighed against this
+  recipe instead of being ported beside it.
+- **Tests**: `test_network_error_reporting.py` (a failed connect and a body
+  cut mid-stream through two adapters), `test_http_describe_transport_error.py`,
+  and the pidrei-only cases in `test_retry.py` and `test_provider_retry.py`.
 
 ### `codemode-python` (`codemode/src/runtime/prelude-source.ts`, `runtime/host.ts`, `declarations.ts`, `source.ts`, `coding-agent/src/extensions/codemode/tool.ts`, `execute.ts`, `docs/codemode.md`, the codemode tests)
 

@@ -59,7 +59,8 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.error_body import truncate_error_text
+from pidrei_ai.utils.diagnostics import append_network_error_diagnostic
+from pidrei_ai.utils.error_body import provider_error_text, truncate_error_text
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.identity import get_identity_headers
@@ -347,6 +348,7 @@ def stream(
         except Exception as error:
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
             output.error_message = format_mistral_error(error)
+            append_network_error_diagnostic(output, error)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
@@ -440,7 +442,7 @@ def format_mistral_error(error: Any) -> str:
             return f"Mistral API error ({status_code}): {truncate_error_text(body_text, MAX_MISTRAL_ERROR_BODY_CHARS)}"
         if isinstance(status_code, int):
             return f"Mistral API error ({status_code}): {error}"
-        return str(error)
+        return provider_error_text(error)
     return safe_json_stringify(error)
 
 

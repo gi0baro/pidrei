@@ -74,6 +74,7 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_ai.utils.diagnostics import append_network_error_diagnostic
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
@@ -1603,6 +1604,7 @@ def stream(
             raw_metadata = error_field.get("metadata", {}).get("raw") if isinstance(error_field, dict) else None
             if raw_metadata and str(raw_metadata) not in output.error_message:
                 output.error_message += f"\n{raw_metadata}"
+            append_network_error_diagnostic(output, error)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

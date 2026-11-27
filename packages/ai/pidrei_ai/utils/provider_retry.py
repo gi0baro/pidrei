@@ -22,6 +22,7 @@ from tonio.colored import time as tonio_time
 
 from pidrei_ai.types import ProviderResponse
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import AbortError, CancelToken
 
@@ -124,6 +125,10 @@ def _get_retry_delay_ms(error: Any, retry_index: int, max_retry_delay_ms: float 
         if math.isfinite(delay_ms):
             return _validate_server_retry_delay_ms(delay_ms, max_retry_delay_ms, message)
 
+    return _backoff_delay_ms(retry_index)
+
+
+def _backoff_delay_ms(retry_index: int) -> float:
     exponential_delay = min(0.5 * 2**retry_index, 8) * 1000
     return exponential_delay * (1 - random.random() * 0.25)  # noqa: S311
 
@@ -148,6 +153,16 @@ async def retry_provider_request[T](
     while True:
         try:
             return await request()
+        except http.TransportError as error:
+            # The exchange itself failed: the SDKs' `APIConnectionError`, which has no
+            # status or headers and is always retried, after the plain backoff.
+            if cancel is not None and cancel.cancelled:
+                raise _create_abort_error() from error
+            if retries_remaining <= 0:
+                raise
+            retry_index = max_retries - retries_remaining
+            retries_remaining -= 1
+            await abortable_sleep(_backoff_delay_ms(retry_index), cancel)
         except Exception as error:
             if cancel is not None and cancel.cancelled:
                 raise _create_abort_error() from error

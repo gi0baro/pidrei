@@ -4,6 +4,7 @@ import traceback
 from typing import Any
 
 from pidrei_ai.types import AssistantMessageDiagnostic, DiagnosticErrorInfo
+from pidrei_http import http
 from pidrei_utils import clock
 
 
@@ -43,3 +44,24 @@ def create_assistant_message_diagnostic(
 
 def append_assistant_message_diagnostic(message: Any, diagnostic: AssistantMessageDiagnostic) -> None:
     message.diagnostics = [*(message.diagnostics or []), diagnostic]
+
+
+# The diagnostic of a response that failed in the exchange itself: connect,
+# read, write, protocol, proxy or timeout. pi learns this from the error text
+# (its SDKs' "Connection error.", undici's "terminated"); here the adapter
+# still holds the exception when it reports the failure, so the class decides
+# and `is_retryable_assistant_error` reads the diagnostic.
+NETWORK_ERROR_DIAGNOSTIC = "network_error"
+
+
+def append_network_error_diagnostic(message: Any, error: BaseException) -> None:
+    """Mark `message` as failed by a network error, if `error` is one.
+
+    Called by an adapter's error arm once the stop reason is set: an aborted
+    request is not a failure. The diagnostic keeps the transport's own error
+    (class, text, stack), which the reported message leaves out.
+    """
+    if message.stop_reason == "error" and isinstance(error, http.TransportError):
+        append_assistant_message_diagnostic(
+            message, create_assistant_message_diagnostic(NETWORK_ERROR_DIAGNOSTIC, error)
+        )

@@ -16,13 +16,15 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from pidrei_http import http
+
 
 MAX_PROVIDER_ERROR_BODY_CHARS = 4000
 
 
 @dataclass(slots=True)
 class NormalizedProviderError:
-    # `str(error)`, or `safe_json_stringify(error)` for a non-exception value.
+    # `provider_error_text(error)`, or `safe_json_stringify(error)` for a non-exception value.
     message: str
     # True when `message` already contains the body (no separate body to add).
     message_carries_body: bool
@@ -87,11 +89,23 @@ def _extract_body(error: BaseException) -> str | None:
     return truncate_error_text(trimmed, MAX_PROVIDER_ERROR_BODY_CHARS)
 
 
+def provider_error_text(error: BaseException) -> str:
+    """The text an error is reported with.
+
+    pi's SDKs name every failed exchange `Connection error.`; here the HTTP
+    seam describes one from its class, so the report never carries the
+    transport's own wording. Anything else is `str(error)`.
+    """
+    if isinstance(error, http.TransportError):
+        return http.describe_transport_error(error)
+    return str(error)
+
+
 def normalize_provider_error(error: Any) -> NormalizedProviderError:
     if not isinstance(error, BaseException):
         return NormalizedProviderError(message=safe_json_stringify(error), message_carries_body=False)
 
-    message = str(error)
+    message = provider_error_text(error)
     status = _extract_status(error)
     body = _extract_body(error)
     message_carries_body = body is None or body in message

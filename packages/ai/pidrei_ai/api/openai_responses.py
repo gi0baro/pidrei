@@ -28,6 +28,7 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_ai.utils.diagnostics import append_network_error_diagnostic
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.identity import set_default_identity_headers
@@ -551,6 +552,7 @@ def stream(
                 output.error_message = f"{error_message}\n{CHATGPT_WORKSPACE_LIMIT_HINT}"
             else:
                 output.error_message = error_message
+            append_network_error_diagnostic(output, error)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

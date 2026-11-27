@@ -53,6 +53,7 @@ from pidrei_ai.utils import websocket
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import (
     append_assistant_message_diagnostic,
+    append_network_error_diagnostic,
     create_assistant_message_diagnostic,
     format_thrown_value,
 )
@@ -687,6 +688,7 @@ def stream(
         except Exception as error:
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
             output.error_message = format_provider_error(normalize_provider_error(error))
+            append_network_error_diagnostic(output, error)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

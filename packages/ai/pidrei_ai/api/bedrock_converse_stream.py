@@ -100,7 +100,7 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
+from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic, append_network_error_diagnostic
 from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -417,6 +417,7 @@ def stream(
             output.error_message = format_bedrock_error(error)
             if output.stop_reason == "error":
                 _append_bedrock_failure_diagnostic(output, error, response_request_id)
+            append_network_error_diagnostic(output, error)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

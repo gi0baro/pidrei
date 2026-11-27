@@ -16,6 +16,7 @@ from tonio.colored import time as tonio_time
 
 from pidrei_ai.types import AssistantMessage
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_ai.utils.diagnostics import NETWORK_ERROR_DIAGNOSTIC
 from pidrei_utils.cancel import CancelToken
 
 
@@ -292,4 +293,8 @@ def is_retryable_assistant_error(message: AssistantMessage) -> bool:
     error_message = message.error_message
     if _NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.search(error_message):
         return False
+    # A network failure is known by its class where the adapter caught it, and
+    # recorded as a diagnostic: no pattern has to match its text.
+    if any(diagnostic.type == NETWORK_ERROR_DIAGNOSTIC for diagnostic in message.diagnostics or []):
+        return True
     return bool(_RETRYABLE_PROVIDER_ERROR_PATTERN.search(error_message))

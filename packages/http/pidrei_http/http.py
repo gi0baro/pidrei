@@ -17,12 +17,20 @@ from typing import Any
 import tonio.colored as tonio
 from httpunk import Backend, H1Connection, H1Server
 from punkreq import (
+    ConnectError,
+    ConnectTimeout,
     Limits,
+    PoolTimeout,
+    ProxyError,
+    ReadError,
+    ReadTimeout,
+    RemoteProtocolError,
     Request as _Request,
     Response as _Response,
     Timeout,
     TimeoutException,
     TransportError as _TransportError,
+    WriteError,
 )
 from punkreq.tonio import Client
 from tonio.colored.exceptions import CancelledError
@@ -39,6 +47,38 @@ RequestTimeout = TimeoutException
 # Every failure of the exchange itself (connect, read, write, protocol, proxy,
 # timeouts): what fetch reports as a network error.
 TransportError = _TransportError
+
+
+def describe_transport_error(error: _TransportError) -> str:
+    """What a failed exchange is reported as to the user.
+
+    Built from the class of the failure and the host of its request, never
+    from the transport's own text: that names library internals and changes
+    between punkreq and httpunk releases. An error raised without a request
+    (a custom fetch that had none to attach) names no host.
+    """
+    try:
+        target = error.request.url.host
+    except RuntimeError:
+        target = "the server"
+    match error:
+        case ConnectTimeout():
+            return f"Timed out connecting to {target}"
+        case PoolTimeout():
+            return f"Timed out waiting for a free connection to {target}"
+        case ReadTimeout():
+            return f"Timed out waiting for a response from {target}"
+        case TimeoutException():
+            # The total deadline, or the kernel giving up on a peer that stopped answering.
+            return f"Connection to {target} timed out"
+        case ConnectError():
+            return f"Could not connect to {target}"
+        case ProxyError():
+            return f"Could not reach {target} through the proxy"
+        case ReadError() | WriteError() | RemoteProtocolError():
+            return f"Connection to {target} was lost"
+    return f"Network error while talking to {target}"
+
 
 # A prepared request and its response, the two values a request-local
 # transport (`FetchFunction`, pi's `options.fetch`) exchanges. `Request` is

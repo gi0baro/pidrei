@@ -10,6 +10,7 @@ import tonio.colored as tonio
 
 from pidrei_ai.types import ProviderResponse
 from pidrei_ai.utils.provider_retry import retry_provider_request
+from pidrei_http import http
 from pidrei_utils.cancel import AbortError, CancelToken
 
 
@@ -136,6 +137,22 @@ async def test_retries_when_status_is_none():
         calls += 1
         if calls == 1:
             raise ProviderError(None)
+        return "ok"
+
+    assert await retry_provider_request(request, max_retries=1) == "ok"
+    assert calls == 2
+
+
+# pidrei-only: the SDKs' `APIConnectionError` (no status) is the transport's own error here.
+@pytest.mark.tonio
+async def test_retries_a_network_failure():
+    calls = 0
+
+    async def request():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise http.TransportError("[Errno 101] Network is unreachable")
         return "ok"
 
     assert await retry_provider_request(request, max_retries=1) == "ok"

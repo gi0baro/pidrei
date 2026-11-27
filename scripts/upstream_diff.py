@@ -1033,6 +1033,16 @@ _FREEZE_ADAPTER_NOTE = (
     "mutation lines port verbatim; new message/block fields land in both "
     "frozen type and builder"
 )
+_NETWORK_ERROR_ARM_NOTE = (
+    "the stream's error arm ends with append_network_error_diagnostic(output, error), "
+    "after the stop reason and error_message are set; a transport error's text comes "
+    "from provider_error_text, never str(error)"
+)
+# A streaming adapter: its builders, and its error arm.
+_STREAMING_ADAPTER = (
+    ("freeze-at-seam", _FREEZE_ADAPTER_NOTE),
+    ("network-error-class", _NETWORK_ERROR_ARM_NOTE),
+)
 
 DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/agent/src/agent.ts": (
@@ -1225,6 +1235,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "packages/ai/src/api/anthropic-messages.ts": (
         ("freeze-at-seam", _FREEZE_ADAPTER_NOTE),
+        ("network-error-class", _NETWORK_ERROR_ARM_NOTE),
         (
             "anthropic-federation",
             (
@@ -1247,15 +1258,42 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "the session set is an insertion-ordered dict behind a module thread lock; add + evict-oldest is one hold",
         ),
     ),
-    "packages/ai/src/api/openai-completions.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/openai-completions.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/api/openai-responses.ts": _STREAMING_ADAPTER,
     "packages/ai/src/api/openai-responses-shared.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/azure-openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/openai-codex-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/google-generative-ai.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/google-vertex.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/mistral-conversations.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    "packages/ai/src/api/bedrock-converse-stream.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/azure-openai-responses.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/api/openai-codex-responses.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/api/google-generative-ai.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/api/google-vertex.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/api/mistral-conversations.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/api/bedrock-converse-stream.ts": _STREAMING_ADAPTER,
+    "packages/ai/src/utils/retry.ts": (
+        (
+            "network-error-class",
+            (
+                "is_retryable_assistant_error also accepts a message carrying the network_error "
+                "diagnostic, after the non-retryable patterns; the pattern lists port verbatim"
+            ),
+        ),
+    ),
+    "packages/ai/src/utils/provider-retry.ts": (
+        (
+            "network-error-class",
+            (
+                "retry_provider_request has an arm for http.TransportError (the SDKs' statusless "
+                "APIConnectionError): always retried, plain backoff"
+            ),
+        ),
+    ),
+    "packages/ai/src/utils/error-body.ts": (
+        (
+            "network-error-class",
+            "normalize_provider_error takes its message from provider_error_text, not str(error)",
+        ),
+    ),
+    "packages/ai/src/utils/diagnostics.ts": (
+        ("network-error-class", "NETWORK_ERROR_DIAGNOSTIC and append_network_error_diagnostic are PiDrei's"),
+    ),
     "packages/ai/src/providers/faux.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     # The TUI island: passive UI state under one
     # reentrant lock, with input, render and terminal-event loops.

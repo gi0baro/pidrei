@@ -1,10 +1,13 @@
 """Mirror of pi's retry.test.ts."""
 
+from dataclasses import replace
+
 import pytest
 import tonio.colored as tonio
 
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.types import TextContent
+from pidrei_ai.utils.diagnostics import NETWORK_ERROR_DIAGNOSTIC, create_assistant_message_diagnostic
 from pidrei_ai.utils.retry import (
     RetryCallbacks,
     RetryPolicy,
@@ -12,6 +15,7 @@ from pidrei_ai.utils.retry import (
     retry_assistant_call,
     retry_delay_ms,
 )
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 
 
@@ -282,6 +286,16 @@ class TestProviderRetryClassification:
     )
     def test_does_not_retry(self, text):
         assert is_retryable_assistant_error(error_message(text)) is False
+
+
+# pidrei-only: a network failure is marked by the adapter that caught it; pi matches the SDK's text.
+def test_retries_a_message_marked_as_a_network_error_whatever_its_text():
+    message = error_message("Could not connect to api.example.com")
+    assert is_retryable_assistant_error(message) is False
+
+    error = http.TransportError("[Errno 101] Network is unreachable")
+    marked = replace(message, diagnostics=[create_assistant_message_diagnostic(NETWORK_ERROR_DIAGNOSTIC, error)])
+    assert is_retryable_assistant_error(marked) is True
 
 
 def test_caps_agent_retry_delay():

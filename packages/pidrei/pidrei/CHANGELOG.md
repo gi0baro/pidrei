@@ -12,10 +12,24 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 - HTTP connections use TCP keepalive and, on Linux, a 30 second TCP user
   timeout. A connection whose peer stopped answering fails within about a
-  minute with a `Connection timed out` error, instead of waiting for the HTTP
-  idle timeout (`httpIdleTimeoutMs`).
+  minute with a timeout error, instead of waiting for the HTTP idle timeout
+  (`httpIdleTimeoutMs`).
 - Bumped the httpunk dependency to 0.6.0.
 - Bumped the punkreq dependency to 0.4.0.
+
+### Fixed
+
+- Network failures are retried whatever the operating system or the HTTP
+  stack calls them. A response cut off mid-stream on an HTTP/1 connection, a
+  failed write, an unreachable network or a failed DNS lookup ended the turn
+  instead of being retried, because the automatic retry recognised a network
+  failure by its error text. These errors now read, for example, `Could not
+  connect to api.anthropic.com` or `Connection to api.anthropic.com was lost`;
+  the underlying error is kept in the session file as a `network_error`
+  diagnostic on the message.
+- `retry.provider.maxRetries` also retries a request that failed before any
+  response arrived (connection refused, reset or timed out), as Pi does.
+  Only responses with a retryable HTTP status were retried.
 
 ## [1.6.1.0] - 2026-11-25
 
