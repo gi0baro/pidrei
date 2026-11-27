@@ -6,6 +6,17 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [1.6.1.1] - 2026-11-27
+
+### Changed
+
+- HTTP connections use TCP keepalive and, on Linux, a 30 second TCP user
+  timeout. A connection whose peer stopped answering fails within about a
+  minute with a `Connection timed out` error, instead of waiting for the HTTP
+  idle timeout (`httpIdleTimeoutMs`).
+- Bumped the httpunk dependency to 0.6.0.
+- Bumped the punkreq dependency to 0.4.0.
+
 ## [1.6.1.0] - 2026-11-25
 
 Tracks [Pi 1.6.1](https://github.com/earendil-works/pi/releases/tag/v1.6.1).
